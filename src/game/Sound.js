@@ -405,48 +405,65 @@ export class Sound {
   }
 
   // Audio Building Blocks
-  playMetallicClick(time, frequency, duration, volume = 0.3) {
-    this.init();
-    if (!this.ctx) return;
-    
-    const osc = this.ctx.createOscillator();
-    const gain = this.ctx.createGain();
-    
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(frequency, time);
-    
-    gain.gain.setValueAtTime(volume, time);
-    gain.gain.exponentialRampToValueAtTime(0.001, time + duration);
-    
-    osc.connect(gain);
-    gain.connect(this.masterVolume);
-    
-    osc.start(time);
-    osc.stop(time + duration + 0.02);
+  // timeOffset: seconds from NOW (ctx.currentTime). Default 0 = play immediately.
+  playMetallicClick(timeOffset, frequency, duration, volume = 0.3) {
+    try {
+      this.init();
+      if (!this.ctx) return;
+      if (this.ctx.state === 'suspended') this.ctx.resume();
+
+      // timeOffset must be a small offset, not an absolute clock value
+      // Clamp to valid range to prevent scheduling errors
+      const safeOffset = (typeof timeOffset === 'number' && timeOffset < 10) ? Math.max(0, timeOffset) : 0;
+      const t = this.ctx.currentTime + safeOffset;
+
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+
+      osc.connect(gain);
+      gain.connect(this.masterVolume);
+
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(frequency, t);
+      osc.frequency.exponentialRampToValueAtTime(frequency * 0.5, t + duration);
+
+      gain.gain.setValueAtTime(volume, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
+
+      osc.start(t);
+      osc.stop(t + duration + 0.01);
+    } catch(e) { /* audio scheduling error — ignore to protect game loop */ }
   }
 
-  playFrictionalScrape(time, duration, volume = 0.2) {
-    this.init();
-    if (!this.ctx) return;
-    
-    const noise = this.ctx.createBufferSource();
-    noise.buffer = this.noiseBuffer;
-    
-    const filter = this.ctx.createBiquadFilter();
-    filter.type = 'bandpass';
-    filter.frequency.setValueAtTime(800, time);
-    filter.frequency.exponentialRampToValueAtTime(1400, time + duration);
-    
-    const gain = this.ctx.createGain();
-    gain.gain.setValueAtTime(volume, time);
-    gain.gain.linearRampToValueAtTime(volume * 0.5, time + duration * 0.5);
-    gain.gain.exponentialRampToValueAtTime(0.001, time + duration);
-    
-    noise.connect(filter);
-    filter.connect(gain);
-    gain.connect(this.masterVolume);
-    
-    noise.start(time);
-    noise.stop(time + duration + 0.02);
+  // timeOffset: seconds from NOW (ctx.currentTime). Default 0 = play immediately.
+  playFrictionalScrape(timeOffset, duration, volume = 0.2) {
+    try {
+      this.init();
+      if (!this.ctx) return;
+      if (this.ctx.state === 'suspended') this.ctx.resume();
+
+      const safeOffset = (typeof timeOffset === 'number' && timeOffset < 10) ? Math.max(0, timeOffset) : 0;
+      const t = this.ctx.currentTime + safeOffset;
+
+      const noise = this.ctx.createBufferSource();
+      noise.buffer = this.noiseBuffer;
+
+      const filter = this.ctx.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.frequency.setValueAtTime(800, t);
+      filter.frequency.exponentialRampToValueAtTime(1400, t + duration);
+
+      const gain = this.ctx.createGain();
+      gain.gain.setValueAtTime(volume, t);
+      gain.gain.linearRampToValueAtTime(volume * 0.5, t + duration * 0.5);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
+
+      noise.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.masterVolume);
+
+      noise.start(t);
+      noise.stop(t + duration + 0.02);
+    } catch(e) { /* audio scheduling error — ignore to protect game loop */ }
   }
 }

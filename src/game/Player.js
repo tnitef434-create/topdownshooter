@@ -1,11 +1,11 @@
 const WEAPON_DEFS = {
   pistol: { name: 'Tactical 9mm', damage: 22, fireRate: 300, accuracy: 0.95, magSize: 12, range: 400, reloadTime: 1200, speedMultiplier: 1.0, type: 'Semi-Auto', recoil: 3, bulletSpeed: 14 },
-  rifle: { name: 'Assault Rifle (M4A1)', damage: 26, fireRate: 110, accuracy: 0.88, magSize: 30, range: 600, reloadTime: 2200, speedMultiplier: 0.85, type: 'Automatic', recoil: 4.5, bulletSpeed: 16 },
-  shotgun: { name: 'Shotgun (Remington 870)', damage: 14, fireRate: 850, accuracy: 0.65, magSize: 6, range: 250, reloadTime: 2800, speedMultiplier: 0.9, type: 'Pump-Action', pellets: 7, recoil: 12, bulletSpeed: 12 },
-  sniper: { name: 'Sniper Rifle (AWM)', damage: 95, fireRate: 1500, accuracy: 0.99, magSize: 5, range: 1200, reloadTime: 2800, speedMultiplier: 0.75, type: 'Bolt-Action', recoil: 18, bulletSpeed: 24 },
-  smg: { name: 'SMG (MP5)', damage: 18, fireRate: 75, accuracy: 0.82, magSize: 30, range: 350, reloadTime: 1500, speedMultiplier: 1.05, type: 'Automatic', recoil: 2.2, bulletSpeed: 13 },
-  lmg: { name: 'LMG (M249)', damage: 25, fireRate: 85, accuracy: 0.75, magSize: 100, range: 550, reloadTime: 4500, speedMultiplier: 0.70, type: 'Automatic', recoil: 6.0, bulletSpeed: 15 },
-  dmr: { name: 'DMR (M14 EBR)', damage: 45, fireRate: 400, accuracy: 0.94, magSize: 20, range: 800, reloadTime: 2400, speedMultiplier: 0.80, type: 'Semi-Auto', recoil: 8.5, bulletSpeed: 20 }
+  rifle: { name: 'Assault Rifle (M4A1)', damage: 26, fireRate: 110, accuracy: 0.88, magSize: 30, range: 600, reloadTime: 2200, speedMultiplier: 1.0, type: 'Automatic', recoil: 4.5, bulletSpeed: 16 },
+  shotgun: { name: 'Shotgun (Remington 870)', damage: 14, fireRate: 850, accuracy: 0.65, magSize: 6, range: 250, reloadTime: 2800, speedMultiplier: 1.0, type: 'Pump-Action', pellets: 7, recoil: 12, bulletSpeed: 12 },
+  sniper: { name: 'Sniper Rifle (AWM)', damage: 95, fireRate: 1500, accuracy: 0.99, magSize: 5, range: 1200, reloadTime: 2800, speedMultiplier: 1.0, type: 'Bolt-Action', recoil: 18, bulletSpeed: 24 },
+  smg: { name: 'SMG (MP5)', damage: 18, fireRate: 75, accuracy: 0.82, magSize: 30, range: 350, reloadTime: 1500, speedMultiplier: 1.0, type: 'Automatic', recoil: 2.2, bulletSpeed: 13 },
+  lmg: { name: 'LMG (M249)', damage: 25, fireRate: 85, accuracy: 0.75, magSize: 100, range: 550, reloadTime: 4500, speedMultiplier: 1.0, type: 'Automatic', recoil: 6.0, bulletSpeed: 15 },
+  dmr: { name: 'DMR (M14 EBR)', damage: 45, fireRate: 400, accuracy: 0.94, magSize: 20, range: 800, reloadTime: 2400, speedMultiplier: 1.0, type: 'Semi-Auto', recoil: 8.5, bulletSpeed: 20 }
 };
 
 const COLOR_THEMES = {

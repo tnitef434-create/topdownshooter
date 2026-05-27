@@ -294,8 +294,8 @@ export class Engine {
     const hudStatus = document.getElementById('hud-status');
     if (hudStatus) hudStatus.innerText = `ROUND ${this.roundNumber} - COOLDOWN`;
     
-    // Sound FX init
-    this.sound.playFrictionalScrape(performance.now()/1000, 0.5, 0.1);
+    // Sound FX init (0 = play immediately from AudioContext.currentTime)
+    try { this.sound.playFrictionalScrape(0, 0.5, 0.1); } catch(e) {}
   }
 
   startRoundAction() {
@@ -456,15 +456,15 @@ export class Engine {
       
       if (count !== this.countdownTimer && count >= 0) {
         this.countdownTimer = count;
-        // Play click tone
-        this.sound.playMetallicClick(currentTime/1000, 1000, 0.05, 0.2);
+        // Play countdown click tone (pass 0 = play immediately)
+        try { this.sound.playMetallicClick(0, 1000, 0.05, 0.2); } catch(e) {}
       }
       
       if (count > 0) {
         const hudStatus = document.getElementById('hud-status');
         if (hudStatus) hudStatus.innerText = `DEPLOYING IN ${count}...`;
       } else {
-        this.sound.playMetallicClick(currentTime/1000, 2000, 0.15, 0.35); // final beep
+        try { this.sound.playMetallicClick(0, 2000, 0.15, 0.35); } catch(e) {} // final beep
         this.startRoundAction();
       }
     }
