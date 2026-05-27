@@ -1,3 +1,5 @@
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import mapData from './map_data.json';
 
 // Seeded random number generator for synchronized crate spawning
@@ -96,6 +98,11 @@ export class Map {
       // Remove crate
       this.walls.splice(crateIdx, 1);
       this.rebuildSegments();
+
+      // Hide 3D mesh
+      if (this.crateMeshes && this.crateMeshes[crateId]) {
+        this.crateMeshes[crateId].visible = false;
+      }
       
       // Spawn items from crate (seeded probabilities)
       // 40% chance of item spawn
@@ -126,6 +133,10 @@ export class Map {
     if (crateIdx !== -1) {
       this.walls.splice(crateIdx, 1);
       this.rebuildSegments();
+    }
+    // Hide 3D mesh
+    if (this.crateMeshes && this.crateMeshes[crateId]) {
+      this.crateMeshes[crateId].visible = false;
     }
     if (spawnedItem) {
       // Avoid duplicate spawning
@@ -402,5 +413,169 @@ export class Map {
       
       ctx.restore();
     }
+  }
+
+  init3D(scene, mapName) {
+    this.scene = scene;
+    this.mapName = mapName;
+    this.meshes = [];
+    this.crateMeshes = {};
+    this.crateNames = ['Cube.002', 'Cube.016', 'Cube.017', 'Cube.018', 'Cube.019', 'Cube.020', 'Cube.021', 'Cube.022', 'Cube.023', 'Cube.024'];
+
+    // 1. Create 3D floor plane (dark concrete floor)
+    const floorGeo = new THREE.PlaneGeometry(this.width * 2, this.height * 2);
+    const floorMat = new THREE.MeshStandardMaterial({ 
+      color: 0x050608, 
+      roughness: 0.8,
+      metalness: 0.2
+    });
+    const floor = new THREE.Mesh(floorGeo, floorMat);
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.y = -0.5;
+    floor.receiveShadow = true;
+    this.scene.add(floor);
+
+    // Grid helper on the floor for alignment/visuals
+    const grid = new THREE.GridHelper(this.width * 2, 70, 0x45a29e, 0x121620);
+    grid.position.y = -0.49;
+    this.scene.add(grid);
+
+    if (this.mapName === 'warface') {
+      // 2. Load the 3D GLB Map
+      const loader = new GLTFLoader();
+      loader.load('/Warfacemap.glb', (gltf) => {
+        const model = gltf.scene;
+        
+        // World space scale
+        const scaleX = 1200 / (21.51 - (-20.90)); // ~28.3
+        const scaleZ = 1200 / (9.44 - (-9.04));   // ~65.0
+        
+        model.scale.set(scaleX, 28.0, scaleZ);
+        
+        const posX = 100 - (-20.90 * scaleX);
+        const posZ = 100 - (-9.04 * scaleZ);
+        model.position.set(posX, -0.49, posZ);
+        
+        // Traverse model to set shadow casting and materials
+        model.traverse((child) => {
+          if (child.isMesh) {
+            child.castShadow = true;
+            child.receiveShadow = true;
+            
+            // Adjust materials to look glowing and metallic
+            if (child.material) {
+              child.material.roughness = 0.5;
+              child.material.metalness = 0.7;
+              
+              if (child.name.toLowerCase().includes('glow') || child.name.toLowerCase().includes('neon')) {
+                child.material.emissive = new THREE.Color(0x66fcf1);
+                child.material.emissiveIntensity = 2.0;
+              }
+            }
+
+            // Map crate child meshes to hide them when broken
+            if (this.crateNames.includes(child.name)) {
+              const idx = this.crateNames.indexOf(child.name);
+              this.crateMeshes[`crate_${idx}`] = child;
+            }
+          }
+        });
+        
+        this.scene.add(model);
+      });
+    } else {
+      // 3. Render Neon Grid Map in 3D
+      this.walls.forEach(wall => {
+        // Exclude boundary walls from visuals
+        if (wall.x === 0 || wall.y === 0 || wall.x + wall.w === this.width || wall.y + wall.h === this.height) {
+          // Boundary walls: big dark concrete walls
+          const geom = new THREE.BoxGeometry(wall.w, 40, wall.h);
+          const mat = new THREE.MeshStandardMaterial({ color: 0x07090c, roughness: 0.9, metalness: 0.1 });
+          const mesh = new THREE.Mesh(geom, mat);
+          mesh.position.set(wall.x + wall.w / 2, 20, wall.y + wall.h / 2);
+          mesh.castShadow = true;
+          mesh.receiveShadow = true;
+          this.scene.add(mesh);
+          return;
+        }
+
+        const height = wall.type === 'crate' ? 18 : 35;
+        const geom = new THREE.BoxGeometry(wall.w, height, wall.h);
+        
+        let mat;
+        if (wall.type === 'crate') {
+          mat = new THREE.MeshStandardMaterial({ 
+            color: 0x4e3629, 
+            roughness: 0.9, 
+            metalness: 0.1 
+          });
+        } else {
+          mat = new THREE.MeshStandardMaterial({ 
+            color: 0x10141d, 
+            roughness: 0.4, 
+            metalness: 0.8,
+            emissive: 0x45a29e,
+            emissiveIntensity: 0.05
+          });
+        }
+        
+        const mesh = new THREE.Mesh(geom, mat);
+        mesh.position.set(wall.x + wall.w / 2, height / 2 - 0.5, wall.y + wall.h / 2);
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        
+        this.scene.add(mesh);
+        
+        if (wall.type === 'crate') {
+          this.crateMeshes[wall.id] = mesh;
+        } else {
+          this.meshes.push(mesh);
+        }
+      });
+    }
+  }
+
+  update3D() {
+    if (!this.scene) return;
+    
+    // Create meshes for items if they don't have them
+    this.items.forEach(item => {
+      if (item.active && !item.mesh) {
+        let geom, mat;
+        if (item.type === 'health') {
+          geom = new THREE.BoxGeometry(10, 10, 10);
+          mat = new THREE.MeshStandardMaterial({ 
+            color: 0xff2e2e, 
+            roughness: 0.3, 
+            metalness: 0.5,
+            emissive: 0xff0000,
+            emissiveIntensity: 0.5
+          });
+        } else {
+          geom = new THREE.CylinderGeometry(2, 2, 8, 8);
+          mat = new THREE.MeshStandardMaterial({ 
+            color: 0xffcc00, 
+            roughness: 0.2, 
+            metalness: 0.8,
+            emissive: 0xccaa00,
+            emissiveIntensity: 0.4
+          });
+        }
+        
+        const mesh = new THREE.Mesh(geom, mat);
+        mesh.position.set(item.x, 2, item.y);
+        mesh.castShadow = true;
+        this.scene.add(mesh);
+        item.mesh = mesh;
+      } else if (!item.active && item.mesh) {
+        this.scene.remove(item.mesh);
+        item.mesh = null;
+      }
+      
+      if (item.active && item.mesh) {
+        item.mesh.position.y = 2.5 + Math.sin(Date.now() / 150) * 0.5;
+        item.mesh.rotation.y += 0.03;
+      }
+    });
   }
 }

@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 import { Player } from './Player.js';
 import { Bullet } from './Bullet.js';
 import { Map } from './Map.js';
@@ -8,10 +9,49 @@ import { Network } from './Network.js';
 export class Engine {
   constructor(canvasId, config) {
     this.canvas = document.getElementById(canvasId);
-    this.ctx = this.canvas.getContext('2d');
+    if (!this.canvas) {
+      console.error(`Canvas element with ID '${canvasId}' not found.`);
+      return;
+    }
     
     this.mode = config.mode; // 'online' | 'offline'
     this.socket = config.socket;
+    this.mapName = config.mapName || 'neon';
+    this.settings = config.settings;
+
+    // 1. Initialize Three.js WebGLRenderer
+    this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: true });
+    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+    // 2. Scene setup
+    this.scene = new THREE.Scene();
+    this.scene.background = new THREE.Color(0x06070a);
+    this.scene.fog = new THREE.FogExp2(0x06070a, 0.0006);
+
+    // 3. Perspective Camera (Tilted top-down)
+    this.camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 1, 3000);
+
+    // 4. Lighting setup
+    const ambientLight = new THREE.AmbientLight(0x0e1117);
+    this.scene.add(ambientLight);
+
+    // Sunlight casting shadows
+    this.sunLight = new THREE.DirectionalLight(0xffffff, 0.4);
+    this.sunLight.position.set(200, 600, 200);
+    this.sunLight.castShadow = true;
+    this.sunLight.shadow.mapSize.width = 2048;
+    this.sunLight.shadow.mapSize.height = 2048;
+    this.sunLight.shadow.camera.near = 0.5;
+    this.sunLight.shadow.camera.far = 1500;
+
+    const d = 1000;
+    this.sunLight.shadow.camera.left = -d;
+    this.sunLight.shadow.camera.right = d;
+    this.sunLight.shadow.camera.top = d;
+    this.sunLight.shadow.camera.bottom = -d;
+    this.scene.add(this.sunLight);
     
     // Map dimensions
     this.mapWidth = 1400;
@@ -19,13 +59,14 @@ export class Engine {
     
     // Seeded map & item configuration
     this.map = new Map(this.mapWidth, this.mapHeight, config.seed);
+    this.map.init3D(this.scene, this.mapName);
     
     // Sound & particles setup
     this.sound = new Sound();
     this.sound.setVolume((config.settings.volume !== undefined) ? config.settings.volume : 0.5);
     this.particles = new ParticleEngine();
     this.particles.setBloodEnabled(config.settings.blood);
-    this.settings = config.settings;
+    this.particles.init3D(this.scene);
     
     // Global identifiers
     window.LocalPlayerId = config.localPlayerId;
@@ -61,6 +102,9 @@ export class Engine {
       isOpponentBot
     );
     
+    this.localPlayer.init3D(this.scene);
+    this.opponent.init3D(this.scene);
+    
     this.players = [this.localPlayer, this.opponent];
     this.bullets = [];
     
@@ -91,10 +135,9 @@ export class Engine {
     this.onMatchEnd = config.onMatchEnd;
     this.onKillFeed = config.onKillFeed;
     
-    // Camera settings
-    this.camera = { x: this.localPlayer.x, y: this.localPlayer.y, shakeX: 0, shakeY: 0 };
+    // Camera settings (follow players in 3D coordinate system)
+    this.cameraPosition = { x: this.localPlayer.x, y: 550, z: this.localPlayer.y + 200 };
     this.cameraShake = 0;
-    this.zoom = 1.0;
     
     // Game state phases
     this.gameState = 'warmup'; // warmup, countdown, playing, round-over, match-over
@@ -142,6 +185,13 @@ export class Engine {
   resizeCanvas() {
     this.canvas.width = window.innerWidth;
     this.canvas.height = window.innerHeight;
+    if (this.renderer) {
+      this.renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+    if (this.camera) {
+      this.camera.aspect = window.innerWidth / window.innerHeight;
+      this.camera.updateProjectionMatrix();
+    }
   }
 
   setupControls() {
@@ -209,6 +259,13 @@ export class Engine {
     this.particles.clear();
     window.OnBotShootCallback = null;
     window.AppSocket = null;
+
+    if (this.renderer) {
+      this.renderer.dispose();
+    }
+    if (this.scene) {
+      this.scene.clear();
+    }
   }
 
   updateSettings(settings) {
@@ -227,10 +284,14 @@ export class Engine {
     if (shootData.pellets && shootData.pellets > 1) {
       // Shotgun spread
       for (let i = 0; i < shootData.pellets; i++) {
-        this.bullets.push(new Bullet(shootData));
+        const b = new Bullet(shootData);
+        this.bullets.push(b);
+        b.init3D(this.scene);
       }
     } else {
-      this.bullets.push(new Bullet(shootData));
+      const b = new Bullet(shootData);
+      this.bullets.push(b);
+      b.init3D(this.scene);
     }
   }
 
@@ -272,6 +333,11 @@ export class Engine {
     }
     
     // Clear dynamic bullet trails and particles for fresh round
+    this.bullets.forEach(b => {
+      if (b.mesh && this.scene) {
+        this.scene.remove(b.mesh);
+      }
+    });
     this.bullets = [];
     this.particles.clear();
     this.map.generateMap(); // Regen crate positions
@@ -491,10 +557,14 @@ export class Engine {
           if (shootData.pellets && shootData.pellets > 1) {
             // Shotgun spread
             for (let i = 0; i < shootData.pellets; i++) {
-              this.bullets.push(new Bullet(shootData));
+              const b = new Bullet(shootData);
+              this.bullets.push(b);
+              b.init3D(this.scene);
             }
           } else {
-            this.bullets.push(new Bullet(shootData));
+            const b = new Bullet(shootData);
+            this.bullets.push(b);
+            b.init3D(this.scene);
           }
 
           // Broadcast shooting event in multiplayer
@@ -520,6 +590,9 @@ export class Engine {
         if (b.playerId === this.localPlayer.id) {
           window.MatchStats.hitsRegistered++;
         }
+        if (b.mesh && this.scene) {
+          this.scene.remove(b.mesh);
+        }
         this.bullets.splice(i, 1);
       }
     }
@@ -538,24 +611,10 @@ export class Engine {
       }
     }
 
-    // 6. Camera follows local player with smooth interpolations
-    // Peek ahead feature: shifts camera 25% * sensitivity towards mouse cursor direction
-    const sensVal = (this.settings && this.settings.sens !== undefined) ? this.settings.sens : 1.0;
-    const mouseOffsetMax = 0.25 * sensVal;
-    const camTargetX = this.localPlayer.x + (this.mouse.x - this.canvas.width / 2) * mouseOffsetMax;
-    const camTargetY = this.localPlayer.y + (this.mouse.y - this.canvas.height / 2) * mouseOffsetMax;
-    
-    this.camera.x += (camTargetX - this.camera.x) * 0.085;
-    this.camera.y += (camTargetY - this.camera.y) * 0.085;
-
     // Decay camera shake
     if (this.cameraShake > 0.1) {
-      this.camera.shakeX = (Math.random() - 0.5) * this.cameraShake;
-      this.camera.shakeY = (Math.random() - 0.5) * this.cameraShake;
       this.cameraShake *= 0.88; // decay
     } else {
-      this.camera.shakeX = 0;
-      this.camera.shakeY = 0;
       this.cameraShake = 0;
     }
 
@@ -567,68 +626,73 @@ export class Engine {
 
   // Core Render loop
   render() {
-    // Clear canvas
-    this.ctx.fillStyle = '#06070a';
-    this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
-
-    // Dynamic scale/zoom sizing helper based on resolution
-    const baseWidth = 1920;
-    const scaleFactor = Math.max(0.65, Math.min(1.2, this.canvas.width / baseWidth));
-    this.zoom = scaleFactor;
-
-    // 1. Save state and apply Camera Viewport translations
-    this.ctx.save();
-    this.ctx.translate(this.canvas.width / 2, this.canvas.height / 2);
-    this.ctx.scale(this.zoom, this.zoom);
+    // 1. Update Camera Position to follow player
+    // Peek ahead feature: shifts camera 25% * sensitivity towards mouse cursor direction
+    const sensVal = (this.settings && this.settings.sens !== undefined) ? this.settings.sens : 1.0;
+    const mouseOffsetMax = 0.25 * sensVal;
     
-    // Apply camera centrings and screenshakes
-    const focusX = -this.camera.x + this.camera.shakeX;
-    const focusY = -this.camera.y + this.camera.shakeY;
-    this.ctx.translate(focusX, focusY);
-
-    // Compute dynamic Visibility Light Field (FOV Shadows)
-    let visibilityPolygon = null;
-    if (this.settings.shadows && this.localPlayer.health > 0) {
-      // Cast rays from player coordinates (eyes) up to 720px vision range limit
-      visibilityPolygon = this.map.computeVisibilityPolygon(this.localPlayer.x, this.localPlayer.y, 720);
+    const dx = this.mouse.x - window.innerWidth / 2;
+    const dy = this.mouse.y - window.innerHeight / 2;
+    
+    const camTargetX = this.localPlayer.x + dx * mouseOffsetMax;
+    const camTargetZ = this.localPlayer.y + 220 + dy * mouseOffsetMax;
+    
+    this.cameraPosition.x += (camTargetX - this.cameraPosition.x) * 0.085;
+    this.cameraPosition.z += (camTargetZ - this.cameraPosition.z) * 0.085;
+    
+    // Look at player center
+    const lookAtTarget = new THREE.Vector3(this.localPlayer.x, 0, this.localPlayer.y);
+    
+    // Apply camera shake decay
+    let shakeX = 0, shakeY = 0, shakeZ = 0;
+    if (this.cameraShake > 0.1) {
+      shakeX = (Math.random() - 0.5) * this.cameraShake * 1.5;
+      shakeY = (Math.random() - 0.5) * this.cameraShake * 1.5;
+      shakeZ = (Math.random() - 0.5) * this.cameraShake * 1.5;
+      this.cameraShake *= 0.88;
     }
+    
+    this.camera.position.set(
+      this.cameraPosition.x + shakeX,
+      500 + shakeY,
+      this.cameraPosition.z + shakeZ
+    );
+    this.camera.lookAt(lookAtTarget);
 
-    // Render floor details & blood decals underneath players/obstacles
-    this.particles.drawDecals(this.ctx);
-
-    // Render static walls & crates. Overlay shadows using calculated visibility field
-    this.map.draw(this.ctx, this.settings, visibilityPolygon);
-
-    // Render dead operatives lying flat
-    this.players.forEach(p => {
-      if (p.health <= 0) p.draw(this.ctx);
-    });
-
-    // Check if opponent is visible (inside visibility field)
+    // Compute dynamic Line of Sight visibility
+    let visibilityPolygon = null;
     let oppVisible = true;
-    if (this.settings.shadows && visibilityPolygon && this.opponent.health > 0) {
-      // Determine if opponent center coordinate lies within the visibility polygon
+    
+    if (this.settings.shadows && this.localPlayer.health > 0) {
+      visibilityPolygon = this.map.computeVisibilityPolygon(this.localPlayer.x, this.localPlayer.y, 720);
       oppVisible = this.isPointInPolygon({ x: this.opponent.x, y: this.opponent.y }, visibilityPolygon);
     }
 
-    // Render active players (only draw opponent if visible in Line of Sight)
-    this.localPlayer.draw(this.ctx, this.settings);
+    // 2. Update players 3D representation
+    this.localPlayer.update3D(this.settings);
+    this.opponent.update3D(this.settings);
+
+    // Show or hide opponent based on LOS
     if (this.opponent.health > 0 && oppVisible) {
-      this.opponent.draw(this.ctx, this.settings);
+      this.opponent.show3D(true);
+    } else {
+      this.opponent.show3D(this.opponent.health <= 0); // show body if dead
     }
 
-    // Render Bullets
-    this.bullets.forEach(b => b.draw(this.ctx));
+    // 3. Update map animations (floating items)
+    this.map.update3D();
 
-    // Render active flying sparks, wood fragments & shell casings
-    this.particles.drawParticles(this.ctx);
+    // 4. Update bullets and particles 3D meshes
+    this.bullets.forEach(b => b.update3D());
+    this.particles.update3D();
 
-    // Restore viewport transformations
-    this.ctx.restore();
+    // 5. Render Three.js WebGL Scene
+    this.renderer.render(this.scene, this.camera);
   }
 
   // Ray-crossing algorithm to check if opponent is inside the player's light field
   isPointInPolygon(point, polygon) {
+    if (!polygon) return true;
     let inside = false;
     for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
       const xi = polygon[i].x, yi = polygon[i].y;
