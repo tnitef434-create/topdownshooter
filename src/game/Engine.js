@@ -285,7 +285,7 @@ export class Engine {
     document.getElementById('hud-status').innerText = `ROUND ${this.roundNumber} - COOLDOWN`;
     
     // Sound FX init
-    this.sound.playFrictionScrape(performance.now()/1000, 0.5, 0.1);
+    this.sound.playFrictionalScrape(performance.now()/1000, 0.5, 0.1);
   }
 
   startRoundAction() {
