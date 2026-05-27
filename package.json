@@ -1,0 +1,22 @@
+{
+  "name": "1v1-topdown-shooter",
+  "version": "1.0.0",
+  "description": "Realistic 1v1 online top-down shooter",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev:server": "node server.js dev",
+    "dev:client": "vite src",
+    "build": "vite build src --outDir ../dist",
+    "preview": "vite preview src"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "socket.io": "^4.7.5",
+    "socket.io-client": "^4.7.5"
+  },
+  "devDependencies": {
+    "vite": "^5.2.11"
+  }
+}

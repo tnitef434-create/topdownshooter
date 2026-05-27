@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TacticStrike 1v1 | Realistic Top-Down Multiplayer Shooter</title>
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=Orbitron:wght@500;700;900&display=swap" rel="stylesheet">
+  <!-- Style sheet -->
+  <link rel="stylesheet" href="./style.css">
+  <!-- Socket.io client (loaded dynamically via bundler or server, or we can just import from socket.io-client) -->
+</head>
+<body>
+  
+  <div id="app">
+    <!-- 1. Background Grid and Glows -->
+    <div class="bg-effects">
+      <div class="glow glow-1"></div>
+      <div class="glow glow-2"></div>
+      <div class="grid-overlay"></div>
+    </div>
+
+    <!-- 2. Main Menu Screen -->
+    <div id="menu-screen" class="screen active">
+      <div class="menu-container">
+        <header>
+          <h1 class="glitch-title">TACTIC<span>STRIKE</span></h1>
+          <p class="subtitle">Online 1v1 Top-Down Tactical Shooter</p>
+        </header>
+
+        <div class="card name-card">
+          <label for="player-name-input">OPERATIVE NAME</label>
+          <input type="text" id="player-name-input" maxlength="15" placeholder="Enter codename..." value="Operative">
+        </div>
+
+        <div class="menu-options">
+          <button id="btn-quick-match" class="btn primary">
+            <span class="btn-glow"></span>
+            QUICK MATCH
+          </button>
+          
+          <div class="multiplayer-row">
+            <button id="btn-create-room" class="btn secondary">CREATE ROOM</button>
+            <div class="join-group">
+              <input type="text" id="room-code-input" placeholder="ROOM CODE" maxlength="5">
+              <button id="btn-join-room" class="btn secondary">JOIN</button>
+            </div>
+          </div>
+
+          <button id="btn-practice-bot" class="btn tertiary">
+            PRACTICE VS BOT (OFFLINE)
+          </button>
+        </div>
+
+        <footer>
+          <button id="btn-open-settings" class="btn-text">SETTINGS</button>
+          <span class="divider">|</span>
+          <span class="version">v1.0.0 Stable</span>
+        </footer>
+      </div>
+    </div>
+
+    <!-- 3. Lobby Screen -->
+    <div id="lobby-screen" class="screen">
+      <div class="lobby-container">
+        <div class="lobby-header">
+          <h2>OPERATION LOBBY</h2>
+          <div class="room-display">
+            <span>ROOM CODE:</span>
+            <span id="room-code-display" class="code">-----</span>
+            <button id="btn-copy-code" class="btn-icon" title="Copy Code">📋</button>
+          </div>
+        </div>
+
+        <div class="lobby-main">
+          <!-- Left side: Player States -->
+          <div class="players-panel">
+            <h3>OPERATIVES</h3>
+            <div class="players-list">
+              <div id="player-slot-1" class="player-slot empty">
+                <div class="slot-status">WAITING FOR HOST...</div>
+              </div>
+              <div class="vs-divider">VS</div>
+              <div id="player-slot-2" class="player-slot empty">
+                <div class="slot-status">WAITING FOR OPPONENT...</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Right side: Weapon Selection -->
+          <div class="weapon-panel">
+            <h3>SELECT LOADOUT</h3>
+            <div class="weapon-selector">
+              <div class="weapon-option active" data-weapon="pistol">
+                <div class="weapon-info">
+                  <span class="weapon-name">Pistol (Tactical 9mm)</span>
+                  <span class="weapon-type">Semi-Auto</span>
+                </div>
+              </div>
+              <div class="weapon-option" data-weapon="rifle">
+                <div class="weapon-info">
+                  <span class="weapon-name">Assault Rifle (M4A1)</span>
+                  <span class="weapon-type">Automatic</span>
+                </div>
+              </div>
+              <div class="weapon-option" data-weapon="shotgun">
+                <div class="weapon-info">
+                  <span class="weapon-name">Shotgun (Remington 870)</span>
+                  <span class="weapon-type">Pump-Action</span>
+                </div>
+              </div>
+              <div class="weapon-option" data-weapon="sniper">
+                <div class="weapon-info">
+                  <span class="weapon-name">Sniper Rifle (AWM)</span>
+                  <span class="weapon-type">Bolt-Action</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Weapon Details / Stats -->
+            <div id="weapon-stats-display" class="weapon-stats">
+              <div class="stat-row">
+                <span>DAMAGE:</span>
+                <div class="stat-bar"><div class="bar-fill" style="width: 25%"></div></div>
+              </div>
+              <div class="stat-row">
+                <span>FIRE RATE:</span>
+                <div class="stat-bar"><div class="bar-fill" style="width: 40%"></div></div>
+              </div>
+              <div class="stat-row">
+                <span>ACCURACY:</span>
+                <div class="stat-bar"><div class="bar-fill" style="width: 90%"></div></div>
+              </div>
+              <div class="stat-row">
+                <span>MAG CAPACITY:</span>
+                <span class="stat-val">12 rounds</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="lobby-footer">
+          <button id="btn-leave-lobby" class="btn secondary">LEAVE LOBBY</button>
+          <button id="btn-ready-toggle" class="btn primary">READY TO DEPLOY</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 4. Game Screen -->
+    <div id="game-screen" class="screen">
+      <div id="game-container">
+        <canvas id="game-canvas"></canvas>
+
+        <!-- Dynamic Game HUD Overlay -->
+        <div class="game-hud">
+          <!-- Top Center: Match Status / Timer -->
+          <div class="hud-top">
+            <div class="score-display">
+              <span id="score-self" class="score">0</span>
+              <span class="score-sep">-</span>
+              <span id="score-opponent" class="score">0</span>
+            </div>
+            <div class="timer-display">
+              <span id="game-timer">02:00</span>
+            </div>
+            <div id="hud-status" class="status-alert">GET READY!</div>
+          </div>
+
+          <!-- Bottom Left: Self Status -->
+          <div class="hud-bottom-left">
+            <div class="operative-badge">
+              <div class="op-indicator online"></div>
+              <span id="hud-self-name">OPERATIVE A</span>
+            </div>
+            <div class="bars-container">
+              <div class="hud-bar-wrapper">
+                <span class="bar-label">HP</span>
+                <div class="hud-bar hp-bar"><div id="hud-self-hp" class="bar-fill hp" style="width: 100%"></div></div>
+                <span id="hud-self-hp-text" class="bar-text">100</span>
+              </div>
+            </div>
+            <div class="ammo-display">
+              <span id="hud-weapon-name" class="weapon-active">TACTICAL 9MM</span>
+              <span id="hud-ammo-val" class="ammo-count">12 / 12</span>
+              <div id="reload-indicator" class="reload-progress" style="display: none;">
+                <div class="reload-wheel"></div>
+                <span>RELOADING</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Bottom Right: Opponent Status -->
+          <div class="hud-bottom-right">
+            <div class="operative-badge right-aligned">
+              <span id="hud-opponent-name">OPPONENT</span>
+              <div id="opponent-indicator" class="op-indicator offline"></div>
+            </div>
+            <div class="bars-container right-aligned">
+              <div class="hud-bar-wrapper">
+                <div class="hud-bar hp-bar opponent"><div id="hud-opponent-hp" class="bar-fill hp" style="width: 100%"></div></div>
+                <span class="bar-label">HP</span>
+              </div>
+            </div>
+            <div class="opponent-weapon-display">
+              <span id="hud-opponent-weapon">PISTOL</span>
+            </div>
+          </div>
+
+          <!-- Kill Feed Notifications (top right) -->
+          <div id="kill-feed" class="kill-feed"></div>
+
+          <!-- Chat Drawer -->
+          <div id="chat-drawer" class="chat-drawer">
+            <div id="chat-messages" class="chat-messages"></div>
+            <input type="text" id="chat-input" placeholder="Press Enter to send chat..." maxlength="50">
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 5. Game Over / Scoreboard Screen Modal -->
+    <div id="game-over-modal" class="modal-overlay">
+      <div class="modal-card">
+        <h2 id="match-result-title" class="result-title win">MISSION ACCOMPLISHED</h2>
+        <p id="match-result-subtitle" class="result-subtitle">You eliminated the target operative</p>
+        
+        <div class="match-stats-table">
+          <h3>DEBRIEFING REPORT</h3>
+          <div class="stats-row">
+            <span>Rounds Won</span>
+            <span id="stat-rounds-won">0</span>
+          </div>
+          <div class="stats-row">
+            <span>Damage Dealt</span>
+            <span id="stat-damage-dealt">0</span>
+          </div>
+          <div class="stats-row">
+            <span>Accuracy</span>
+            <span id="stat-accuracy">0%</span>
+          </div>
+          <div class="stats-row">
+            <span>Shots Fired</span>
+            <span id="stat-shots-fired">0</span>
+          </div>
+        </div>
+
+        <div class="modal-actions">
+          <button id="btn-return-lobby" class="btn primary">RETURN TO LOBBY</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 6. Settings Screen Modal -->
+    <div id="settings-modal" class="modal-overlay">
+      <div class="modal-card settings-card">
+        <h2>GAME SETTINGS</h2>
+        
+        <div class="settings-body">
+          <div class="setting-group">
+            <label for="setting-volume">Sound FX Volume</label>
+            <input type="range" id="setting-volume" min="0" max="100" value="50">
+            <span id="volume-val">50%</span>
+          </div>
+
+          <div class="setting-group checkbox-group">
+            <label class="checkbox-container">
+              Enable Visual Blood Splatter
+              <input type="checkbox" id="setting-blood" checked>
+              <span class="checkmark"></span>
+            </label>
+          </div>
+
+          <div class="setting-group checkbox-group">
+            <label class="checkbox-container">
+              Enable Real-time Shadows (Dynamic Lighting)
+              <input type="checkbox" id="setting-shadows" checked>
+              <span class="checkmark"></span>
+            </label>
+          </div>
+
+          <div class="setting-group checkbox-group">
+            <label class="checkbox-container">
+              Laser Sight Indicator
+              <input type="checkbox" id="setting-laser" checked>
+              <span class="checkmark"></span>
+            </label>
+          </div>
+
+          <div class="controls-guide">
+            <h3>KEYBOARD & MOUSE CONTROLS</h3>
+            <ul>
+              <li><strong>WASD</strong>: Move Operative</li>
+              <li><strong>Mouse movement</strong>: Aim weapon</li>
+              <li><strong>Left-Click</strong>: Shoot weapon</li>
+              <li><strong>R key</strong>: Reload magazine</li>
+              <li><strong>Enter key</strong>: Open chat / Send message</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="modal-actions">
+          <button id="btn-close-settings" class="btn primary">SAVE & CLOSE</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Client-side Socket.io is imported dynamically inside main.js via build. -->
+  <script type="module" src="./main.js"></script>
+</body>
+</html>
