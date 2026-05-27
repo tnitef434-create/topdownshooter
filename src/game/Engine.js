@@ -4,6 +4,7 @@ import { Map as GameMap } from './Map.js';
 import { ParticleEngine } from './Particle.js';
 import { Sound } from './Sound.js';
 import { Network } from './Network.js';
+import { CharacterRenderer } from './CharacterRenderer.js';
 
 export class Engine {
   constructor(canvasId, config) {
@@ -27,6 +28,9 @@ export class Engine {
       this.particles = new ParticleEngine();
       this.particles.setBloodEnabled(config.settings.blood);
       this.settings = config.settings;
+      
+      // Start loading the 3D character model (async, non-blocking)
+      CharacterRenderer.init().catch(e => console.warn('[Engine] CharacterRenderer init failed:', e));
       
       // Global identifiers
       window.LocalPlayerId = config.localPlayerId;

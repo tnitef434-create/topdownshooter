@@ -1,3 +1,5 @@
+import { CharacterRenderer } from './CharacterRenderer.js';
+
 const WEAPON_DEFS = {
   pistol: { name: 'Tactical 9mm', damage: 22, fireRate: 300, accuracy: 0.95, magSize: 12, range: 400, reloadTime: 1200, speedMultiplier: 1.0, type: 'Semi-Auto', recoil: 3, bulletSpeed: 14 },
   rifle: { name: 'Assault Rifle (M4A1)', damage: 26, fireRate: 110, accuracy: 0.88, magSize: 30, range: 600, reloadTime: 2200, speedMultiplier: 1.0, type: 'Automatic', recoil: 4.5, bulletSpeed: 16 },
@@ -58,6 +60,7 @@ export class Player {
     // Visual indicators
     this.muzzleFlash = 0; // opacity timer
     this.footstepTimer = 0;
+    this.currentSpeed = 0; // tracked for walk animation
     
     // AI Bot State (if isBot)
     this.botTargetX = x;
@@ -106,6 +109,7 @@ export class Player {
       this.vx = (this.vx / speed) * currentMaxSpeed;
       this.vy = (this.vy / speed) * currentMaxSpeed;
     }
+    this.currentSpeed = speed; // track for walk animation
 
     // Collision detection against map walls & sliding response
     const nextX = this.x + this.vx;
@@ -523,12 +527,21 @@ export class Player {
   // Draw player operative on canvas
   draw(ctx, configSettings = { laser: true }) {
     if (this.health <= 0) {
-      // Draw death pool
+      // Draw death pool / fallen character
       ctx.save();
-      ctx.fillStyle = 'rgba(180, 0, 0, 0.4)';
+      ctx.fillStyle = 'rgba(180, 0, 0, 0.35)';
       ctx.beginPath();
-      ctx.arc(this.x, this.y, this.radius + 6, 0, Math.PI * 2);
+      ctx.ellipse(this.x, this.y, this.radius + 8, this.radius + 4, 0, 0, Math.PI * 2);
       ctx.fill();
+      // Try to draw the fallen elf girl sprite (rotated sideways)
+      if (CharacterRenderer.ready) {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        ctx.rotate(this.angle + Math.PI / 2);
+        ctx.globalAlpha = 0.55;
+        CharacterRenderer.draw(ctx, this.id + '_dead', 0, 0, 0, 0, false, this.isLocal ? 'blue' : 'red');
+        ctx.restore();
+      }
       ctx.restore();
       return;
     }
@@ -541,72 +554,96 @@ export class Player {
       ctx.lineWidth = 1.0;
       ctx.beginPath();
       ctx.moveTo(this.x, this.y);
-      // Cast a thin ray forward
       const maxLaserDist = 1200;
       const laserEnd = {
         x: this.x + Math.cos(this.angle) * maxLaserDist,
         y: this.y + Math.sin(this.angle) * maxLaserDist
       };
-      
       ctx.lineTo(laserEnd.x, laserEnd.y);
       ctx.stroke();
     }
 
-    // Set rotation around center
+    ctx.restore();
+
+    // ── Try drawing elf girl 3D sprite ──────────────────────────────────
+    const isShooting = this.muzzleFlash > 0.1;
+    const drewSprite = CharacterRenderer.draw(
+      ctx,
+      this.id,
+      this.x,
+      this.y,
+      this.angle,
+      this.currentSpeed || 0,
+      isShooting,
+      this.isLocal ? 'blue' : 'red'
+    );
+
+    // ── Fallback: tactical circle operative ──────────────────────────────
+    if (!drewSprite) {
+      ctx.save();
+      ctx.translate(this.x, this.y);
+      ctx.rotate(this.angle);
+
+      const theme = COLOR_THEMES[this.colorTheme] || COLOR_THEMES[this.isLocal ? 'cyan' : 'red'];
+      const bodyColor = theme.body;
+      const armorColor = theme.armor;
+      const helmetColor = theme.helmet;
+
+      let barrelLength = 18, barrelWidth = 4;
+      if (this.weaponKey === 'rifle')  { barrelLength = 24; barrelWidth = 5; }
+      if (this.weaponKey === 'shotgun'){ barrelLength = 22; barrelWidth = 6; }
+      if (this.weaponKey === 'sniper') { barrelLength = 32; barrelWidth = 4; ctx.fillStyle='#444'; ctx.fillRect(8,-5,6,3); }
+      if (this.weaponKey === 'smg')    { barrelLength = 16; barrelWidth = 4; }
+      if (this.weaponKey === 'lmg')    { barrelLength = 26; barrelWidth = 7; ctx.fillStyle='#222'; ctx.fillRect(6,-8,6,16); }
+      if (this.weaponKey === 'dmr')    { barrelLength = 28; barrelWidth = 5; ctx.fillRect(10,-4,5,2); }
+
+      ctx.fillStyle = '#444'; ctx.strokeStyle = '#000'; ctx.lineWidth = 1;
+      ctx.fillRect(10, -barrelWidth / 2, barrelLength, barrelWidth);
+      ctx.strokeRect(10, -barrelWidth / 2, barrelLength, barrelWidth);
+
+      ctx.fillStyle = armorColor; ctx.strokeStyle = '#000'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(8, -10, 5, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+      ctx.beginPath(); ctx.arc(14, 6, 5, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+
+      ctx.fillStyle = bodyColor;
+      ctx.beginPath(); ctx.ellipse(0, 0, this.radius, this.radius+3, 0, 0, Math.PI*2);
+      ctx.fill(); ctx.stroke();
+
+      ctx.fillStyle = armorColor;
+      ctx.beginPath(); ctx.ellipse(-3, 0, this.radius-4, this.radius-2, 0, 0, Math.PI*2);
+      ctx.fill();
+
+      ctx.fillStyle = helmetColor;
+      ctx.beginPath(); ctx.arc(-2, 0, 8, 0, Math.PI*2);
+      ctx.fill(); ctx.stroke();
+
+      ctx.fillStyle = '#111'; ctx.fillRect(1, -5, 3, 10);
+      ctx.restore();
+    }
+
+    // ── Weapon barrel & muzzle flash (drawn on top of sprite) ──────────
+    ctx.save();
     ctx.translate(this.x, this.y);
     ctx.rotate(this.angle);
 
-    // --- Draw Operative ---
-
-    // 1. Draw Weapon Barrel
-    ctx.fillStyle = '#444';
-    ctx.strokeStyle = '#000';
+    ctx.fillStyle = '#333';
+    ctx.strokeStyle = 'rgba(0,0,0,0.7)';
     ctx.lineWidth = 1;
-    let barrelLength = 18;
-    let barrelWidth = 4;
-    let handOffset = 10;
+    let barrelLength = 18, barrelWidth = 3;
+    if (this.weaponKey === 'rifle')  { barrelLength = 26; barrelWidth = 4; }
+    if (this.weaponKey === 'shotgun'){ barrelLength = 22; barrelWidth = 5; }
+    if (this.weaponKey === 'sniper') { barrelLength = 36; barrelWidth = 3; }
+    if (this.weaponKey === 'smg')    { barrelLength = 16; barrelWidth = 3; }
+    if (this.weaponKey === 'lmg')    { barrelLength = 28; barrelWidth = 5; }
+    if (this.weaponKey === 'dmr')    { barrelLength = 30; barrelWidth = 4; }
 
-    if (this.weaponKey === 'rifle') {
-      barrelLength = 24;
-      barrelWidth = 5;
-      handOffset = 12;
-    } else if (this.weaponKey === 'shotgun') {
-      barrelLength = 22;
-      barrelWidth = 6;
-      handOffset = 11;
-    } else if (this.weaponKey === 'sniper') {
-      barrelLength = 32;
-      barrelWidth = 4;
-      handOffset = 14;
-      // Draw Scope block
-      ctx.fillRect(8, -5, 6, 3);
-    } else if (this.weaponKey === 'smg') {
-      barrelLength = 16;
-      barrelWidth = 4;
-      handOffset = 9;
-    } else if (this.weaponKey === 'lmg') {
-      barrelLength = 26;
-      barrelWidth = 7;
-      handOffset = 13;
-      // Draw drum mag visual details
-      ctx.fillStyle = '#222';
-      ctx.fillRect(6, -8, 6, 16);
-    } else if (this.weaponKey === 'dmr') {
-      barrelLength = 28;
-      barrelWidth = 5;
-      handOffset = 12;
-      // Draw Scope block
-      ctx.fillRect(10, -4, 5, 2);
-    }
-
-    // Barrel
-    ctx.fillRect(10, -barrelWidth / 2, barrelLength, barrelWidth);
-    ctx.strokeRect(10, -barrelWidth / 2, barrelLength, barrelWidth);
+    ctx.fillRect(12, -barrelWidth / 2, barrelLength, barrelWidth);
+    ctx.strokeRect(12, -barrelWidth / 2, barrelLength, barrelWidth);
 
     // Muzzle Flash
     if (this.muzzleFlash > 0) {
       ctx.save();
-      ctx.translate(10 + barrelLength, 0);
+      ctx.translate(12 + barrelLength, 0);
       const grad = ctx.createRadialGradient(0, 0, 2, 0, 0, 16);
       grad.addColorStop(0, 'rgba(255, 255, 255, 1.0)');
       grad.addColorStop(0.3, 'rgba(255, 220, 0, 0.9)');
@@ -618,51 +655,6 @@ export class Player {
       ctx.fill();
       ctx.restore();
     }
-
-    // 2. Draw Shoulders & Body Circle
-    const theme = COLOR_THEMES[this.colorTheme] || COLOR_THEMES[this.isLocal ? 'cyan' : 'red'];
-    const bodyColor = theme.body;
-    const armorColor = theme.armor;
-    const helmetColor = theme.helmet;
-
-    // Hands gripping weapon
-    ctx.fillStyle = armorColor;
-    ctx.strokeStyle = '#000';
-    ctx.lineWidth = 1.5;
-    // Left hand
-    ctx.beginPath();
-    ctx.arc(8, -handOffset, 5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-    // Right hand
-    ctx.beginPath();
-    ctx.arc(14, handOffset - 4, 5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-
-    // Shoulders base oval
-    ctx.fillStyle = bodyColor;
-    ctx.beginPath();
-    ctx.ellipse(0, 0, this.radius, this.radius + 3, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-
-    // Tactical Vest padding
-    ctx.fillStyle = armorColor;
-    ctx.beginPath();
-    ctx.ellipse(-3, 0, this.radius - 4, this.radius - 2, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    // 3. Head & Helmet
-    ctx.fillStyle = helmetColor;
-    ctx.beginPath();
-    ctx.arc(-2, 0, 8, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-
-    // Visor strip
-    ctx.fillStyle = '#111';
-    ctx.fillRect(1, -5, 3, 10);
 
     ctx.restore();
 
