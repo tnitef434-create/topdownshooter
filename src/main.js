@@ -30,8 +30,7 @@ const inputs = {
 const displays = {
   roomCode: document.getElementById('room-code-display'),
   weaponStats: document.getElementById('weapon-stats-display'),
-  slot1: document.getElementById('player-slot-1'),
-  slot2: document.getElementById('player-slot-2'),
+  playersList: document.getElementById('lobby-players-list'),
   chatMessages: document.getElementById('chat-messages'),
   chatDrawer: document.getElementById('chat-drawer')
 };
@@ -53,7 +52,10 @@ const WEAPON_STATS = {
   pistol: { name: 'Tactical 9mm', damage: 22, fireRate: 35, accuracy: 90, magSize: 12, range: 400, reloadTime: 1200, speedMultiplier: 1.0, type: 'Semi-Auto' },
   rifle: { name: 'Assault Rifle (M4A1)', damage: 28, fireRate: 75, accuracy: 70, magSize: 30, range: 600, reloadTime: 2200, speedMultiplier: 0.85, type: 'Automatic' },
   shotgun: { name: 'Shotgun (Remington 870)', damage: 15, fireRate: 20, accuracy: 40, magSize: 6, range: 250, reloadTime: 3000, speedMultiplier: 0.9, type: 'Pump-Action', pellets: 8 },
-  sniper: { name: 'Sniper Rifle (AWM)', damage: 95, fireRate: 10, accuracy: 98, magSize: 5, range: 1000, reloadTime: 2800, speedMultiplier: 0.75, type: 'Bolt-Action' }
+  sniper: { name: 'Sniper Rifle (AWM)', damage: 95, fireRate: 10, accuracy: 98, magSize: 5, range: 1000, reloadTime: 2800, speedMultiplier: 0.75, type: 'Bolt-Action' },
+  smg: { name: 'SMG (MP5)', damage: 18, fireRate: 85, accuracy: 82, magSize: 30, range: 350, reloadTime: 1500, speedMultiplier: 1.05, type: 'Automatic' },
+  lmg: { name: 'LMG (M249)', damage: 25, fireRate: 80, accuracy: 75, magSize: 100, range: 550, reloadTime: 4500, speedMultiplier: 0.70, type: 'Automatic' },
+  dmr: { name: 'DMR (M14 EBR)', damage: 45, fireRate: 30, accuracy: 94, magSize: 20, range: 800, reloadTime: 2400, speedMultiplier: 0.80, type: 'Semi-Auto' }
 };
 
 // Game Instance & Socket State
@@ -62,6 +64,8 @@ let gameEngine = null;
 let currentRoom = null;
 let myName = 'Operative';
 let myWeapon = 'pistol';
+let myColor = 'cyan';
+let myMode = '1v1';
 let isReady = false;
 
 // Global Game Settings
@@ -190,11 +194,11 @@ function updateWeaponStatsUI(weaponKey) {
   displays.weaponStats.innerHTML = `
     <div class="stat-row">
       <span>DAMAGE:</span>
-      <div class="stat-bar"><div class="bar-fill" style="width: ${weaponKey === 'sniper' ? 100 : weaponKey === 'rifle' ? 65 : weaponKey === 'shotgun' ? 80 : 35}%"></div></div>
+      <div class="stat-bar"><div class="bar-fill" style="width: ${weaponKey === 'sniper' ? 100 : weaponKey === 'dmr' ? 75 : weaponKey === 'rifle' ? 65 : weaponKey === 'shotgun' ? 80 : weaponKey === 'smg' ? 30 : weaponKey === 'lmg' ? 55 : 35}%"></div></div>
     </div>
     <div class="stat-row">
       <span>FIRE RATE:</span>
-      <div class="stat-bar"><div class="bar-fill" style="width: ${weaponKey === 'rifle' ? 85 : weaponKey === 'pistol' ? 45 : weaponKey === 'shotgun' ? 25 : 10}%"></div></div>
+      <div class="stat-bar"><div class="bar-fill" style="width: ${weaponKey === 'smg' ? 95 : weaponKey === 'rifle' ? 85 : weaponKey === 'lmg' ? 90 : weaponKey === 'pistol' ? 45 : weaponKey === 'shotgun' ? 25 : weaponKey === 'dmr' ? 35 : 10}%"></div></div>
     </div>
     <div class="stat-row">
       <span>ACCURACY:</span>
@@ -209,36 +213,60 @@ function updateWeaponStatsUI(weaponKey) {
 
 // 4. Lobby UI Refresh
 function updateLobbyUI(players) {
-  // Clear slots
-  if (displays.slot1) {
-    displays.slot1.className = 'player-slot empty';
-    displays.slot1.innerHTML = '<div class="slot-status">WAITING FOR OPERATIVE 1...</div>';
-  }
-  if (displays.slot2) {
-    displays.slot2.className = 'player-slot empty';
-    displays.slot2.innerHTML = '<div class="slot-status">WAITING FOR OPERATIVE 2...</div>';
-  }
+  if (!displays.playersList) return;
 
-  players.forEach((p, idx) => {
-    const slot = idx === 0 ? displays.slot1 : displays.slot2;
-    if (!slot) return;
-    slot.className = `player-slot active ${p.ready ? 'ready' : ''}`;
+  displays.playersList.innerHTML = '';
+
+  const maxCapacity = (myMode === '2v2') ? 4 : 2;
+  
+  for (let idx = 0; idx < maxCapacity; idx++) {
+    const p = players[idx];
+    const slotEl = document.createElement('div');
     
-    const weaponName = WEAPON_STATS[p.weapon]?.name || p.weapon;
+    if (p) {
+      slotEl.className = `player-slot active ${p.ready ? 'ready' : ''}`;
+      const weaponName = WEAPON_STATS[p.weapon]?.name || p.weapon;
+      
+      const themeColors = {
+        cyan: '#66fcf1',
+        green: '#39db14',
+        purple: '#9d3bff',
+        orange: '#ff7f3b',
+        yellow: '#ffd700',
+        red: '#ff3c3c'
+      };
+      const playerColor = themeColors[p.color] || '#66fcf1';
+      
+      const teamLabel = (myMode === '2v2') ? `TEAM ${ (idx % 2 === 0) ? '1' : '2' }` : (idx === 0 ? 'HOST' : 'GUEST');
+      
+      slotEl.innerHTML = `
+        <div class="player-info">
+          <span class="player-name" style="color: ${playerColor};">${escapeHTML(p.name)} ${p.id === socket.id ? '(YOU)' : ''}</span>
+          <span class="player-weapon-desc">WEAPON: ${weaponName}</span>
+        </div>
+        <div class="player-badge ${idx % 2 === 0 ? 'host' : 'guest'}">
+          ${teamLabel}
+        </div>
+        <div class="status-badge ${p.ready ? 'ready-status' : 'waiting'}">
+          ${p.ready ? 'READY' : 'CHOOSING...'}
+        </div>
+      `;
+    } else {
+      slotEl.className = 'player-slot empty';
+      const slotNum = idx + 1;
+      const expectedTeam = (myMode === '2v2') ? ` (TEAM ${ (idx % 2 === 0) ? '1' : '2' })` : '';
+      slotEl.innerHTML = `<div class="slot-status">WAITING FOR OPERATIVE ${slotNum}${expectedTeam}...</div>`;
+    }
+    
+    displays.playersList.appendChild(slotEl);
 
-    slot.innerHTML = `
-      <div class="player-info">
-        <span class="player-name">${escapeHTML(p.name)} ${p.id === socket.id ? '(YOU)' : ''}</span>
-        <span class="player-weapon-desc">WEAPON: ${weaponName}</span>
-      </div>
-      <div class="player-badge ${idx === 0 ? 'host' : 'guest'}">
-        ${idx === 0 ? 'HOST' : 'GUEST'}
-      </div>
-      <div class="status-badge ${p.ready ? 'ready-status' : 'waiting'}">
-        ${p.ready ? 'READY TO DEPLOY' : 'CHOOSING...'}
-      </div>
-    `;
-  });
+    if (myMode === '1v1' && idx === 0) {
+      const vsEl = document.createElement('div');
+      vsEl.className = 'vs-divider';
+      vsEl.innerText = 'VS';
+      displays.playersList.appendChild(vsEl);
+    }
+  }
 
   // Update own ready button text
   const myState = players.find(p => p.id === socket.id);
@@ -272,16 +300,18 @@ function connectSocket() {
   });
 
   // Socket Events
-  socket.on('room-created', ({ roomId, players, autoMatch }) => {
+  socket.on('room-created', ({ roomId, players, autoMatch, mode }) => {
     currentRoom = roomId;
+    if (mode) myMode = mode;
     displays.roomCode.innerText = roomId;
     showScreen('lobby');
     updateLobbyUI(players);
     addSystemChatMessage(autoMatch ? 'Created matchmaking room. Waiting for opponent...' : `Lobby created. Share code [${roomId}] with a friend.`);
   });
 
-  socket.on('room-joined', ({ roomId, players }) => {
+  socket.on('room-joined', ({ roomId, players, mode }) => {
     currentRoom = roomId;
+    if (mode) myMode = mode;
     displays.roomCode.innerText = roomId;
     showScreen('lobby');
     updateLobbyUI(players);
@@ -314,8 +344,7 @@ function connectSocket() {
 
   socket.on('match-start', ({ players, seed }) => {
     showScreen('game');
-    const myData = players.find(p => p.id === socket.id);
-    const opponentData = players.find(p => p.id !== socket.id);
+    const myIndex = players.findIndex(p => p.id === socket.id);
     
     // Clear chat display for fresh round
     displays.chatMessages.innerHTML = '';
@@ -331,11 +360,12 @@ function connectSocket() {
       localPlayerId: socket.id,
       localPlayerName: myName,
       localWeapon: myWeapon,
-      opponentId: opponentData.id,
-      opponentName: opponentData.name,
-      opponentWeapon: opponentData.weapon,
+      localColor: myColor,
+      localPlayerIndex: myIndex,
+      players: players,
       seed: seed,
       settings: gameSettings,
+      matchMode: myMode,
       onMatchEnd: handleMatchEnd,
       onKillFeed: addKillFeedMessage
     });
@@ -359,20 +389,37 @@ function startOfflineMode() {
     gameEngine.destroy();
   }
 
+  const playersList = [
+    { id: 'player', name: myName, weapon: myWeapon, color: myColor }
+  ];
+  
+  if (myMode === '2v2') {
+    playersList.push({ id: 'bot_enemy_1', name: 'Bot Miller (Enemy)', weapon: getRandomWeapon(), color: 'red' });
+    playersList.push({ id: 'bot_teammate', name: 'Bot Ramirez (Teammate)', weapon: getRandomWeapon(), color: 'green' });
+    playersList.push({ id: 'bot_enemy_2', name: 'Bot Cooper (Enemy)', weapon: getRandomWeapon(), color: 'orange' });
+  } else {
+    playersList.push({ id: 'bot_enemy_1', name: 'Bot Miller (Enemy)', weapon: getRandomWeapon(), color: 'red' });
+  }
+
   gameEngine = new Engine('game-canvas', {
     mode: 'offline',
     socket: null,
     localPlayerId: 'player',
     localPlayerName: myName,
     localWeapon: myWeapon,
-    opponentId: 'bot',
-    opponentName: 'Bot (Sgt. Miller)',
-    opponentWeapon: ['pistol', 'rifle', 'shotgun', 'sniper'][Math.floor(Math.random() * 4)],
+    localColor: myColor,
+    localPlayerIndex: 0,
+    players: playersList,
     seed: Math.random(),
     settings: gameSettings,
+    matchMode: myMode,
     onMatchEnd: handleMatchEnd,
     onKillFeed: addKillFeedMessage
   });
+}
+
+function getRandomWeapon() {
+  return ['pistol', 'rifle', 'shotgun', 'sniper', 'smg', 'lmg', 'dmr'][Math.floor(Math.random() * 7)];
 }
 
 // Match Over Debriefing Display
@@ -440,7 +487,7 @@ function setupUIListeners() {
       localStorage.setItem('tacticstrike_player_name', myName);
       connectSocket();
       if (socket) {
-        socket.emit('create-room', { playerName: myName });
+        socket.emit('create-room', { playerName: myName, mode: myMode, color: myColor });
       }
     });
   }
@@ -457,7 +504,7 @@ function setupUIListeners() {
       localStorage.setItem('tacticstrike_player_name', myName);
       connectSocket();
       if (socket) {
-        socket.emit('join-room', { roomId: code, playerName: myName });
+        socket.emit('join-room', { roomId: code, playerName: myName, color: myColor });
       }
     });
   }
@@ -469,7 +516,7 @@ function setupUIListeners() {
       localStorage.setItem('tacticstrike_player_name', myName);
       connectSocket();
       if (socket) {
-        socket.emit('auto-match', { playerName: myName });
+        socket.emit('auto-match', { playerName: myName, mode: myMode, color: myColor });
       }
     });
   }
@@ -636,10 +683,60 @@ function escapeHTML(str) {
   );
 }
 
+function setupColorSelector() {
+  const options = document.querySelectorAll('#lobby-color-selector .color-option');
+  options.forEach(opt => {
+    opt.addEventListener('click', () => {
+      options.forEach(o => {
+        o.classList.remove('active');
+        o.style.borderColor = 'transparent';
+      });
+      opt.classList.add('active');
+      myColor = opt.dataset.color;
+      
+      const themeColors = {
+        cyan: '#66fcf1',
+        green: '#39db14',
+        purple: '#9d3bff',
+        orange: '#ff7f3b',
+        yellow: '#ffd700',
+        red: '#ff3c3c'
+      };
+      opt.style.borderColor = themeColors[myColor];
+      localStorage.setItem('tacticstrike_player_color', myColor);
+
+      // Notify server if in a lobby
+      if (socket && currentRoom) {
+        socket.emit('select-color', { color: myColor });
+      }
+    });
+  });
+
+  // Pre-select saved color
+  const savedColor = localStorage.getItem('tacticstrike_player_color');
+  if (savedColor) {
+    const targetOpt = document.querySelector(`#lobby-color-selector .color-option[data-color="${savedColor}"]`);
+    if (targetOpt) {
+      targetOpt.click();
+    }
+  }
+}
+
+function setupModeSelector() {
+  const radios = document.querySelectorAll('input[name="match-mode"]');
+  radios.forEach(radio => {
+    radio.addEventListener('change', () => {
+      myMode = radio.value;
+    });
+  });
+}
+
 // App Bootstrap
 document.addEventListener('DOMContentLoaded', () => {
   initSettings();
   setupWeaponSelector();
+  setupColorSelector();
+  setupModeSelector();
   setupUIListeners();
   
   // Set default name (load from local storage or generate a random one)

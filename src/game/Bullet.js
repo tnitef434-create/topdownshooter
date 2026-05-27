@@ -96,18 +96,28 @@ export class Bullet {
         // Apply damage if we are the local player shooting (or if it's offline bot shooting)
         // Hit detection is resolved client-side by the shooter
         if (this.playerId === window.LocalPlayerId) {
-          player.takeDamage(this.damage, soundEngine);
+          // Check for damage multiplier zone at bullet hit position
+          const zone = map.checkZone ? map.checkZone(this.x, this.y) : null;
+          const dmgMult = (zone && zone.type === 'damage') ? zone.multiplier : 1.0;
+          const finalDamage = Math.round(this.damage * dmgMult);
+
+          player.takeDamage(finalDamage, soundEngine);
           if (soundEngine) soundEngine.playHitMarker();
+
+          // Show zone damage indicator
+          if (dmgMult > 1.0 && player.showTextNotification) {
+            player.showTextNotification(`×${dmgMult} ZONE!`);
+          }
 
           // Collect match accuracy stat
           if (window.MatchStats) {
-            window.MatchStats.damageDealt += this.damage;
+            window.MatchStats.damageDealt += finalDamage;
           }
 
           // Emit hit damage to target player
           if (window.AppSocket) {
             window.AppSocket.emit('hit', {
-              damage: this.damage,
+              damage: finalDamage,
               shooterId: this.playerId,
               targetId: player.id,
               x: this.x,
@@ -115,9 +125,11 @@ export class Bullet {
             });
           }
         } else if (player.id === window.LocalPlayerId) {
-          // Visual/Audio indicators for local player when hit by bot (offline)
+          // Offline: bot bullets can also be multiplied by zone
           if (window.IsOfflineMode) {
-            player.takeDamage(this.damage, soundEngine);
+            const zone2 = map.checkZone ? map.checkZone(this.x, this.y) : null;
+            const dmgMult2 = (zone2 && zone2.type === 'damage') ? zone2.multiplier : 1.0;
+            player.takeDamage(Math.round(this.damage * dmgMult2), soundEngine);
           }
         }
         

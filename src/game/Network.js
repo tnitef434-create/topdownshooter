@@ -2,14 +2,14 @@ export class Network {
   constructor(socket, localPlayer, opponentPlayer, map, particles, sound, engine) {
     this.socket = socket;
     this.localPlayer = localPlayer;
-    this.opponent = opponentPlayer;
+    this.opponent = opponentPlayer; // legacy fallback
     this.map = map;
     this.particles = particles;
     this.sound = sound;
     this.engine = engine;
 
-    // Buffer for opponent state interpolation
-    this.opponentStateBuffer = [];
+    // Buffers for opponents state interpolation mapped by player ID
+    this.opponentStateBuffers = new Map();
     this.interpolationDelay = 100; // 100ms lag buffer for interpolation
 
     this.lastSentTime = 0;
@@ -26,8 +26,19 @@ export class Network {
   setupListeners() {
     // 1. Receive Opponent State
     this.socket.on('opponent-state', (state) => {
+      if (!state.id) return;
+      
+      const remotePlayer = this.engine.remotePlayers.get(state.id);
+      if (!remotePlayer) return;
+
+      let buffer = this.opponentStateBuffers.get(state.id);
+      if (!buffer) {
+        buffer = [];
+        this.opponentStateBuffers.set(state.id, buffer);
+      }
+
       // Store in buffer with arrival timestamp
-      this.opponentStateBuffer.push({
+      buffer.push({
         time: Date.now(),
         x: state.x,
         y: state.y,
@@ -41,19 +52,20 @@ export class Network {
       });
 
       // Keep buffer small (last 30 frames)
-      if (this.opponentStateBuffer.length > 30) {
-        this.opponentStateBuffer.shift();
+      if (buffer.length > 30) {
+        buffer.shift();
       }
     });
 
     // 2. Receive Opponent Shooting Trigger
     this.socket.on('opponent-shoot', (shootData) => {
-      if (!this.opponent) return;
+      const shooter = this.engine.remotePlayers.get(shootData.playerId);
+      if (!shooter) return;
 
       // Force muzzle flash and eject shell casing visually
-      this.opponent.muzzleFlash = 1.0;
-      this.opponent.angle = shootData.angle;
-      this.particles.spawnGunCasing(this.opponent.x, this.opponent.y, this.opponent.angle, shootData.weaponKey);
+      shooter.muzzleFlash = 1.0;
+      shooter.angle = shootData.angle;
+      this.particles.spawnGunCasing(shooter.x, shooter.y, shooter.angle, shootData.weaponKey);
 
       // Play gunshot sound at opponent's location
       if (this.sound) {
@@ -79,12 +91,12 @@ export class Network {
         // Trigger screen shake from heavy hits
         this.engine.shakeCamera(hitData.damage * 0.45);
 
-        // Check if dead
-        if (this.localPlayer.health <= 0) {
-          this.localPlayer.health = 0;
+        // Check if our team is completely eliminated
+        const teamAlive = this.engine.players.some(p => p.health > 0 && p.team === this.localPlayer.team);
+        if (!teamAlive) {
           this.socket.emit('player-died', {
-            winnerId: this.opponent.id,
-            winnerName: this.opponent.name,
+            winnerId: hitData.shooterId,
+            winnerName: 'Opponents',
             loserId: this.localPlayer.id
           });
         }
@@ -93,10 +105,9 @@ export class Network {
 
     // 4. Coordinate Health adjustments
     this.socket.on('opponent-health-sync', (healthData) => {
-      if (this.opponent && healthData.playerId === this.opponent.id) {
-        this.opponent.health = healthData.health;
-        const bar = document.getElementById('hud-opponent-hp');
-        if (bar) bar.style.width = `${Math.max(0, this.opponent.health)}%`;
+      const remotePlayer = this.engine.remotePlayers.get(healthData.playerId);
+      if (remotePlayer) {
+        remotePlayer.health = healthData.health;
       }
     });
 
@@ -121,9 +132,12 @@ export class Network {
 
     // 7. Chat forwarding
     this.socket.on('opponent-chat', (chatData) => {
-      // Dispatch custom event to main.js UI
+      let name = chatData.name;
+      const sender = this.engine.remotePlayers.get(chatData.id);
+      if (sender) name = sender.name;
+
       const chatEvent = new CustomEvent('opponent-chat-msg', {
-        detail: { name: chatData.name, msg: chatData.msg }
+        detail: { name: name, msg: chatData.msg }
       });
       window.dispatchEvent(chatEvent);
     });
@@ -160,66 +174,65 @@ export class Network {
   }
 
   // --- Entity Interpolation loop ---
-  // Interpolates the opponent's position and rotation based on delayed server ticks
-  interpolateOpponent() {
-    if (!this.opponent || this.opponentStateBuffer.length === 0) return;
+  // Interpolates all remote players' positions and rotations based on delayed server ticks
+  interpolateOpponents() {
+    this.engine.remotePlayers.forEach((opponent, id) => {
+      const buffer = this.opponentStateBuffers.get(id);
+      if (!opponent || !buffer || buffer.length === 0) return;
 
-    const now = Date.now();
-    const renderTime = now - this.interpolationDelay;
+      const now = Date.now();
+      const renderTime = now - this.interpolationDelay;
 
-    // Try to find two frames surrounding renderTime
-    let beforeState = null;
-    let afterState = null;
+      // Try to find two frames surrounding renderTime
+      let beforeState = null;
+      let afterState = null;
 
-    for (let i = 0; i < this.opponentStateBuffer.length; i++) {
-      const state = this.opponentStateBuffer[i];
-      if (state.time <= renderTime) {
-        beforeState = state;
-      } else {
-        afterState = state;
-        break; // found the future frame
+      for (let i = 0; i < buffer.length; i++) {
+        const state = buffer[i];
+        if (state.time <= renderTime) {
+          beforeState = state;
+        } else {
+          afterState = state;
+          break; // found the future frame
+        }
       }
-    }
 
-    if (beforeState && afterState) {
-      // Linear Interpolation ratio (0.0 to 1.0)
-      const total = afterState.time - beforeState.time;
-      const ratio = total > 0 ? (renderTime - beforeState.time) / total : 0;
+      if (beforeState && afterState) {
+        // Linear Interpolation ratio (0.0 to 1.0)
+        const total = afterState.time - beforeState.time;
+        const ratio = total > 0 ? (renderTime - beforeState.time) / total : 0;
 
-      // Lerp positions
-      this.opponent.x = beforeState.x + (afterState.x - beforeState.x) * ratio;
-      this.opponent.y = beforeState.y + (afterState.y - beforeState.y) * ratio;
-      
-      // Interpolate angles (handles wrap around 2*PI correctly)
-      this.opponent.angle = this.lerpAngle(beforeState.angle, afterState.angle, ratio);
-      
-      // Fast sync status flags
-      this.opponent.vx = beforeState.vx + (afterState.vx - beforeState.vx) * ratio;
-      this.opponent.vy = beforeState.vy + (afterState.vy - beforeState.vy) * ratio;
-      this.opponent.health = beforeState.health;
-      this.opponent.weaponKey = beforeState.weaponKey;
-      this.opponent.isReloading = beforeState.isReloading;
-      this.opponent.muzzleFlash = beforeState.muzzleFlash;
-    } else {
-      // Fallback: If lagging and don't have surround states, slide towards latest packet
-      const latest = this.opponentStateBuffer[this.opponentStateBuffer.length - 1];
-      const lerpFactor = 0.25; // responsive snap
-      
-      this.opponent.x += (latest.x - this.opponent.x) * lerpFactor;
-      this.opponent.y += (latest.y - this.opponent.y) * lerpFactor;
-      this.opponent.angle = this.lerpAngle(this.opponent.angle, latest.angle, lerpFactor);
-      
-      this.opponent.vx = latest.vx;
-      this.opponent.vy = latest.vy;
-      this.opponent.health = latest.health;
-      this.opponent.weaponKey = latest.weaponKey;
-      this.opponent.isReloading = latest.isReloading;
-      this.opponent.muzzleFlash = latest.muzzleFlash;
-    }
-
-    // Keep HUD updated
-    const bar = document.getElementById('hud-opponent-hp');
-    if (bar) bar.style.width = `${Math.max(0, this.opponent.health)}%`;
+        // Lerp positions
+        opponent.x = beforeState.x + (afterState.x - beforeState.x) * ratio;
+        opponent.y = beforeState.y + (afterState.y - beforeState.y) * ratio;
+        
+        // Interpolate angles (handles wrap around 2*PI correctly)
+        opponent.angle = this.lerpAngle(beforeState.angle, afterState.angle, ratio);
+        
+        // Fast sync status flags
+        opponent.vx = beforeState.vx + (afterState.vx - beforeState.vx) * ratio;
+        opponent.vy = beforeState.vy + (afterState.vy - beforeState.vy) * ratio;
+        opponent.health = beforeState.health;
+        opponent.weaponKey = beforeState.weaponKey;
+        opponent.isReloading = beforeState.isReloading;
+        opponent.muzzleFlash = beforeState.muzzleFlash;
+      } else {
+        // Fallback: If lagging and don't have surround states, slide towards latest packet
+        const latest = buffer[buffer.length - 1];
+        const lerpFactor = 0.25; // responsive snap
+        
+        opponent.x += (latest.x - opponent.x) * lerpFactor;
+        opponent.y += (latest.y - opponent.y) * lerpFactor;
+        opponent.angle = this.lerpAngle(opponent.angle, latest.angle, lerpFactor);
+        
+        opponent.vx = latest.vx;
+        opponent.vy = latest.vy;
+        opponent.health = latest.health;
+        opponent.weaponKey = latest.weaponKey;
+        opponent.isReloading = latest.isReloading;
+        opponent.muzzleFlash = latest.muzzleFlash;
+      }
+    });
   }
 
   // Smooth angle interpolation solving wrap-around issues

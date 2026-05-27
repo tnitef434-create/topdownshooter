@@ -31,37 +31,53 @@ export class Engine {
     window.LocalPlayerId = config.localPlayerId;
     window.IsOfflineMode = (this.mode === 'offline');
     
-    // Spawn positions (P1 spawns top-left, P2 bottom-right)
-    const p1Spawn = { x: 150, y: 150 };
-    const p2Spawn = { x: this.mapWidth - 150, y: this.mapHeight - 150 };
+    // 4 distinct spawn points (opposite corners of the map)
+    this.spawns = [
+      { x: 150, y: 150 },                         // Team 1, Spawn A
+      { x: this.mapWidth - 150, y: this.mapHeight - 150 }, // Team 2, Spawn A
+      { x: 150, y: this.mapHeight - 150 },         // Team 1, Spawn B
+      { x: this.mapWidth - 150, y: 150 }          // Team 2, Spawn B
+    ];
     
-    const isP1 = this.mode === 'offline' || this.socket.id === config.localPlayerId;
-    const localSpawn = isP1 ? p1Spawn : p2Spawn;
-    const oppSpawn = isP1 ? p2Spawn : p1Spawn;
+    this.players = [];
+    this.localPlayer = null;
+    this.remotePlayers = new Map();
     
-    // Operatives
-    this.localPlayer = new Player(
-      config.localPlayerId, 
-      localSpawn.x, 
-      localSpawn.y, 
-      config.localPlayerName, 
-      config.localWeapon, 
-      true, 
-      false
-    );
+    const lobbyPlayers = config.players || [
+      { id: config.localPlayerId, name: config.localPlayerName, weapon: config.localWeapon, color: config.localColor }
+    ];
     
-    const isOpponentBot = (this.mode === 'offline');
-    this.opponent = new Player(
-      config.opponentId, 
-      oppSpawn.x, 
-      oppSpawn.y, 
-      config.opponentName, 
-      config.opponentWeapon, 
-      false, 
-      isOpponentBot
-    );
-    
-    this.players = [this.localPlayer, this.opponent];
+    lobbyPlayers.forEach((p, idx) => {
+      const spawn = this.spawns[idx % this.spawns.length];
+      const isLocal = p.id === config.localPlayerId;
+      
+      const team = (idx % 2 === 0) ? 1 : 2;
+      const isBot = (this.mode === 'offline' && !isLocal);
+      
+      const player = new Player(
+        p.id,
+        spawn.x,
+        spawn.y,
+        p.name,
+        p.weapon || 'pistol',
+        p.color || 'cyan',
+        isLocal,
+        isBot
+      );
+      
+      player.team = team;
+      
+      if (isLocal) {
+        this.localPlayer = player;
+        this.localPlayerIndex = idx;
+      } else {
+        const myIndex = config.localPlayerIndex !== undefined ? config.localPlayerIndex : 0;
+        player.isTeammate = (idx % 2 === myIndex % 2);
+        this.remotePlayers.set(p.id, player);
+      }
+      this.players.push(player);
+    });
+
     this.bullets = [];
     
     // Network component
@@ -70,7 +86,7 @@ export class Engine {
       this.network = new Network(
         this.socket, 
         this.localPlayer, 
-        this.opponent, 
+        null, 
         this.map, 
         this.particles, 
         this.sound, 
@@ -132,7 +148,10 @@ export class Engine {
     // Expose bot shot coordinate handler in offline mode
     if (this.mode === 'offline') {
       window.OnBotShootCallback = (shootData) => {
-        this.particles.spawnGunCasing(this.opponent.x, this.opponent.y, this.opponent.angle, shootData.weaponKey);
+        const bot = this.players.find(p => p.id === shootData.playerId);
+        if (bot) {
+          this.particles.spawnGunCasing(bot.x, bot.y, bot.angle, shootData.weaponKey);
+        }
         this.spawnBulletFromNetwork(shootData);
       };
     }
@@ -240,37 +259,25 @@ export class Engine {
     this.countdownTimer = 3;
     this.countdownStart = performance.now();
     
-    const p1Spawn = { x: 150, y: 150 };
-    const p2Spawn = { x: this.mapWidth - 150, y: this.mapHeight - 150 };
-    
-    const isP1 = this.mode === 'offline' || this.socket.id === window.LocalPlayerId;
-    const localSpawn = isP1 ? p1Spawn : p2Spawn;
-    const oppSpawn = isP1 ? p2Spawn : p1Spawn;
-    
-    // Reset operatives
-    this.localPlayer.x = localSpawn.x;
-    this.localPlayer.y = localSpawn.y;
-    this.localPlayer.vx = 0;
-    this.localPlayer.vy = 0;
-    this.localPlayer.health = 100;
-    this.localPlayer.ammoInMag = this.localPlayer.weapon.magSize;
-    this.localPlayer.reserveAmmo = this.localPlayer.weapon.magSize * 3;
-    this.localPlayer.isReloading = false;
-    this.localPlayer.floatingText = null;
+    // Reset all operatives
+    this.players.forEach((p, idx) => {
+      const spawn = this.spawns[idx % this.spawns.length];
+      p.x = spawn.x;
+      p.y = spawn.y;
+      p.vx = 0;
+      p.vy = 0;
+      p.health = 100;
+      p.ammoInMag = p.weapon.magSize;
+      p.reserveAmmo = p.weapon.magSize * 3;
+      p.isReloading = false;
+      p.floatingText = null;
+      p.isDeadLogged = false;
 
-    this.opponent.x = oppSpawn.x;
-    this.opponent.y = oppSpawn.y;
-    this.opponent.vx = 0;
-    this.opponent.vy = 0;
-    this.opponent.health = 100;
-    this.opponent.ammoInMag = this.opponent.weapon.magSize;
-    this.opponent.reserveAmmo = this.opponent.weapon.magSize * 3;
-    this.opponent.isReloading = false;
-
-    if (this.opponent.isBot) {
-      this.opponent.botState = 'patrol';
-      this.opponent.choosePatrolPoint(this.map);
-    }
+      if (p.isBot) {
+        p.botState = 'patrol';
+        p.choosePatrolPoint(this.map);
+      }
+    });
     
     // Clear dynamic bullet trails and particles for fresh round
     this.bullets = [];
@@ -316,32 +323,27 @@ export class Engine {
     }, 1000);
   }
 
-  // Triggered when a player dies or time runs out
-  endRound(winnerId, killFeedMsg = '') {
+  // Triggered when a team dies or time runs out
+  endRound(winningTeam, killFeedMsg = '') {
     if (this.gameState !== 'playing') return;
     
     this.gameState = 'round-over';
     if (this.matchTimerInterval) clearInterval(this.matchTimerInterval);
 
     let feedAlert = document.getElementById('hud-status');
+    const myTeam = this.localPlayer.team;
 
-    if (winnerId === this.localPlayer.id) {
+    if (winningTeam === myTeam) {
       this.scoreSelf++;
       if (feedAlert) {
         feedAlert.innerText = 'ROUND WON';
         feedAlert.style.color = '#39ff14';
       }
-      if (this.onKillFeed && killFeedMsg) {
-        this.onKillFeed(this.localPlayer.name, this.opponent.name, this.localPlayer.weaponKey);
-      }
-    } else if (winnerId === this.opponent.id) {
+    } else if (winningTeam !== null) {
       this.scoreOpponent++;
       if (feedAlert) {
         feedAlert.innerText = 'ROUND LOST';
         feedAlert.style.color = '#ff3c3c';
-      }
-      if (this.onKillFeed && killFeedMsg) {
-        this.onKillFeed(this.opponent.name, this.localPlayer.name, this.opponent.weaponKey);
       }
     } else {
       if (feedAlert) {
@@ -371,7 +373,9 @@ export class Engine {
     const accuracyVal = (window.MatchStats.hitsRegistered / totalShots) * 100;
     window.MatchStats.accuracy = accuracyVal;
     window.MatchStats.roundsWon = this.scoreSelf;
-    window.MatchStats.winnerId = this.scoreSelf >= 3 ? this.localPlayer.id : this.opponent.id;
+    const winningTeam = this.scoreSelf >= 3 ? this.localPlayer.team : (this.localPlayer.team === 1 ? 2 : 1);
+    const winningPlayer = this.players.find(p => p.team === winningTeam);
+    window.MatchStats.winnerId = winningPlayer ? winningPlayer.id : 'unknown';
 
     // Trigger end match callback sound FX
     if (this.scoreSelf >= 3) {
@@ -402,13 +406,26 @@ export class Engine {
     if (scoreOpponent) scoreOpponent.innerText = this.scoreOpponent;
     
     const selfName = document.getElementById('hud-self-name');
-    if (selfName) selfName.innerText = this.localPlayer.name.toUpperCase();
+    if (selfName) {
+      selfName.innerText = this.mode === 'online' && this.players.length > 2
+        ? 'YOUR TEAM'
+        : this.localPlayer.name.toUpperCase();
+    }
     
     const opponentName = document.getElementById('hud-opponent-name');
-    if (opponentName) opponentName.innerText = this.opponent.name.toUpperCase();
+    if (opponentName) {
+      opponentName.innerText = this.players.length > 2 ? 'OPPONENTS' : 'OPPONENT';
+    }
     
     const opponentWeapon = document.getElementById('hud-opponent-weapon');
-    if (opponentWeapon) opponentWeapon.innerText = this.opponent.weapon.name.toUpperCase();
+    if (opponentWeapon) {
+      if (this.players.length > 2) {
+        opponentWeapon.innerText = 'SQUAD LOADOUT';
+      } else {
+        const opp = this.players.find(p => p.id !== this.localPlayer.id);
+        opponentWeapon.innerText = opp ? opp.weapon.name.toUpperCase() : 'UNKNOWN';
+      }
+    }
     
     const opponentIndicator = document.getElementById('opponent-indicator');
     if (opponentIndicator) {
@@ -457,17 +474,31 @@ export class Engine {
       this.localPlayer.update(this.keys, this.mouse, this.map, this.sound, currentTime, null);
       
       if (this.mode === 'offline') {
-        // Update bot AI
-        this.opponent.update(null, null, this.map, this.sound, currentTime, this.localPlayer);
+        this.players.forEach(p => {
+          if (p.isBot) {
+            const opposingTeam = p.team === 1 ? 2 : 1;
+            const targets = this.players.filter(t => t.health > 0 && t.team === opposingTeam);
+            
+            if (targets.length > 0) {
+              targets.sort((a, b) => Math.hypot(p.x - a.x, p.y - a.y) - Math.hypot(p.x - b.x, p.y - b.y));
+              p.update(null, null, this.map, this.sound, currentTime, targets[0]);
+            } else {
+              p.update(null, null, this.map, this.sound, currentTime, null);
+            }
+          }
+        });
       } else {
-        // Online opponent is updated by interpolating server states
-        this.network.interpolateOpponent();
+        this.network.interpolateOpponents();
       }
 
       // Check item collisions
       this.localPlayer.checkPickups(this.map, this.sound);
       if (this.mode === 'offline') {
-        this.opponent.checkPickups(this.map, this.sound);
+        this.players.forEach(p => {
+          if (p.isBot) {
+            p.checkPickups(this.map, this.sound);
+          }
+        });
       }
     }
 
@@ -528,15 +559,56 @@ export class Engine {
     // 4. Update Particle animations
     this.particles.update(this.map);
 
-    // 5. Check local kill checks
-    if (this.gameState === 'playing') {
-      if (this.opponent.health <= 0 && this.localPlayer.health > 0) {
-        this.endRound(this.localPlayer.id, 'eliminated');
-      } else if (this.localPlayer.health <= 0 && this.opponent.health > 0) {
-        this.endRound(this.opponent.id, 'eliminated');
-      } else if (this.localPlayer.health <= 0 && this.opponent.health <= 0) {
-        this.endRound(null, 'both dead'); // draw
+    // Log new deaths to kill feed
+    this.players.forEach(p => {
+      if (p.health <= 0 && !p.isDeadLogged) {
+        p.isDeadLogged = true;
+        if (this.onKillFeed) {
+          this.onKillFeed('Eliminated', p.name, p.weaponKey);
+        }
       }
+    });
+
+    // Update Average Team Health HUD Bars
+    const team1List = this.players.filter(p => p.team === this.localPlayer.team);
+    const avgTeam1HP = team1List.reduce((sum, p) => sum + p.health, 0) / team1List.length;
+    const hpBar = document.getElementById('hud-self-hp');
+    if (hpBar) hpBar.style.width = `${Math.max(0, avgTeam1HP)}%`;
+    const hpText = document.getElementById('hud-self-hp-text');
+    if (hpText) hpText.innerText = Math.round(Math.max(0, avgTeam1HP));
+
+    const enemyTeam = this.localPlayer.team === 1 ? 2 : 1;
+    const team2List = this.players.filter(p => p.team === enemyTeam);
+    const avgTeam2HP = team2List.reduce((sum, p) => sum + p.health, 0) / team2List.length;
+    const oppHpBar = document.getElementById('hud-opponent-hp');
+    if (oppHpBar) oppHpBar.style.width = `${Math.max(0, avgTeam2HP)}%`;
+
+    // 5. Check team-wide wipeout conditions
+    if (this.gameState === 'playing') {
+      const team1Alive = this.players.some(p => p.health > 0 && p.team === 1);
+      const team2Alive = this.players.some(p => p.health > 0 && p.team === 2);
+      
+      if (team1Alive && !team2Alive) {
+        this.endRound(1, 'eliminated');
+      } else if (!team1Alive && team2Alive) {
+        this.endRound(2, 'eliminated');
+      } else if (!team1Alive && !team2Alive) {
+        this.endRound(null, 'both dead');
+      }
+    }
+
+    // 6. Healing zone tick — all living players regenerate HP when standing in a healing zone
+    if (this.gameState === 'playing') {
+      this.players.forEach(p => {
+        if (p.health <= 0 || p.health >= p.maxHealth) return;
+        const zone = this.map.checkZone(p.x, p.y);
+        if (zone && zone.type === 'healing') {
+          p.health = Math.min(p.maxHealth, p.health + zone.healRate);
+          if (p.isLocal && !p.isBot) {
+            p.updateHUD();
+          }
+        }
+      });
     }
 
     // 6. Camera follows local player with smooth interpolations
@@ -604,27 +676,106 @@ export class Engine {
       if (p.health <= 0) p.draw(this.ctx);
     });
 
-    // Check if opponent is visible (inside visibility field)
-    let oppVisible = true;
-    if (this.settings.shadows && visibilityPolygon && this.opponent.health > 0) {
-      // Determine if opponent center coordinate lies within the visibility polygon
-      oppVisible = this.isPointInPolygon({ x: this.opponent.x, y: this.opponent.y }, visibilityPolygon);
+    // Render active players (only draw enemies if visible in Line of Sight/flashlight)
+    this.players.forEach(p => {
+      if (p.health <= 0) return;
+      
+      let visible = true;
+      if (this.settings.shadows && visibilityPolygon && !p.isLocal) {
+        visible = this.isPointInPolygon({ x: p.x, y: p.y }, visibilityPolygon) || p.isTeammate;
+      }
+      
+      if (visible) {
+        p.draw(this.ctx, this.settings);
+      }
+    });
+
+    // Render local player's rotating compass ring
+    if (this.localPlayer.health > 0) {
+      this.ctx.save();
+      this.ctx.translate(this.localPlayer.x, this.localPlayer.y);
+      this.ctx.strokeStyle = 'rgba(102, 252, 241, 0.15)';
+      this.ctx.lineWidth = 1;
+      this.ctx.setLineDash([4, 8]);
+      this.ctx.beginPath();
+      this.ctx.arc(0, 0, 32, Date.now() / 1500, Date.now() / 1500 + Math.PI * 2);
+      this.ctx.stroke();
+      this.ctx.restore();
     }
 
-    // Render active players (only draw opponent if visible in Line of Sight)
-    this.localPlayer.draw(this.ctx, this.settings);
-    if (this.opponent.health > 0 && oppVisible) {
-      this.opponent.draw(this.ctx, this.settings);
-    }
-
-    // Render Bullets
+    // Render Bullets and Particles with additive bloom glow
+    this.ctx.save();
+    this.ctx.globalCompositeOperation = 'lighter';
     this.bullets.forEach(b => b.draw(this.ctx));
-
-    // Render active flying sparks, wood fragments & shell casings
     this.particles.drawParticles(this.ctx);
-
-    // Restore viewport transformations
     this.ctx.restore();
+
+    // Restore viewport translations
+    this.ctx.restore();
+
+    // 2. Render Tactical Screen Edge Vignette Overlay & Scanlines
+    this.ctx.save();
+    const vignette = this.ctx.createRadialGradient(
+      this.canvas.width / 2, this.canvas.height / 2, this.canvas.width / 3,
+      this.canvas.width / 2, this.canvas.height / 2, this.canvas.width / 1.1
+    );
+    vignette.addColorStop(0, 'rgba(0, 0, 0, 0)');
+    vignette.addColorStop(1, 'rgba(0, 0, 0, 0.82)');
+    this.ctx.fillStyle = vignette;
+    this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+    // Scanlines
+    this.ctx.fillStyle = 'rgba(255, 255, 255, 0.015)';
+    for (let y = 0; y < this.canvas.height; y += 4) {
+      this.ctx.fillRect(0, y, this.canvas.width, 1);
+    }
+    this.ctx.restore();
+
+    // 3. Zone indicator HUD (screen-space overlay)
+    const localZone = this.localPlayer && this.localPlayer.health > 0
+      ? this.map.checkZone(this.localPlayer.x, this.localPlayer.y)
+      : null;
+
+    if (localZone) {
+      this.ctx.save();
+      const isHeal   = localZone.type === 'healing';
+      const pulse    = Math.sin(Date.now() / 400) * 0.25 + 0.75;
+      const zoneCol  = isHeal ? `rgba(40,255,110,${pulse*0.18})` : `rgba(255,60,20,${pulse*0.18})`;
+      const textCol  = isHeal ? `rgba(80,255,130,${pulse})`      : `rgba(255,100,60,${pulse})`;
+
+      // Background bar
+      const barW = 260, barH = 38;
+      const barX = this.canvas.width / 2 - barW / 2;
+      const barY = this.canvas.height - 130;
+
+      this.ctx.fillStyle = zoneCol;
+      this.ctx.beginPath();
+      this.ctx.roundRect(barX, barY, barW, barH, 6);
+      this.ctx.fill();
+
+      this.ctx.strokeStyle = isHeal ? `rgba(80,255,130,${pulse*0.8})` : `rgba(255,100,60,${pulse*0.8})`;
+      this.ctx.lineWidth = 1.5;
+      this.ctx.beginPath();
+      this.ctx.roundRect(barX, barY, barW, barH, 6);
+      this.ctx.stroke();
+
+      // Label
+      this.ctx.textAlign = 'center';
+      this.ctx.font = 'bold 12px Orbitron';
+      this.ctx.fillStyle = textCol;
+      const icon = isHeal ? '⚕' : '☠';
+      this.ctx.fillText(`${icon} ${localZone.label}`, this.canvas.width / 2, barY + 15);
+
+      // Sub-text
+      this.ctx.font = '9px Orbitron';
+      this.ctx.fillStyle = isHeal ? 'rgba(60,255,110,0.7)' : 'rgba(255,80,40,0.7)';
+      const sub = isHeal
+        ? `+${(localZone.healRate * 60).toFixed(0)} HP/s REGENERATION`
+        : `DAMAGE ×${localZone.multiplier} — DANGER`;
+      this.ctx.fillText(sub, this.canvas.width / 2, barY + 29);
+
+      this.ctx.restore();
+    }
   }
 
   // Ray-crossing algorithm to check if opponent is inside the player's light field

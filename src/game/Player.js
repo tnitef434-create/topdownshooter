@@ -2,11 +2,23 @@ const WEAPON_DEFS = {
   pistol: { name: 'Tactical 9mm', damage: 22, fireRate: 300, accuracy: 0.95, magSize: 12, range: 400, reloadTime: 1200, speedMultiplier: 1.0, type: 'Semi-Auto', recoil: 3, bulletSpeed: 14 },
   rifle: { name: 'Assault Rifle (M4A1)', damage: 26, fireRate: 110, accuracy: 0.88, magSize: 30, range: 600, reloadTime: 2200, speedMultiplier: 0.85, type: 'Automatic', recoil: 4.5, bulletSpeed: 16 },
   shotgun: { name: 'Shotgun (Remington 870)', damage: 14, fireRate: 850, accuracy: 0.65, magSize: 6, range: 250, reloadTime: 2800, speedMultiplier: 0.9, type: 'Pump-Action', pellets: 7, recoil: 12, bulletSpeed: 12 },
-  sniper: { name: 'Sniper Rifle (AWM)', damage: 95, fireRate: 1500, accuracy: 0.99, magSize: 5, range: 1200, reloadTime: 2800, speedMultiplier: 0.75, type: 'Bolt-Action', recoil: 18, bulletSpeed: 24 }
+  sniper: { name: 'Sniper Rifle (AWM)', damage: 95, fireRate: 1500, accuracy: 0.99, magSize: 5, range: 1200, reloadTime: 2800, speedMultiplier: 0.75, type: 'Bolt-Action', recoil: 18, bulletSpeed: 24 },
+  smg: { name: 'SMG (MP5)', damage: 18, fireRate: 75, accuracy: 0.82, magSize: 30, range: 350, reloadTime: 1500, speedMultiplier: 1.05, type: 'Automatic', recoil: 2.2, bulletSpeed: 13 },
+  lmg: { name: 'LMG (M249)', damage: 25, fireRate: 85, accuracy: 0.75, magSize: 100, range: 550, reloadTime: 4500, speedMultiplier: 0.70, type: 'Automatic', recoil: 6.0, bulletSpeed: 15 },
+  dmr: { name: 'DMR (M14 EBR)', damage: 45, fireRate: 400, accuracy: 0.94, magSize: 20, range: 800, reloadTime: 2400, speedMultiplier: 0.80, type: 'Semi-Auto', recoil: 8.5, bulletSpeed: 20 }
+};
+
+const COLOR_THEMES = {
+  cyan: { body: '#3ba39f', armor: '#16202c', helmet: '#66fcf1' },
+  green: { body: '#39db14', armor: '#133d07', helmet: '#5eff39' },
+  purple: { body: '#9d3bff', armor: '#20083c', helmet: '#c47aff' },
+  orange: { body: '#ff7f3b', armor: '#3f1b07', helmet: '#ff9d7a' },
+  yellow: { body: '#ffd700', armor: '#3a3000', helmet: '#ffea70' },
+  red: { body: '#ff3c3c', armor: '#3a0707', helmet: '#ff7a7a' }
 };
 
 export class Player {
-  constructor(id, x, y, name, weaponKey, isLocal = false, isBot = false) {
+  constructor(id, x, y, name, weaponKey, colorThemeKey, isLocal = false, isBot = false) {
     this.id = id;
     this.x = x;
     this.y = y;
@@ -18,6 +30,8 @@ export class Player {
     
     this.isLocal = isLocal;
     this.isBot = isBot;
+    this.colorTheme = colorThemeKey || (isLocal ? 'cyan' : 'red');
+    this.isTeammate = false;
     
     // Health & Combat stats
     this.health = 100;
@@ -524,6 +538,23 @@ export class Player {
       handOffset = 14;
       // Draw Scope block
       ctx.fillRect(8, -5, 6, 3);
+    } else if (this.weaponKey === 'smg') {
+      barrelLength = 16;
+      barrelWidth = 4;
+      handOffset = 9;
+    } else if (this.weaponKey === 'lmg') {
+      barrelLength = 26;
+      barrelWidth = 7;
+      handOffset = 13;
+      // Draw drum mag visual details
+      ctx.fillStyle = '#222';
+      ctx.fillRect(6, -8, 6, 16);
+    } else if (this.weaponKey === 'dmr') {
+      barrelLength = 28;
+      barrelWidth = 5;
+      handOffset = 12;
+      // Draw Scope block
+      ctx.fillRect(10, -4, 5, 2);
     }
 
     // Barrel
@@ -547,9 +578,10 @@ export class Player {
     }
 
     // 2. Draw Shoulders & Body Circle
-    const bodyColor = this.isLocal ? '#45a29e' : '#ff3c3c';
-    const armorColor = this.isLocal ? '#1f2833' : '#b01b1b';
-    const helmetColor = this.isLocal ? '#66fcf1' : '#ff7a7a';
+    const theme = COLOR_THEMES[this.colorTheme] || COLOR_THEMES[this.isLocal ? 'cyan' : 'red'];
+    const bodyColor = theme.body;
+    const armorColor = theme.armor;
+    const helmetColor = theme.helmet;
 
     // Hands gripping weapon
     ctx.fillStyle = armorColor;
@@ -595,7 +627,12 @@ export class Player {
     // 4. Floating HUD text above player (Operative name / pickups)
     ctx.save();
     ctx.textAlign = 'center';
-    ctx.fillStyle = this.isLocal ? '#66fcf1' : '#ff7a7a';
+    
+    const nameColor = this.isLocal 
+      ? (COLOR_THEMES[this.colorTheme]?.helmet || '#66fcf1')
+      : (this.isTeammate ? '#39db14' : '#ff3c3c');
+      
+    ctx.fillStyle = nameColor;
     ctx.font = '10px Orbitron';
     ctx.fillText(this.name.toUpperCase(), this.x, this.y - this.radius - 12);
     
@@ -603,7 +640,9 @@ export class Player {
     if (!this.isLocal && this.health > 0) {
       ctx.fillStyle = 'rgba(0,0,0,0.5)';
       ctx.fillRect(this.x - 20, this.y - this.radius - 8, 40, 4);
-      ctx.fillStyle = '#ff3c3c';
+      
+      const hpColor = this.isTeammate ? '#39db14' : '#ff3c3c';
+      ctx.fillStyle = hpColor;
       ctx.fillRect(this.x - 20, this.y - this.radius - 8, 40 * (this.health / this.maxHealth), 4);
     }
 

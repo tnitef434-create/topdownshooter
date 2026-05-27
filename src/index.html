@@ -27,12 +27,26 @@
       <div class="menu-container">
         <header>
           <h1 class="glitch-title">TACTIC<span>STRIKE</span></h1>
-          <p class="subtitle">Online 1v1 Top-Down Tactical Shooter</p>
+          <p class="subtitle">Online Top-Down Tactical Shooter</p>
         </header>
 
         <div class="card name-card">
           <label for="player-name-input">OPERATIVE NAME</label>
           <input type="text" id="player-name-input" maxlength="15" placeholder="Enter codename..." value="Operative">
+        </div>
+
+        <div class="card mode-card" style="padding: 16px 24px; display: flex; flex-direction: column; gap: 8px;">
+          <label style="font-family: var(--font-title); font-size: 11px; letter-spacing: 1.5px; color: var(--neon-teal);">MATCH TYPE</label>
+          <div class="mode-selector" style="display: flex; gap: 20px;">
+            <label class="radio-container" style="display: flex; align-items: center; gap: 8px; font-family: var(--font-title); font-size: 13px; cursor: pointer; letter-spacing: 1px;">
+              <input type="radio" name="match-mode" value="1v1" checked style="accent-color: var(--neon-cyan);">
+              1v1 DUEL
+            </label>
+            <label class="radio-container" style="display: flex; align-items: center; gap: 8px; font-family: var(--font-title); font-size: 13px; cursor: pointer; letter-spacing: 1px;">
+              <input type="radio" name="match-mode" value="2v2" style="accent-color: var(--neon-cyan);">
+              2v2 SQUAD
+            </label>
+          </div>
         </div>
 
         <div class="menu-options">
@@ -78,14 +92,8 @@
           <!-- Left side: Player States -->
           <div class="players-panel">
             <h3>OPERATIVES</h3>
-            <div class="players-list">
-              <div id="player-slot-1" class="player-slot empty">
-                <div class="slot-status">WAITING FOR HOST...</div>
-              </div>
-              <div class="vs-divider">VS</div>
-              <div id="player-slot-2" class="player-slot empty">
-                <div class="slot-status">WAITING FOR OPPONENT...</div>
-              </div>
+            <div id="lobby-players-list" class="players-list">
+              <!-- Rebuilt dynamically by javascript -->
             </div>
           </div>
 
@@ -117,6 +125,35 @@
                   <span class="weapon-type">Bolt-Action</span>
                 </div>
               </div>
+              <div class="weapon-option" data-weapon="smg">
+                <div class="weapon-info">
+                  <span class="weapon-name">SMG (MP5)</span>
+                  <span class="weapon-type">Automatic</span>
+                </div>
+              </div>
+              <div class="weapon-option" data-weapon="lmg">
+                <div class="weapon-info">
+                  <span class="weapon-name">LMG (M249)</span>
+                  <span class="weapon-type">Automatic</span>
+                </div>
+              </div>
+              <div class="weapon-option" data-weapon="dmr">
+                <div class="weapon-info">
+                  <span class="weapon-name">DMR (M14 EBR)</span>
+                  <span class="weapon-type">Semi-Auto</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Color Selection Panel -->
+            <h3 style="margin-top: 15px; font-family: var(--font-title); font-size: 14px; color: var(--neon-teal); letter-spacing: 1.5px; border-left: 3px solid var(--neon-cyan); padding-left: 10px;">OPERATIVE COLOR</h3>
+            <div id="lobby-color-selector" class="color-selector" style="display: flex; gap: 10px; margin-top: 10px; margin-bottom: 5px;">
+              <div class="color-option active" data-color="cyan" style="border: 2px solid #66fcf1; width: 30px; height: 30px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; background: rgba(102, 252, 241, 0.2);"><span style="display: block; width: 14px; height: 14px; border-radius: 50%; background: #66fcf1;"></span></div>
+              <div class="color-option" data-color="green" style="border: 2px solid transparent; width: 30px; height: 30px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; background: rgba(57, 219, 20, 0.2);"><span style="display: block; width: 14px; height: 14px; border-radius: 50%; background: #39db14;"></span></div>
+              <div class="color-option" data-color="purple" style="border: 2px solid transparent; width: 30px; height: 30px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; background: rgba(157, 59, 255, 0.2);"><span style="display: block; width: 14px; height: 14px; border-radius: 50%; background: #9d3bff;"></span></div>
+              <div class="color-option" data-color="orange" style="border: 2px solid transparent; width: 30px; height: 30px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; background: rgba(255, 127, 59, 0.2);"><span style="display: block; width: 14px; height: 14px; border-radius: 50%; background: #ff7f3b;"></span></div>
+              <div class="color-option" data-color="yellow" style="border: 2px solid transparent; width: 30px; height: 30px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; background: rgba(255, 215, 0, 0.2);"><span style="display: block; width: 14px; height: 14px; border-radius: 50%; background: #ffd700;"></span></div>
+              <div class="color-option" data-color="red" style="border: 2px solid transparent; width: 30px; height: 30px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; background: rgba(255, 60, 60, 0.2);"><span style="display: block; width: 14px; height: 14px; border-radius: 50%; background: #ff3c3c;"></span></div>
             </div>
 
             <!-- Weapon Details / Stats -->

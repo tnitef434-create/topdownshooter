@@ -55,19 +55,22 @@ io.on('connection', (socket) => {
   let currentRoomId = null;
 
   // 1. Create a custom room
-  socket.on('create-room', ({ playerName }) => {
+  socket.on('create-room', ({ playerName, mode, color }) => {
     let roomId = generateRoomId();
     while (rooms.has(roomId)) {
       roomId = generateRoomId();
     }
 
+    const roomMode = (mode === '2v2') ? '2v2' : '1v1';
     const room = {
       id: roomId,
+      mode: roomMode,
       players: [{
         id: socket.id,
         name: playerName || 'Player 1',
         ready: false,
-        weapon: 'pistol'
+        weapon: 'pistol',
+        color: color || 'cyan'
       }],
       status: 'lobby'
     };
@@ -76,12 +79,12 @@ io.on('connection', (socket) => {
     socket.join(roomId);
     currentRoomId = roomId;
 
-    socket.emit('room-created', { roomId, players: room.players });
-    console.log(`Room created: ${roomId} by player: ${playerName} (${socket.id})`);
+    socket.emit('room-created', { roomId, players: room.players, mode: roomMode });
+    console.log(`Room created: ${roomId} (${roomMode}) by player: ${playerName} (${socket.id})`);
   });
 
   // 2. Join a room via code
-  socket.on('join-room', ({ roomId, playerName }) => {
+  socket.on('join-room', ({ roomId, playerName, color }) => {
     const cleanRoomId = roomId.trim().toUpperCase();
     const room = rooms.get(cleanRoomId);
 
@@ -90,7 +93,8 @@ io.on('connection', (socket) => {
       return;
     }
 
-    if (room.players.length >= 2) {
+    const maxPlayers = (room.mode === '2v2') ? 4 : 2;
+    if (room.players.length >= maxPlayers) {
       socket.emit('room-error', 'Room is full.');
       return;
     }
@@ -98,26 +102,30 @@ io.on('connection', (socket) => {
     // Add player
     const newPlayer = {
       id: socket.id,
-      name: playerName || 'Player 2',
+      name: playerName || `Player ${room.players.length + 1}`,
       ready: false,
-      weapon: 'pistol'
+      weapon: 'pistol',
+      color: color || 'cyan'
     };
     room.players.push(newPlayer);
     
     socket.join(cleanRoomId);
     currentRoomId = cleanRoomId;
 
-    socket.emit('room-joined', { roomId: cleanRoomId, players: room.players });
+    socket.emit('room-joined', { roomId: cleanRoomId, players: room.players, mode: room.mode });
     socket.to(cleanRoomId).emit('player-joined', { players: room.players });
     console.log(`Player ${playerName} (${socket.id}) joined room: ${cleanRoomId}`);
   });
 
   // 3. Auto-matchmaking
-  socket.on('auto-match', ({ playerName }) => {
-    // Find a room with 1 player in lobby status
+  socket.on('auto-match', ({ playerName, mode, color }) => {
+    const searchMode = (mode === '2v2') ? '2v2' : '1v1';
+    const maxPlayers = (searchMode === '2v2') ? 4 : 2;
+    
+    // Find a room with space in lobby status and matching mode
     let targetRoom = null;
     for (const [id, room] of rooms.entries()) {
-      if (room.status === 'lobby' && room.players.length === 1) {
+      if (room.status === 'lobby' && room.mode === searchMode && room.players.length < maxPlayers) {
         targetRoom = room;
         break;
       }
@@ -127,15 +135,16 @@ io.on('connection', (socket) => {
       // Join it
       const newPlayer = {
         id: socket.id,
-        name: playerName || 'Player 2',
+        name: playerName || `Player ${targetRoom.players.length + 1}`,
         ready: false,
-        weapon: 'pistol'
+        weapon: 'pistol',
+        color: color || 'cyan'
       };
       targetRoom.players.push(newPlayer);
       socket.join(targetRoom.id);
       currentRoomId = targetRoom.id;
 
-      socket.emit('room-joined', { roomId: targetRoom.id, players: targetRoom.players });
+      socket.emit('room-joined', { roomId: targetRoom.id, players: targetRoom.players, mode: targetRoom.mode });
       socket.to(targetRoom.id).emit('player-joined', { players: targetRoom.players });
       console.log(`Auto-matched Player ${playerName} into room: ${targetRoom.id}`);
     } else {
@@ -147,11 +156,13 @@ io.on('connection', (socket) => {
 
       const room = {
         id: roomId,
+        mode: searchMode,
         players: [{
           id: socket.id,
           name: playerName || 'Player 1',
           ready: false,
-          weapon: 'pistol'
+          weapon: 'pistol',
+          color: color || 'cyan'
         }],
         status: 'lobby'
       };
@@ -160,8 +171,8 @@ io.on('connection', (socket) => {
       socket.join(roomId);
       currentRoomId = roomId;
 
-      socket.emit('room-created', { roomId, players: room.players, autoMatch: true });
-      console.log(`Auto-match created room: ${roomId} for player: ${playerName}`);
+      socket.emit('room-created', { roomId, players: room.players, autoMatch: true, mode: searchMode });
+      console.log(`Auto-match created room: ${roomId} (${searchMode}) for player: ${playerName}`);
     }
   });
 
@@ -178,6 +189,19 @@ io.on('connection', (socket) => {
     }
   });
 
+  // 4.1 Update Color selection
+  socket.on('select-color', ({ color }) => {
+    if (!currentRoomId) return;
+    const room = rooms.get(currentRoomId);
+    if (!room) return;
+
+    const player = room.players.find(p => p.id === socket.id);
+    if (player) {
+      player.color = color;
+      io.to(currentRoomId).emit('players-update', { players: room.players });
+    }
+  });
+
   // 5. Ready state toggle
   socket.on('player-ready', ({ ready }) => {
     if (!currentRoomId) return;
@@ -189,15 +213,16 @@ io.on('connection', (socket) => {
       player.ready = ready;
       io.to(currentRoomId).emit('players-update', { players: room.players });
 
-      // Start match if all players are ready and we have 2 players
-      const allReady = room.players.every(p => p.ready) && room.players.length === 2;
+      // Start match if all players are ready and lobby is full
+      const maxPlayers = (room.mode === '2v2') ? 4 : 2;
+      const allReady = room.players.every(p => p.ready) && room.players.length === maxPlayers;
       if (allReady) {
         room.status = 'playing';
         io.to(currentRoomId).emit('match-start', {
           players: room.players,
           seed: Math.random() // synchronized seed for map spawns / layouts
         });
-        console.log(`Match started in room: ${currentRoomId}`);
+        console.log(`Match started in room: ${currentRoomId} (${room.mode})`);
       }
     }
   });
@@ -205,26 +230,28 @@ io.on('connection', (socket) => {
   // 6. In-game: Relay Player State (60hz updates)
   socket.on('player-state', (state) => {
     if (!currentRoomId) return;
-    // Broadcast directly to other socket in room to minimize latency
+    state.id = socket.id; // inject sender ID
     socket.to(currentRoomId).emit('opponent-state', state);
   });
 
   // 7. In-game: Relay Shooting Action
   socket.on('shoot', (shootData) => {
     if (!currentRoomId) return;
+    shootData.playerId = socket.id; // tag shooter ID
     socket.to(currentRoomId).emit('opponent-shoot', shootData);
   });
 
   // 8. In-game: Hit Event
   socket.on('hit', (hitData) => {
     if (!currentRoomId) return;
-    // Forward the hit details to the opponent so they take damage
+    hitData.shooterId = socket.id; // tag shooter ID
     socket.to(currentRoomId).emit('damage-taken', hitData);
   });
 
   // 9. In-game: Health Sync
   socket.on('sync-health', (healthData) => {
     if (!currentRoomId) return;
+    healthData.playerId = socket.id; // tag player ID
     socket.to(currentRoomId).emit('opponent-health-sync', healthData);
   });
 
@@ -256,6 +283,7 @@ io.on('connection', (socket) => {
   // 13. Text Chat
   socket.on('chat-message', (msg) => {
     if (!currentRoomId) return;
+    msg.id = socket.id; // tag sender ID
     socket.to(currentRoomId).emit('opponent-chat', msg);
   });
 
