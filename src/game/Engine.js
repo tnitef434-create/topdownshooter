@@ -25,6 +25,7 @@ export class Engine {
     this.sound.setVolume((config.settings.volume !== undefined) ? config.settings.volume : 0.5);
     this.particles = new ParticleEngine();
     this.particles.setBloodEnabled(config.settings.blood);
+    this.settings = config.settings;
     
     // Global identifiers
     window.LocalPlayerId = config.localPlayerId;
