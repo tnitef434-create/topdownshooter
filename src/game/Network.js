@@ -258,4 +258,18 @@ export class Network {
     while (diff > Math.PI) diff -= Math.PI * 2;
     return a + diff * t;
   }
+
+  destroy() {
+    if (this.socket) {
+      this.socket.off('opponent-state');
+      this.socket.off('opponent-shoot');
+      this.socket.off('damage-taken');
+      this.socket.off('opponent-health-sync');
+      this.socket.off('opponent-break-crate');
+      this.socket.off('opponent-pickup-item');
+      this.socket.off('opponent-chat');
+      this.socket.off('round-over');
+      this.socket.off('match-over');
+    }
+  }
 }

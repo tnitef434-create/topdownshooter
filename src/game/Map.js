@@ -17,6 +17,11 @@ export class Map {
     this.rooms    = [];   // room meta (for drawing)
     this.segments = [];   // raycasting segments
 
+    this.ambientLights = {
+      brokenCeiling: { x: 731, y: 701, radius: 240, on: true },
+      lantern: { x: 1171, y: 250, radius: 180 }
+    };
+
     this.generateMap();
   }
 
@@ -465,14 +470,44 @@ export class Map {
       this.maskCtx.save();
       this.maskCtx.setTransform(ctx.getTransform());
 
+      // Deterministic synchronized flicker calculation
+      const time = Date.now();
+      const rawFlicker = Math.sin(time * 0.04) * Math.cos(time * 0.007) + Math.sin(time * 0.1) * 0.5;
+      const brokenLightOn = rawFlicker > -0.45;
+      this.ambientLights.brokenCeiling.on = brokenLightOn;
+
       // Cut out light fields using destination-out
       this.maskCtx.globalCompositeOperation = 'destination-out';
       this.maskCtx.fillStyle = 'white'; // Color doesn't matter for cutout
 
+      // A. Cut out Lantern (steady warm light)
+      const lat = this.ambientLights.lantern;
+      const lanternGrad = this.maskCtx.createRadialGradient(lat.x, lat.y, 10, lat.x, lat.y, lat.radius);
+      lanternGrad.addColorStop(0, 'rgba(255, 255, 255, 1.0)');
+      lanternGrad.addColorStop(0.5, 'rgba(255, 255, 255, 0.45)');
+      lanternGrad.addColorStop(1, 'rgba(255, 255, 255, 0.0)');
+      this.maskCtx.fillStyle = lanternGrad;
+      this.maskCtx.beginPath();
+      this.maskCtx.arc(lat.x, lat.y, lat.radius, 0, Math.PI * 2);
+      this.maskCtx.fill();
+
+      // B. Cut out Broken Ceiling Light (flickering light)
+      if (brokenLightOn) {
+        const bcl = this.ambientLights.brokenCeiling;
+        const ceilingGrad = this.maskCtx.createRadialGradient(bcl.x, bcl.y, 20, bcl.x, bcl.y, bcl.radius);
+        ceilingGrad.addColorStop(0, 'rgba(255, 255, 255, 1.0)');
+        ceilingGrad.addColorStop(0.6, 'rgba(255, 255, 255, 0.35)');
+        ceilingGrad.addColorStop(1, 'rgba(255, 255, 255, 0.0)');
+        this.maskCtx.fillStyle = ceilingGrad;
+        this.maskCtx.beginPath();
+        this.maskCtx.arc(bcl.x, bcl.y, bcl.radius, 0, Math.PI * 2);
+        this.maskCtx.fill();
+      }
+
       players.forEach(p => {
         if (p.health <= 0) return;
 
-        // B. Flashlight cone cutout (if active)
+        // C. Flashlight cone cutout (if active)
         if (p.flashlightActive && p.lightPoly && p.lightPoly.length > 0) {
           this.maskCtx.beginPath();
           this.maskCtx.moveTo(p.lightPoly[0].x, p.lightPoly[0].y);
@@ -480,6 +515,7 @@ export class Map {
             this.maskCtx.lineTo(p.lightPoly[i].x, p.lightPoly[i].y);
           }
           this.maskCtx.closePath();
+          this.maskCtx.fillStyle = 'white';
           this.maskCtx.fill();
         }
       });
@@ -529,7 +565,81 @@ export class Map {
           ctx.restore();
         }
       });
+
+      // 7. Draw ambient light color glow on the main canvas
+      ctx.save();
+      // Lantern warm orange-yellow glow
+      const latPulse = 1.0 + Math.sin(time / 200) * 0.04; // subtle pulsation
+      const lGrad = ctx.createRadialGradient(lat.x, lat.y, 5, lat.x, lat.y, lat.radius * latPulse);
+      lGrad.addColorStop(0, 'rgba(255, 140, 40, 0.22)');
+      lGrad.addColorStop(0.4, 'rgba(255, 140, 40, 0.10)');
+      lGrad.addColorStop(1, 'rgba(255, 140, 40, 0.0)');
+      ctx.fillStyle = lGrad;
+      ctx.beginPath();
+      ctx.arc(lat.x, lat.y, lat.radius * latPulse, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Draw the lantern object
+      ctx.fillStyle = '#222';
+      ctx.strokeStyle = '#d4af37'; // gold trim
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(lat.x, lat.y, 8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(255, 180, 50, 0.9)'; // flame core
+      ctx.beginPath();
+      ctx.arc(lat.x, lat.y, 3, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Broken Ceiling Light cold fluorescent white-blue flickering glow
+      const bcl = this.ambientLights.brokenCeiling;
+      if (brokenLightOn) {
+        const cGrad = ctx.createRadialGradient(bcl.x, bcl.y, 10, bcl.x, bcl.y, bcl.radius);
+        cGrad.addColorStop(0, 'rgba(200, 230, 255, 0.25)');
+        cGrad.addColorStop(0.5, 'rgba(200, 230, 255, 0.08)');
+        cGrad.addColorStop(1, 'rgba(200, 230, 255, 0.0)');
+        ctx.fillStyle = cGrad;
+        ctx.beginPath();
+        ctx.arc(bcl.x, bcl.y, bcl.radius, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // Draw the ceiling light fixture
+      ctx.fillStyle = '#333';
+      ctx.strokeStyle = '#555';
+      ctx.lineWidth = 1;
+      ctx.fillRect(bcl.x - 16, bcl.y - 4, 32, 8);
+      ctx.strokeRect(bcl.x - 16, bcl.y - 4, 32, 8);
+      // Bulb
+      ctx.fillStyle = brokenLightOn ? '#fff' : '#111';
+      ctx.shadowColor = brokenLightOn ? '#6cf' : 'transparent';
+      ctx.shadowBlur = brokenLightOn ? 10 : 0;
+      ctx.fillRect(bcl.x - 12, bcl.y - 2, 24, 4);
+      ctx.shadowBlur = 0; // reset shadow
+      ctx.restore();
     }
+  }
+
+  isPointInAmbientLight(x, y) {
+    // 1. Check lantern (always active)
+    const lat = this.ambientLights.lantern;
+    const distLat = Math.hypot(x - lat.x, y - lat.y);
+    if (distLat < lat.radius - 20) {
+      // Must also have line of sight from lantern to point
+      return !this.getLineIntersection({ x: lat.x, y: lat.y }, { x, y });
+    }
+
+    // 2. Check broken ceiling light (if ON)
+    const bcl = this.ambientLights.brokenCeiling;
+    if (bcl.on) {
+      const distBcl = Math.hypot(x - bcl.x, y - bcl.y);
+      if (distBcl < bcl.radius - 20) {
+        return !this.getLineIntersection({ x: bcl.x, y: bcl.y }, { x, y });
+      }
+    }
+
+    return false;
   }
 
   // ── Floor textures ──

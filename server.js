@@ -162,12 +162,14 @@ io.on('connection', (socket) => {
     const room = {
       id: roomId,
       mode: roomMode,
+      isRanked: false, // Custom rooms are never ranked
       players: [{
         id: socket.id,
         name: playerName || 'Player 1',
         ready: false,
         weapon: 'pistol',
-        color: color || 'cyan'
+        color: color || 'cyan',
+        rp: 0
       }],
       status: 'lobby',
       score1: 0,
@@ -205,7 +207,8 @@ io.on('connection', (socket) => {
       name: playerName || `Player ${room.players.length + 1}`,
       ready: false,
       weapon: 'pistol',
-      color: color || 'cyan'
+      color: color || 'cyan',
+      rp: 0
     };
     room.players.push(newPlayer);
     
@@ -217,17 +220,27 @@ io.on('connection', (socket) => {
     console.log(`Player ${playerName} (${socket.id}) joined room: ${cleanRoomId}`);
   });
 
-  // 3. Auto-matchmaking
-  socket.on('auto-match', ({ playerName, mode, color }) => {
+  // 3. Auto-matchmaking (Ranked)
+  socket.on('auto-match', ({ playerName, mode, color, rp, rankStrict }) => {
     const searchMode = (mode === '2v2') ? '2v2' : '1v1';
     const maxPlayers = (searchMode === '2v2') ? 4 : 2;
+    const playerRP = typeof rp === 'number' ? rp : 0;
     
     // Find a room with space in lobby status and matching mode
     let targetRoom = null;
     for (const [id, room] of rooms.entries()) {
-      if (room.status === 'lobby' && room.mode === searchMode && room.players.length < maxPlayers) {
-        targetRoom = room;
-        break;
+      if (room.status === 'lobby' && room.mode === searchMode && room.players.length < maxPlayers && room.isRanked) {
+        if (!rankStrict) {
+          targetRoom = room;
+          break;
+        } else {
+          // Strict check: all players in room must be within 1000 RP of playerRP
+          const withinBracket = room.players.every(p => Math.abs((p.rp || 0) - playerRP) <= 1000);
+          if (withinBracket) {
+            targetRoom = room;
+            break;
+          }
+        }
       }
     }
 
@@ -238,7 +251,8 @@ io.on('connection', (socket) => {
         name: playerName || `Player ${targetRoom.players.length + 1}`,
         ready: false,
         weapon: 'pistol',
-        color: color || 'cyan'
+        color: color || 'cyan',
+        rp: playerRP
       };
       targetRoom.players.push(newPlayer);
       socket.join(targetRoom.id);
@@ -246,7 +260,7 @@ io.on('connection', (socket) => {
 
       socket.emit('room-joined', { roomId: targetRoom.id, players: targetRoom.players, mode: targetRoom.mode });
       socket.to(targetRoom.id).emit('player-joined', { players: targetRoom.players });
-      console.log(`Auto-matched Player ${playerName} into room: ${targetRoom.id}`);
+      console.log(`Auto-matched Player ${playerName} (RP: ${playerRP}) into room: ${targetRoom.id}`);
     } else {
       // Create a room
       let roomId = generateRoomId();
@@ -257,12 +271,14 @@ io.on('connection', (socket) => {
       const room = {
         id: roomId,
         mode: searchMode,
+        isRanked: true, // Lobbies created via matchmaking are ranked
         players: [{
           id: socket.id,
           name: playerName || 'Player 1',
           ready: false,
           weapon: 'pistol',
-          color: color || 'cyan'
+          color: color || 'cyan',
+          rp: playerRP
         }],
         status: 'lobby',
         score1: 0,
@@ -275,7 +291,7 @@ io.on('connection', (socket) => {
       currentRoomId = roomId;
 
       socket.emit('room-created', { roomId, players: room.players, autoMatch: true, mode: searchMode });
-      console.log(`Auto-match created room: ${roomId} (${searchMode}) for player: ${playerName}`);
+      console.log(`Auto-match created room: ${roomId} (${searchMode}) for player: ${playerName} (RP: ${playerRP})`);
     }
   });
 
@@ -324,14 +340,48 @@ io.on('connection', (socket) => {
         room.score1 = 0;
         room.score2 = 0;
         room.roundNumber = 1;
+        room.players.forEach(p => p.wantsRematch = false); // clear any old rematch tags
         io.to(currentRoomId).emit('match-start', {
           players: room.players,
-          seed: Math.random() // synchronized seed for map spawns / layouts
+          seed: Math.random(), // synchronized seed for map spawns / layouts
+          isRanked: room.isRanked
         });
-        console.log(`Match started in room: ${currentRoomId} (${room.mode})`);
+        console.log(`Match started in room: ${currentRoomId} (${room.mode}, Ranked: ${room.isRanked})`);
       }
     }
   });
+
+  // Rematch request
+  socket.on('request-rematch', () => {
+    if (!currentRoomId) return;
+    const room = rooms.get(currentRoomId);
+    if (!room) return;
+
+    const player = room.players.find(p => p.id === socket.id);
+    if (player) {
+      player.wantsRematch = true;
+      socket.to(currentRoomId).emit('opponent-requested-rematch', { playerId: socket.id });
+      
+      const allWantRematch = room.players.every(p => p.wantsRematch);
+      if (allWantRematch) {
+        room.status = 'playing';
+        room.score1 = 0;
+        room.score2 = 0;
+        room.roundNumber = 1;
+        room.players.forEach(p => {
+          p.ready = false;
+          p.wantsRematch = false;
+        });
+        io.to(currentRoomId).emit('match-start', {
+          players: room.players,
+          seed: Math.random(),
+          isRanked: room.isRanked
+        });
+        console.log(`Rematch started in room: ${currentRoomId} (Ranked: ${room.isRanked})`);
+      }
+    }
+  });
+
 
   // 6. In-game: Relay Player State (60hz updates)
   socket.on('player-state', (state) => {

@@ -24,11 +24,12 @@ const safeStorage = {
 const screens = {
   menu: document.getElementById('menu-screen'),
   lobby: document.getElementById('lobby-screen'),
-  game: document.getElementById('game-screen')
+  game: document.getElementById('game-screen'),
+  matchmaking: document.getElementById('matchmaking-screen')
 };
 
 const btns = {
-  quickMatch: document.getElementById('btn-quick-match'),
+  quickMatch: document.getElementById('btn-ranked-match'),
   createRoom: document.getElementById('btn-create-room'),
   joinRoom: document.getElementById('btn-join-room'),
   practiceBot: document.getElementById('btn-practice-bot'),
@@ -87,6 +88,7 @@ let myWeapon = 'pistol';
 let myColor = 'cyan';
 let myMode = '1v1';
 let isReady = false;
+let lobbyPlayers = [];
 
 // ── Career Stats (localStorage) ────────────────────────────────────────────
 function loadCareerStats() {
@@ -119,6 +121,9 @@ function recordMatchResult(isWin) {
 // Audio Background Music
 const menuMusic = new Audio('/Midnight_Deployment.mp3');
 menuMusic.loop = true;
+const waitMusic = new Audio('/Before_The_Starting_Bell.mp3');
+waitMusic.loop = true;
+
 let musicStarted = false;
 let isMusicMuted = false;
 
@@ -135,6 +140,116 @@ function playWeaponSelectMusic() {
   } catch(e) {}
 }
 
+window.stopAllMusic = function() {
+  try {
+    menuMusic.pause();
+    menuMusic.currentTime = 0;
+    waitMusic.pause();
+    waitMusic.currentTime = 0;
+  } catch(e) {}
+};
+
+function playWaitMusic() {
+  if (isMusicMuted) return;
+  try {
+    menuMusic.pause();
+    menuMusic.currentTime = 0;
+    waitMusic.currentTime = 0;
+    waitMusic.play().catch(() => {});
+  } catch(e) {}
+}
+
+function playMenuMusic() {
+  if (isMusicMuted) return;
+  try {
+    waitMusic.pause();
+    waitMusic.currentTime = 0;
+    menuMusic.currentTime = 0;
+    menuMusic.play().catch(() => {});
+  } catch(e) {}
+}
+
+function playRankedStartVideo(callback) {
+  const overlay = document.getElementById('ranked-video-overlay');
+  const video = document.getElementById('ranked-video');
+  if (!overlay || !video) {
+    callback();
+    return;
+  }
+
+  video.muted = !!gameSettings.sfxMuted;
+  video.volume = typeof gameSettings.volume === 'number' ? gameSettings.volume : 0.5;
+  video.currentTime = 0;
+  overlay.style.display = 'flex';
+  overlay.offsetHeight; // trigger reflow
+  overlay.style.opacity = '1';
+  
+  window.stopAllMusic();
+
+  video.play().then(() => {
+    const fadeOutTimeout = setTimeout(() => {
+      overlay.style.opacity = '0';
+    }, 4400);
+
+    const endTimeout = setTimeout(() => {
+      video.pause();
+      overlay.style.display = 'none';
+      callback();
+    }, 5000);
+
+    const onEnded = () => {
+      clearTimeout(fadeOutTimeout);
+      clearTimeout(endTimeout);
+      overlay.style.opacity = '0';
+      setTimeout(() => {
+        overlay.style.display = 'none';
+        callback();
+      }, 500);
+      video.removeEventListener('ended', onEnded);
+    };
+    video.addEventListener('ended', onEnded);
+  }).catch(err => {
+    console.warn('Ranked video playback failed or blocked by browser:', err);
+    overlay.style.opacity = '0';
+    overlay.style.display = 'none';
+    callback();
+  });
+}
+
+const RANKS = [
+  { id: 'recruit', label: 'RECRUIT',  minRP: 0,    maxRP: 999,  color: '#8a9bb5', icon: '▪' },
+  { id: 'veteran', label: 'VETERAN',  minRP: 1000, maxRP: 3999, color: '#e8c84a', icon: '◆' },
+  { id: 'elite',   label: 'ELITE',    minRP: 4000, maxRP: Infinity, color: '#ff6ef7', icon: '★' }
+];
+
+function getRankForRP(rp) {
+  for (let i = RANKS.length - 1; i >= 0; i--) {
+    if (rp >= RANKS[i].minRP) return RANKS[i];
+  }
+  return RANKS[0];
+}
+
+function updateMenuRankUI() {
+  const rpVal = parseInt(localStorage.getItem('tacticstrike_rp') || '0');
+  const rk = getRankForRP(rpVal);
+  
+  const rIcon = document.getElementById('menu-rank-icon');
+  const rLabel = document.getElementById('menu-rank-label');
+  const rRp = document.getElementById('menu-rank-rp');
+  
+  if (rIcon) {
+    rIcon.innerText = rk.icon;
+    rIcon.style.color = rk.color;
+  }
+  if (rLabel) {
+    rLabel.innerText = rk.label;
+    rLabel.style.color = rk.color;
+  }
+  if (rRp) {
+    rRp.innerText = `(${rpVal} RP)`;
+  }
+}
+
 // Ranked Matchmaking state
 let rankSearchExpanded = false;
 let rankSearchTimer = null;
@@ -147,18 +262,30 @@ menuMusic.addEventListener('ended', () => {
   }
 });
 
+waitMusic.addEventListener('ended', () => {
+  if (!isMusicMuted) {
+    waitMusic.currentTime = 0;
+    waitMusic.play().catch(() => {});
+  }
+});
+
 function startMusic() {
   if (musicStarted || isMusicMuted) {
     cleanupMusicListeners();
     return;
   }
-  menuMusic.play().then(() => {
-    musicStarted = true;
-    updateMusicVolume();
-    cleanupMusicListeners();
-  }).catch(err => {
-    console.warn("Autoplay / play blocked or not loaded yet, retrying on next interaction:", err);
-  });
+  const activeScreen = document.querySelector('.screen.active');
+  if (activeScreen && (activeScreen.id === 'lobby-screen' || activeScreen.id === 'matchmaking-screen')) {
+    waitMusic.play().then(() => {
+      musicStarted = true;
+      cleanupMusicListeners();
+    }).catch(() => {});
+  } else {
+    menuMusic.play().then(() => {
+      musicStarted = true;
+      cleanupMusicListeners();
+    }).catch(() => {});
+  }
 }
 
 function cleanupMusicListeners() {
@@ -175,10 +302,10 @@ function cleanupMusicListeners() {
 function updateMusicVolume() {
   if (isMusicMuted) {
     menuMusic.volume = 0;
+    waitMusic.volume = 0;
   } else {
-    const activeScreen = document.querySelector('.screen.active');
-    const isGameActive = activeScreen && activeScreen.id === 'game-screen';
-    menuMusic.volume = isGameActive ? 0.04 : 0.15;
+    menuMusic.volume = 0.15;
+    waitMusic.volume = 0.15;
   }
 }
 
@@ -313,10 +440,33 @@ function showScreen(screenKey) {
   Object.keys(screens).forEach(key => {
     if (key === screenKey) {
       screens[key].classList.add('active');
+      if (key === 'matchmaking' || key === 'lobby') {
+        screens[key].style.display = 'flex';
+      }
     } else {
       screens[key].classList.remove('active');
+      if (key === 'matchmaking') {
+        screens[key].style.display = 'none';
+      }
     }
   });
+
+  if (screenKey !== 'matchmaking') {
+    if (window.mmDotsInterval) {
+      clearInterval(window.mmDotsInterval);
+      window.mmDotsInterval = null;
+    }
+  }
+
+  // Transition music based on screen
+  if (screenKey === 'menu') {
+    playMenuMusic();
+  } else if (screenKey === 'lobby' || screenKey === 'matchmaking') {
+    playWaitMusic();
+  } else if (screenKey === 'game') {
+    window.stopAllMusic();
+  }
+
   updateMusicVolume();
 }
 
@@ -368,6 +518,7 @@ function updateWeaponStatsUI(weaponKey) {
 
 // 4. Lobby UI Refresh
 function updateLobbyUI(players) {
+  lobbyPlayers = players;
   if (!displays.playersList) return;
 
   displays.playersList.innerHTML = '';
@@ -394,10 +545,15 @@ function updateLobbyUI(players) {
       
       const teamLabel = (myMode === '2v2') ? `TEAM ${ (idx % 2 === 0) ? '1' : '2' }` : (idx === 0 ? 'HOST' : 'GUEST');
       
+      const playerRP = p.rp || 0;
+      const playerRank = getRankForRP(playerRP);
+      
       slotEl.innerHTML = `
         <div class="player-info">
-          <span class="player-name" style="color: ${playerColor};">${escapeHTML(p.name)} ${p.id === socket.id ? '(YOU)' : ''}</span>
-          <span class="player-weapon-desc">WEAPON: ${weaponName}</span>
+          <span class="player-name" style="color: ${playerColor};">
+            <span style="color: ${playerRank.color}; margin-right: 4px;">${playerRank.icon}</span>${escapeHTML(p.name)} ${p.id === socket.id ? '(YOU)' : ''}
+          </span>
+          <span class="player-weapon-desc">RANK: <span style="color:${playerRank.color}">${playerRank.label}</span> | WEAPON: ${weaponName}</span>
         </div>
         <div class="player-badge ${idx % 2 === 0 ? 'host' : 'guest'}">
           ${teamLabel}
@@ -470,9 +626,14 @@ function connectSocket() {
     currentRoom = roomId;
     if (mode) myMode = mode;
     displays.roomCode.innerText = roomId;
-    showScreen('lobby');
-    updateLobbyUI(players);
-    addSystemChatMessage(autoMatch ? 'Created matchmaking room. Waiting for opponent...' : `Lobby created. Share code [${roomId}] with a friend.`);
+    if (autoMatch) {
+      updateLobbyUI(players);
+      addSystemChatMessage('Created matchmaking room. Waiting for opponent...');
+    } else {
+      showScreen('lobby');
+      updateLobbyUI(players);
+      addSystemChatMessage(`Lobby created. Share code [${roomId}] with a friend.`);
+    }
   });
 
   socket.on('room-joined', ({ roomId, players, mode }) => {
@@ -497,6 +658,12 @@ function connectSocket() {
     if (opponent) {
       addSystemChatMessage(`${opponent.name} entered the lobby.`);
     }
+    
+    // Transition from matchmaking screen to lobby screen once opponent is found
+    const activeScreen = document.querySelector('.screen.active');
+    if (activeScreen && activeScreen.id === 'matchmaking-screen') {
+      showScreen('lobby');
+    }
   });
 
   socket.on('players-update', ({ players }) => {
@@ -511,33 +678,47 @@ function connectSocket() {
     }
   });
 
-  socket.on('match-start', ({ players, seed }) => {
-    showScreen('game');
-    const myIndex = players.findIndex(p => p.id === socket.id);
-    
-    // Clear chat display for fresh round
-    displays.chatMessages.innerHTML = '';
-    
-    // Instantiate game engine
-    if (gameEngine) {
-      gameEngine.destroy();
+  socket.on('match-start', ({ players, seed, isRanked }) => {
+    const initGame = () => {
+      showScreen('game');
+      const myIndex = players.findIndex(p => p.id === socket.id);
+      
+      // Clear chat display for fresh round
+      displays.chatMessages.innerHTML = '';
+      
+      // Instantiate game engine
+      if (gameEngine) {
+        gameEngine.destroy();
+      }
+      
+      gameEngine = new Engine('game-canvas', {
+        mode: 'online',
+        socket: socket,
+        localPlayerId: socket.id,
+        localPlayerName: myName,
+        localWeapon: myWeapon,
+        localColor: myColor,
+        localPlayerIndex: myIndex,
+        players: players,
+        seed: seed,
+        settings: { ...gameSettings, volume: gameSettings.sfxMuted ? 0 : gameSettings.volume },
+        matchMode: myMode,
+        isRanked: !!isRanked, // Pass isRanked
+        onMatchEnd: handleMatchEnd,
+        onKillFeed: addKillFeedMessage
+      });
+    };
+
+    if (isRanked) {
+      playRankedStartVideo(initGame);
+    } else {
+      initGame();
     }
-    
-    gameEngine = new Engine('game-canvas', {
-      mode: 'online',
-      socket: socket,
-      localPlayerId: socket.id,
-      localPlayerName: myName,
-      localWeapon: myWeapon,
-      localColor: myColor,
-      localPlayerIndex: myIndex,
-      players: players,
-      seed: seed,
-      settings: { ...gameSettings, volume: gameSettings.sfxMuted ? 0 : gameSettings.volume },
-      matchMode: myMode,
-      onMatchEnd: handleMatchEnd,
-      onKillFeed: addKillFeedMessage
-    });
+  });
+
+  socket.on('opponent-requested-rematch', () => {
+    const rStatus = document.getElementById('rematch-status');
+    if (rStatus) rStatus.innerText = 'Opponent requested a rematch! Click REMATCH to accept.';
   });
 }
 
@@ -582,6 +763,7 @@ function startOfflineMode() {
     seed: Math.random(),
     settings: { ...gameSettings, volume: gameSettings.sfxMuted ? 0 : gameSettings.volume },
     matchMode: myMode,
+    isRanked: false, // bots never ranked
     onMatchEnd: handleMatchEnd,
     onKillFeed: addKillFeedMessage
   });
@@ -594,72 +776,102 @@ function getRandomWeapon() {
 // Match Over Debriefing Display
   function handleMatchEnd(results) {
     if (gameOverModal) gameOverModal.classList.add('active');
-    const isWin = results.winnerId === (socket ? socket.id : 'player');
+    const isWin = !!results.isWin;
 
-    // Record W/L in localStorage
-    recordMatchResult(isWin);
-
-  const resultTitle = document.getElementById('match-result-title');
-  const resultSubtitle = document.getElementById('match-result-subtitle');
-  
-  if (resultTitle) {
-    if (isWin) {
-      resultTitle.innerText = 'MISSION ACCOMPLISHED';
-      resultTitle.className = 'result-title win';
-    } else {
-      resultTitle.innerText = 'MISSION FAILED';
-      resultTitle.className = 'result-title lose';
+    // Record W/L in localStorage only for human online matches!
+    if (gameEngine && gameEngine.mode === 'online') {
+      recordMatchResult(isWin);
     }
-  }
 
-  if (resultSubtitle) {
-    if (isWin) {
-      resultSubtitle.innerText = 'You successfully eliminated the target operative.';
-    } else {
-      resultSubtitle.innerText = 'You were eliminated by the target operative.';
+    const resultTitle = document.getElementById('match-result-title');
+    const resultSubtitle = document.getElementById('match-result-subtitle');
+    
+    if (resultTitle) {
+      if (isWin) {
+        resultTitle.innerText = 'MISSION ACCOMPLISHED';
+        resultTitle.className = 'result-title win';
+      } else {
+        resultTitle.innerText = 'MISSION FAILED';
+        resultTitle.className = 'result-title lose';
+      }
     }
-  }
 
-  const roundsWonEl = document.getElementById('stat-rounds-won');
-  if (roundsWonEl) roundsWonEl.innerText = results.roundsWon || 0;
+    if (resultSubtitle) {
+      if (isWin) {
+        resultSubtitle.innerText = 'You successfully eliminated the target operative.';
+      } else {
+        resultSubtitle.innerText = 'You were eliminated by the target operative.';
+      }
+    }
 
-  const damageDealtEl = document.getElementById('stat-damage-dealt');
-  if (damageDealtEl) damageDealtEl.innerText = Math.round(results.damageDealt || 0);
+    // Set cinematic winner display
+    let winnerName = 'Unknown Operative';
+    if (gameEngine) {
+      const winnerPlayer = gameEngine.players.find(p => p.id === results.winnerId);
+      if (winnerPlayer) {
+        winnerName = winnerPlayer.name;
+      }
+    }
+    const winnerNameEl = document.getElementById('match-winner-name');
+    if (winnerNameEl) {
+      winnerNameEl.innerText = `WINNER: ${winnerName}`;
+      winnerNameEl.style.color = isWin ? '#39db14' : '#ff3c3c';
+    }
 
-  const accuracyEl = document.getElementById('stat-accuracy');
-  if (accuracyEl) accuracyEl.innerText = `${Math.round(results.accuracy || 0)}%`;
+    const roundsWonEl = document.getElementById('stat-rounds-won');
+    if (roundsWonEl) roundsWonEl.innerText = results.roundsWon || 0;
 
-  const shotsFiredEl = document.getElementById('stat-shots-fired');
-  if (shotsFiredEl) shotsFiredEl.innerText = results.shotsFired || 0;
+    const damageDealtEl = document.getElementById('stat-damage-dealt');
+    if (damageDealtEl) damageDealtEl.innerText = Math.round(results.damageDealt || 0);
 
-  // ── Rank / RP Panel ─────────────────────────────────────────────────────
-  const rankPanel = document.getElementById('rank-result-panel');
-  if (rankPanel && results.newRank) {
-    const rk = results.newRank;
-    const delta = results.rpDelta || 0;
-    const deltaStr = delta >= 0 ? `+${delta} RP` : `${delta} RP`;
-    const deltaColor = delta >= 0 ? '#39ff14' : '#ff3c3c';
-    rankPanel.innerHTML = `
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;">
-        <div style="display:flex;align-items:center;gap:10px;">
-          <span style="font-size:22px;color:${rk.color};">${rk.icon}</span>
-          <div>
-            <div style="font-family:var(--font-title);font-size:11px;color:var(--text-muted);letter-spacing:1px;">CURRENT RANK</div>
-            <div style="font-family:var(--font-title);font-size:18px;color:${rk.color};font-weight:700;letter-spacing:2px;">${rk.label}</div>
+    const accuracyEl = document.getElementById('stat-accuracy');
+    if (accuracyEl) accuracyEl.innerText = `${Math.round(results.accuracy || 0)}%`;
+
+    const shotsFiredEl = document.getElementById('stat-shots-fired');
+    if (shotsFiredEl) shotsFiredEl.innerText = results.shotsFired || 0;
+
+    // Reset rematch UI on end of match
+    const rStatus = document.getElementById('rematch-status');
+    if (rStatus) rStatus.innerText = '';
+    const rBtn = document.getElementById('btn-rematch');
+    if (rBtn) {
+      rBtn.disabled = false;
+      rBtn.innerText = 'REMATCH';
+    }
+
+    // ── Rank / RP Panel ─────────────────────────────────────────────────────
+    const rankPanel = document.getElementById('rank-result-panel');
+    if (rankPanel) {
+      if (gameEngine && gameEngine.isRanked && results.newRank) {
+        const rk = results.newRank;
+        const delta = results.rpDelta || 0;
+        const deltaStr = delta >= 0 ? `+${delta} RP` : `${delta} RP`;
+        const deltaColor = delta >= 0 ? '#39ff14' : '#ff3c3c';
+        rankPanel.innerHTML = `
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+            <div style="display:flex;align-items:center;gap:10px;">
+              <span style="font-size:22px;color:${rk.color};">${rk.icon}</span>
+              <div>
+                <div style="font-family:var(--font-title);font-size:11px;color:var(--text-muted);letter-spacing:1px;">CURRENT RANK</div>
+                <div style="font-family:var(--font-title);font-size:18px;color:${rk.color};font-weight:700;letter-spacing:2px;">${rk.label}</div>
+              </div>
+            </div>
+            <div style="text-align:right;">
+              <div style="font-family:var(--font-title);font-size:11px;color:var(--text-muted);">RANK POINTS</div>
+              <div style="font-family:var(--font-title);font-size:16px;color:#fff;font-weight:700;">${results.newRP} RP</div>
+              <div style="font-size:12px;color:${deltaColor};font-family:var(--font-title);margin-top:2px;">${deltaStr}</div>
+            </div>
           </div>
-        </div>
-        <div style="text-align:right;">
-          <div style="font-family:var(--font-title);font-size:11px;color:var(--text-muted);">RANK POINTS</div>
-          <div style="font-family:var(--font-title);font-size:16px;color:#fff;font-weight:700;">${results.newRP} RP</div>
-          <div style="font-size:12px;color:${deltaColor};font-family:var(--font-title);margin-top:2px;">${deltaStr}</div>
-        </div>
-      </div>
-      ${results.rankChanged ? `<div style="margin-top:10px;padding:6px 12px;background:rgba(${delta>=0?'57,255,20':'255,60,60'},0.12);border:1px solid ${delta>=0?'#39ff14':'#ff3c3c'};border-radius:6px;font-family:var(--font-title);font-size:10px;color:${delta>=0?'#39ff14':'#ff3c3c'};text-align:center;letter-spacing:1px;">${delta>=0?'▲ RANK UP!':'▼ RANK DOWN'} ${results.oldRankLabel} → ${rk.label}</div>` : ''}
-    `;
-    rankPanel.style.display = 'block';
+          ${results.rankChanged ? `<div style="margin-top:10px;padding:6px 12px;background:rgba(${delta>=0?'57,255,20':'255,60,60'},0.12);border:1px solid ${delta>=0?'#39ff14':'#ff3c3c'};border-radius:6px;font-family:var(--font-title);font-size:10px;color:${delta>=0?'#39ff14':'#ff3c3c'};text-align:center;letter-spacing:1px;">${delta>=0?'▲ RANK UP!':'▼ RANK DOWN'} ${results.oldRankLabel} → ${rk.label}</div>` : ''}
+        `;
+        rankPanel.style.display = 'block';
+      } else {
+        rankPanel.innerHTML = `<div style="font-family:var(--font-title); font-size:10px; color:var(--text-muted); text-align:center; letter-spacing:1.5px;">CASUAL MATCH - NO RANK EFFECT</div>`;
+        rankPanel.style.display = 'block';
+      }
+    }
+    // ─────────────────────────────────────────────────────────────────────────
   }
-  // ─────────────────────────────────────────────────────────────────────────
-}
 
 // UI Event Handlers
 function setupUIListeners() {
@@ -669,11 +881,15 @@ function setupUIListeners() {
       gameSettings.musicMuted = !gameSettings.musicMuted;
       isMusicMuted = gameSettings.musicMuted;
       if (isMusicMuted) {
-        menuMusic.pause();
+        window.stopAllMusic();
       } else {
-        menuMusic.play().catch(() => {});
+        const activeScreen = document.querySelector('.screen.active');
+        if (activeScreen && (activeScreen.id === 'lobby-screen' || activeScreen.id === 'matchmaking-screen')) {
+          playWaitMusic();
+        } else {
+          playMenuMusic();
+        }
       }
-      updateMusicVolume();
       
       const muteMusicCb = document.getElementById('setting-mute-music');
       if (muteMusicCb) muteMusicCb.checked = isMusicMuted;
@@ -742,17 +958,73 @@ function setupUIListeners() {
 
         // Emit first with strict rank bracket
         socket.emit('auto-match', { playerName: myName, mode: myMode, color: myColor, rp: myRP, rankStrict: true });
+        
+        // Show matchmaking screen
+        showScreen('matchmaking');
+        
+        // Update matchmaking overlay details
+        const mmRankDisplay = document.getElementById('mm-rank-display');
+        const mmRankIcon = document.getElementById('mm-rank-icon');
+        const mmTimer = document.getElementById('mm-timer');
+        const mmExpandNotice = document.getElementById('mm-expand-notice');
+        
+        const myRank = getRankForRP(myRP);
+        if (mmRankDisplay) mmRankDisplay.innerText = myRank.label;
+        if (mmRankIcon) {
+          mmRankIcon.innerText = myRank.icon;
+          mmRankIcon.style.color = myRank.color;
+        }
+        if (mmTimer) mmTimer.innerText = '0s';
+        if (mmExpandNotice) mmExpandNotice.innerText = 'Searching within your skill bracket...';
+        
+        let seconds = 0;
+        if (window.mmInterval) clearInterval(window.mmInterval);
+        window.mmInterval = setInterval(() => {
+          seconds++;
+          if (mmTimer) mmTimer.innerText = `${seconds}s`;
+        }, 1000);
+
+        // Start MM dots animation
+        let dotCount = 0;
+        const mmDots = document.getElementById('mm-dots');
+        if (window.mmDotsInterval) clearInterval(window.mmDotsInterval);
+        window.mmDotsInterval = setInterval(() => {
+          dotCount = (dotCount + 1) % 4;
+          if (mmDots) mmDots.innerText = '.'.repeat(dotCount);
+        }, 500);
 
         // After 15 s, expand search to any rank
         if (rankSearchTimer) clearTimeout(rankSearchTimer);
         rankSearchTimer = setTimeout(() => {
-          if (!rankSearchExpanded && socket && socket.connected && !currentRoom) {
-            rankSearchExpanded = true;
-            socket.emit('auto-match', { playerName: myName, mode: myMode, color: myColor, rp: myRP, rankStrict: false });
-            addSystemChatMessage('⚡ Rank filter removed — expanding search to all ranks...');
+          if (!rankSearchExpanded && socket && socket.connected) {
+            if (!currentRoom || (lobbyPlayers && lobbyPlayers.length === 1)) {
+              rankSearchExpanded = true;
+              addSystemChatMessage('⚡ Rank filter removed — expanding search to all ranks...');
+              if (mmExpandNotice) mmExpandNotice.innerText = '⚡ Search expanded to all skill ranks!';
+              
+              if (currentRoom) {
+                socket.emit('leave-room');
+                currentRoom = null;
+              }
+              socket.emit('auto-match', { playerName: myName, mode: myMode, color: myColor, rp: myRP, rankStrict: false });
+            }
           }
         }, 15000);
       }
+    });
+  }
+
+  // Cancel matchmaking
+  const cancelMmBtn = document.getElementById('btn-cancel-matchmaking');
+  if (cancelMmBtn) {
+    cancelMmBtn.addEventListener('click', () => {
+      if (window.mmInterval) clearInterval(window.mmInterval);
+      if (rankSearchTimer) clearTimeout(rankSearchTimer);
+      showScreen('menu');
+      if (socket) {
+        socket.emit('leave-room');
+      }
+      disconnectSocket();
     });
   }
 
@@ -771,7 +1043,13 @@ function setupUIListeners() {
   if (btns.readyToggle) {
     btns.readyToggle.addEventListener('click', () => {
       if (socket && currentRoom) {
-        socket.emit('player-ready', { ready: !isReady });
+        const nextReadyState = !isReady;
+        socket.emit('player-ready', { ready: nextReadyState });
+        if (nextReadyState) {
+          window.stopAllMusic();
+        } else {
+          playWaitMusic();
+        }
       }
     });
   }
@@ -799,6 +1077,7 @@ function setupUIListeners() {
         gameEngine.destroy();
         gameEngine = null;
       }
+      updateMenuRankUI();
       if (socket && currentRoom) {
         showScreen('lobby');
         isReady = false;
@@ -807,6 +1086,60 @@ function setupUIListeners() {
         // Offline mode goes back to main menu
         disconnectSocket();
         showScreen('menu');
+      }
+    });
+  }
+
+  // Leave Game button in HUD
+  const gameMenuBtn = document.getElementById('btn-game-menu');
+  const gameMenuOverlay = document.getElementById('game-menu-overlay');
+  const gameResumeBtn = document.getElementById('btn-game-resume');
+  const gameLeaveBtn = document.getElementById('btn-game-leave');
+
+  if (gameMenuBtn && gameMenuOverlay) {
+    gameMenuBtn.addEventListener('click', () => {
+      gameMenuOverlay.style.display = 'flex';
+    });
+  }
+  if (gameResumeBtn && gameMenuOverlay) {
+    gameResumeBtn.addEventListener('click', () => {
+      gameMenuOverlay.style.display = 'none';
+    });
+  }
+  if (gameLeaveBtn && gameMenuOverlay) {
+    gameLeaveBtn.addEventListener('click', () => {
+      gameMenuOverlay.style.display = 'none';
+      if (gameEngine) {
+        gameEngine.destroy();
+        gameEngine = null;
+      }
+      if (socket && currentRoom) {
+        socket.emit('leave-room');
+      }
+      disconnectSocket();
+      showScreen('menu');
+    });
+  }
+
+  // Rematch request button
+  const rematchBtn = document.getElementById('btn-rematch');
+  if (rematchBtn) {
+    rematchBtn.addEventListener('click', () => {
+      if (gameEngine && gameEngine.mode === 'offline') {
+        if (gameOverModal) gameOverModal.classList.remove('active');
+        if (gameEngine) {
+          gameEngine.destroy();
+          gameEngine = null;
+        }
+        startOfflineMode();
+      } else {
+        rematchBtn.disabled = true;
+        rematchBtn.innerText = 'WAITING...';
+        const rStatus = document.getElementById('rematch-status');
+        if (rStatus) rStatus.innerText = 'Rematch requested. Waiting for opponent...';
+        if (socket) {
+          socket.emit('request-rematch');
+        }
       }
     });
   }
@@ -970,10 +1303,40 @@ function setupModeSelector() {
   });
 }
 
+function setupMainMenuWeaponSelector() {
+  const wBtns = document.querySelectorAll('#menu-weapon-selector .weapon-btn');
+  wBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      wBtns.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      myWeapon = btn.dataset.weapon;
+      playWeaponSelectMusic();
+      
+      // Sync with lobby weapon option selected
+      const lobbyOpts = document.querySelectorAll('.weapon-option');
+      lobbyOpts.forEach(opt => {
+        if (opt.dataset.weapon === myWeapon) {
+          // Temporarily unbind select-weapon emission so we don't spam if not needed,
+          // but clicking on the option triggers appropriate card highlighting.
+          opt.classList.add('active');
+        } else {
+          opt.classList.remove('active');
+        }
+      });
+      updateWeaponStatsUI(myWeapon);
+      
+      if (socket && currentRoom) {
+        socket.emit('select-weapon', { weapon: myWeapon });
+      }
+    });
+  });
+}
+
 // App Bootstrap
 document.addEventListener('DOMContentLoaded', () => {
   initSettings();
   setupWeaponSelector();
+  setupMainMenuWeaponSelector();
   setupColorSelector();
   setupModeSelector();
   setupUIListeners();
@@ -994,8 +1357,9 @@ document.addEventListener('DOMContentLoaded', () => {
   connectSocket();
   showScreen('menu');
 
-  // Load career stats into UI
+  // Load career stats and rank
   renderCareerStats();
+  updateMenuRankUI();
 
   // Reset stats button
   const resetBtn = document.getElementById('btn-reset-stats');
@@ -1014,3 +1378,4 @@ window.addEventListener('opponent-chat-msg', (e) => {
   const { name, msg } = e.detail;
   appendChatMessage(name, msg, 'opponent');
 });
+

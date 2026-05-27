@@ -495,6 +495,23 @@ export class Player {
       }
     }
 
+    // Stuck detection: check if bot is trying to roam but position hasn't updated much
+    if (this.botState === 'patrol' || this.botState === 'search') {
+      const distToTarget = Math.hypot(this.x - this.botTargetX, this.y - this.botTargetY);
+      if (distToTarget > 20) {
+        if (!this.lastPositionRecord) {
+          this.lastPositionRecord = { x: this.x, y: this.y, time: currentTime };
+        } else if (currentTime - this.lastPositionRecord.time > 800) {
+          const distMoved = Math.hypot(this.x - this.lastPositionRecord.x, this.y - this.lastPositionRecord.y);
+          if (distMoved < 15) {
+            // Stuck on obstacle! Choose a new target direction
+            this.choosePatrolPoint(map);
+          }
+          this.lastPositionRecord = { x: this.x, y: this.y, time: currentTime };
+        }
+      }
+    }
+
     // Steering movement towards target
     const distToTarget = Math.hypot(this.x - this.botTargetX, this.y - this.botTargetY);
     if (distToTarget > 10) {
@@ -507,6 +524,24 @@ export class Player {
       this.vx += Math.cos(moveAngle) * this.accel;
       this.vy += Math.sin(moveAngle) * this.accel;
     }
+
+    // Proximity wall avoidance force to prevent sliding sticking
+    let avoidForceX = 0;
+    let avoidForceY = 0;
+    for (const wall of map.walls) {
+      const clX = Math.max(wall.x, Math.min(this.x, wall.x + wall.w));
+      const clY = Math.max(wall.y, Math.min(this.y, wall.y + wall.h));
+      const dX = this.x - clX;
+      const dY = this.y - clY;
+      const d = Math.hypot(dX, dY);
+      if (d < this.radius + 20 && d > 0) {
+        const force = (this.radius + 20 - d) / 20;
+        avoidForceX += (dX / d) * force * 0.45;
+        avoidForceY += (dY / d) * force * 0.45;
+      }
+    }
+    this.vx += avoidForceX;
+    this.vy += avoidForceY;
 
     // Shooting behavior when chasing (burst firing)
     if (this.botState === 'chase' && hasLOS && !this.isReloading && this.ammoInMag > 0) {
@@ -535,14 +570,58 @@ export class Player {
   }
 
   choosePatrolPoint(map) {
-    // Choose a random location on the map that is not inside a wall
+    if (!map || !map.rooms || map.rooms.length === 0) {
+      this.botTargetX = Math.random() * (map.width - 160) + 80;
+      this.botTargetY = Math.random() * (map.height - 160) + 80;
+      return;
+    }
+
+    // 1. Find the current room index (0-8)
+    const currentRoomIdx = map.rooms.findIndex(r => 
+      this.x >= r.x && this.x <= r.x + r.w &&
+      this.y >= r.y && this.y <= r.y + r.h
+    );
+
+    let targetRoom = null;
+
+    if (currentRoomIdx !== -1 && Math.random() < 0.75) {
+      // 75% chance: Pick current room or adjacent room
+      const col = currentRoomIdx % 3;
+      const row = Math.floor(currentRoomIdx / 3);
+
+      const adjacentIndices = [];
+      for (let dRow = -1; dRow <= 1; dRow++) {
+        for (let dCol = -1; dCol <= 1; dCol++) {
+          const nRow = row + dRow;
+          const nCol = col + dCol;
+          if (nRow >= 0 && nRow < 3 && nCol >= 0 && nCol < 3) {
+            adjacentIndices.push(nRow * 3 + nCol);
+          }
+        }
+      }
+
+      // Pick one random adjacent index
+      const targetIdx = adjacentIndices[Math.floor(Math.random() * adjacentIndices.length)];
+      targetRoom = map.rooms[targetIdx];
+    } else {
+      // 25% chance or if not inside any room: Pick any room completely randomly
+      targetRoom = map.rooms[Math.floor(Math.random() * map.rooms.length)];
+    }
+
+    if (!targetRoom) {
+      targetRoom = map.rooms[0];
+    }
+
+    // 2. Select a random coordinate inside the target room (keeping distance from outer walls)
     let attempts = 0;
-    while (attempts < 20) {
+    const padding = 38; // Keep 38px padding from room walls
+
+    while (attempts < 100) {
       attempts++;
-      const rx = Math.random() * (map.width - 160) + 80;
-      const ry = Math.random() * (map.height - 160) + 80;
-      
-      // verify not overlapping walls
+      const rx = targetRoom.x + padding + Math.random() * (targetRoom.w - padding * 2);
+      const ry = targetRoom.y + padding + Math.random() * (targetRoom.h - padding * 2);
+
+      // Verify not overlapping with furniture walls/crates
       let overlaps = false;
       for (const wall of map.walls) {
         if (rx + 25 > wall.x && rx - 25 < wall.x + wall.w &&
@@ -555,9 +634,13 @@ export class Player {
       if (!overlaps) {
         this.botTargetX = rx;
         this.botTargetY = ry;
-        break;
+        return;
       }
     }
+
+    // Fallback: If room target selection failed to avoid overlap after 100 attempts, pick the room center
+    this.botTargetX = targetRoom.x + targetRoom.w / 2;
+    this.botTargetY = targetRoom.y + targetRoom.h / 2;
   }
 
   // Draw player operative on canvas

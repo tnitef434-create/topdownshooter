@@ -14,6 +14,8 @@ export class Engine {
       
       this.mode = config.mode; // 'online' | 'offline'
       this.socket = config.socket;
+      this.isRanked = !!config.isRanked;
+      if (window.stopAllMusic) window.stopAllMusic();
       
       // Map dimensions
       this.mapWidth = 1400;
@@ -261,6 +263,10 @@ export class Engine {
       clearInterval(this.matchTimerInterval);
     }
     
+    if (this.network) {
+      this.network.destroy();
+    }
+    
     this.particles.clear();
     window.OnBotShootCallback = null;
     window.AppSocket = null;
@@ -413,13 +419,19 @@ export class Engine {
     const winningPlayer = this.players.find(p => p.team === winningTeam);
     window.MatchStats.winnerId = winningPlayer ? winningPlayer.id : 'unknown';
 
-    // Apply rank RP delta
+    // Apply rank RP delta only if ranked
     const isWin = this.scoreSelf >= 3;
     const oldRank = this.localPlayer.rank ? this.localPlayer.rank.label : '';
-    const rankChanged = this.localPlayer.applyRankDelta(isWin ? RP_WIN : RP_LOSS);
+    let rankChanged = false;
+    let rpDelta = 0;
+    if (this.isRanked) {
+      rankChanged = this.localPlayer.applyRankDelta(isWin ? RP_WIN : RP_LOSS);
+      rpDelta = isWin ? RP_WIN : RP_LOSS;
+    }
+    window.MatchStats.isWin = isWin;
     window.MatchStats.newRP = this.localPlayer.rp;
     window.MatchStats.newRank = this.localPlayer.rank;
-    window.MatchStats.rpDelta = isWin ? RP_WIN : RP_LOSS;
+    window.MatchStats.rpDelta = rpDelta;
     window.MatchStats.rankChanged = rankChanged;
     window.MatchStats.oldRankLabel = oldRank;
 
@@ -774,7 +786,8 @@ export class Engine {
       if (this.settings.shadows && this.localPlayer && this.localPlayer.health > 0 && !p.isLocal) {
         const inFlashlight = this.localPlayer.flashlightActive && this.localPlayer.lightPoly && this.isPointInPolygon({ x: p.x, y: p.y }, this.localPlayer.lightPoly);
         const hasLOS = !this.map.getLineIntersection({ x: this.localPlayer.x, y: this.localPlayer.y }, { x: p.x, y: p.y });
-        visible = inFlashlight || p.isTeammate || (p.flashlightActive && hasLOS);
+        const inAmbientLight = this.map.isPointInAmbientLight(p.x, p.y);
+        visible = inFlashlight || p.isTeammate || (p.flashlightActive && hasLOS) || (inAmbientLight && hasLOS);
       }
       
       if (visible) {
@@ -940,13 +953,19 @@ export class Engine {
     window.MatchStats.roundsWon = this.scoreSelf;
     window.MatchStats.winnerId = data.winnerId;
 
-    // Apply rank RP delta
-    const isWin = data.winnerId === this.localPlayer.id;
+    // Apply rank RP delta only if ranked
+    const isWin = this.scoreSelf >= 3;
     const oldRank = this.localPlayer.rank ? this.localPlayer.rank.label : '';
-    const rankChanged = this.localPlayer.applyRankDelta(isWin ? RP_WIN : RP_LOSS);
+    let rankChanged = false;
+    let rpDelta = 0;
+    if (this.isRanked) {
+      rankChanged = this.localPlayer.applyRankDelta(isWin ? RP_WIN : RP_LOSS);
+      rpDelta = isWin ? RP_WIN : RP_LOSS;
+    }
+    window.MatchStats.isWin = isWin;
     window.MatchStats.newRP = this.localPlayer.rp;
     window.MatchStats.newRank = this.localPlayer.rank;
-    window.MatchStats.rpDelta = isWin ? RP_WIN : RP_LOSS;
+    window.MatchStats.rpDelta = rpDelta;
     window.MatchStats.rankChanged = rankChanged;
     window.MatchStats.oldRankLabel = oldRank;
 
