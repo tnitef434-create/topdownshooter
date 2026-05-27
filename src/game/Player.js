@@ -267,10 +267,14 @@ export class Player {
     if (hpText) hpText.innerText = Math.round(Math.max(0, this.health));
     
     const weaponName = document.getElementById('hud-weapon-name');
-    if (weaponName) weaponName.innerText = this.weapon.name.toUpperCase();
+    if (weaponName && this.weapon && this.weapon.name) {
+      weaponName.innerText = this.weapon.name.toUpperCase();
+    }
     
     const ammoVal = document.getElementById('hud-ammo-val');
-    if (ammoVal) ammoVal.innerText = `${this.ammoInMag} / ${this.reserveAmmo}`;
+    if (ammoVal) {
+      ammoVal.innerText = `${this.ammoInMag} / ${this.reserveAmmo}`;
+    }
   }
 
   // Damage handling

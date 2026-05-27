@@ -7,153 +7,175 @@ import { Network } from './Network.js';
 
 export class Engine {
   constructor(canvasId, config) {
-    this.canvas = document.getElementById(canvasId);
-    this.ctx = this.canvas.getContext('2d');
-    
-    this.mode = config.mode; // 'online' | 'offline'
-    this.socket = config.socket;
-    
-    // Map dimensions
-    this.mapWidth = 1400;
-    this.mapHeight = 1400;
-    
-    // Seeded map & item configuration
-    this.map = new Map(this.mapWidth, this.mapHeight, config.seed);
-    
-    // Sound & particles setup
-    this.sound = new Sound();
-    this.sound.setVolume((config.settings.volume !== undefined) ? config.settings.volume : 0.5);
-    this.particles = new ParticleEngine();
-    this.particles.setBloodEnabled(config.settings.blood);
-    this.settings = config.settings;
-    
-    // Global identifiers
-    window.LocalPlayerId = config.localPlayerId;
-    window.IsOfflineMode = (this.mode === 'offline');
-    
-    // 4 distinct spawn points (opposite corners of the map)
-    this.spawns = [
-      { x: 150, y: 150 },                         // Team 1, Spawn A
-      { x: this.mapWidth - 150, y: this.mapHeight - 150 }, // Team 2, Spawn A
-      { x: 150, y: this.mapHeight - 150 },         // Team 1, Spawn B
-      { x: this.mapWidth - 150, y: 150 }          // Team 2, Spawn B
-    ];
-    
-    this.players = [];
-    this.localPlayer = null;
-    this.remotePlayers = new Map();
-    
-    const lobbyPlayers = config.players || [
-      { id: config.localPlayerId, name: config.localPlayerName, weapon: config.localWeapon, color: config.localColor }
-    ];
-    
-    lobbyPlayers.forEach((p, idx) => {
-      const spawn = this.spawns[idx % this.spawns.length];
-      const isLocal = p.id === config.localPlayerId;
+    try {
+      this.canvas = document.getElementById(canvasId);
+      this.ctx = this.canvas.getContext('2d');
       
-      const team = (idx % 2 === 0) ? 1 : 2;
-      const isBot = (this.mode === 'offline' && !isLocal);
+      this.mode = config.mode; // 'online' | 'offline'
+      this.socket = config.socket;
       
-      const player = new Player(
-        p.id,
-        spawn.x,
-        spawn.y,
-        p.name,
-        p.weapon || 'pistol',
-        p.color || 'cyan',
-        isLocal,
-        isBot
-      );
+      // Map dimensions
+      this.mapWidth = 1400;
+      this.mapHeight = 1400;
       
-      player.team = team;
+      // Seeded map & item configuration
+      this.map = new Map(this.mapWidth, this.mapHeight, config.seed);
       
-      if (isLocal) {
-        this.localPlayer = player;
-        this.localPlayerIndex = idx;
-      } else {
-        const myIndex = config.localPlayerIndex !== undefined ? config.localPlayerIndex : 0;
-        player.isTeammate = (idx % 2 === myIndex % 2);
-        this.remotePlayers.set(p.id, player);
-      }
-      this.players.push(player);
-    });
-
-    this.bullets = [];
-    
-    // Network component
-    this.network = null;
-    if (this.mode === 'online') {
-      this.network = new Network(
-        this.socket, 
-        this.localPlayer, 
-        null, 
-        this.map, 
-        this.particles, 
-        this.sound, 
-        this
-      );
-    }
-    
-    // Match Stats trackers
-    window.MatchStats = {
-      roundsWon: 0,
-      damageDealt: 0,
-      shotsFired: 0,
-      accuracy: 0,
-      hitsRegistered: 0
-    };
-    
-    // Callback handlers
-    this.onMatchEnd = config.onMatchEnd;
-    this.onKillFeed = config.onKillFeed;
-    
-    // Camera settings
-    this.camera = { x: this.localPlayer.x, y: this.localPlayer.y, shakeX: 0, shakeY: 0 };
-    this.cameraShake = 0;
-    this.zoom = 1.0;
-    
-    // Game state phases
-    this.gameState = 'warmup'; // warmup, countdown, playing, round-over, match-over
-    this.roundNumber = 1;
-    this.scoreSelf = 0;
-    this.scoreOpponent = 0;
-    this.countdownTimer = 3; // countdown seconds
-    this.matchTime = 120; // 2 minutes round time limit
-    
-    // Timing
-    this.lastTime = performance.now();
-    this.roundStartTime = 0;
-    this.countdownStart = 0;
-    this.matchTimerInterval = null;
-    
-    // Controls binding
-    this.keys = {};
-    this.mouse = { x: 0, y: 0, gameX: 0, gameY: 0, angle: 0, clicked: false };
-    
-    // Setup
-    this.resizeCanvas();
-    this.setupControls();
-    
-    // Start warmups
-    this.startRoundCycle();
-    
-    // Begin main animation loop
-    this.active = true;
-    this.loop();
-
-    // Trigger local HUD loadouts
-    this.localPlayer.updateHUD();
-    this.updateScoreboardHUD();
-
-    // Expose bot shot coordinate handler in offline mode
-    if (this.mode === 'offline') {
-      window.OnBotShootCallback = (shootData) => {
-        const bot = this.players.find(p => p.id === shootData.playerId);
-        if (bot) {
-          this.particles.spawnGunCasing(bot.x, bot.y, bot.angle, shootData.weaponKey);
+      // Sound & particles setup
+      this.sound = new Sound();
+      this.sound.setVolume((config.settings.volume !== undefined) ? config.settings.volume : 0.5);
+      this.particles = new ParticleEngine();
+      this.particles.setBloodEnabled(config.settings.blood);
+      this.settings = config.settings;
+      
+      // Global identifiers
+      window.LocalPlayerId = config.localPlayerId;
+      window.IsOfflineMode = (this.mode === 'offline');
+      
+      // 4 distinct spawn points (opposite corners of the map)
+      this.spawns = [
+        { x: 150, y: 150 },                         // Team 1, Spawn A
+        { x: this.mapWidth - 150, y: this.mapHeight - 150 }, // Team 2, Spawn A
+        { x: 150, y: this.mapHeight - 150 },         // Team 1, Spawn B
+        { x: this.mapWidth - 150, y: 150 }          // Team 2, Spawn B
+      ];
+      
+      this.players = [];
+      this.localPlayer = null;
+      this.remotePlayers = new Map();
+      
+      const lobbyPlayers = config.players || [
+        { id: config.localPlayerId, name: config.localPlayerName, weapon: config.localWeapon, color: config.localColor }
+      ];
+      
+      lobbyPlayers.forEach((p, idx) => {
+        const spawn = this.spawns[idx % this.spawns.length];
+        const isLocal = p.id === config.localPlayerId;
+        
+        const team = (idx % 2 === 0) ? 1 : 2;
+        const isBot = (this.mode === 'offline' && !isLocal);
+        
+        const player = new Player(
+          p.id,
+          spawn.x,
+          spawn.y,
+          p.name,
+          p.weapon || 'pistol',
+          p.color || 'cyan',
+          isLocal,
+          isBot
+        );
+        
+        player.team = team;
+        
+        if (isLocal) {
+          this.localPlayer = player;
+          this.localPlayerIndex = idx;
+        } else {
+          const myIndex = config.localPlayerIndex !== undefined ? config.localPlayerIndex : 0;
+          player.isTeammate = (idx % 2 === myIndex % 2);
+          this.remotePlayers.set(p.id, player);
         }
-        this.spawnBulletFromNetwork(shootData);
+        this.players.push(player);
+      });
+
+      this.bullets = [];
+      
+      // Network component
+      this.network = null;
+      if (this.mode === 'online') {
+        this.network = new Network(
+          this.socket, 
+          this.localPlayer, 
+          null, 
+          this.map, 
+          this.particles, 
+          this.sound, 
+          this
+        );
+      }
+      
+      // Match Stats trackers
+      window.MatchStats = {
+        roundsWon: 0,
+        damageDealt: 0,
+        shotsFired: 0,
+        accuracy: 0,
+        hitsRegistered: 0
       };
+      
+      // Callback handlers
+      this.onMatchEnd = config.onMatchEnd;
+      this.onKillFeed = config.onKillFeed;
+      
+      // Camera settings
+      this.camera = { x: this.localPlayer.x, y: this.localPlayer.y, shakeX: 0, shakeY: 0 };
+      this.cameraShake = 0;
+      this.zoom = 1.0;
+      
+      // Game state phases
+      this.gameState = 'warmup'; // warmup, countdown, playing, round-over, match-over
+      this.roundNumber = 1;
+      this.scoreSelf = 0;
+      this.scoreOpponent = 0;
+      this.countdownTimer = 3; // countdown seconds
+      this.matchTime = 120; // 2 minutes round time limit
+      
+      // Timing
+      this.lastTime = performance.now();
+      this.roundStartTime = 0;
+      this.countdownStart = 0;
+      this.matchTimerInterval = null;
+      
+      // Controls binding
+      this.keys = {};
+      this.mouse = { x: 0, y: 0, gameX: 0, gameY: 0, angle: 0, clicked: false };
+      
+      // Setup
+      this.resizeCanvas();
+      this.setupControls();
+      
+      // Start warmups
+      this.startRoundCycle();
+      
+      // Begin main animation loop
+      this.active = true;
+      this.loop();
+
+      // Trigger local HUD loadouts
+      this.localPlayer.updateHUD();
+      this.updateScoreboardHUD();
+
+      // Expose bot shot coordinate handler in offline mode
+      if (this.mode === 'offline') {
+        window.OnBotShootCallback = (shootData) => {
+          const bot = this.players.find(p => p.id === shootData.playerId);
+          if (bot) {
+            this.particles.spawnGunCasing(bot.x, bot.y, bot.angle, shootData.weaponKey);
+          }
+          this.spawnBulletFromNetwork(shootData);
+        };
+      }
+    } catch (e) {
+      console.error("Engine Constructor Error:", e);
+      try {
+        const canvas = document.getElementById(canvasId);
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = 'rgba(10, 10, 15, 0.95)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#ff3c3c';
+        ctx.font = 'bold 20px monospace';
+        ctx.fillText("TACTICSTRIKE CONSTRUCTOR ERROR DETECTED", 20, 50);
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '12px monospace';
+        const lines = (e.stack || e.toString()).split('\n');
+        let y = 90;
+        lines.forEach(line => {
+          ctx.fillText(line, 20, y);
+          y += 18;
+        });
+      } catch(ex) {}
+      throw e;
     }
   }
 
