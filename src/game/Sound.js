@@ -500,4 +500,46 @@ export class Sound {
       noise.stop(t + duration + 0.02);
     } catch(e) { /* audio scheduling error — ignore to protect game loop */ }
   }
+
+  playFlashbangExplosion(distance = 0) {
+    try {
+      this.init();
+      if (!this.ctx) return;
+      if (this.ctx.state === 'suspended') this.ctx.resume();
+
+      const t = this.ctx.currentTime;
+      
+      // 1. Loud low-frequency explosion thump
+      const osc = this.ctx.createOscillator();
+      const oscGain = this.ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(160, t);
+      osc.frequency.exponentialRampToValueAtTime(10, t + 0.3);
+      
+      const distScale = Math.max(0.1, 1 - distance / 1100);
+      oscGain.gain.setValueAtTime(0.85 * distScale, t);
+      oscGain.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
+      
+      osc.connect(oscGain);
+      oscGain.connect(this.masterVolume);
+      osc.start(t);
+      osc.stop(t + 0.4);
+
+      // 2. High-pitched ears ringing feedback tone
+      const ring = this.ctx.createOscillator();
+      const ringGain = this.ctx.createGain();
+      ring.type = 'sine';
+      ring.frequency.setValueAtTime(4500, t);
+      
+      const ringVol = 0.35 * Math.max(0.01, 1 - distance / 700);
+      ringGain.gain.setValueAtTime(ringVol, t);
+      ringGain.gain.linearRampToValueAtTime(ringVol * 0.5, t + 1.0);
+      ringGain.gain.exponentialRampToValueAtTime(0.001, t + 2.5);
+      
+      ring.connect(ringGain);
+      ringGain.connect(this.masterVolume);
+      ring.start(t);
+      ring.stop(t + 2.6);
+    } catch(e) {}
+  }
 }

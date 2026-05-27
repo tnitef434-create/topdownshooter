@@ -79,6 +79,132 @@ const WEAPON_STATS = {
   dmr: { name: 'DMR (M14 EBR)', damage: 45, fireRate: 30, accuracy: 94, magSize: 20, range: 800, reloadTime: 2400, speedMultiplier: 1.0, type: 'Semi-Auto' }
 };
 
+// Weapon locks requirements
+const WEAPON_LOCKS = {
+  dmr: { rp: 1000, rank: 'VETERAN' },
+  sniper: { rp: 1000, rank: 'VETERAN' },
+  lmg: { rp: 4000, rank: 'ELITE' }
+};
+
+const WEAPON_NAMES = {
+  pistol: 'Pistol',
+  rifle: 'Rifle',
+  shotgun: 'Shotgun',
+  sniper: 'Sniper',
+  smg: 'SMG',
+  lmg: 'LMG',
+  dmr: 'DMR'
+};
+
+// Device UUID double-redundant persistence helpers
+function getCookie(name) {
+  const value = `; ${document.cookie}`;
+  const parts = value.split(`; ${name}=`);
+  if (parts.length === 2) return parts.pop().split(';').shift();
+  return null;
+}
+
+function setCookie(name, value, days = 365) {
+  const date = new Date();
+  date.setTime(date.getTime() + (days * 24 * 60 * 60 * 1000));
+  document.cookie = `${name}=${value};expires=${date.toUTCString()};path=/;SameSite=Strict`;
+}
+
+function getOrCreateUUID() {
+  let uuid = safeStorage.getItem('tacticstrike_uuid');
+  if (!uuid) {
+    uuid = getCookie('tacticstrike_uuid');
+  }
+  if (!uuid) {
+    uuid = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+      const r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
+      return v.toString(16);
+    });
+  }
+  safeStorage.setItem('tacticstrike_uuid', uuid);
+  setCookie('tacticstrike_uuid', uuid, 365);
+  return uuid;
+}
+
+function playErrorBeep() {
+  try {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return;
+    const ctx = new AudioContextClass();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(120, ctx.currentTime);
+    gain.gain.setValueAtTime(0.12, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.15);
+  } catch(e) {}
+}
+
+function updateWeaponLocksUI() {
+  const rp = parseInt(safeStorage.getItem('tacticstrike_rp') || '0');
+  
+  // 1. Menu Weapon Buttons
+  const wBtns = document.querySelectorAll('#menu-weapon-selector .weapon-btn');
+  wBtns.forEach(btn => {
+    const weaponKey = btn.dataset.weapon;
+    const req = WEAPON_LOCKS[weaponKey];
+    if (req && rp < req.rp) {
+      btn.classList.add('locked');
+      btn.innerHTML = `🔒 ${WEAPON_NAMES[weaponKey]} <span style="font-size:7px; display:block; color:#ff3c3c; margin-top:2.5px; font-family:var(--font-title); font-weight:bold;">${req.rank}</span>`;
+    } else {
+      btn.classList.remove('locked');
+      btn.innerHTML = WEAPON_NAMES[weaponKey] || weaponKey;
+    }
+  });
+
+  // 2. Lobby Weapon Options
+  const options = document.querySelectorAll('.weapon-option');
+  options.forEach(opt => {
+    const weaponKey = opt.dataset.weapon;
+    const req = WEAPON_LOCKS[weaponKey];
+    let lockBadge = opt.querySelector('.lock-badge');
+    
+    if (req && rp < req.rp) {
+      opt.classList.add('locked');
+      if (!lockBadge) {
+        lockBadge = document.createElement('span');
+        lockBadge.className = 'lock-badge';
+        opt.appendChild(lockBadge);
+      }
+      lockBadge.innerHTML = `🔒 <span style="font-size:8px; font-weight:bold; color:#ff3c3c; margin-left:2px;">${req.rank}</span>`;
+      lockBadge.style.display = 'inline-flex';
+    } else {
+      opt.classList.remove('locked');
+      if (lockBadge) {
+        lockBadge.style.display = 'none';
+      }
+    }
+  });
+
+  // 3. Fallback check: if selected weapon is locked, force select pistol
+  const activeReq = WEAPON_LOCKS[myWeapon];
+  if (activeReq && rp < activeReq.rp) {
+    myWeapon = 'pistol';
+    safeStorage.setItem('tacticstrike_player_weapon', 'pistol');
+    
+    // Highlight pistol buttons
+    wBtns.forEach(b => {
+      if (b.dataset.weapon === 'pistol') b.classList.add('active');
+      else b.classList.remove('active');
+    });
+    options.forEach(o => {
+      if (o.dataset.weapon === 'pistol') o.classList.add('active');
+      else o.classList.remove('active');
+    });
+    updateWeaponStatsUI('pistol');
+  }
+}
+
+
 // Game Instance & Socket State
 let socket = null;
 let gameEngine = null;
@@ -485,10 +611,17 @@ function showScreen(screenKey) {
 function setupWeaponSelector() {
   const options = document.querySelectorAll('.weapon-option');
   options.forEach(opt => {
-    opt.addEventListener('click', () => {
+    opt.addEventListener('click', (e) => {
+      if (opt.classList.contains('locked')) {
+        e.preventDefault();
+        e.stopPropagation();
+        playErrorBeep();
+        return;
+      }
       options.forEach(o => o.classList.remove('active'));
       opt.classList.add('active');
       myWeapon = opt.dataset.weapon;
+      safeStorage.setItem('tacticstrike_player_weapon', myWeapon);
       updateWeaponStatsUI(myWeapon);
       playWeaponSelectMusic();   // ← play deployment music on weapon pick
 
@@ -622,6 +755,43 @@ function connectSocket() {
 
   socket.on('connect', () => {
     console.log('Socket connected.');
+    
+    // Double redundant device sync
+    const uuid = getOrCreateUUID();
+    const rp = parseInt(safeStorage.getItem('tacticstrike_rp') || '0');
+    const career = loadCareerStats();
+    socket.emit('sync-device', {
+      uuid: uuid,
+      rp: rp,
+      wins: career.wins,
+      losses: career.losses,
+      name: myName
+    });
+  });
+
+  socket.on('device-synced', (data) => {
+    console.log('Device synced with database:', data);
+    
+    const localRP = parseInt(safeStorage.getItem('tacticstrike_rp') || '0');
+    const mergedRP = Math.max(localRP, data.rp || 0);
+    safeStorage.setItem('tacticstrike_rp', String(mergedRP));
+    
+    const localCareer = loadCareerStats();
+    const mergedWins = Math.max(localCareer.wins, data.wins || 0);
+    const mergedLosses = Math.max(localCareer.losses, data.losses || 0);
+    saveCareerStats({ wins: mergedWins, losses: mergedLosses });
+    
+    if (data.name && data.name !== 'Operative') {
+      myName = data.name;
+      safeStorage.setItem('tacticstrike_player_name', myName);
+      if (inputs.name) {
+        inputs.name.value = myName;
+      }
+    }
+    
+    updateMenuRankUI();
+    renderCareerStats();
+    updateWeaponLocksUI();
   });
 
   socket.on('register-response', (res) => {
@@ -1346,18 +1516,23 @@ function setupModeSelector() {
 function setupMainMenuWeaponSelector() {
   const wBtns = document.querySelectorAll('#menu-weapon-selector .weapon-btn');
   wBtns.forEach(btn => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', (e) => {
+      if (btn.classList.contains('locked')) {
+        e.preventDefault();
+        e.stopPropagation();
+        playErrorBeep();
+        return;
+      }
       wBtns.forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       myWeapon = btn.dataset.weapon;
+      safeStorage.setItem('tacticstrike_player_weapon', myWeapon);
       playWeaponSelectMusic();
       
       // Sync with lobby weapon option selected
       const lobbyOpts = document.querySelectorAll('.weapon-option');
       lobbyOpts.forEach(opt => {
         if (opt.dataset.weapon === myWeapon) {
-          // Temporarily unbind select-weapon emission so we don't spam if not needed,
-          // but clicking on the option triggers appropriate card highlighting.
           opt.classList.add('active');
         } else {
           opt.classList.remove('active');
@@ -1413,6 +1588,24 @@ document.addEventListener('DOMContentLoaded', () => {
   // Load career stats and rank
   renderCareerStats();
   updateMenuRankUI();
+
+  // Load saved weapon and sync locks
+  const savedWeapon = safeStorage.getItem('tacticstrike_player_weapon') || 'pistol';
+  myWeapon = savedWeapon;
+  updateWeaponLocksUI();
+
+  // Highlight weapon selection in UI
+  const wBtns = document.querySelectorAll('#menu-weapon-selector .weapon-btn');
+  wBtns.forEach(btn => {
+    if (btn.dataset.weapon === myWeapon) btn.classList.add('active');
+    else btn.classList.remove('active');
+  });
+  const lobbyOpts = document.querySelectorAll('.weapon-option');
+  lobbyOpts.forEach(opt => {
+    if (opt.dataset.weapon === myWeapon) opt.classList.add('active');
+    else opt.classList.remove('active');
+  });
+  updateWeaponStatsUI(myWeapon);
 
   // Reset stats button
   const resetBtn = document.getElementById('btn-reset-stats');

@@ -480,6 +480,45 @@ io.on('connection', (socket) => {
     socket.to(currentRoomId).emit('opponent-chat', msg);
   });
 
+  // 13.1 Device Sync & Backup
+  socket.on('sync-device', ({ uuid, rp, wins, losses, name }) => {
+    if (!uuid) return;
+    const id = uuid.toLowerCase();
+    
+    if (!users[id]) {
+      users[id] = {
+        username: name || 'Operative',
+        rp: rp || 0,
+        stats: { wins: wins || 0, losses: losses || 0, rounds: 0, hits: 0, shots: 0 }
+      };
+      saveUsers();
+    } else {
+      const sProfile = users[id];
+      sProfile.rp = Math.max(sProfile.rp || 0, rp || 0);
+      sProfile.stats.wins = Math.max(sProfile.stats.wins || 0, wins || 0);
+      sProfile.stats.losses = Math.max(sProfile.stats.losses || 0, losses || 0);
+      if (name && name !== 'Operative' && (!sProfile.username || sProfile.username === 'Operative')) {
+        sProfile.username = name;
+      }
+      saveUsers();
+    }
+    
+    const sProfile = users[id];
+    socket.emit('device-synced', {
+      rp: sProfile.rp,
+      wins: sProfile.stats.wins,
+      losses: sProfile.stats.losses,
+      name: sProfile.username
+    });
+  });
+
+  // 13.2 Relay Grenade
+  socket.on('throw-grenade', (data) => {
+    if (!currentRoomId) return;
+    data.playerId = socket.id;
+    socket.to(currentRoomId).emit('opponent-throw-grenade', data);
+  });
+
   // 14. Leave Room
   socket.on('leave-room', () => {
     if (currentRoomId) {

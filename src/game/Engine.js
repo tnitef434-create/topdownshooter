@@ -6,6 +6,75 @@ import { Sound } from './Sound.js';
 import { Network } from './Network.js';
 import { CharacterRenderer } from './CharacterRenderer.js';
 
+class FlashGrenade {
+  constructor(x, y, vx, vy, throwerId) {
+    this.x = x;
+    this.y = y;
+    this.vx = vx;
+    this.vy = vy;
+    this.throwerId = throwerId;
+    this.radius = 6;
+    this.friction = 0.98;
+    this.bounceFriction = 0.6;
+    this.timer = 1200; // 1.2s fuse
+    this.creationTime = performance.now();
+    this.active = true;
+  }
+
+  update(map, currentTime) {
+    const elapsed = currentTime - this.creationTime;
+    if (elapsed >= this.timer) {
+      this.active = false;
+      return;
+    }
+
+    this.vx *= this.friction;
+    this.vy *= this.friction;
+
+    const nextX = this.x + this.vx;
+    const nextY = this.y + this.vy;
+
+    const response = map.checkCircleCollision(nextX, nextY, this.radius);
+    if (response.x !== nextX || response.y !== nextY) {
+      const checkX = map.checkCircleCollision(nextX, this.y, this.radius);
+      const checkY = map.checkCircleCollision(this.x, nextY, this.radius);
+      
+      if (checkX.x !== nextX) {
+        this.vx = -this.vx * this.bounceFriction;
+      }
+      if (checkY.y !== nextY) {
+        this.vy = -this.vy * this.bounceFriction;
+      }
+      
+      this.x = response.x;
+      this.y = response.y;
+    } else {
+      this.x = nextX;
+      this.y = nextY;
+    }
+  }
+
+  draw(ctx) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+    ctx.fillStyle = '#2d332f';
+    ctx.strokeStyle = '#66fcf1';
+    ctx.lineWidth = 1.5;
+    ctx.fill();
+    ctx.stroke();
+
+    const isLit = Math.floor(performance.now() / 150) % 2 === 0;
+    if (isLit) {
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, 2, 0, Math.PI * 2);
+      ctx.fillStyle = '#ff3c3c';
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+}
+
 export class Engine {
   constructor(canvasId, config) {
     try {
@@ -85,6 +154,7 @@ export class Engine {
       });
 
       this.bullets = [];
+      this.grenades = [];
       this.replayFrames = [];
       
       // Network component
@@ -99,6 +169,12 @@ export class Engine {
           this.sound, 
           this
         );
+        this.socket.on('opponent-throw-grenade', (data) => {
+          const grenade = new FlashGrenade(data.x, data.y, data.vx, data.vy, data.playerId);
+          this.grenades.push(grenade);
+          const dist = Math.hypot(this.localPlayer.x - data.x, this.localPlayer.y - data.y);
+          this.sound.playMetallicClick(0, 1500, 0.08, 0.2, dist);
+        });
       }
       
       // Match Stats trackers
@@ -213,6 +289,13 @@ export class Engine {
           } catch (ex) {}
         }
       }
+
+      // Throw flash grenade
+      if (e.key === '3') {
+        if (this.localPlayer && this.localPlayer.health > 0) {
+          this.localPlayer.throwFlashbangRequest = true;
+        }
+      }
     };
     this.keyupHandler = (e) => {
       this.keys[e.key.toLowerCase()] = false;
@@ -245,9 +328,18 @@ export class Engine {
       }
     };
 
+    this.wheelHandler = (e) => {
+      const chatInput = document.getElementById('chat-input');
+      if (chatInput && document.activeElement === chatInput) return;
+      if (this.localPlayer && this.localPlayer.health > 0) {
+        this.localPlayer.throwFlashbangRequest = true;
+      }
+    };
+
     window.addEventListener('mousemove', this.mousemoveHandler);
     window.addEventListener('mousedown', this.mousedownHandler);
     window.addEventListener('mouseup', this.mouseupHandler);
+    window.addEventListener('wheel', this.wheelHandler, { passive: true });
   }
 
   destroy() {
@@ -258,6 +350,7 @@ export class Engine {
     window.removeEventListener('mousemove', this.mousemoveHandler);
     window.removeEventListener('mousedown', this.mousedownHandler);
     window.removeEventListener('mouseup', this.mouseupHandler);
+    window.removeEventListener('wheel', this.wheelHandler);
     
     if (this.matchTimerInterval) {
       clearInterval(this.matchTimerInterval);
@@ -265,6 +358,10 @@ export class Engine {
     
     if (this.network) {
       this.network.destroy();
+    }
+
+    if (this.socket) {
+      this.socket.off('opponent-throw-grenade');
     }
     
     this.particles.clear();
@@ -314,6 +411,8 @@ export class Engine {
       p.isReloading = false;
       p.floatingText = null;
       p.isDeadLogged = false;
+      p.flashGrenades = 1;
+      p.flashAlpha = 0;
 
       if (p.isBot) {
         p.botState = 'patrol';
@@ -323,6 +422,7 @@ export class Engine {
     
     // Clear dynamic bullet trails and particles for fresh round
     this.bullets = [];
+    this.grenades = [];
     this.particles.clear();
     this.map.generateMap(); // Regen crate positions
     
@@ -608,6 +708,35 @@ export class Engine {
           }
         });
       }
+
+      // Handle local player throwing a flash grenade
+      if (this.gameState === 'playing' && this.localPlayer.throwFlashbangRequest && this.localPlayer.flashGrenades > 0) {
+        this.localPlayer.throwFlashbangRequest = false;
+        this.localPlayer.flashGrenades--;
+        this.localPlayer.updateHUD();
+
+        const speed = 11;
+        const vx = Math.cos(this.localPlayer.angle) * speed;
+        const vy = Math.sin(this.localPlayer.angle) * speed;
+        
+        const grenade = new FlashGrenade(this.localPlayer.x, this.localPlayer.y, vx, vy, this.localPlayer.id);
+        this.grenades.push(grenade);
+
+        // Play local click/throw sound
+        this.sound.playMetallicClick(0, 1500, 0.08, 0.2);
+
+        // Send to server
+        if (this.mode === 'online') {
+          this.socket.emit('throw-grenade', {
+            x: this.localPlayer.x,
+            y: this.localPlayer.y,
+            vx: vx,
+            vy: vy
+          });
+        }
+      } else {
+        this.localPlayer.throwFlashbangRequest = false;
+      }
     }
 
     // Local Player shooting controller
@@ -661,6 +790,41 @@ export class Engine {
           window.MatchStats.hitsRegistered++;
         }
         this.bullets.splice(i, 1);
+      }
+    }
+
+    // Update active grenades
+    for (let i = this.grenades.length - 1; i >= 0; i--) {
+      const g = this.grenades[i];
+      g.update(this.map, currentTime);
+      
+      if (!g.active) {
+        // Explode!
+        this.particles.spawnFlashbangBurst(g.x, g.y);
+        
+        const dist = Math.hypot(this.localPlayer.x - g.x, this.localPlayer.y - g.y);
+        this.sound.playFlashbangExplosion(dist);
+        
+        if (dist < 800) {
+          this.shakeCamera(Math.max(1, 15 * (1 - dist / 800)));
+        }
+
+        // Apply white screen flash to players in range & Line of Sight
+        this.players.forEach(p => {
+          if (p.health <= 0) return;
+          const pDist = Math.hypot(p.x - g.x, p.y - g.y);
+          if (pDist < 380) {
+            const hasLOS = p.checkLineOfSight(this.map, g.x, g.y, p.x, p.y);
+            if (hasLOS) {
+              p.flashAlpha = 1.0;
+              if (p.isLocal) {
+                p.updateHUD();
+              }
+            }
+          }
+        });
+
+        this.grenades.splice(i, 1);
       }
     }
 
@@ -767,7 +931,8 @@ export class Engine {
           isTeammate: p.isTeammate,
           color: p.colorTheme,
           name: p.name,
-          flashlightActive: p.flashlightActive
+          flashlightActive: p.flashlightActive,
+          flashAlpha: p.flashAlpha
         })),
         bullets: this.bullets.map(b => ({
           x: b.x,
@@ -777,6 +942,10 @@ export class Engine {
           angle: b.angle,
           playerId: b.playerId,
           active: b.active
+        })),
+        grenades: this.grenades.map(g => ({
+          x: g.x,
+          y: g.y
         })),
         particles: this.particles.particles.map(p => ({
           x: p.x,
@@ -1196,6 +1365,23 @@ export class Engine {
     }
     this.ctx.restore();
 
+    // Draw active/snapshot grenades
+    if (frame && frame.grenades) {
+      frame.grenades.forEach(g => {
+        this.ctx.save();
+        this.ctx.beginPath();
+        this.ctx.arc(g.x, g.y, 6, 0, Math.PI * 2);
+        this.ctx.fillStyle = '#2d332f';
+        this.ctx.strokeStyle = '#66fcf1';
+        this.ctx.lineWidth = 1.5;
+        this.ctx.fill();
+        this.ctx.stroke();
+        this.ctx.restore();
+      });
+    } else if (this.grenades) {
+      this.grenades.forEach(g => g.draw(this.ctx));
+    }
+
     // Restore viewport translations
     this.ctx.restore();
 
@@ -1216,6 +1402,22 @@ export class Engine {
       this.ctx.fillRect(0, y, this.canvas.width, 1);
     }
     this.ctx.restore();
+
+    // Render flashbang screen whiteout overlay (2 seconds decay)
+    let currentFlashAlpha = 0;
+    if (frame) {
+      const localSnap = frame.players.find(p => p.isLocal);
+      if (localSnap) currentFlashAlpha = localSnap.flashAlpha || 0;
+    } else if (this.localPlayer) {
+      currentFlashAlpha = this.localPlayer.flashAlpha || 0;
+    }
+
+    if (currentFlashAlpha > 0) {
+      this.ctx.save();
+      this.ctx.fillStyle = `rgba(255, 255, 255, ${currentFlashAlpha})`;
+      this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+      this.ctx.restore();
+    }
 
     // 3. Zone indicator HUD (screen-space overlay)
     if (!frame) {

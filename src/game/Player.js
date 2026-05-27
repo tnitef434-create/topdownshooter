@@ -76,6 +76,9 @@ export class Player {
     this.muzzleFlash = 0; // opacity timer
     this.footstepTimer = 0;
     this.currentSpeed = 0; // tracked for walk animation
+    this.flashGrenades = 1;
+    this.flashAlpha = 0;
+    this.throwFlashbangRequest = false;
     
     // AI Bot State (if isBot)
     this.botTargetX = x;
@@ -131,8 +134,9 @@ export class Player {
       this.handleBotAI(map, soundEngine, currentTime, target, localPlayer);
     }
 
-    // Apply speed multiplier based on carrying weapon weight
-    const speedMod = this.weapon.speedMultiplier;
+    // Apply speed multiplier based on carrying weapon weight and sprint speed mult
+    const isSprinting = this.isLocal && keys && keys['shift'];
+    const speedMod = this.weapon.speedMultiplier * (isSprinting ? 1.35 : 1.0);
     let currentMaxSpeed = this.maxSpeed * speedMod;
 
     // Apply physics
@@ -195,16 +199,26 @@ export class Player {
     if (this.muzzleFlash > 0) {
       this.muzzleFlash -= 0.15;
     }
+
+    // Flashbang opacity decay
+    if (this.flashAlpha > 0) {
+      this.flashAlpha = Math.max(0, this.flashAlpha - 0.008);
+    }
   }
 
   handleLocalInput(keys, mouse, soundEngine, currentTime) {
+    // Sprint check
+    const isSprinting = keys && keys['shift'];
+    const sprintSpeedMult = isSprinting ? 1.35 : 1.0;
+    const sprintAccelMult = isSprinting ? 1.35 : 1.0;
+
     // WASD movement inputs
     let ax = 0;
     let ay = 0;
-    if (keys['w'] || keys['arrowup']) ay -= this.accel;
-    if (keys['s'] || keys['arrowdown']) ay += this.accel;
-    if (keys['a'] || keys['arrowleft']) ax -= this.accel;
-    if (keys['d'] || keys['arrowright']) ax += this.accel;
+    if (keys['w'] || keys['arrowup']) ay -= this.accel * sprintAccelMult;
+    if (keys['s'] || keys['arrowdown']) ay += this.accel * sprintAccelMult;
+    if (keys['a'] || keys['arrowleft']) ax -= this.accel * sprintAccelMult;
+    if (keys['d'] || keys['arrowright']) ax += this.accel * sprintAccelMult;
 
     // Normalize diagonal acceleration
     if (ax !== 0 && ay !== 0) {
@@ -319,6 +333,18 @@ export class Player {
     const ammoVal = document.getElementById('hud-ammo-val');
     if (ammoVal) {
       ammoVal.innerText = `${this.ammoInMag} / ${this.reserveAmmo}`;
+    }
+
+    const flashVal = document.getElementById('hud-flash-val');
+    if (flashVal) {
+      flashVal.innerText = `FLASH [${this.flashGrenades !== undefined ? this.flashGrenades : 1}]`;
+      if (this.flashGrenades <= 0) {
+        flashVal.style.color = '#ff3c3c';
+        flashVal.style.borderColor = 'rgba(255, 60, 60, 0.3)';
+      } else {
+        flashVal.style.color = '#ffd700';
+        flashVal.style.borderColor = 'rgba(255, 215, 0, 0.3)';
+      }
     }
   }
 

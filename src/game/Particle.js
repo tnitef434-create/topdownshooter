@@ -305,4 +305,35 @@ export class ParticleEngine {
       ));
     }
   }
+
+  // 5. Spawning bright flashbang particles
+  spawnFlashbangBurst(x, y) {
+    const numSparks = 30;
+    for (let i = 0; i < numSparks; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = Math.random() * 7 + 3;
+      const vx = Math.cos(angle) * speed;
+      const vy = Math.sin(angle) * speed;
+      const size = Math.random() * 4 + 2;
+      const decay = Math.random() * 0.03 + 0.02;
+      this.particles.push(new Particle(
+        x, y, vx, vy,
+        Math.random() > 0.3 ? '#ffffff' : '#66fcf1',
+        size, 1.0, decay, 'spark'
+      ));
+    }
+    // Add white smoke puffs
+    for (let i = 0; i < 10; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = Math.random() * 2.5;
+      const vx = Math.cos(angle) * speed;
+      const vy = Math.sin(angle) * speed;
+      this.particles.push(new Particle(
+        x, y, vx, vy,
+        'rgba(255, 255, 255, 0.4)',
+        Math.random() * 20 + 10, 1.0, 0.015, 'smoke'
+      ));
+    }
+  }
 }
+
