@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TacticStrike 1v1 | Realistic Top-Down Multiplayer Shooter</title>
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=Orbitron:wght@500;700;900&display=swap" rel="stylesheet">
+  <!-- Style sheet -->
+  <!-- Socket.io client (loaded dynamically via bundler or server, or we can just import from socket.io-client) -->
+  <script type="module" crossorigin src="/assets/index-XIQroJRT.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-B7yp7unh.css">
+</head>
+<body>
+  
+  <div id="app">
+    <!-- 1. Background Grid and Glows -->
+    <div class="bg-effects">
+      <div class="glow glow-1"></div>
+      <div class="glow glow-2"></div>
+      <div class="grid-overlay"></div>
+    </div>
+
+    <!-- 2. Main Menu Screen -->
+    <div id="menu-screen" class="screen active">
+      <div class="menu-container">
+        <header>
+          <h1 class="glitch-title">TACTIC<span>STRIKE</span></h1>
+          <p class="subtitle">Online Top-Down Tactical Shooter</p>
+        </header>
+
+        <!-- Operative Secure Authentication Panel -->
+        <div id="auth-panel" class="card auth-card">
+          <div class="auth-tabs">
+            <button id="tab-login" class="auth-tab active">LOGIN</button>
+            <button id="tab-register" class="auth-tab">REGISTER</button>
+          </div>
+          
+          <div class="auth-form" id="form-login">
+            <div class="input-group">
+              <label for="login-username">OPERATIVE ID</label>
+              <input type="text" id="login-username" placeholder="Codename..." maxlength="15">
+            </div>
+            <div class="input-group">
+              <label for="login-password">SECURE KEY</label>
+              <input type="password" id="login-password" placeholder="Passkey...">
+            </div>
+            <button id="btn-login-submit" class="btn primary" style="width: 100%; margin-top: 10px;">AUTHORIZE</button>
+          </div>
+
+          <div class="auth-form hidden" id="form-register">
+            <div class="input-group">
+              <label for="reg-username">NEW CODENAME</label>
+              <input type="text" id="reg-username" placeholder="Codename..." maxlength="15">
+            </div>
+            <div class="input-group">
+              <label for="reg-password">SECURE PASSKEY</label>
+              <input type="password" id="reg-password" placeholder="Passkey...">
+            </div>
+            <button id="btn-register-submit" class="btn secondary" style="width: 100%; margin-top: 10px;">REGISTER OPERATIVE</button>
+          </div>
+          
+          <div class="auth-footer" style="margin-top: 12px; text-align: center;">
+            <button id="btn-guest-play" class="btn-text">BYPASS AUTHENTICATION (PLAY AS GUEST)</button>
+          </div>
+        </div>
+
+        <!-- Logged In / Profile Panel (Hidden by default) -->
+        <div id="profile-panel" class="card profile-card hidden">
+          <div class="profile-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+            <span class="profile-label" style="font-family: var(--font-title); font-size: 10px; color: var(--neon-teal); letter-spacing: 1px;">OPERATIVE ONLINE</span>
+            <button id="btn-logout" class="btn-text" style="color: var(--neon-red); font-size: 10px; padding: 0;">LOGOUT</button>
+          </div>
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+            <span id="profile-codename" class="profile-name" style="font-family: var(--font-title); font-size: 18px; color: var(--neon-cyan); letter-spacing: 1px; font-weight: 700;">VIPER</span>
+          </div>
+          <div class="profile-stats" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; border-top: 1px solid var(--glass-border); padding-top: 10px;">
+            <div class="p-stat" style="display: flex; flex-direction: column; align-items: center;"><span style="font-size: 9px; color: var(--text-muted);">WINS</span><span id="stat-profile-wins" style="font-family: var(--font-title); font-size: 15px; color: var(--neon-green); font-weight: 700;">0</span></div>
+            <div class="p-stat" style="display: flex; flex-direction: column; align-items: center;"><span style="font-size: 9px; color: var(--text-muted);">ROUNDS</span><span id="stat-profile-rounds" style="font-family: var(--font-title); font-size: 15px; color: white; font-weight: 700;">0</span></div>
+            <div class="p-stat" style="display: flex; flex-direction: column; align-items: center;"><span style="font-size: 9px; color: var(--text-muted);">ACCURACY</span><span id="stat-profile-acc" style="font-family: var(--font-title); font-size: 15px; color: var(--neon-yellow); font-weight: 700;">0%</span></div>
+          </div>
+        </div>
+
+        <input type="hidden" id="player-name-input" value="Operative">
+
+
+        <div class="card mode-card" style="padding: 16px 24px; display: flex; flex-direction: column; gap: 8px;">
+          <label style="font-family: var(--font-title); font-size: 11px; letter-spacing: 1.5px; color: var(--neon-teal);">MATCH TYPE</label>
+          <div class="mode-selector" style="display: flex; gap: 20px;">
+            <label class="radio-container" style="display: flex; align-items: center; gap: 8px; font-family: var(--font-title); font-size: 13px; cursor: pointer; letter-spacing: 1px;">
+              <input type="radio" name="match-mode" value="1v1" checked style="accent-color: var(--neon-cyan);">
+              1v1 DUEL
+            </label>
+            <label class="radio-container" style="display: flex; align-items: center; gap: 8px; font-family: var(--font-title); font-size: 13px; cursor: pointer; letter-spacing: 1px;">
+              <input type="radio" name="match-mode" value="2v2" style="accent-color: var(--neon-cyan);">
+              2v2 SQUAD
+            </label>
+          </div>
+        </div>
+
+        <div class="menu-options">
+          <button id="btn-quick-match" class="btn primary">
+            <span class="btn-glow"></span>
+            QUICK MATCH
+          </button>
+          
+          <div class="multiplayer-row">
+            <button id="btn-create-room" class="btn secondary">CREATE ROOM</button>
+            <div class="join-group">
+              <input type="text" id="room-code-input" placeholder="ROOM CODE" maxlength="5">
+              <button id="btn-join-room" class="btn secondary">JOIN</button>
+            </div>
+          </div>
+
+          <button id="btn-practice-bot" class="btn tertiary">
+            PRACTICE VS BOT (OFFLINE)
+          </button>
+        </div>
+
+        <footer>
+          <button id="btn-open-settings" class="btn-text">SETTINGS</button>
+          <span class="divider">|</span>
+          <button id="btn-toggle-mute" class="btn-text">MUTE MUSIC</button>
+          <span class="divider">|</span>
+          <span class="version">v1.0.0 Stable</span>
+        </footer>
+      </div>
+    </div>
+
+    <!-- 3. Lobby Screen -->
+    <div id="lobby-screen" class="screen">
+      <div class="lobby-container">
+        <div class="lobby-header">
+          <h2>OPERATION LOBBY</h2>
+          <div class="room-display">
+            <span>ROOM CODE:</span>
+            <span id="room-code-display" class="code">-----</span>
+            <button id="btn-copy-code" class="btn-icon" title="Copy Code">📋</button>
+          </div>
+        </div>
+
+        <div class="lobby-main">
+          <!-- Left side: Player States -->
+          <div class="players-panel">
+            <h3>OPERATIVES</h3>
+            <div id="lobby-players-list" class="players-list">
+              <!-- Rebuilt dynamically by javascript -->
+            </div>
+          </div>
+
+          <!-- Right side: Weapon Selection -->
+          <div class="weapon-panel">
+            <h3>SELECT LOADOUT</h3>
+            <div class="weapon-selector">
+              <div class="weapon-option active" data-weapon="pistol">
+                <div class="weapon-info">
+                  <span class="weapon-name">Pistol (Tactical 9mm)</span>
+                  <span class="weapon-type">Semi-Auto</span>
+                </div>
+              </div>
+              <div class="weapon-option" data-weapon="rifle">
+                <div class="weapon-info">
+                  <span class="weapon-name">Assault Rifle (M4A1)</span>
+                  <span class="weapon-type">Automatic</span>
+                </div>
+              </div>
+              <div class="weapon-option" data-weapon="shotgun">
+                <div class="weapon-info">
+                  <span class="weapon-name">Shotgun (Remington 870)</span>
+                  <span class="weapon-type">Pump-Action</span>
+                </div>
+              </div>
+              <div class="weapon-option" data-weapon="sniper">
+                <div class="weapon-info">
+                  <span class="weapon-name">Sniper Rifle (AWM)</span>
+                  <span class="weapon-type">Bolt-Action</span>
+                </div>
+              </div>
+              <div class="weapon-option" data-weapon="smg">
+                <div class="weapon-info">
+                  <span class="weapon-name">SMG (MP5)</span>
+                  <span class="weapon-type">Automatic</span>
+                </div>
+              </div>
+              <div class="weapon-option" data-weapon="lmg">
+                <div class="weapon-info">
+                  <span class="weapon-name">LMG (M249)</span>
+                  <span class="weapon-type">Automatic</span>
+                </div>
+              </div>
+              <div class="weapon-option" data-weapon="dmr">
+                <div class="weapon-info">
+                  <span class="weapon-name">DMR (M14 EBR)</span>
+                  <span class="weapon-type">Semi-Auto</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Color Selection Panel -->
+            <h3 style="margin-top: 15px; font-family: var(--font-title); font-size: 14px; color: var(--neon-teal); letter-spacing: 1.5px; border-left: 3px solid var(--neon-cyan); padding-left: 10px;">OPERATIVE COLOR</h3>
+            <div id="lobby-color-selector" class="color-selector" style="display: flex; gap: 10px; margin-top: 10px; margin-bottom: 5px;">
+              <div class="color-option active" data-color="cyan" style="border: 2px solid #66fcf1; width: 30px; height: 30px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; background: rgba(102, 252, 241, 0.2);"><span style="display: block; width: 14px; height: 14px; border-radius: 50%; background: #66fcf1;"></span></div>
+              <div class="color-option" data-color="green" style="border: 2px solid transparent; width: 30px; height: 30px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; background: rgba(57, 219, 20, 0.2);"><span style="display: block; width: 14px; height: 14px; border-radius: 50%; background: #39db14;"></span></div>
+              <div class="color-option" data-color="purple" style="border: 2px solid transparent; width: 30px; height: 30px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; background: rgba(157, 59, 255, 0.2);"><span style="display: block; width: 14px; height: 14px; border-radius: 50%; background: #9d3bff;"></span></div>
+              <div class="color-option" data-color="orange" style="border: 2px solid transparent; width: 30px; height: 30px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; background: rgba(255, 127, 59, 0.2);"><span style="display: block; width: 14px; height: 14px; border-radius: 50%; background: #ff7f3b;"></span></div>
+              <div class="color-option" data-color="yellow" style="border: 2px solid transparent; width: 30px; height: 30px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; background: rgba(255, 215, 0, 0.2);"><span style="display: block; width: 14px; height: 14px; border-radius: 50%; background: #ffd700;"></span></div>
+              <div class="color-option" data-color="red" style="border: 2px solid transparent; width: 30px; height: 30px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; background: rgba(255, 60, 60, 0.2);"><span style="display: block; width: 14px; height: 14px; border-radius: 50%; background: #ff3c3c;"></span></div>
+            </div>
+
+            <!-- Weapon Details / Stats -->
+            <div id="weapon-stats-display" class="weapon-stats">
+              <div class="stat-row">
+                <span>DAMAGE:</span>
+                <div class="stat-bar"><div class="bar-fill" style="width: 25%"></div></div>
+              </div>
+              <div class="stat-row">
+                <span>FIRE RATE:</span>
+                <div class="stat-bar"><div class="bar-fill" style="width: 40%"></div></div>
+              </div>
+              <div class="stat-row">
+                <span>ACCURACY:</span>
+                <div class="stat-bar"><div class="bar-fill" style="width: 90%"></div></div>
+              </div>
+              <div class="stat-row">
+                <span>MAG CAPACITY:</span>
+                <span class="stat-val">12 rounds</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="lobby-footer">
+          <button id="btn-leave-lobby" class="btn secondary">LEAVE LOBBY</button>
+          <button id="btn-ready-toggle" class="btn primary">READY TO DEPLOY</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 4. Game Screen -->
+    <div id="game-screen" class="screen">
+      <div id="game-container">
+        <canvas id="game-canvas"></canvas>
+
+        <!-- Dynamic Game HUD Overlay -->
+        <div class="game-hud">
+          <!-- Top Center: Match Status / Timer -->
+          <div class="hud-top">
+            <div class="score-display">
+              <span id="score-self" class="score">0</span>
+              <span class="score-sep">-</span>
+              <span id="score-opponent" class="score">0</span>
+            </div>
+            <div class="timer-display">
+              <span id="game-timer">02:00</span>
+            </div>
+            <div id="hud-status" class="status-alert">GET READY!</div>
+          </div>
+
+          <!-- Bottom Left: Self Status -->
+          <div class="hud-bottom-left">
+            <div class="operative-badge">
+              <div class="op-indicator online"></div>
+              <span id="hud-self-name">OPERATIVE A</span>
+            </div>
+            <div class="bars-container">
+              <div class="hud-bar-wrapper">
+                <span class="bar-label">HP</span>
+                <div class="hud-bar hp-bar"><div id="hud-self-hp" class="bar-fill hp" style="width: 100%"></div></div>
+                <span id="hud-self-hp-text" class="bar-text">100</span>
+              </div>
+            </div>
+            <div class="ammo-display">
+              <span id="hud-weapon-name" class="weapon-active">TACTICAL 9MM</span>
+              <span id="hud-ammo-val" class="ammo-count">12 / 12</span>
+              <div id="reload-indicator" class="reload-progress" style="display: none;">
+                <div class="reload-wheel"></div>
+                <span>RELOADING</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Bottom Right: Opponent Status -->
+          <div class="hud-bottom-right">
+            <div class="operative-badge right-aligned">
+              <span id="hud-opponent-name">OPPONENT</span>
+              <div id="opponent-indicator" class="op-indicator offline"></div>
+            </div>
+            <div class="bars-container right-aligned">
+              <div class="hud-bar-wrapper">
+                <div class="hud-bar hp-bar opponent"><div id="hud-opponent-hp" class="bar-fill hp" style="width: 100%"></div></div>
+                <span class="bar-label">HP</span>
+              </div>
+            </div>
+            <div class="opponent-weapon-display">
+              <span id="hud-opponent-weapon">PISTOL</span>
+            </div>
+          </div>
+
+          <!-- Kill Feed Notifications (top right) -->
+          <div id="kill-feed" class="kill-feed"></div>
+
+          <!-- Chat Drawer -->
+          <div id="chat-drawer" class="chat-drawer">
+            <div id="chat-messages" class="chat-messages"></div>
+            <input type="text" id="chat-input" placeholder="Press Enter to send chat..." maxlength="50">
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 5. Game Over / Scoreboard Screen Modal -->
+    <div id="game-over-modal" class="modal-overlay">
+      <div class="modal-card">
+        <h2 id="match-result-title" class="result-title win">MISSION ACCOMPLISHED</h2>
+        <p id="match-result-subtitle" class="result-subtitle">You eliminated the target operative</p>
+        
+        <div class="match-stats-table">
+          <h3>DEBRIEFING REPORT</h3>
+          <div class="stats-row">
+            <span>Rounds Won</span>
+            <span id="stat-rounds-won">0</span>
+          </div>
+          <div class="stats-row">
+            <span>Damage Dealt</span>
+            <span id="stat-damage-dealt">0</span>
+          </div>
+          <div class="stats-row">
+            <span>Accuracy</span>
+            <span id="stat-accuracy">0%</span>
+          </div>
+          <div class="stats-row">
+            <span>Shots Fired</span>
+            <span id="stat-shots-fired">0</span>
+          </div>
+        </div>
+
+        <div class="modal-actions">
+          <button id="btn-return-lobby" class="btn primary">RETURN TO LOBBY</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 6. Settings Screen Modal -->
+    <div id="settings-modal" class="modal-overlay">
+      <div class="modal-card settings-card">
+        <h2>GAME SETTINGS</h2>
+        
+        <div class="settings-body">
+          <div class="setting-group">
+            <label for="setting-volume">Sound FX Volume</label>
+            <input type="range" id="setting-volume" min="0" max="100" value="50">
+            <span id="volume-val">50%</span>
+          </div>
+
+          <div class="setting-group">
+            <label for="setting-server-url">Multiplayer Server URL (Render / Railway / Glitch)</label>
+            <input type="text" id="setting-server-url" placeholder="Leave empty for same-origin" style="background: rgba(0, 0, 0, 0.4); border: 1px solid var(--glass-border); padding: 10px; border-radius: 4px; color: white; font-size: 13px; outline: none; transition: border-color 0.2s;">
+          </div>
+
+          <div class="setting-group checkbox-group">
+            <label class="checkbox-container">
+              Enable Visual Blood Splatter
+              <input type="checkbox" id="setting-blood" checked>
+              <span class="checkmark"></span>
+            </label>
+          </div>
+
+          <div class="setting-group checkbox-group">
+            <label class="checkbox-container">
+              Enable Real-time Shadows (Dynamic Lighting)
+              <input type="checkbox" id="setting-shadows" checked>
+              <span class="checkmark"></span>
+            </label>
+          </div>
+
+          <div class="setting-group checkbox-group">
+            <label class="checkbox-container">
+              Laser Sight Indicator
+              <input type="checkbox" id="setting-laser" checked>
+              <span class="checkmark"></span>
+            </label>
+          </div>
+
+          <div class="setting-group checkbox-group">
+            <label class="checkbox-container">
+              Mute Background Music
+              <input type="checkbox" id="setting-mute-music">
+              <span class="checkmark"></span>
+            </label>
+          </div>
+
+          <div class="setting-group checkbox-group">
+            <label class="checkbox-container">
+              Mute Sound Effects
+              <input type="checkbox" id="setting-mute-sfx">
+              <span class="checkmark"></span>
+            </label>
+          </div>
+
+          <div class="controls-guide">
+            <h3>KEYBOARD & MOUSE CONTROLS</h3>
+            <ul>
+              <li><strong>WASD</strong>: Move Operative</li>
+              <li><strong>Mouse movement</strong>: Aim weapon</li>
+              <li><strong>Left-Click</strong>: Shoot weapon</li>
+              <li><strong>R key</strong>: Reload magazine</li>
+              <li><strong>Enter key</strong>: Open chat / Send message</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="modal-actions">
+          <button id="btn-close-settings" class="btn primary">SAVE & CLOSE</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Client-side Socket.io is imported dynamically inside main.js via build. -->
+</body>
+</html>
