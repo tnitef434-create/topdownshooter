@@ -82,52 +82,66 @@ function initSettings() {
       const parsed = JSON.parse(savedSettings);
       Object.assign(gameSettings, parsed);
       
-      settings.volume.value = gameSettings.volume * 100;
-      settings.volumeVal.innerText = `${Math.round(gameSettings.volume * 100)}%`;
-      settings.blood.checked = gameSettings.blood;
-      settings.shadows.checked = gameSettings.shadows;
-      settings.laser.checked = gameSettings.laser;
-      settings.serverUrl.value = gameSettings.serverUrl || '';
+      if (settings.volume) settings.volume.value = gameSettings.volume * 100;
+      if (settings.volumeVal) settings.volumeVal.innerText = `${Math.round(gameSettings.volume * 100)}%`;
+      if (settings.blood) settings.blood.checked = gameSettings.blood;
+      if (settings.shadows) settings.shadows.checked = gameSettings.shadows;
+      if (settings.laser) settings.laser.checked = gameSettings.laser;
+      if (settings.serverUrl) settings.serverUrl.value = gameSettings.serverUrl || '';
     } catch (e) {
       console.error(e);
     }
   }
 
-  // Bind settings UI changes
-  settings.serverUrl.addEventListener('input', (e) => {
-    gameSettings.serverUrl = e.target.value.trim();
-    saveSettings();
-  });
+  // Bind settings UI changes safely
+  if (settings.serverUrl) {
+    settings.serverUrl.addEventListener('input', (e) => {
+      gameSettings.serverUrl = e.target.value.trim();
+      saveSettings();
+    });
+  }
 
-  settings.volume.addEventListener('input', (e) => {
-    const val = parseInt(e.target.value);
-    gameSettings.volume = val / 100;
-    settings.volumeVal.innerText = `${val}%`;
-    saveSettings();
-  });
+  if (settings.volume) {
+    settings.volume.addEventListener('input', (e) => {
+      const val = parseInt(e.target.value);
+      gameSettings.volume = val / 100;
+      if (settings.volumeVal) settings.volumeVal.innerText = `${val}%`;
+      saveSettings();
+    });
+  }
 
-  settings.blood.addEventListener('change', (e) => {
-    gameSettings.blood = e.target.checked;
-    saveSettings();
-  });
+  if (settings.blood) {
+    settings.blood.addEventListener('change', (e) => {
+      gameSettings.blood = e.target.checked;
+      saveSettings();
+    });
+  }
 
-  settings.shadows.addEventListener('change', (e) => {
-    gameSettings.shadows = e.target.checked;
-    saveSettings();
-  });
+  if (settings.shadows) {
+    settings.shadows.addEventListener('change', (e) => {
+      gameSettings.shadows = e.target.checked;
+      saveSettings();
+    });
+  }
 
-  settings.laser.addEventListener('change', (e) => {
-    gameSettings.laser = e.target.checked;
-    saveSettings();
-  });
+  if (settings.laser) {
+    settings.laser.addEventListener('change', (e) => {
+      gameSettings.laser = e.target.checked;
+      saveSettings();
+    });
+  }
 
-  btns.openSettings.addEventListener('click', () => {
-    settings.modal.classList.add('active');
-  });
+  if (btns.openSettings) {
+    btns.openSettings.addEventListener('click', () => {
+      if (settings.modal) settings.modal.classList.add('active');
+    });
+  }
 
-  btns.closeSettings.addEventListener('click', () => {
-    settings.modal.classList.remove('active');
-  });
+  if (btns.closeSettings) {
+    btns.closeSettings.addEventListener('click', () => {
+      if (settings.modal) settings.modal.classList.remove('active');
+    });
+  }
 }
 
 function saveSettings() {
@@ -383,118 +397,140 @@ function handleMatchEnd(results) {
 // UI Event Handlers
 function setupUIListeners() {
   // Set operative name change
-  inputs.name.addEventListener('change', () => {
-    myName = inputs.name.value.trim() || 'Operative';
-    localStorage.setItem('tacticstrike_player_name', myName);
-  });
+  if (inputs.name) {
+    inputs.name.addEventListener('change', () => {
+      myName = inputs.name.value.trim() || 'Operative';
+      localStorage.setItem('tacticstrike_player_name', myName);
+    });
+  }
 
   // Practice Bot
-  btns.practiceBot.addEventListener('click', () => {
-    myName = inputs.name.value.trim() || 'Operative';
-    localStorage.setItem('tacticstrike_player_name', myName);
-    startOfflineMode();
-  });
+  if (btns.practiceBot) {
+    btns.practiceBot.addEventListener('click', () => {
+      if (inputs.name) myName = inputs.name.value.trim() || 'Operative';
+      localStorage.setItem('tacticstrike_player_name', myName);
+      startOfflineMode();
+    });
+  }
 
   // Create Room
-  btns.createRoom.addEventListener('click', () => {
-    myName = inputs.name.value.trim() || 'Operative';
-    localStorage.setItem('tacticstrike_player_name', myName);
-    connectSocket();
-    if (socket) {
-      socket.emit('create-room', { playerName: myName });
-    }
-  });
+  if (btns.createRoom) {
+    btns.createRoom.addEventListener('click', () => {
+      if (inputs.name) myName = inputs.name.value.trim() || 'Operative';
+      localStorage.setItem('tacticstrike_player_name', myName);
+      connectSocket();
+      if (socket) {
+        socket.emit('create-room', { playerName: myName });
+      }
+    });
+  }
 
   // Join Room
-  btns.joinRoom.addEventListener('click', () => {
-    const code = inputs.roomCode.value.toUpperCase().trim();
-    if (!code || code.length !== 5) {
-      alert('Please enter a valid 5-character room code.');
-      return;
-    }
-    myName = inputs.name.value.trim() || 'Operative';
-    localStorage.setItem('tacticstrike_player_name', myName);
-    connectSocket();
-    if (socket) {
-      socket.emit('join-room', { roomId: code, playerName: myName });
-    }
-  });
+  if (btns.joinRoom) {
+    btns.joinRoom.addEventListener('click', () => {
+      const code = inputs.roomCode ? inputs.roomCode.value.toUpperCase().trim() : '';
+      if (!code || code.length !== 5) {
+        alert('Please enter a valid 5-character room code.');
+        return;
+      }
+      if (inputs.name) myName = inputs.name.value.trim() || 'Operative';
+      localStorage.setItem('tacticstrike_player_name', myName);
+      connectSocket();
+      if (socket) {
+        socket.emit('join-room', { roomId: code, playerName: myName });
+      }
+    });
+  }
 
   // Quick Match
-  btns.quickMatch.addEventListener('click', () => {
-    myName = inputs.name.value.trim() || 'Operative';
-    localStorage.setItem('tacticstrike_player_name', myName);
-    connectSocket();
-    if (socket) {
-      socket.emit('auto-match', { playerName: myName });
-    }
-  });
+  if (btns.quickMatch) {
+    btns.quickMatch.addEventListener('click', () => {
+      if (inputs.name) myName = inputs.name.value.trim() || 'Operative';
+      localStorage.setItem('tacticstrike_player_name', myName);
+      connectSocket();
+      if (socket) {
+        socket.emit('auto-match', { playerName: myName });
+      }
+    });
+  }
 
   // Leave Lobby
-  btns.leaveLobby.addEventListener('click', () => {
-    if (socket && currentRoom) {
-      socket.emit('leave-room');
-    }
-    disconnectSocket();
-    showScreen('menu');
-  });
-
-  // Ready Up Toggle
-  btns.readyToggle.addEventListener('click', () => {
-    if (socket && currentRoom) {
-      socket.emit('player-ready', { ready: !isReady });
-    }
-  });
-
-  // Copy Room Code
-  btns.copyCode.addEventListener('click', () => {
-    if (currentRoom) {
-      navigator.clipboard.writeText(currentRoom).then(() => {
-        btns.copyCode.innerText = '✅';
-        setTimeout(() => btns.copyCode.innerText = '📋', 1500);
-      });
-    }
-  });
-
-  // Return to Lobby after game over
-  btns.returnLobby.addEventListener('click', () => {
-    gameOverModal.classList.remove('active');
-    if (gameEngine) {
-      gameEngine.destroy();
-      gameEngine = null;
-    }
-    if (socket && currentRoom) {
-      showScreen('lobby');
-      isReady = false;
-      updateWeaponStatsUI(myWeapon);
-    } else {
-      // Offline mode goes back to main menu
+  if (btns.leaveLobby) {
+    btns.leaveLobby.addEventListener('click', () => {
+      if (socket && currentRoom) {
+        socket.emit('leave-room');
+      }
       disconnectSocket();
       showScreen('menu');
-    }
-  });
+    });
+  }
+
+  // Ready Up Toggle
+  if (btns.readyToggle) {
+    btns.readyToggle.addEventListener('click', () => {
+      if (socket && currentRoom) {
+        socket.emit('player-ready', { ready: !isReady });
+      }
+    });
+  }
+
+  // Copy Room Code
+  if (btns.copyCode) {
+    btns.copyCode.addEventListener('click', () => {
+      if (currentRoom) {
+        navigator.clipboard.writeText(currentRoom).then(() => {
+          btns.copyCode.innerText = '✅';
+          setTimeout(() => btns.copyCode.innerText = '📋', 1500);
+        });
+      }
+    });
+  }
+
+  // Return to Lobby after game over
+  if (btns.returnLobby) {
+    btns.returnLobby.addEventListener('click', () => {
+      if (gameOverModal) gameOverModal.classList.remove('active');
+      if (gameEngine) {
+        gameEngine.destroy();
+        gameEngine = null;
+      }
+      if (socket && currentRoom) {
+        showScreen('lobby');
+        isReady = false;
+        updateWeaponStatsUI(myWeapon);
+      } else {
+        // Offline mode goes back to main menu
+        disconnectSocket();
+        showScreen('menu');
+      }
+    });
+  }
 
   // Keyboard binding for chat focus
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
-      if (document.activeElement === inputs.chat) {
+      if (inputs.chat && document.activeElement === inputs.chat) {
         // Send message
         sendChatMessage();
-      } else if (screens.game.classList.contains('active')) {
+      } else if (screens.game && screens.game.classList.contains('active')) {
         // Focus chat input
-        displays.chatDrawer.classList.add('active');
-        inputs.chat.focus();
+        if (displays.chatDrawer && inputs.chat) {
+          displays.chatDrawer.classList.add('active');
+          inputs.chat.focus();
+        }
       }
     }
   });
 
-  inputs.chat.addEventListener('blur', () => {
-    setTimeout(() => {
-      if (document.activeElement !== inputs.chat) {
-        displays.chatDrawer.classList.remove('active');
-      }
-    }, 100);
-  });
+  if (inputs.chat) {
+    inputs.chat.addEventListener('blur', () => {
+      setTimeout(() => {
+        if (inputs.chat && document.activeElement !== inputs.chat) {
+          if (displays.chatDrawer) displays.chatDrawer.classList.remove('active');
+        }
+      }, 100);
+    });
+  }
 }
 
 // 7. Chat Utilities
