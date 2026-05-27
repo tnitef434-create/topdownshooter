@@ -115,6 +115,23 @@ menuMusic.loop = true;
 let musicStarted = false;
 let isMusicMuted = false;
 
+// Weapon Select Music (plays once when a weapon card is clicked)
+const weaponSelectMusic = new Audio('/Deployment_Sequence.mp3');
+weaponSelectMusic.loop = false;
+weaponSelectMusic.volume = 0.18;
+
+function playWeaponSelectMusic() {
+  if (isMusicMuted) return;
+  try {
+    weaponSelectMusic.currentTime = 0;
+    weaponSelectMusic.play().catch(() => {});
+  } catch(e) {}
+}
+
+// Ranked Matchmaking state
+let rankSearchExpanded = false;
+let rankSearchTimer = null;
+
 // Fallback looping guarantee
 menuMusic.addEventListener('ended', () => {
   if (!isMusicMuted) {
@@ -305,6 +322,7 @@ function setupWeaponSelector() {
       opt.classList.add('active');
       myWeapon = opt.dataset.weapon;
       updateWeaponStatsUI(myWeapon);
+      playWeaponSelectMusic();   // ← play deployment music on weapon pick
 
       // Notify server if in a lobby
       if (socket && currentRoom) {
@@ -477,6 +495,9 @@ function connectSocket() {
     showScreen('lobby');
     updateLobbyUI(players);
     addSystemChatMessage(`Joined lobby: ${roomId}`);
+    // Cancel rank expansion timer
+    if (rankSearchTimer) { clearTimeout(rankSearchTimer); rankSearchTimer = null; }
+    rankSearchExpanded = false;
   });
 
   socket.on('room-error', (msg) => {
@@ -630,6 +651,34 @@ function getRandomWeapon() {
 
   const shotsFiredEl = document.getElementById('stat-shots-fired');
   if (shotsFiredEl) shotsFiredEl.innerText = results.shotsFired || 0;
+
+  // ── Rank / RP Panel ─────────────────────────────────────────────────────
+  const rankPanel = document.getElementById('rank-result-panel');
+  if (rankPanel && results.newRank) {
+    const rk = results.newRank;
+    const delta = results.rpDelta || 0;
+    const deltaStr = delta >= 0 ? `+${delta} RP` : `${delta} RP`;
+    const deltaColor = delta >= 0 ? '#39ff14' : '#ff3c3c';
+    rankPanel.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="font-size:22px;color:${rk.color};">${rk.icon}</span>
+          <div>
+            <div style="font-family:var(--font-title);font-size:11px;color:var(--text-muted);letter-spacing:1px;">CURRENT RANK</div>
+            <div style="font-family:var(--font-title);font-size:18px;color:${rk.color};font-weight:700;letter-spacing:2px;">${rk.label}</div>
+          </div>
+        </div>
+        <div style="text-align:right;">
+          <div style="font-family:var(--font-title);font-size:11px;color:var(--text-muted);">RANK POINTS</div>
+          <div style="font-family:var(--font-title);font-size:16px;color:#fff;font-weight:700;">${results.newRP} RP</div>
+          <div style="font-size:12px;color:${deltaColor};font-family:var(--font-title);margin-top:2px;">${deltaStr}</div>
+        </div>
+      </div>
+      ${results.rankChanged ? `<div style="margin-top:10px;padding:6px 12px;background:rgba(${delta>=0?'57,255,20':'255,60,60'},0.12);border:1px solid ${delta>=0?'#39ff14':'#ff3c3c'};border-radius:6px;font-family:var(--font-title);font-size:10px;color:${delta>=0?'#39ff14':'#ff3c3c'};text-align:center;letter-spacing:1px;">${delta>=0?'▲ RANK UP!':'▼ RANK DOWN'} ${results.oldRankLabel} → ${rk.label}</div>` : ''}
+    `;
+    rankPanel.style.display = 'block';
+  }
+  // ─────────────────────────────────────────────────────────────────────────
 }
 
 // UI Event Handlers
@@ -700,14 +749,29 @@ function setupUIListeners() {
     });
   }
 
-  // Quick Match
+  // Quick Match — ranked matchmaking with 15-second rank expansion
   if (btns.quickMatch) {
     btns.quickMatch.addEventListener('click', () => {
       if (inputs.name) myName = inputs.name.value.trim() || 'Operative';
       safeStorage.setItem('tacticstrike_player_name', myName);
       connectSocket();
       if (socket) {
-        socket.emit('auto-match', { playerName: myName, mode: myMode, color: myColor });
+        // Get current RP from localStorage
+        const myRP = parseInt(localStorage.getItem('tacticstrike_rp') || '0');
+        rankSearchExpanded = false;
+
+        // Emit first with strict rank bracket
+        socket.emit('auto-match', { playerName: myName, mode: myMode, color: myColor, rp: myRP, rankStrict: true });
+
+        // After 15 s, expand search to any rank
+        if (rankSearchTimer) clearTimeout(rankSearchTimer);
+        rankSearchTimer = setTimeout(() => {
+          if (!rankSearchExpanded && socket && socket.connected && !currentRoom) {
+            rankSearchExpanded = true;
+            socket.emit('auto-match', { playerName: myName, mode: myMode, color: myColor, rp: myRP, rankStrict: false });
+            addSystemChatMessage('⚡ Rank filter removed — expanding search to all ranks...');
+          }
+        }, 15000);
       }
     });
   }
@@ -748,6 +812,9 @@ function setupUIListeners() {
   if (btns.returnLobby) {
     btns.returnLobby.addEventListener('click', () => {
       if (gameOverModal) gameOverModal.classList.remove('active');
+      // Reset rank panel for next match
+      const rp = document.getElementById('rank-result-panel');
+      if (rp) { rp.style.display = 'none'; rp.innerHTML = ''; }
       if (gameEngine) {
         gameEngine.destroy();
         gameEngine = null;

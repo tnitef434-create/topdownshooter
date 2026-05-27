@@ -1,5 +1,15 @@
 import { CharacterRenderer } from './CharacterRenderer.js';
 
+// ─── Rank System ──────────────────────────────────────────────────────────────
+export const RANKS = [
+  { id: 'recruit', label: 'RECRUIT',  minRP: 0,    maxRP: 999,  color: '#8a9bb5', icon: '▪' },
+  { id: 'veteran', label: 'VETERAN',  minRP: 1000, maxRP: 3999, color: '#e8c84a', icon: '◆' },
+  { id: 'elite',   label: 'ELITE',    minRP: 4000, maxRP: Infinity, color: '#ff6ef7', icon: '★' }
+];
+export const RP_WIN  =  80;   // RP gained on match win
+export const RP_LOSS = -40;   // RP lost on match loss (negative)
+// ─────────────────────────────────────────────────────────────────────────────
+
 const WEAPON_DEFS = {
   pistol: { name: 'Tactical 9mm', damage: 22, fireRate: 300, accuracy: 0.95, magSize: 12, range: 400, reloadTime: 1200, speedMultiplier: 1.0, type: 'Semi-Auto', recoil: 3, bulletSpeed: 14 },
   rifle: { name: 'Assault Rifle (M4A1)', damage: 26, fireRate: 110, accuracy: 0.88, magSize: 30, range: 600, reloadTime: 2200, speedMultiplier: 1.0, type: 'Automatic', recoil: 4.5, bulletSpeed: 16 },
@@ -39,6 +49,11 @@ export class Player {
     this.health = 100;
     this.maxHealth = 100;
     this.score = 0;
+
+    // Rank system
+    this.rp   = isLocal ? (parseInt(localStorage.getItem('tacticstrike_rp') || '0')) : 0;
+    this.rank = this._calcRank(this.rp);
+
     this.weaponKey = weaponKey;
     this.weapon = { ...WEAPON_DEFS[weaponKey] };
     
@@ -76,6 +91,27 @@ export class Player {
     this.botStrafeDir = Math.random() > 0.5 ? 1 : -1;
     this.botLastStrafeToggle = 0;
   }
+
+  // ─── Rank helpers ────────────────────────────────────────────────────────────
+  _calcRank(rp) {
+    for (let i = RANKS.length - 1; i >= 0; i--) {
+      if (rp >= RANKS[i].minRP) return RANKS[i];
+    }
+    return RANKS[0];
+  }
+
+  /** Call after win (delta=RP_WIN) or loss (delta=RP_LOSS). Persists for local player. */
+  applyRankDelta(delta) {
+    this.rp = Math.max(0, this.rp + delta);
+    const newRank = this._calcRank(this.rp);
+    const rankChanged = newRank.id !== this.rank.id;
+    this.rank = newRank;
+    if (this.isLocal) {
+      try { localStorage.setItem('tacticstrike_rp', String(this.rp)); } catch(e) {}
+    }
+    return rankChanged;
+  }
+  // ─────────────────────────────────────────────────────────────────────────────
 
   changeWeapon(weaponKey) {
     this.weaponKey = weaponKey;
@@ -665,6 +701,28 @@ export class Player {
     const nameColor = this.isLocal 
       ? (COLOR_THEMES[this.colorTheme]?.helmet || '#66fcf1')
       : (this.isTeammate ? '#39db14' : '#ff3c3c');
+
+    // ── Rank badge above name ────────────────────────────────────────────────
+    if (this.rank) {
+      const badgeY = this.y - this.radius - 28;
+      const badgeTxt = `${this.rank.icon} ${this.rank.label}`;
+      ctx.font = 'bold 8px Orbitron';
+      const tw = ctx.measureText(badgeTxt).width;
+      const bw = tw + 10, bh = 12;
+      // Badge background
+      ctx.fillStyle = 'rgba(0,0,0,0.65)';
+      ctx.beginPath();
+      ctx.roundRect(this.x - bw / 2, badgeY - bh / 2, bw, bh, 3);
+      ctx.fill();
+      // Badge border
+      ctx.strokeStyle = this.rank.color;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      // Badge text
+      ctx.fillStyle = this.rank.color;
+      ctx.fillText(badgeTxt, this.x, badgeY + 4);
+    }
+    // ────────────────────────────────────────────────────────────────────────
       
     ctx.fillStyle = nameColor;
     ctx.font = '10px Orbitron';

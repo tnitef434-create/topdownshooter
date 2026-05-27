@@ -1,4 +1,4 @@
-import { Player } from './Player.js';
+import { Player, RP_WIN, RP_LOSS } from './Player.js';
 import { Bullet } from './Bullet.js';
 import { Map as GameMap } from './Map.js';
 import { ParticleEngine } from './Particle.js';
@@ -412,6 +412,16 @@ export class Engine {
     const winningTeam = this.scoreSelf >= 3 ? this.localPlayer.team : (this.localPlayer.team === 1 ? 2 : 1);
     const winningPlayer = this.players.find(p => p.team === winningTeam);
     window.MatchStats.winnerId = winningPlayer ? winningPlayer.id : 'unknown';
+
+    // Apply rank RP delta
+    const isWin = this.scoreSelf >= 3;
+    const oldRank = this.localPlayer.rank ? this.localPlayer.rank.label : '';
+    const rankChanged = this.localPlayer.applyRankDelta(isWin ? RP_WIN : RP_LOSS);
+    window.MatchStats.newRP = this.localPlayer.rp;
+    window.MatchStats.newRank = this.localPlayer.rank;
+    window.MatchStats.rpDelta = isWin ? RP_WIN : RP_LOSS;
+    window.MatchStats.rankChanged = rankChanged;
+    window.MatchStats.oldRankLabel = oldRank;
 
     // Trigger end match callback sound FX
     if (this.scoreSelf >= 3) {
@@ -930,7 +940,17 @@ export class Engine {
     window.MatchStats.roundsWon = this.scoreSelf;
     window.MatchStats.winnerId = data.winnerId;
 
-    if (data.winnerId === this.localPlayer.id) {
+    // Apply rank RP delta
+    const isWin = data.winnerId === this.localPlayer.id;
+    const oldRank = this.localPlayer.rank ? this.localPlayer.rank.label : '';
+    const rankChanged = this.localPlayer.applyRankDelta(isWin ? RP_WIN : RP_LOSS);
+    window.MatchStats.newRP = this.localPlayer.rp;
+    window.MatchStats.newRank = this.localPlayer.rank;
+    window.MatchStats.rpDelta = isWin ? RP_WIN : RP_LOSS;
+    window.MatchStats.rankChanged = rankChanged;
+    window.MatchStats.oldRankLabel = oldRank;
+
+    if (isWin) {
       this.sound.playMatchWin();
     } else {
       this.sound.playMatchLose();
