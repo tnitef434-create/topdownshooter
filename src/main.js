@@ -385,17 +385,20 @@ function setupUIListeners() {
   // Set operative name change
   inputs.name.addEventListener('change', () => {
     myName = inputs.name.value.trim() || 'Operative';
+    localStorage.setItem('tacticstrike_player_name', myName);
   });
 
   // Practice Bot
   btns.practiceBot.addEventListener('click', () => {
     myName = inputs.name.value.trim() || 'Operative';
+    localStorage.setItem('tacticstrike_player_name', myName);
     startOfflineMode();
   });
 
   // Create Room
   btns.createRoom.addEventListener('click', () => {
     myName = inputs.name.value.trim() || 'Operative';
+    localStorage.setItem('tacticstrike_player_name', myName);
     connectSocket();
     if (socket) {
       socket.emit('create-room', { playerName: myName });
@@ -410,6 +413,7 @@ function setupUIListeners() {
       return;
     }
     myName = inputs.name.value.trim() || 'Operative';
+    localStorage.setItem('tacticstrike_player_name', myName);
     connectSocket();
     if (socket) {
       socket.emit('join-room', { roomId: code, playerName: myName });
@@ -419,6 +423,7 @@ function setupUIListeners() {
   // Quick Match
   btns.quickMatch.addEventListener('click', () => {
     myName = inputs.name.value.trim() || 'Operative';
+    localStorage.setItem('tacticstrike_player_name', myName);
     connectSocket();
     if (socket) {
       socket.emit('auto-match', { playerName: myName });
@@ -574,9 +579,15 @@ document.addEventListener('DOMContentLoaded', () => {
   setupWeaponSelector();
   setupUIListeners();
   
-  // Set default name randomly
-  const names = ['Viper', 'Ghost', 'Specter', 'Rex', 'Apex', 'Phantom', 'Onyx', 'Nova'];
-  myName = `${names[Math.floor(Math.random() * names.length)]}_${Math.floor(Math.random() * 900 + 100)}`;
+  // Set default name (load from local storage or generate a random one)
+  const savedName = localStorage.getItem('tacticstrike_player_name');
+  if (savedName) {
+    myName = savedName;
+  } else {
+    const names = ['Viper', 'Ghost', 'Specter', 'Rex', 'Apex', 'Phantom', 'Onyx', 'Nova'];
+    myName = `${names[Math.floor(Math.random() * names.length)]}_${Math.floor(Math.random() * 900 + 100)}`;
+    localStorage.setItem('tacticstrike_player_name', myName);
+  }
   inputs.name.value = myName;
 
   showScreen('menu');
