@@ -1,6 +1,25 @@
 import { io } from 'socket.io-client';
 import { Engine } from './game/Engine.js';
 
+// Safe localStorage wrapper to prevent crash if disabled in browser
+const safeStorage = {
+  getItem(key) {
+    try {
+      return localStorage.getItem(key);
+    } catch (e) {
+      console.warn('localStorage.getItem failed:', e);
+      return null;
+    }
+  },
+  setItem(key, value) {
+    try {
+      localStorage.setItem(key, value);
+    } catch (e) {
+      console.warn('localStorage.setItem failed:', e);
+    }
+  }
+};
+
 // DOM Elements
 const screens = {
   menu: document.getElementById('menu-screen'),
@@ -80,7 +99,7 @@ const gameSettings = {
 // 1. Initialize Settings
 function initSettings() {
   // Load from LocalStorage if available
-  const savedSettings = localStorage.getItem('tacticstrike_settings');
+  const savedSettings = safeStorage.getItem('tacticstrike_settings');
   if (savedSettings) {
     try {
       const parsed = JSON.parse(savedSettings);
@@ -149,7 +168,7 @@ function initSettings() {
 }
 
 function saveSettings() {
-  localStorage.setItem('tacticstrike_settings', JSON.stringify(gameSettings));
+  safeStorage.setItem('tacticstrike_settings', JSON.stringify(gameSettings));
   if (gameEngine) {
     gameEngine.updateSettings(gameSettings);
   }
@@ -467,7 +486,7 @@ function setupUIListeners() {
   if (inputs.name) {
     inputs.name.addEventListener('change', () => {
       myName = inputs.name.value.trim() || 'Operative';
-      localStorage.setItem('tacticstrike_player_name', myName);
+      safeStorage.setItem('tacticstrike_player_name', myName);
     });
   }
 
@@ -475,7 +494,7 @@ function setupUIListeners() {
   if (btns.practiceBot) {
     btns.practiceBot.addEventListener('click', () => {
       if (inputs.name) myName = inputs.name.value.trim() || 'Operative';
-      localStorage.setItem('tacticstrike_player_name', myName);
+      safeStorage.setItem('tacticstrike_player_name', myName);
       startOfflineMode();
     });
   }
@@ -484,7 +503,7 @@ function setupUIListeners() {
   if (btns.createRoom) {
     btns.createRoom.addEventListener('click', () => {
       if (inputs.name) myName = inputs.name.value.trim() || 'Operative';
-      localStorage.setItem('tacticstrike_player_name', myName);
+      safeStorage.setItem('tacticstrike_player_name', myName);
       connectSocket();
       if (socket) {
         socket.emit('create-room', { playerName: myName, mode: myMode, color: myColor });
@@ -501,7 +520,7 @@ function setupUIListeners() {
         return;
       }
       if (inputs.name) myName = inputs.name.value.trim() || 'Operative';
-      localStorage.setItem('tacticstrike_player_name', myName);
+      safeStorage.setItem('tacticstrike_player_name', myName);
       connectSocket();
       if (socket) {
         socket.emit('join-room', { roomId: code, playerName: myName, color: myColor });
@@ -513,7 +532,7 @@ function setupUIListeners() {
   if (btns.quickMatch) {
     btns.quickMatch.addEventListener('click', () => {
       if (inputs.name) myName = inputs.name.value.trim() || 'Operative';
-      localStorage.setItem('tacticstrike_player_name', myName);
+      safeStorage.setItem('tacticstrike_player_name', myName);
       connectSocket();
       if (socket) {
         socket.emit('auto-match', { playerName: myName, mode: myMode, color: myColor });
@@ -703,7 +722,7 @@ function setupColorSelector() {
         red: '#ff3c3c'
       };
       opt.style.borderColor = themeColors[myColor];
-      localStorage.setItem('tacticstrike_player_color', myColor);
+      safeStorage.setItem('tacticstrike_player_color', myColor);
 
       // Notify server if in a lobby
       if (socket && currentRoom) {
@@ -713,7 +732,7 @@ function setupColorSelector() {
   });
 
   // Pre-select saved color
-  const savedColor = localStorage.getItem('tacticstrike_player_color');
+  const savedColor = safeStorage.getItem('tacticstrike_player_color');
   if (savedColor) {
     const targetOpt = document.querySelector(`#lobby-color-selector .color-option[data-color="${savedColor}"]`);
     if (targetOpt) {
@@ -740,15 +759,17 @@ document.addEventListener('DOMContentLoaded', () => {
   setupUIListeners();
   
   // Set default name (load from local storage or generate a random one)
-  const savedName = localStorage.getItem('tacticstrike_player_name');
+  const savedName = safeStorage.getItem('tacticstrike_player_name');
   if (savedName) {
     myName = savedName;
   } else {
     const names = ['Viper', 'Ghost', 'Specter', 'Rex', 'Apex', 'Phantom', 'Onyx', 'Nova'];
     myName = `${names[Math.floor(Math.random() * names.length)]}_${Math.floor(Math.random() * 900 + 100)}`;
-    localStorage.setItem('tacticstrike_player_name', myName);
+    safeStorage.setItem('tacticstrike_player_name', myName);
   }
-  inputs.name.value = myName;
+  if (inputs.name) {
+    inputs.name.value = myName;
+  }
 
   showScreen('menu');
 });
