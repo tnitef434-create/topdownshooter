@@ -30,59 +30,16 @@
           <p class="subtitle">Online Top-Down Tactical Shooter</p>
         </header>
 
-        <!-- Operative Secure Authentication Panel -->
-        <div id="auth-panel" class="card auth-card">
-          <div class="auth-tabs">
-            <button id="tab-login" class="auth-tab active">LOGIN</button>
-            <button id="tab-register" class="auth-tab">REGISTER</button>
-          </div>
-          
-          <div class="auth-form" id="form-login">
-            <div class="input-group">
-              <label for="login-username">OPERATIVE ID</label>
-              <input type="text" id="login-username" placeholder="Codename..." maxlength="15">
-            </div>
-            <div class="input-group">
-              <label for="login-password">SECURE KEY</label>
-              <input type="password" id="login-password" placeholder="Passkey...">
-            </div>
-            <button id="btn-login-submit" class="btn primary" style="width: 100%; margin-top: 10px;">AUTHORIZE</button>
-          </div>
-
-          <div class="auth-form hidden" id="form-register">
-            <div class="input-group">
-              <label for="reg-username">NEW CODENAME</label>
-              <input type="text" id="reg-username" placeholder="Codename..." maxlength="15">
-            </div>
-            <div class="input-group">
-              <label for="reg-password">SECURE PASSKEY</label>
-              <input type="password" id="reg-password" placeholder="Passkey...">
-            </div>
-            <button id="btn-register-submit" class="btn secondary" style="width: 100%; margin-top: 10px;">REGISTER OPERATIVE</button>
-          </div>
-          
-          <div class="auth-footer" style="margin-top: 12px; text-align: center;">
-            <button id="btn-guest-play" class="btn-text">BYPASS AUTHENTICATION (PLAY AS GUEST)</button>
-          </div>
+        <!-- Operative Codename Card -->
+        <div class="card" style="padding: 18px 24px; display: flex; flex-direction: column; gap: 10px;">
+          <label style="font-family: var(--font-title); font-size: 11px; letter-spacing: 1.5px; color: var(--neon-teal);">OPERATIVE CODENAME</label>
+          <input type="text" id="player-name-input" placeholder="Enter your codename..." maxlength="15"
+            style="background: rgba(0,0,0,0.4); border: 1px solid var(--glass-border); padding: 10px 14px;
+                   border-radius: 6px; color: #fff; font-family: var(--font-title); font-size: 14px;
+                   outline: none; letter-spacing: 1px; transition: border-color 0.2s;"
+            onfocus="this.style.borderColor='var(--neon-cyan)'"
+            onblur="this.style.borderColor='var(--glass-border)'">
         </div>
-
-        <!-- Logged In / Profile Panel (Hidden by default) -->
-        <div id="profile-panel" class="card profile-card hidden">
-          <div class="profile-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-            <span class="profile-label" style="font-family: var(--font-title); font-size: 10px; color: var(--neon-teal); letter-spacing: 1px;">OPERATIVE ONLINE</span>
-            <button id="btn-logout" class="btn-text" style="color: var(--neon-red); font-size: 10px; padding: 0;">LOGOUT</button>
-          </div>
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-            <span id="profile-codename" class="profile-name" style="font-family: var(--font-title); font-size: 18px; color: var(--neon-cyan); letter-spacing: 1px; font-weight: 700;">VIPER</span>
-          </div>
-          <div class="profile-stats" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; border-top: 1px solid var(--glass-border); padding-top: 10px;">
-            <div class="p-stat" style="display: flex; flex-direction: column; align-items: center;"><span style="font-size: 9px; color: var(--text-muted);">WINS</span><span id="stat-profile-wins" style="font-family: var(--font-title); font-size: 15px; color: var(--neon-green); font-weight: 700;">0</span></div>
-            <div class="p-stat" style="display: flex; flex-direction: column; align-items: center;"><span style="font-size: 9px; color: var(--text-muted);">ROUNDS</span><span id="stat-profile-rounds" style="font-family: var(--font-title); font-size: 15px; color: white; font-weight: 700;">0</span></div>
-            <div class="p-stat" style="display: flex; flex-direction: column; align-items: center;"><span style="font-size: 9px; color: var(--text-muted);">ACCURACY</span><span id="stat-profile-acc" style="font-family: var(--font-title); font-size: 15px; color: var(--neon-yellow); font-weight: 700;">0%</span></div>
-          </div>
-        </div>
-
-        <input type="hidden" id="player-name-input" value="Operative">
 
 
         <div class="card mode-card" style="padding: 16px 24px; display: flex; flex-direction: column; gap: 8px;">

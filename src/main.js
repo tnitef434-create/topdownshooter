@@ -21,27 +21,6 @@ const safeStorage = {
 };
 
 // DOM Elements
-const auth = {
-  panel: document.getElementById('auth-panel'),
-  tabLogin: document.getElementById('tab-login'),
-  tabRegister: document.getElementById('tab-register'),
-  formLogin: document.getElementById('form-login'),
-  formRegister: document.getElementById('form-register'),
-  loginUser: document.getElementById('login-username'),
-  loginPass: document.getElementById('login-password'),
-  regUser: document.getElementById('reg-username'),
-  regPass: document.getElementById('reg-password'),
-  btnLogin: document.getElementById('btn-login-submit'),
-  btnRegister: document.getElementById('btn-register-submit'),
-  btnGuest: document.getElementById('btn-guest-play'),
-  profilePanel: document.getElementById('profile-panel'),
-  profileName: document.getElementById('profile-codename'),
-  statWins: document.getElementById('stat-profile-wins'),
-  statRounds: document.getElementById('stat-profile-rounds'),
-  statAcc: document.getElementById('stat-profile-acc'),
-  btnLogout: document.getElementById('btn-logout')
-};
-
 const screens = {
   menu: document.getElementById('menu-screen'),
   lobby: document.getElementById('lobby-screen'),
@@ -448,34 +427,14 @@ function connectSocket() {
 
   socket.on('connect', () => {
     console.log('Socket connected.');
-    // Auto login if credentials exist
-    const savedUser = safeStorage.getItem('tacticstrike_logged_in_user');
-    const savedHash = safeStorage.getItem('tacticstrike_logged_in_hash');
-    if (savedUser && savedHash) {
-      socket.emit('login', { username: savedUser, password: savedHash });
-    }
   });
 
   socket.on('register-response', (res) => {
-    if (res.success) {
-      alert('Operative registered successfully! You can now authorize.');
-      if (auth.tabLogin) auth.tabLogin.click();
-    } else {
-      alert(`Registration failed: ${res.error}`);
-    }
+    if (!res.success) console.warn('Register failed:', res.error);
   });
 
   socket.on('login-response', (res) => {
-    if (res.success) {
-      handleLoginSuccess(res.username, res.stats);
-    } else {
-      alert(`Authorization failed: ${res.error}`);
-      handleLogout();
-    }
-  });
-
-  socket.on('stats-updated', (res) => {
-    updateProfileStatsUI(res.stats);
+    if (!res.success) console.warn('Login failed:', res.error);
   });
 
   // Socket Events
@@ -608,17 +567,7 @@ function getRandomWeapon() {
   function handleMatchEnd(results) {
     if (gameOverModal) gameOverModal.classList.add('active');
     const isWin = results.winnerId === (socket ? socket.id : 'player');
-  
-    const loggedInUser = safeStorage.getItem('tacticstrike_logged_in_user');
-    if (loggedInUser && socket && socket.connected) {
-      socket.emit('match-stats', {
-        isWin: isWin,
-        rounds: results.roundsWon || 0,
-        shots: results.shotsFired || 0,
-        hits: results.hitsRegistered || 0
-      });
-    }
-  
+
   const resultTitle = document.getElementById('match-result-title');
   const resultSubtitle = document.getElementById('match-result-subtitle');
   
@@ -997,7 +946,8 @@ document.addEventListener('DOMContentLoaded', () => {
   setupColorSelector();
   setupModeSelector();
   setupUIListeners();
-  // Set default name (load from local storage or generate a random one)
+
+  // Load or generate operative codename
   const savedName = safeStorage.getItem('tacticstrike_player_name');
   if (savedName) {
     myName = savedName;
@@ -1010,179 +960,9 @@ document.addEventListener('DOMContentLoaded', () => {
     inputs.name.value = myName;
   }
 
-  setupAuthUI();
-  connectSocket(); // Attempt server connect and auto-login
-
+  connectSocket();
   showScreen('menu');
 });
-
-// Helper functions for secure Auth
-async function hashPassword(password) {
-  if (window.crypto && window.crypto.subtle) {
-    try {
-      const msgBuffer = new TextEncoder().encode(password);
-      const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
-      const hashArray = Array.from(new Uint8Array(hashBuffer));
-      return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-    } catch(e) {}
-  }
-  // Simple fallback hashing for non-secure HTTP contexts
-  let hash = 0;
-  for (let i = 0; i < password.length; i++) {
-    const char = password.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash; // Convert to 32bit integer
-  }
-  return 'fallback_' + hash.toString(16);
-}
-
-function handleLoginSuccess(username, stats) {
-  myName = username;
-  safeStorage.setItem('tacticstrike_logged_in_user', username);
-  safeStorage.setItem('tacticstrike_player_name', username);
-  
-  if (inputs.name) inputs.name.value = username;
-  
-  // Toggle UI panels
-  if (auth.panel) auth.panel.classList.add('hidden');
-  if (auth.profilePanel) auth.profilePanel.classList.remove('hidden');
-  if (auth.profileName) auth.profileName.innerText = username.toUpperCase();
-  
-  updateProfileStatsUI(stats);
-}
-
-function updateProfileStatsUI(stats) {
-  if (!stats) return;
-  if (auth.statWins) auth.statWins.innerText = stats.wins || 0;
-  if (auth.statRounds) auth.statRounds.innerText = stats.rounds || 0;
-  
-  if (auth.statAcc) {
-    const accuracy = stats.shots > 0 ? Math.round((stats.hits / stats.shots) * 100) : 0;
-    auth.statAcc.innerText = `${accuracy}%`;
-  }
-}
-
-function handleLogout() {
-  myName = 'Operative';
-  safeStorage.setItem('tacticstrike_logged_in_user', '');
-  safeStorage.setItem('tacticstrike_logged_in_hash', '');
-  
-  // Re-generate guest name
-  const names = ['Viper', 'Ghost', 'Specter', 'Rex', 'Apex', 'Phantom', 'Onyx', 'Nova'];
-  myName = `${names[Math.floor(Math.random() * names.length)]}_${Math.floor(Math.random() * 900 + 100)}`;
-  safeStorage.setItem('tacticstrike_player_name', myName);
-  if (inputs.name) inputs.name.value = myName;
-
-  // Toggle UI panels
-  if (auth.panel) auth.panel.classList.remove('hidden');
-  if (auth.profilePanel) auth.profilePanel.classList.add('hidden');
-  
-  if (auth.loginUser) auth.loginUser.value = '';
-  if (auth.loginPass) auth.loginPass.value = '';
-  if (auth.regUser) auth.regUser.value = '';
-  if (auth.regPass) auth.regPass.value = '';
-}
-
-function setupAuthUI() {
-  // Tab switching
-  if (auth.tabLogin && auth.tabRegister) {
-    auth.tabLogin.addEventListener('click', () => {
-      auth.tabLogin.classList.add('active');
-      auth.tabRegister.classList.remove('active');
-      if (auth.formLogin) auth.formLogin.classList.remove('hidden');
-      if (auth.formRegister) auth.formRegister.classList.add('hidden');
-    });
-    auth.tabRegister.addEventListener('click', () => {
-      auth.tabRegister.classList.add('active');
-      auth.tabLogin.classList.remove('active');
-      if (auth.formRegister) auth.formRegister.classList.remove('hidden');
-      if (auth.formLogin) auth.formLogin.classList.add('hidden');
-    });
-  }
-
-  // Submit Login
-  if (auth.btnLogin) {
-    auth.btnLogin.addEventListener('click', async () => {
-      const username = auth.loginUser ? auth.loginUser.value.trim() : '';
-      const password = auth.loginPass ? auth.loginPass.value : '';
-      
-      if (!username || !password) {
-        alert('Please fill in all authorization fields.');
-        return;
-      }
-      
-      connectSocket();
-      if (socket) {
-        const hashedPassword = await hashPassword(password);
-        // Save to cache for auto-login
-        safeStorage.setItem('tacticstrike_logged_in_user', username);
-        safeStorage.setItem('tacticstrike_logged_in_hash', hashedPassword);
-        
-        socket.emit('login', { username, password: hashedPassword });
-      } else {
-        alert('Multiplayer server is offline. Use guest mode to play offline.');
-      }
-    });
-  }
-
-  // Submit Register
-  if (auth.btnRegister) {
-    auth.btnRegister.addEventListener('click', async () => {
-      const username = auth.regUser ? auth.regUser.value.trim() : '';
-      const password = auth.regPass ? auth.regPass.value : '';
-      
-      if (!username || !password) {
-        alert('Please fill in all registration fields.');
-        return;
-      }
-      if (username.length < 3 || username.length > 15) {
-        alert('Codename must be between 3 and 15 characters.');
-        return;
-      }
-      if (!/^[a-zA-Z0-9_]+$/.test(username)) {
-        alert('Codename must contain only letters, numbers, and underscores.');
-        return;
-      }
-      if (password.length < 4) {
-        alert('Passkey must be at least 4 characters long.');
-        return;
-      }
-      
-      connectSocket();
-      if (socket) {
-        const hashedPassword = await hashPassword(password);
-        socket.emit('register', { username, password: hashedPassword });
-      } else {
-        alert('Multiplayer server is offline. Cannot register account.');
-      }
-    });
-  }
-
-  // Guest Play
-  if (auth.btnGuest) {
-    auth.btnGuest.addEventListener('click', () => {
-      if (auth.panel) auth.panel.classList.add('hidden');
-      if (auth.profilePanel) auth.profilePanel.classList.remove('hidden');
-      
-      const names = ['Guest_Viper', 'Guest_Ghost', 'Guest_Specter', 'Guest_Rex', 'Guest_Apex', 'Guest_Nova'];
-      myName = `${names[Math.floor(Math.random() * names.length)]}_${Math.floor(Math.random() * 900 + 100)}`;
-      safeStorage.setItem('tacticstrike_player_name', myName);
-      if (inputs.name) inputs.name.value = myName;
-      if (auth.profileName) auth.profileName.innerText = myName.toUpperCase();
-      
-      if (auth.statWins) auth.statWins.innerText = '-';
-      if (auth.statRounds) auth.statRounds.innerText = '-';
-      if (auth.statAcc) auth.statAcc.innerText = '-';
-    });
-  }
-
-  // Logout
-  if (auth.btnLogout) {
-    auth.btnLogout.addEventListener('click', () => {
-      handleLogout();
-    });
-  }
-}
 
 // Expose remote chat event
 window.addEventListener('opponent-chat-msg', (e) => {
