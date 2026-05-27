@@ -727,7 +727,7 @@ export class Engine {
     this.particles.drawDecals(this.ctx);
 
     // Render static walls & crates. Overlay shadows using calculated visibility field
-    this.map.draw(this.ctx, this.settings, visibilityPolygon);
+    this.map.draw(this.ctx, this.settings, visibilityPolygon, this.localPlayer.x, this.localPlayer.y);
 
     // Render dead operatives lying flat
     this.players.forEach(p => {

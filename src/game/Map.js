@@ -376,7 +376,7 @@ export class Map {
   // ─────────────────────────────────────────────────────────────────
   //  RENDERING
   // ─────────────────────────────────────────────────────────────────
-  draw(ctx, configSettings = { shadows:true }, visibilityPolygon = null) {
+  draw(ctx, configSettings = { shadows:true }, visibilityPolygon = null, px = null, py = null) {
     // 1. Draw room floors
     this.rooms.forEach(r => this._drawFloor(ctx, r));
 
@@ -389,18 +389,44 @@ export class Map {
     // 4. Walls / furniture / crates
     this.walls.forEach(w => this._drawWall(ctx, w));
 
-    // 5. Fog of war
+    // 5. Fog of war & Light rendering
     if (configSettings.shadows && visibilityPolygon && visibilityPolygon.length > 0) {
+      // Draw Fog of War (everything outside the visibility polygon is dark)
       ctx.save();
       ctx.beginPath();
-      ctx.rect(this.width, 0, -this.width, this.height);
+      // Bounding box covering a huge area around the map to handle camera pans/zooms
+      ctx.rect(-3000, -3000, 7400, 7400);
+      
+      // Draw visibility polygon
       ctx.moveTo(visibilityPolygon[0].x, visibilityPolygon[0].y);
-      for (let i=1; i<visibilityPolygon.length; i++)
+      for (let i = 1; i < visibilityPolygon.length; i++) {
         ctx.lineTo(visibilityPolygon[i].x, visibilityPolygon[i].y);
+      }
       ctx.closePath();
-      ctx.fillStyle = 'rgba(4,5,8,0.94)';
-      ctx.fill();
+      
+      ctx.fillStyle = 'rgba(4, 5, 8, 0.94)';
+      ctx.fill('evenodd');
       ctx.restore();
+
+      // Draw subtle light glow inside the visibility polygon (flashlight effect)
+      if (px !== null && py !== null) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(visibilityPolygon[0].x, visibilityPolygon[0].y);
+        for (let i = 1; i < visibilityPolygon.length; i++) {
+          ctx.lineTo(visibilityPolygon[i].x, visibilityPolygon[i].y);
+        }
+        ctx.closePath();
+        ctx.clip();
+
+        const lightGrad = ctx.createRadialGradient(px, py, 20, px, py, 650);
+        lightGrad.addColorStop(0, 'rgba(255, 255, 225, 0.12)'); // Soft warm light near player
+        lightGrad.addColorStop(0.4, 'rgba(255, 255, 255, 0.03)');
+        lightGrad.addColorStop(1, 'rgba(255, 255, 255, 0.0)');
+        ctx.fillStyle = lightGrad;
+        ctx.fill();
+        ctx.restore();
+      }
     }
   }
 
