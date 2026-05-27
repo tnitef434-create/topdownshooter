@@ -562,9 +562,7 @@ export class Map {
     } else {
       ctx.shadowColor = '#ffcc00'; ctx.shadowBlur = 10;
       ctx.fillStyle = '#cc9900';
-      ctx.beginPath();
-      ctx.roundRect(item.x-7, item.y-7, 14, 14, 3);
-      ctx.fill();
+      ctx.fillRect(item.x-7, item.y-7, 14, 14);
       // Bullet icon
       ctx.fillStyle = '#ffe060';
       ctx.fillRect(item.x-2, item.y-5, 4, 8);

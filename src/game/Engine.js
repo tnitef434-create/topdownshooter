@@ -737,44 +737,44 @@ export class Engine {
       : null;
 
     if (localZone) {
-      this.ctx.save();
-      const isHeal   = localZone.type === 'healing';
-      const pulse    = Math.sin(Date.now() / 400) * 0.25 + 0.75;
-      const zoneCol  = isHeal ? `rgba(40,255,110,${pulse*0.18})` : `rgba(255,60,20,${pulse*0.18})`;
-      const textCol  = isHeal ? `rgba(80,255,130,${pulse})`      : `rgba(255,100,60,${pulse})`;
+      try {
+        this.ctx.save();
+        const isHeal   = localZone.type === 'healing';
+        const pulse    = Math.sin(Date.now() / 400) * 0.25 + 0.75;
+        const textCol  = isHeal ? `rgba(80,255,130,${pulse})` : `rgba(255,100,60,${pulse})`;
+        const zoneCol  = isHeal ? `rgba(40,255,110,${pulse*0.18})` : `rgba(255,60,20,${pulse*0.18})`;
+        const borderC  = isHeal ? `rgba(80,255,130,${pulse*0.8})`  : `rgba(255,100,60,${pulse*0.8})`;
 
-      // Background bar
-      const barW = 260, barH = 38;
-      const barX = this.canvas.width / 2 - barW / 2;
-      const barY = this.canvas.height - 130;
+        const barW = 260, barH = 38;
+        const barX = this.canvas.width / 2 - barW / 2;
+        const barY = this.canvas.height - 130;
 
-      this.ctx.fillStyle = zoneCol;
-      this.ctx.beginPath();
-      this.ctx.roundRect(barX, barY, barW, barH, 6);
-      this.ctx.fill();
+        // Background fill (plain rect)
+        this.ctx.fillStyle = zoneCol;
+        this.ctx.fillRect(barX, barY, barW, barH);
 
-      this.ctx.strokeStyle = isHeal ? `rgba(80,255,130,${pulse*0.8})` : `rgba(255,100,60,${pulse*0.8})`;
-      this.ctx.lineWidth = 1.5;
-      this.ctx.beginPath();
-      this.ctx.roundRect(barX, barY, barW, barH, 6);
-      this.ctx.stroke();
+        // Border (plain rect)
+        this.ctx.strokeStyle = borderC;
+        this.ctx.lineWidth = 1.5;
+        this.ctx.strokeRect(barX, barY, barW, barH);
 
-      // Label
-      this.ctx.textAlign = 'center';
-      this.ctx.font = 'bold 12px Orbitron';
-      this.ctx.fillStyle = textCol;
-      const icon = isHeal ? '⚕' : '☠';
-      this.ctx.fillText(`${icon} ${localZone.label}`, this.canvas.width / 2, barY + 15);
+        // Label
+        this.ctx.textAlign = 'center';
+        this.ctx.font = 'bold 12px Orbitron';
+        this.ctx.fillStyle = textCol;
+        const icon = isHeal ? '+' : '!';
+        this.ctx.fillText(`${icon} ${localZone.label}`, this.canvas.width / 2, barY + 15);
 
-      // Sub-text
-      this.ctx.font = '9px Orbitron';
-      this.ctx.fillStyle = isHeal ? 'rgba(60,255,110,0.7)' : 'rgba(255,80,40,0.7)';
-      const sub = isHeal
-        ? `+${(localZone.healRate * 60).toFixed(0)} HP/s REGENERATION`
-        : `DAMAGE ×${localZone.multiplier} — DANGER`;
-      this.ctx.fillText(sub, this.canvas.width / 2, barY + 29);
+        // Sub-text
+        this.ctx.font = '9px Orbitron';
+        this.ctx.fillStyle = isHeal ? 'rgba(60,255,110,0.7)' : 'rgba(255,80,40,0.7)';
+        const sub = isHeal
+          ? `+${(localZone.healRate * 60).toFixed(0)} HP/s REGENERATION`
+          : `DAMAGE x${localZone.multiplier} -- DANGER`;
+        this.ctx.fillText(sub, this.canvas.width / 2, barY + 29);
 
-      this.ctx.restore();
+        this.ctx.restore();
+      } catch(e) { /* silently ignore zone HUD errors to protect render loop */ }
     }
   }
 
