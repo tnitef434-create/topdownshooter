@@ -1,6 +1,6 @@
 import { Player } from './Player.js';
 import { Bullet } from './Bullet.js';
-import { Map } from './Map.js';
+import { Map as GameMap } from './Map.js';
 import { ParticleEngine } from './Particle.js';
 import { Sound } from './Sound.js';
 import { Network } from './Network.js';
@@ -19,7 +19,7 @@ export class Engine {
       this.mapHeight = 1400;
       
       // Seeded map & item configuration
-      this.map = new Map(this.mapWidth, this.mapHeight, config.seed);
+      this.map = new GameMap(this.mapWidth, this.mapHeight, config.seed);
       
       // Sound & particles setup
       this.sound = new Sound();
