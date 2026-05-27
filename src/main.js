@@ -88,6 +88,34 @@ let myColor = 'cyan';
 let myMode = '1v1';
 let isReady = false;
 
+// ── Career Stats (localStorage) ────────────────────────────────────────────
+function loadCareerStats() {
+  try {
+    return JSON.parse(localStorage.getItem('tacticstrike_career') || '{"wins":0,"losses":0}');
+  } catch(e) { return { wins: 0, losses: 0 }; }
+}
+function saveCareerStats(s) {
+  try { localStorage.setItem('tacticstrike_career', JSON.stringify(s)); } catch(e) {}
+}
+function renderCareerStats() {
+  const s = loadCareerStats();
+  const total = s.wins + s.losses;
+  const pct = total > 0 ? Math.round((s.wins / total) * 100) : null;
+  const wEl = document.getElementById('stat-wins');
+  const lEl = document.getElementById('stat-losses');
+  const pEl = document.getElementById('stat-winpct');
+  if (wEl) wEl.innerText = s.wins;
+  if (lEl) lEl.innerText = s.losses;
+  if (pEl) pEl.innerText = pct !== null ? `${pct}%` : '—';
+}
+function recordMatchResult(isWin) {
+  const s = loadCareerStats();
+  if (isWin) s.wins++; else s.losses++;
+  saveCareerStats(s);
+  renderCareerStats();
+}
+// ───────────────────────────────────────────────────────────────────────────
+
 // Audio Background Music
 const menuMusic = new Audio('/Midnight_Deployment.mp3');
 menuMusic.loop = true;
@@ -568,6 +596,9 @@ function getRandomWeapon() {
     if (gameOverModal) gameOverModal.classList.add('active');
     const isWin = results.winnerId === (socket ? socket.id : 'player');
 
+    // Record W/L in localStorage
+    recordMatchResult(isWin);
+
   const resultTitle = document.getElementById('match-result-title');
   const resultSubtitle = document.getElementById('match-result-subtitle');
   
@@ -962,6 +993,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
   connectSocket();
   showScreen('menu');
+
+  // Load career stats into UI
+  renderCareerStats();
+
+  // Reset stats button
+  const resetBtn = document.getElementById('btn-reset-stats');
+  if (resetBtn) {
+    resetBtn.addEventListener('click', () => {
+      if (confirm('Reset your career record? This cannot be undone.')) {
+        saveCareerStats({ wins: 0, losses: 0 });
+        renderCareerStats();
+      }
+    });
+  }
 });
 
 // Expose remote chat event
