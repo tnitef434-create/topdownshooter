@@ -1,5 +1,3 @@
-import * as THREE from 'three';
-
 class Particle {
   constructor(x, y, vx, vy, color, size, life, decay, type = 'normal') {
     this.x = x;
@@ -144,14 +142,6 @@ export class ParticleEngine {
   }
 
   clear() {
-    if (this.scene) {
-      this.particles.forEach(p => {
-        if (p.mesh) this.scene.remove(p.mesh);
-      });
-      this.decals.forEach(d => {
-        if (d.mesh) this.scene.remove(d.mesh);
-      });
-    }
     this.particles = [];
     this.decals = [];
   }
@@ -167,10 +157,6 @@ export class ParticleEngine {
       
       // If particle dies, convert to flat ground decal if applicable
       if (p.life <= 0) {
-        if (p.mesh && this.scene) {
-          this.scene.remove(p.mesh);
-        }
-        
         if (p.type === 'blood' && this.bloodEnabled && Math.random() < 0.6) {
           this.decals.push(new Decal(p.x, p.y, p.size * 1.2, p.color, 'blood'));
         } else if (p.type === 'casing') {
@@ -185,10 +171,7 @@ export class ParticleEngine {
 
     // Limit maximum decals to keep performance at 60fps
     if (this.decals.length > 250) {
-      const removed = this.decals.shift();
-      if (removed && removed.mesh && this.scene) {
-        this.scene.remove(removed.mesh);
-      }
+      this.decals.shift();
     }
   }
 
@@ -198,132 +181,6 @@ export class ParticleEngine {
 
   drawParticles(ctx) {
     this.particles.forEach(p => p.draw(ctx));
-  }
-
-  init3D(scene) {
-    this.scene = scene;
-  }
-
-  update3D() {
-    if (!this.scene) return;
-
-    // 1. Process and sync particle meshes
-    this.particles.forEach(p => {
-      if (!p.mesh) {
-        let geom, mat;
-        let yHeight = 6.0;
-        let vyHeight = 0;
-        
-        if (p.type === 'casing') {
-          geom = new THREE.BoxGeometry(p.size * 2, p.size, p.size * 0.8);
-          mat = new THREE.MeshStandardMaterial({
-            color: 0xd4af37,
-            metalness: 0.8,
-            roughness: 0.2
-          });
-          yHeight = 6.0;
-          vyHeight = 0.5 + Math.random() * 0.5;
-        } else if (p.type === 'splinter') {
-          geom = new THREE.BoxGeometry(p.size * 1.5, p.size * 0.5, p.size * 0.5);
-          mat = new THREE.MeshStandardMaterial({
-            color: 0x8b5a2b,
-            roughness: 0.9
-          });
-          yHeight = 6.0;
-          vyHeight = 0.3 + Math.random() * 0.4;
-        } else if (p.type === 'blood') {
-          geom = new THREE.SphereGeometry(p.size * 0.7, 8, 8);
-          mat = new THREE.MeshStandardMaterial({
-            color: 0x800a0a,
-            roughness: 0.3
-          });
-          yHeight = 6.0;
-          vyHeight = (Math.random() - 0.3) * 0.4;
-        } else {
-          geom = new THREE.SphereGeometry(p.size * 0.8, 6, 6);
-          const colHex = p.color.startsWith('#66fc') ? 0x66fcf1 : p.color.startsWith('#ff3c') ? 0xff3c3c : 0xcccccc;
-          mat = new THREE.MeshBasicMaterial({
-            color: colHex,
-            transparent: true,
-            opacity: p.life
-          });
-          yHeight = 6.0;
-          vyHeight = (Math.random() - 0.2) * 0.3;
-        }
-        
-        p.mesh = new THREE.Mesh(geom, mat);
-        p.mesh.position.set(p.x, yHeight, p.y);
-        p.mesh.castShadow = (p.type === 'casing' || p.type === 'splinter');
-        p.mesh.receiveShadow = false;
-        
-        this.scene.add(p.mesh);
-        p.yHeight = yHeight;
-        p.vyHeight = vyHeight;
-      }
-      
-      if (p.mesh) {
-        if (p.type === 'casing' || p.type === 'splinter') {
-          p.vyHeight -= 0.08;
-          p.yHeight += p.vyHeight;
-          if (p.yHeight < 0.2) {
-            p.yHeight = 0.2;
-            p.vyHeight = -p.vyHeight * 0.4;
-          }
-          p.mesh.rotation.set(p.angle, p.angle * 0.5, 0);
-        } else if (p.type === 'blood') {
-          p.vyHeight -= 0.05;
-          p.yHeight += p.vyHeight;
-          if (p.yHeight < 0.2) p.yHeight = 0.2;
-        } else if (p.type === 'smoke') {
-          p.yHeight += 0.15;
-          p.mesh.scale.setScalar(1 + (1 - p.life) * 2.5);
-          p.mesh.material.opacity = p.life * 0.3;
-        } else {
-          p.vyHeight -= 0.03;
-          p.yHeight += p.vyHeight;
-          if (p.yHeight < 0.2) p.yHeight = 0.2;
-          p.mesh.material.opacity = p.life;
-        }
-        
-        p.mesh.position.set(p.x, p.yHeight, p.y);
-      }
-    });
-
-    // 2. Process and sync decal meshes
-    this.decals.forEach(d => {
-      if (!d.mesh) {
-        let geom, mat;
-        if (d.type === 'blood') {
-          geom = new THREE.PlaneGeometry(d.size * 2 * d.scaleX, d.size * 2 * d.scaleY);
-          mat = new THREE.MeshStandardMaterial({
-            color: 0x800a0a,
-            roughness: 0.8,
-            transparent: true,
-            opacity: 0.75
-          });
-        } else if (d.type === 'casing') {
-          geom = new THREE.PlaneGeometry(d.size * 2, d.size);
-          mat = new THREE.MeshStandardMaterial({
-            color: 0xb5921c,
-            roughness: 0.5
-          });
-        } else {
-          geom = new THREE.PlaneGeometry(d.size * 1.5, d.size * 0.7);
-          mat = new THREE.MeshStandardMaterial({
-            color: 0x5c3917,
-            roughness: 0.9
-          });
-        }
-        
-        d.mesh = new THREE.Mesh(geom, mat);
-        d.mesh.rotation.x = -Math.PI / 2;
-        d.mesh.rotation.z = d.angle;
-        d.mesh.position.set(d.x, 0.05, d.y);
-        d.mesh.receiveShadow = true;
-        
-        this.scene.add(d.mesh);
-      }
-    });
   }
 
   // --- Emitter Methods ---

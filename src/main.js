@@ -40,11 +40,10 @@ const settings = {
   modal: document.getElementById('settings-modal'),
   volume: document.getElementById('setting-volume'),
   volumeVal: document.getElementById('volume-val'),
-  sens: document.getElementById('setting-sens'),
-  sensVal: document.getElementById('sens-val'),
   blood: document.getElementById('setting-blood'),
   shadows: document.getElementById('setting-shadows'),
-  laser: document.getElementById('setting-laser')
+  laser: document.getElementById('setting-laser'),
+  serverUrl: document.getElementById('setting-server-url')
 };
 
 const gameOverModal = document.getElementById('game-over-modal');
@@ -54,9 +53,7 @@ const WEAPON_STATS = {
   pistol: { name: 'Tactical 9mm', damage: 22, fireRate: 35, accuracy: 90, magSize: 12, range: 400, reloadTime: 1200, speedMultiplier: 1.0, type: 'Semi-Auto' },
   rifle: { name: 'Assault Rifle (M4A1)', damage: 28, fireRate: 75, accuracy: 70, magSize: 30, range: 600, reloadTime: 2200, speedMultiplier: 0.85, type: 'Automatic' },
   shotgun: { name: 'Shotgun (Remington 870)', damage: 15, fireRate: 20, accuracy: 40, magSize: 6, range: 250, reloadTime: 3000, speedMultiplier: 0.9, type: 'Pump-Action', pellets: 8 },
-  sniper: { name: 'Sniper Rifle (AWM)', damage: 95, fireRate: 10, accuracy: 98, magSize: 5, range: 1000, reloadTime: 2800, speedMultiplier: 0.75, type: 'Bolt-Action' },
-  smg: { name: 'SMG (MP5)', damage: 16, fireRate: 85, accuracy: 80, magSize: 30, range: 350, reloadTime: 1800, speedMultiplier: 0.95, type: 'Automatic' },
-  lmg: { name: 'LMG (M249)', damage: 30, fireRate: 70, accuracy: 75, magSize: 100, range: 550, reloadTime: 4000, speedMultiplier: 0.65, type: 'Automatic' }
+  sniper: { name: 'Sniper Rifle (AWM)', damage: 95, fireRate: 10, accuracy: 98, magSize: 5, range: 1000, reloadTime: 2800, speedMultiplier: 0.75, type: 'Bolt-Action' }
 };
 
 // Game Instance & Socket State
@@ -66,15 +63,14 @@ let currentRoom = null;
 let myName = 'Operative';
 let myWeapon = 'pistol';
 let isReady = false;
-let selectedMap = 'neon';
 
 // Global Game Settings
 const gameSettings = {
   volume: 0.5,
-  sens: 1.0,
   blood: true,
   shadows: true,
-  laser: true
+  laser: true,
+  serverUrl: ''
 };
 
 // 1. Initialize Settings
@@ -88,22 +84,19 @@ function initSettings() {
       
       if (settings.volume) settings.volume.value = gameSettings.volume * 100;
       if (settings.volumeVal) settings.volumeVal.innerText = `${Math.round(gameSettings.volume * 100)}%`;
-      if (settings.sens) settings.sens.value = gameSettings.sens * 100;
-      if (settings.sensVal) settings.sensVal.innerText = `${Math.round(gameSettings.sens * 100)}%`;
       if (settings.blood) settings.blood.checked = gameSettings.blood;
       if (settings.shadows) settings.shadows.checked = gameSettings.shadows;
       if (settings.laser) settings.laser.checked = gameSettings.laser;
+      if (settings.serverUrl) settings.serverUrl.value = gameSettings.serverUrl || '';
     } catch (e) {
       console.error(e);
     }
   }
 
   // Bind settings UI changes safely
-  if (settings.sens) {
-    settings.sens.addEventListener('input', (e) => {
-      const val = parseInt(e.target.value);
-      gameSettings.sens = val / 100;
-      if (settings.sensVal) settings.sensVal.innerText = `${val}%`;
+  if (settings.serverUrl) {
+    settings.serverUrl.addEventListener('input', (e) => {
+      gameSettings.serverUrl = e.target.value.trim();
       saveSettings();
     });
   }
@@ -197,11 +190,11 @@ function updateWeaponStatsUI(weaponKey) {
   displays.weaponStats.innerHTML = `
     <div class="stat-row">
       <span>DAMAGE:</span>
-      <div class="stat-bar"><div class="bar-fill" style="width: ${weaponKey === 'sniper' ? 100 : weaponKey === 'shotgun' ? 80 : weaponKey === 'lmg' ? 70 : weaponKey === 'rifle' ? 65 : weaponKey === 'smg' ? 45 : 35}%"></div></div>
+      <div class="stat-bar"><div class="bar-fill" style="width: ${weaponKey === 'sniper' ? 100 : weaponKey === 'rifle' ? 65 : weaponKey === 'shotgun' ? 80 : 35}%"></div></div>
     </div>
     <div class="stat-row">
       <span>FIRE RATE:</span>
-      <div class="stat-bar"><div class="bar-fill" style="width: ${weaponKey === 'smg' ? 95 : weaponKey === 'rifle' ? 85 : weaponKey === 'lmg' ? 75 : weaponKey === 'pistol' ? 45 : weaponKey === 'shotgun' ? 25 : 10}%"></div></div>
+      <div class="stat-bar"><div class="bar-fill" style="width: ${weaponKey === 'rifle' ? 85 : weaponKey === 'pistol' ? 45 : weaponKey === 'shotgun' ? 25 : 10}%"></div></div>
     </div>
     <div class="stat-row">
       <span>ACCURACY:</span>
@@ -260,10 +253,15 @@ function updateLobbyUI(players) {
 function connectSocket() {
   if (socket) return;
 
-  // Resolve server connection URL (Fallback: In production, point to Render backend. In development, point to local server)
-  const serverUrl = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
-    ? 'http://localhost:3000' 
-    : 'https://topdownshooter.onrender.com';
+  // Resolve server connection URL
+  let serverUrl = gameSettings.serverUrl;
+  
+  if (!serverUrl) {
+    // Fallback: In production, point to Render backend. In development (Vite), point to local server.
+    serverUrl = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
+      ? 'http://localhost:3000' 
+      : 'https://topdownshooter.onrender.com';
+  }
 
   socket = io(serverUrl);
 
@@ -314,7 +312,7 @@ function connectSocket() {
     }
   });
 
-  socket.on('match-start', ({ players, seed, map }) => {
+  socket.on('match-start', ({ players, seed }) => {
     showScreen('game');
     const myData = players.find(p => p.id === socket.id);
     const opponentData = players.find(p => p.id !== socket.id);
@@ -327,13 +325,9 @@ function connectSocket() {
       gameEngine.destroy();
     }
     
-    const isP1 = (socket.id === players[0].id);
-    
     gameEngine = new Engine('game-canvas', {
       mode: 'online',
       socket: socket,
-      isP1: isP1,
-      mapName: map || 'neon',
       localPlayerId: socket.id,
       localPlayerName: myName,
       localWeapon: myWeapon,
@@ -368,13 +362,12 @@ function startOfflineMode() {
   gameEngine = new Engine('game-canvas', {
     mode: 'offline',
     socket: null,
-    mapName: selectedMap,
     localPlayerId: 'player',
     localPlayerName: myName,
     localWeapon: myWeapon,
     opponentId: 'bot',
     opponentName: 'Bot (Sgt. Miller)',
-    opponentWeapon: ['pistol', 'rifle', 'shotgun', 'sniper', 'smg', 'lmg'][Math.floor(Math.random() * 6)],
+    opponentWeapon: ['pistol', 'rifle', 'shotgun', 'sniper'][Math.floor(Math.random() * 4)],
     seed: Math.random(),
     settings: gameSettings,
     onMatchEnd: handleMatchEnd,
@@ -447,7 +440,7 @@ function setupUIListeners() {
       localStorage.setItem('tacticstrike_player_name', myName);
       connectSocket();
       if (socket) {
-        socket.emit('create-room', { playerName: myName, map: selectedMap });
+        socket.emit('create-room', { playerName: myName });
       }
     });
   }
@@ -476,24 +469,8 @@ function setupUIListeners() {
       localStorage.setItem('tacticstrike_player_name', myName);
       connectSocket();
       if (socket) {
-        socket.emit('auto-match', { playerName: myName, map: selectedMap });
+        socket.emit('auto-match', { playerName: myName });
       }
-    });
-  }
-
-  // Map Selection Buttons
-  const btnMapNeon = document.getElementById('btn-map-neon');
-  const btnMapWarface = document.getElementById('btn-map-warface');
-  if (btnMapNeon && btnMapWarface) {
-    btnMapNeon.addEventListener('click', () => {
-      btnMapNeon.classList.add('active');
-      btnMapWarface.classList.remove('active');
-      selectedMap = 'neon';
-    });
-    btnMapWarface.addEventListener('click', () => {
-      btnMapWarface.classList.add('active');
-      btnMapNeon.classList.remove('active');
-      selectedMap = 'warface';
     });
   }
 

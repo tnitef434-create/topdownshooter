@@ -55,7 +55,7 @@ io.on('connection', (socket) => {
   let currentRoomId = null;
 
   // 1. Create a custom room
-  socket.on('create-room', ({ playerName, map }) => {
+  socket.on('create-room', ({ playerName }) => {
     let roomId = generateRoomId();
     while (rooms.has(roomId)) {
       roomId = generateRoomId();
@@ -69,8 +69,7 @@ io.on('connection', (socket) => {
         ready: false,
         weapon: 'pistol'
       }],
-      status: 'lobby',
-      map: map || 'neon'
+      status: 'lobby'
     };
 
     rooms.set(roomId, room);
@@ -114,7 +113,7 @@ io.on('connection', (socket) => {
   });
 
   // 3. Auto-matchmaking
-  socket.on('auto-match', ({ playerName, map }) => {
+  socket.on('auto-match', ({ playerName }) => {
     // Find a room with 1 player in lobby status
     let targetRoom = null;
     for (const [id, room] of rooms.entries()) {
@@ -154,8 +153,7 @@ io.on('connection', (socket) => {
           ready: false,
           weapon: 'pistol'
         }],
-        status: 'lobby',
-        map: map || 'neon'
+        status: 'lobby'
       };
 
       rooms.set(roomId, room);
@@ -197,10 +195,9 @@ io.on('connection', (socket) => {
         room.status = 'playing';
         io.to(currentRoomId).emit('match-start', {
           players: room.players,
-          seed: Math.random(), // synchronized seed for map spawns / layouts
-          map: room.map
+          seed: Math.random() // synchronized seed for map spawns / layouts
         });
-        console.log(`Match started in room: ${currentRoomId} on map ${room.map}`);
+        console.log(`Match started in room: ${currentRoomId}`);
       }
     }
   });

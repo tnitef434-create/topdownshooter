@@ -1,12 +1,8 @@
-import * as THREE from 'three';
-
 const WEAPON_DEFS = {
   pistol: { name: 'Tactical 9mm', damage: 22, fireRate: 300, accuracy: 0.95, magSize: 12, range: 400, reloadTime: 1200, speedMultiplier: 1.0, type: 'Semi-Auto', recoil: 3, bulletSpeed: 14 },
   rifle: { name: 'Assault Rifle (M4A1)', damage: 26, fireRate: 110, accuracy: 0.88, magSize: 30, range: 600, reloadTime: 2200, speedMultiplier: 0.85, type: 'Automatic', recoil: 4.5, bulletSpeed: 16 },
   shotgun: { name: 'Shotgun (Remington 870)', damage: 14, fireRate: 850, accuracy: 0.65, magSize: 6, range: 250, reloadTime: 2800, speedMultiplier: 0.9, type: 'Pump-Action', pellets: 7, recoil: 12, bulletSpeed: 12 },
-  sniper: { name: 'Sniper Rifle (AWM)', damage: 95, fireRate: 1500, accuracy: 0.99, magSize: 5, range: 1200, reloadTime: 2800, speedMultiplier: 0.75, type: 'Bolt-Action', recoil: 18, bulletSpeed: 24 },
-  smg: { name: 'SMG (MP5)', damage: 16, fireRate: 80, accuracy: 0.80, magSize: 30, range: 350, reloadTime: 1800, speedMultiplier: 0.95, type: 'Automatic', recoil: 2.5, bulletSpeed: 13 },
-  lmg: { name: 'LMG (M249)', damage: 30, fireRate: 130, accuracy: 0.75, magSize: 100, range: 550, reloadTime: 4000, speedMultiplier: 0.65, type: 'Automatic', recoil: 7, bulletSpeed: 15 }
+  sniper: { name: 'Sniper Rifle (AWM)', damage: 95, fireRate: 1500, accuracy: 0.99, magSize: 5, range: 1200, reloadTime: 2800, speedMultiplier: 0.75, type: 'Bolt-Action', recoil: 18, bulletSpeed: 24 }
 };
 
 export class Player {
@@ -42,7 +38,7 @@ export class Player {
     
     // Movement configuration
     this.accel = 0.45;
-    this.maxSpeed = 3.5;
+    this.maxSpeed = 3.4;
     this.friction = 0.84;
     
     // Visual indicators
@@ -68,7 +64,6 @@ export class Player {
   }
 
   update(keys, mouse, map, soundEngine, currentTime, localPlayerRef) {
-    this.mapRef = map;
     if (this.health <= 0) return;
 
     // --- 1. Movement logic ---
@@ -466,181 +461,6 @@ export class Player {
         this.botTargetY = ry;
         break;
       }
-    }
-  }
-
-  init3D(scene) {
-    this.scene = scene;
-    this.group = new THREE.Group();
-    
-    // Body (cylinder)
-    const bodyGeo = new THREE.CylinderGeometry(this.radius, this.radius, 10, 16);
-    const bodyColor = this.isLocal ? 0x45a29e : 0xff3c3c;
-    const bodyMat = new THREE.MeshStandardMaterial({
-      color: bodyColor,
-      roughness: 0.4,
-      metalness: 0.6
-    });
-    this.bodyMesh = new THREE.Mesh(bodyGeo, bodyMat);
-    this.bodyMesh.position.y = 5;
-    this.bodyMesh.castShadow = true;
-    this.bodyMesh.receiveShadow = true;
-    this.group.add(this.bodyMesh);
-    
-    // Head / Helmet (sphere)
-    const headGeo = new THREE.SphereGeometry(8, 16, 16);
-    const helmetColor = this.isLocal ? 0x66fcf1 : 0xff7a7a;
-    const headMat = new THREE.MeshStandardMaterial({
-      color: helmetColor,
-      roughness: 0.3,
-      metalness: 0.7
-    });
-    this.headMesh = new THREE.Mesh(headGeo, headMat);
-    this.headMesh.position.set(-2, 11, 0); // offset to match 2D layout
-    this.headMesh.castShadow = true;
-    this.group.add(this.headMesh);
-    
-    // Visor strip (black box)
-    const visorGeo = new THREE.BoxGeometry(3, 2, 8);
-    const visorMat = new THREE.MeshBasicMaterial({ color: 0x111111 });
-    const visorMesh = new THREE.Mesh(visorGeo, visorMat);
-    visorMesh.position.set(4.5, 11, 0);
-    this.group.add(visorMesh);
-    
-    // Weapon Barrel
-    let barrelLength = 18;
-    let barrelWidth = 4;
-    let barrelHeight = 4;
-    if (this.weaponKey === 'rifle') {
-      barrelLength = 24;
-      barrelWidth = 5;
-    } else if (this.weaponKey === 'shotgun') {
-      barrelLength = 22;
-      barrelWidth = 6;
-    } else if (this.weaponKey === 'sniper') {
-      barrelLength = 32;
-      barrelWidth = 4;
-    } else if (this.weaponKey === 'smg') {
-      barrelLength = 16;
-      barrelWidth = 4.5;
-    } else if (this.weaponKey === 'lmg') {
-      barrelLength = 26;
-      barrelWidth = 6.5;
-    }
-    const barrelGeo = new THREE.BoxGeometry(barrelLength, barrelHeight, barrelWidth);
-    const barrelMat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.5 });
-    this.barrelMesh = new THREE.Mesh(barrelGeo, barrelMat);
-    this.barrelMesh.position.set(10 + barrelLength/2, 6, 0);
-    this.barrelMesh.castShadow = true;
-    this.group.add(this.barrelMesh);
-    
-    // Laser sight (line)
-    const laserGeo = new THREE.BufferGeometry();
-    const laserMat = new THREE.LineBasicMaterial({ color: 0x66fcf1, transparent: true, opacity: 0.6 });
-    this.laserLine = new THREE.Line(laserGeo, laserMat);
-    this.group.add(this.laserLine);
-    
-    // Flashlight (SpotLight pointing forward)
-    this.flashlight = new THREE.SpotLight(0xffffff, 4.0, 300, Math.PI / 5, 0.5, 1);
-    this.flashlight.position.set(10 + barrelLength, 6, 0);
-    this.flashlight.castShadow = true;
-    this.flashlight.shadow.mapSize.width = 512;
-    this.flashlight.shadow.mapSize.height = 512;
-    this.flashlight.shadow.camera.near = 10;
-    this.flashlight.shadow.camera.far = 300;
-    
-    this.flashlightTarget = new THREE.Object3D();
-    this.flashlightTarget.position.set(10 + barrelLength + 100, 6, 0);
-    this.group.add(this.flashlightTarget);
-    this.flashlight.target = this.flashlightTarget;
-    
-    this.group.add(this.flashlight);
-    
-    // Muzzle flash sphere
-    const flashGeo = new THREE.SphereGeometry(6, 8, 8);
-    const flashMat = new THREE.MeshBasicMaterial({ color: 0xffdd44, transparent: true, opacity: 0 });
-    this.flashMesh = new THREE.Mesh(flashGeo, flashMat);
-    this.flashMesh.position.set(10 + barrelLength, 6, 0);
-    this.group.add(this.flashMesh);
-    
-    this.scene.add(this.group);
-  }
-
-  update3D(settings) {
-    if (!this.group) return;
-    
-    // Sync position and orientation
-    this.group.position.set(this.x, 0, this.y);
-    this.group.rotation.y = -this.angle;
-    
-    // Muzzle flash visibility decay
-    if (this.muzzleFlash > 0) {
-      this.flashMesh.visible = true;
-      this.flashMesh.material.opacity = this.muzzleFlash;
-      const scale = 0.8 + Math.random() * 0.4;
-      this.flashMesh.scale.set(scale, scale, scale);
-    } else {
-      this.flashMesh.visible = false;
-    }
-    
-    // Flashlight control
-    if (this.flashlight) {
-      this.flashlight.visible = settings.shadows && this.health > 0;
-    }
-    
-    // Laser control
-    if (this.laserLine) {
-      const showLaser = settings.laser && this.health > 0 && !this.isReloading;
-      this.laserLine.visible = showLaser;
-      
-      if (showLaser) {
-        const map = this.mapRef;
-        let laserLength = 1200;
-        if (map) {
-          const hit = map.getLineIntersection(
-            { x: this.x, y: this.y },
-            { x: this.x + Math.cos(this.angle) * 1200, y: this.y + Math.sin(this.angle) * 1200 }
-          );
-          if (hit) {
-            laserLength = hit.dist;
-          }
-        }
-        
-        // Update laser geometry points
-        const points = [];
-        points.push(new THREE.Vector3(14, 6, 0)); 
-        points.push(new THREE.Vector3(laserLength, 6, 0)); 
-        this.laserLine.geometry.setFromPoints(points);
-      }
-    }
-    
-    // Adjust layout for dead operatives (fallen body)
-    if (this.health <= 0) {
-      this.bodyMesh.rotation.z = Math.PI / 2;
-      this.bodyMesh.position.y = 2;
-      this.headMesh.position.set(-2, 2, 0);
-      this.barrelMesh.position.set(10, 2, 0);
-      if (this.laserLine) this.laserLine.visible = false;
-      if (this.flashlight) this.flashlight.visible = false;
-    } else {
-      this.bodyMesh.rotation.z = 0;
-      this.bodyMesh.position.y = 5;
-      this.headMesh.position.set(-2, 11, 0);
-      
-      let barrelLength = 18;
-      if (this.weaponKey === 'rifle') barrelLength = 24;
-      else if (this.weaponKey === 'shotgun') barrelLength = 22;
-      else if (this.weaponKey === 'sniper') barrelLength = 32;
-      else if (this.weaponKey === 'smg') barrelLength = 16;
-      else if (this.weaponKey === 'lmg') barrelLength = 26;
-      
-      this.barrelMesh.position.set(10 + barrelLength/2, 6, 0);
-    }
-  }
-
-  show3D(visible) {
-    if (this.group) {
-      this.group.visible = visible;
     }
   }
 

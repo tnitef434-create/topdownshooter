@@ -115,20 +115,6 @@ body {
   transform: scale(1);
 }
 
-.alert-notice {
-  background: rgba(255, 165, 0, 0.08);
-  border: 1px solid rgba(255, 165, 0, 0.3);
-  padding: 12px;
-  border-radius: 6px;
-  text-align: center;
-  font-size: 11px;
-  color: var(--neon-yellow);
-  font-family: var(--font-title);
-  letter-spacing: 0.5px;
-  line-height: 1.4;
-  margin-bottom: 8px;
-}
-
 /* Button & UI Components */
 .btn {
   font-family: var(--font-title);
@@ -216,52 +202,6 @@ body {
 .btn-icon:hover {
   background: rgba(102, 252, 241, 0.15);
   border-color: var(--neon-cyan);
-}
-
-.map-card {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.map-card label {
-  font-family: var(--font-title);
-  font-size: 11px;
-  letter-spacing: 1.5px;
-  color: var(--neon-teal);
-}
-
-.map-selector-row {
-  display: flex;
-  gap: 12px;
-}
-
-.btn-map {
-  flex: 1;
-  font-family: var(--font-title);
-  font-weight: 700;
-  padding: 12px;
-  border-radius: 4px;
-  cursor: pointer;
-  border: 1px solid var(--color-border);
-  background: rgba(31, 40, 51, 0.4);
-  color: var(--text-muted);
-  letter-spacing: 1px;
-  transition: all 0.25s ease;
-  font-size: 12px;
-}
-
-.btn-map:hover {
-  background: rgba(102, 252, 241, 0.05);
-  border-color: var(--color-border-glow);
-  color: white;
-}
-
-.btn-map.active {
-  background: rgba(102, 252, 241, 0.15);
-  border-color: var(--neon-cyan);
-  color: var(--neon-cyan);
-  box-shadow: 0 0 10px rgba(102, 252, 241, 0.15);
 }
 
 /* Card layout */

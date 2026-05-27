@@ -30,21 +30,9 @@
           <p class="subtitle">Online 1v1 Top-Down Tactical Shooter</p>
         </header>
 
-        <div class="alert-notice">
-          ⚠️ NOTE: If the screen remains black, press <strong>Ctrl + F5</strong> (or <strong>Cmd + Shift + R</strong>) to hard-refresh the cache!
-        </div>
-
         <div class="card name-card">
           <label for="player-name-input">OPERATIVE NAME</label>
           <input type="text" id="player-name-input" maxlength="15" placeholder="Enter codename..." value="Operative">
-        </div>
-
-        <div class="card map-card">
-          <label>CHOOSE OPERATIONS ZONE</label>
-          <div class="map-selector-row">
-            <button id="btn-map-neon" class="btn-map active" data-map="neon">NEON GRID</button>
-            <button id="btn-map-warface" class="btn-map" data-map="warface">WARFACE TACTICAL</button>
-          </div>
         </div>
 
         <div class="menu-options">
@@ -127,18 +115,6 @@
                 <div class="weapon-info">
                   <span class="weapon-name">Sniper Rifle (AWM)</span>
                   <span class="weapon-type">Bolt-Action</span>
-                </div>
-              </div>
-              <div class="weapon-option" data-weapon="smg">
-                <div class="weapon-info">
-                  <span class="weapon-name">SMG (MP5)</span>
-                  <span class="weapon-type">Automatic</span>
-                </div>
-              </div>
-              <div class="weapon-option" data-weapon="lmg">
-                <div class="weapon-info">
-                  <span class="weapon-name">LMG (M249)</span>
-                  <span class="weapon-type">Automatic</span>
                 </div>
               </div>
             </div>
@@ -289,9 +265,8 @@
           </div>
 
           <div class="setting-group">
-            <label for="setting-sens">Mouse Sensitivity</label>
-            <input type="range" id="setting-sens" min="10" max="300" value="100">
-            <span id="sens-val">100%</span>
+            <label for="setting-server-url">Multiplayer Server URL (Render / Railway / Glitch)</label>
+            <input type="text" id="setting-server-url" placeholder="Leave empty for same-origin" style="background: rgba(0, 0, 0, 0.4); border: 1px solid var(--glass-border); padding: 10px; border-radius: 4px; color: white; font-size: 13px; outline: none; transition: border-color 0.2s;">
           </div>
 
           <div class="setting-group checkbox-group">

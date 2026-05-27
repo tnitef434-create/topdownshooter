@@ -1,5 +1,3 @@
-import * as THREE from 'three';
-
 export class Bullet {
   constructor(shootData) {
     this.id = `${shootData.playerId}_bullet_${Date.now()}_${Math.floor(Math.random()*1000)}`;
@@ -193,44 +191,5 @@ export class Bullet {
     ctx.stroke();
 
     ctx.restore();
-  }
-
-  init3D(scene) {
-    this.scene = scene;
-    
-    // Draw glowing bullet tracer path in 3D
-    const points = [];
-    points.push(new THREE.Vector3(this.prevX, 6.0, this.prevY));
-    points.push(new THREE.Vector3(this.x, 6.0, this.y));
-    
-    const geometry = new THREE.BufferGeometry().setFromPoints(points);
-    
-    const isLocal = this.playerId === window.LocalPlayerId;
-    const color = isLocal ? 0x66fcf1 : 0xff3c3c;
-    
-    const material = new THREE.LineBasicMaterial({
-      color: color,
-      linewidth: 3
-    });
-    
-    this.mesh = new THREE.Line(geometry, material);
-    this.scene.add(this.mesh);
-  }
-
-  update3D() {
-    if (!this.mesh) return;
-    
-    if (!this.active) {
-      this.scene.remove(this.mesh);
-      this.mesh = null;
-      return;
-    }
-    
-    // Update tracer points dynamically along trajectory
-    const points = [
-      new THREE.Vector3(this.prevX, 6.0, this.prevY),
-      new THREE.Vector3(this.x, 6.0, this.y)
-    ];
-    this.mesh.geometry.setFromPoints(points);
   }
 }

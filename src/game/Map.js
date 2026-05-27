@@ -1,7 +1,3 @@
-import * as THREE from 'three';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import mapData from './map_data.json';
-
 // Seeded random number generator for synchronized crate spawning
 class SeededRandom {
   constructor(seed) {
@@ -47,29 +43,81 @@ export class Map {
     // Right
     this.walls.push({ x: this.width - borderThickness, y: borderThickness, w: borderThickness, h: this.height - borderThickness * 2, type: 'wall' });
 
-    // 2. Load custom mapData from the 3D projected layout
-    mapData.forEach(item => {
-      if (item.type === 'crate') {
-        this.walls.push({
-          x: item.x,
-          y: item.y,
-          w: item.w,
-          h: item.h,
-          type: 'crate',
-          health: item.health,
-          maxHealth: item.maxHealth,
-          id: item.id
-        });
-      } else {
-        this.walls.push({
-          x: item.x,
-          y: item.y,
-          w: item.w,
-          h: item.h,
-          type: 'wall'
-        });
-      }
+    // 2. Static Level Obstacles (columns and structures)
+    const columns = [
+      // Central Columns
+      { x: 300, y: 300, w: 80, h: 80 },
+      { x: this.width - 380, y: 300, w: 80, h: 80 },
+      { x: 300, y: this.height - 380, w: 80, h: 80 },
+      { x: this.width - 380, y: this.height - 380, w: 80, h: 80 },
+      
+      // Central Block
+      { x: this.width / 2 - 100, y: this.height / 2 - 100, w: 200, h: 40 },
+      { x: this.width / 2 - 100, y: this.height / 2 + 60, w: 200, h: 40 },
+      
+      // Corridors / Dividers
+      { x: 120, y: this.height / 2 - 80, w: 120, h: 40 },
+      { x: this.width - 240, y: this.height / 2 - 80, w: 120, h: 40 }
+    ];
+
+    columns.forEach(col => {
+      this.walls.push({ ...col, type: 'wall' });
     });
+
+    // 3. Destructible Crates (spawns synchronized via seed)
+    // We will attempt to spawn crates in valid grid cells that don't overlap static obstacles
+    const crateSize = 50;
+    const gridCols = Math.floor(this.width / crateSize);
+    const gridRows = Math.floor(this.height / crateSize);
+
+    // Let's spawn 15-20 crates
+    const numCrates = Math.floor(this.rng.range(16, 22));
+    let spawnedCrates = 0;
+    let attempts = 0;
+
+    while (spawnedCrates < numCrates && attempts < 200) {
+      attempts++;
+      // Get a random grid location (avoiding spawn zones of P1 & P2)
+      // Player 1 spawns around (150, 150), Player 2 around (width-150, height-150)
+      const gx = Math.floor(this.rng.range(2, gridCols - 2));
+      const gy = Math.floor(this.rng.range(2, gridRows - 2));
+
+      const cx = gx * crateSize;
+      const cy = gy * crateSize;
+
+      // Check Spawn Zones
+      if (cx < 250 && cy < 250) continue; // P1 Zone
+      if (cx > this.width - 250 && cy > this.height - 250) continue; // P2 Zone
+
+      // Check Overlap with existing walls
+      let overlaps = false;
+      const margin = 10;
+      for (const wall of this.walls) {
+        if (
+          cx + crateSize + margin > wall.x &&
+          cx - margin < wall.x + wall.w &&
+          cy + crateSize + margin > wall.y &&
+          cy - margin < wall.y + wall.h
+        ) {
+          overlaps = true;
+          break;
+        }
+      }
+
+      if (!overlaps) {
+        this.walls.push({
+          x: cx,
+          y: cy,
+          w: crateSize,
+          h: crateSize,
+          type: 'crate',
+          health: 50,
+          maxHealth: 50,
+          id: `crate_${spawnedCrates}`
+        });
+        spawnedCrates++;
+      }
+    }
 
     this.rebuildSegments();
   }
@@ -98,11 +146,6 @@ export class Map {
       // Remove crate
       this.walls.splice(crateIdx, 1);
       this.rebuildSegments();
-
-      // Hide 3D mesh
-      if (this.crateMeshes && this.crateMeshes[crateId]) {
-        this.crateMeshes[crateId].visible = false;
-      }
       
       // Spawn items from crate (seeded probabilities)
       // 40% chance of item spawn
@@ -133,10 +176,6 @@ export class Map {
     if (crateIdx !== -1) {
       this.walls.splice(crateIdx, 1);
       this.rebuildSegments();
-    }
-    // Hide 3D mesh
-    if (this.crateMeshes && this.crateMeshes[crateId]) {
-      this.crateMeshes[crateId].visible = false;
     }
     if (spawnedItem) {
       // Avoid duplicate spawning
@@ -413,169 +452,5 @@ export class Map {
       
       ctx.restore();
     }
-  }
-
-  init3D(scene, mapName) {
-    this.scene = scene;
-    this.mapName = mapName;
-    this.meshes = [];
-    this.crateMeshes = {};
-    this.crateNames = ['Cube.002', 'Cube.016', 'Cube.017', 'Cube.018', 'Cube.019', 'Cube.020', 'Cube.021', 'Cube.022', 'Cube.023', 'Cube.024'];
-
-    // 1. Create 3D floor plane (dark concrete floor)
-    const floorGeo = new THREE.PlaneGeometry(this.width * 2, this.height * 2);
-    const floorMat = new THREE.MeshStandardMaterial({ 
-      color: 0x050608, 
-      roughness: 0.8,
-      metalness: 0.2
-    });
-    const floor = new THREE.Mesh(floorGeo, floorMat);
-    floor.rotation.x = -Math.PI / 2;
-    floor.position.y = -0.5;
-    floor.receiveShadow = true;
-    this.scene.add(floor);
-
-    // Grid helper on the floor for alignment/visuals
-    const grid = new THREE.GridHelper(this.width * 2, 70, 0x45a29e, 0x121620);
-    grid.position.y = -0.49;
-    this.scene.add(grid);
-
-    if (this.mapName === 'warface') {
-      // 2. Load the 3D GLB Map
-      const loader = new GLTFLoader();
-      loader.load('/Warfacemap.glb', (gltf) => {
-        const model = gltf.scene;
-        
-        // World space scale
-        const scaleX = 1200 / (21.51 - (-20.90)); // ~28.3
-        const scaleZ = 1200 / (9.44 - (-9.04));   // ~65.0
-        
-        model.scale.set(scaleX, 28.0, scaleZ);
-        
-        const posX = 100 - (-20.90 * scaleX);
-        const posZ = 100 - (-9.04 * scaleZ);
-        model.position.set(posX, -0.49, posZ);
-        
-        // Traverse model to set shadow casting and materials
-        model.traverse((child) => {
-          if (child.isMesh) {
-            child.castShadow = true;
-            child.receiveShadow = true;
-            
-            // Adjust materials to look glowing and metallic
-            if (child.material) {
-              child.material.roughness = 0.5;
-              child.material.metalness = 0.7;
-              
-              if (child.name.toLowerCase().includes('glow') || child.name.toLowerCase().includes('neon')) {
-                child.material.emissive = new THREE.Color(0x66fcf1);
-                child.material.emissiveIntensity = 2.0;
-              }
-            }
-
-            // Map crate child meshes to hide them when broken
-            if (this.crateNames.includes(child.name)) {
-              const idx = this.crateNames.indexOf(child.name);
-              this.crateMeshes[`crate_${idx}`] = child;
-            }
-          }
-        });
-        
-        this.scene.add(model);
-      });
-    } else {
-      // 3. Render Neon Grid Map in 3D
-      this.walls.forEach(wall => {
-        // Exclude boundary walls from visuals
-        if (wall.x === 0 || wall.y === 0 || wall.x + wall.w === this.width || wall.y + wall.h === this.height) {
-          // Boundary walls: big dark concrete walls
-          const geom = new THREE.BoxGeometry(wall.w, 40, wall.h);
-          const mat = new THREE.MeshStandardMaterial({ color: 0x07090c, roughness: 0.9, metalness: 0.1 });
-          const mesh = new THREE.Mesh(geom, mat);
-          mesh.position.set(wall.x + wall.w / 2, 20, wall.y + wall.h / 2);
-          mesh.castShadow = true;
-          mesh.receiveShadow = true;
-          this.scene.add(mesh);
-          return;
-        }
-
-        const height = wall.type === 'crate' ? 18 : 35;
-        const geom = new THREE.BoxGeometry(wall.w, height, wall.h);
-        
-        let mat;
-        if (wall.type === 'crate') {
-          mat = new THREE.MeshStandardMaterial({ 
-            color: 0x4e3629, 
-            roughness: 0.9, 
-            metalness: 0.1 
-          });
-        } else {
-          mat = new THREE.MeshStandardMaterial({ 
-            color: 0x10141d, 
-            roughness: 0.4, 
-            metalness: 0.8,
-            emissive: 0x45a29e,
-            emissiveIntensity: 0.05
-          });
-        }
-        
-        const mesh = new THREE.Mesh(geom, mat);
-        mesh.position.set(wall.x + wall.w / 2, height / 2 - 0.5, wall.y + wall.h / 2);
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;
-        
-        this.scene.add(mesh);
-        
-        if (wall.type === 'crate') {
-          this.crateMeshes[wall.id] = mesh;
-        } else {
-          this.meshes.push(mesh);
-        }
-      });
-    }
-  }
-
-  update3D() {
-    if (!this.scene) return;
-    
-    // Create meshes for items if they don't have them
-    this.items.forEach(item => {
-      if (item.active && !item.mesh) {
-        let geom, mat;
-        if (item.type === 'health') {
-          geom = new THREE.BoxGeometry(10, 10, 10);
-          mat = new THREE.MeshStandardMaterial({ 
-            color: 0xff2e2e, 
-            roughness: 0.3, 
-            metalness: 0.5,
-            emissive: 0xff0000,
-            emissiveIntensity: 0.5
-          });
-        } else {
-          geom = new THREE.CylinderGeometry(2, 2, 8, 8);
-          mat = new THREE.MeshStandardMaterial({ 
-            color: 0xffcc00, 
-            roughness: 0.2, 
-            metalness: 0.8,
-            emissive: 0xccaa00,
-            emissiveIntensity: 0.4
-          });
-        }
-        
-        const mesh = new THREE.Mesh(geom, mat);
-        mesh.position.set(item.x, 2, item.y);
-        mesh.castShadow = true;
-        this.scene.add(mesh);
-        item.mesh = mesh;
-      } else if (!item.active && item.mesh) {
-        this.scene.remove(item.mesh);
-        item.mesh = null;
-      }
-      
-      if (item.active && item.mesh) {
-        item.mesh.position.y = 2.5 + Math.sin(Date.now() / 150) * 0.5;
-        item.mesh.rotation.y += 0.03;
-      }
-    });
   }
 }
