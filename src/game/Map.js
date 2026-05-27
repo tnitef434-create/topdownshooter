@@ -354,14 +354,27 @@ export class Map {
   // ─────────────────────────────────────────────────────────────────
   computeVisibilityPolygon(lx, ly, maxR) {
     const angles = new Set();
+    const normalizeAngle = (ang) => {
+      let a = ang;
+      while (a < -Math.PI) a += Math.PI * 2;
+      while (a > Math.PI) a -= Math.PI * 2;
+      return a;
+    };
+
     this.walls.forEach(w => {
       [{x:w.x,y:w.y},{x:w.x+w.w,y:w.y},{x:w.x+w.w,y:w.y+w.h},{x:w.x,y:w.y+w.h}]
         .forEach(v => {
           const a = Math.atan2(v.y-ly, v.x-lx);
-          angles.add(a-0.0001); angles.add(a); angles.add(a+0.0001);
+          angles.add(normalizeAngle(a-0.0001)); 
+          angles.add(a); 
+          angles.add(normalizeAngle(a+0.0001));
         });
     });
-    for (let a=0; a<Math.PI*2; a+=Math.PI/10) angles.add(a);
+
+    // Add circle partitions in [-PI, PI] range
+    for (let a = -Math.PI; a < Math.PI; a += Math.PI / 10) {
+      angles.add(a);
+    }
 
     const ends = [];
     angles.forEach(angle => {
