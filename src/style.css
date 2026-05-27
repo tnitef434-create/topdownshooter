@@ -115,6 +115,20 @@ body {
   transform: scale(1);
 }
 
+.alert-notice {
+  background: rgba(255, 165, 0, 0.08);
+  border: 1px solid rgba(255, 165, 0, 0.3);
+  padding: 12px;
+  border-radius: 6px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--neon-yellow);
+  font-family: var(--font-title);
+  letter-spacing: 0.5px;
+  line-height: 1.4;
+  margin-bottom: 8px;
+}
+
 /* Button & UI Components */
 .btn {
   font-family: var(--font-title);

@@ -40,10 +40,11 @@ const settings = {
   modal: document.getElementById('settings-modal'),
   volume: document.getElementById('setting-volume'),
   volumeVal: document.getElementById('volume-val'),
+  sens: document.getElementById('setting-sens'),
+  sensVal: document.getElementById('sens-val'),
   blood: document.getElementById('setting-blood'),
   shadows: document.getElementById('setting-shadows'),
-  laser: document.getElementById('setting-laser'),
-  serverUrl: document.getElementById('setting-server-url')
+  laser: document.getElementById('setting-laser')
 };
 
 const gameOverModal = document.getElementById('game-over-modal');
@@ -67,10 +68,10 @@ let isReady = false;
 // Global Game Settings
 const gameSettings = {
   volume: 0.5,
+  sens: 1.0,
   blood: true,
   shadows: true,
-  laser: true,
-  serverUrl: ''
+  laser: true
 };
 
 // 1. Initialize Settings
@@ -84,19 +85,22 @@ function initSettings() {
       
       if (settings.volume) settings.volume.value = gameSettings.volume * 100;
       if (settings.volumeVal) settings.volumeVal.innerText = `${Math.round(gameSettings.volume * 100)}%`;
+      if (settings.sens) settings.sens.value = gameSettings.sens * 100;
+      if (settings.sensVal) settings.sensVal.innerText = `${Math.round(gameSettings.sens * 100)}%`;
       if (settings.blood) settings.blood.checked = gameSettings.blood;
       if (settings.shadows) settings.shadows.checked = gameSettings.shadows;
       if (settings.laser) settings.laser.checked = gameSettings.laser;
-      if (settings.serverUrl) settings.serverUrl.value = gameSettings.serverUrl || '';
     } catch (e) {
       console.error(e);
     }
   }
 
   // Bind settings UI changes safely
-  if (settings.serverUrl) {
-    settings.serverUrl.addEventListener('input', (e) => {
-      gameSettings.serverUrl = e.target.value.trim();
+  if (settings.sens) {
+    settings.sens.addEventListener('input', (e) => {
+      const val = parseInt(e.target.value);
+      gameSettings.sens = val / 100;
+      if (settings.sensVal) settings.sensVal.innerText = `${val}%`;
       saveSettings();
     });
   }
@@ -253,15 +257,10 @@ function updateLobbyUI(players) {
 function connectSocket() {
   if (socket) return;
 
-  // Resolve server connection URL
-  let serverUrl = gameSettings.serverUrl;
-  
-  if (!serverUrl) {
-    // Fallback: In production, point to Render backend. In development (Vite), point to local server.
-    serverUrl = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
-      ? 'http://localhost:3000' 
-      : 'https://topdownshooter.onrender.com';
-  }
+  // Resolve server connection URL (Fallback: In production, point to Render backend. In development, point to local server)
+  const serverUrl = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
+    ? 'http://localhost:3000' 
+    : 'https://topdownshooter.onrender.com';
 
   socket = io(serverUrl);
 
@@ -325,9 +324,12 @@ function connectSocket() {
       gameEngine.destroy();
     }
     
+    const isP1 = (socket.id === players[0].id);
+    
     gameEngine = new Engine('game-canvas', {
       mode: 'online',
       socket: socket,
+      isP1: isP1,
       localPlayerId: socket.id,
       localPlayerName: myName,
       localWeapon: myWeapon,

@@ -35,9 +35,9 @@ export class Engine {
     const p1Spawn = { x: 150, y: 150 };
     const p2Spawn = { x: this.mapWidth - 150, y: this.mapHeight - 150 };
     
-    const isP1 = this.mode === 'offline' || this.socket.id === config.localPlayerId;
-    const localSpawn = isP1 ? p1Spawn : p2Spawn;
-    const oppSpawn = isP1 ? p2Spawn : p1Spawn;
+    this.isP1 = this.mode === 'offline' || config.isP1;
+    const localSpawn = this.isP1 ? p1Spawn : p2Spawn;
+    const oppSpawn = this.isP1 ? p2Spawn : p1Spawn;
     
     // Operatives
     this.localPlayer = new Player(
@@ -243,9 +243,8 @@ export class Engine {
     const p1Spawn = { x: 150, y: 150 };
     const p2Spawn = { x: this.mapWidth - 150, y: this.mapHeight - 150 };
     
-    const isP1 = this.mode === 'offline' || this.socket.id === window.LocalPlayerId;
-    const localSpawn = isP1 ? p1Spawn : p2Spawn;
-    const oppSpawn = isP1 ? p2Spawn : p1Spawn;
+    const localSpawn = this.isP1 ? p1Spawn : p2Spawn;
+    const oppSpawn = this.isP1 ? p2Spawn : p1Spawn;
     
     // Reset operatives
     this.localPlayer.x = localSpawn.x;
@@ -352,8 +351,8 @@ export class Engine {
 
     this.updateScoreboardHUD();
 
-    // Check if match over (First to 3 rounds won)
-    if (this.scoreSelf >= 3 || this.scoreOpponent >= 3) {
+    // Check if match over (First to 5 rounds won)
+    if (this.scoreSelf >= 5 || this.scoreOpponent >= 5) {
       setTimeout(() => this.endMatch(), 2000);
     } else {
       this.roundNumber++;
@@ -371,10 +370,10 @@ export class Engine {
     const accuracyVal = (window.MatchStats.hitsRegistered / totalShots) * 100;
     window.MatchStats.accuracy = accuracyVal;
     window.MatchStats.roundsWon = this.scoreSelf;
-    window.MatchStats.winnerId = this.scoreSelf >= 3 ? this.localPlayer.id : this.opponent.id;
+    window.MatchStats.winnerId = this.scoreSelf >= 5 ? this.localPlayer.id : this.opponent.id;
 
     // Trigger end match callback sound FX
-    if (this.scoreSelf >= 3) {
+    if (this.scoreSelf >= 5) {
       this.sound.playMatchWin();
     } else {
       this.sound.playMatchLose();
@@ -540,8 +539,9 @@ export class Engine {
     }
 
     // 6. Camera follows local player with smooth interpolations
-    // Peek ahead feature: shifts camera 25% towards mouse cursor direction
-    const mouseOffsetMax = 0.25;
+    // Peek ahead feature: shifts camera 25% * sensitivity towards mouse cursor direction
+    const sensVal = (this.settings && this.settings.sens !== undefined) ? this.settings.sens : 1.0;
+    const mouseOffsetMax = 0.25 * sensVal;
     const camTargetX = this.localPlayer.x + (this.mouse.x - this.canvas.width / 2) * mouseOffsetMax;
     const camTargetY = this.localPlayer.y + (this.mouse.y - this.canvas.height / 2) * mouseOffsetMax;
     
