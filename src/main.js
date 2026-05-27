@@ -238,10 +238,10 @@ function connectSocket() {
   let serverUrl = gameSettings.serverUrl;
   
   if (!serverUrl) {
-    // Fallback: In production, server is same origin. In development (Vite), point to server port 3000.
+    // Fallback: In production, point to Render backend. In development (Vite), point to local server.
     serverUrl = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
       ? 'http://localhost:3000' 
-      : window.location.origin;
+      : 'https://topdownshooter.onrender.com';
   }
 
   socket = io(serverUrl);
