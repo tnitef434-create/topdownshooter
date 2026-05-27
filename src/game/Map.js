@@ -1,3 +1,5 @@
+import mapData from './map_data.json';
+
 // Seeded random number generator for synchronized crate spawning
 class SeededRandom {
   constructor(seed) {
@@ -43,81 +45,29 @@ export class Map {
     // Right
     this.walls.push({ x: this.width - borderThickness, y: borderThickness, w: borderThickness, h: this.height - borderThickness * 2, type: 'wall' });
 
-    // 2. Static Level Obstacles (columns and structures)
-    const columns = [
-      // Central Columns
-      { x: 300, y: 300, w: 80, h: 80 },
-      { x: this.width - 380, y: 300, w: 80, h: 80 },
-      { x: 300, y: this.height - 380, w: 80, h: 80 },
-      { x: this.width - 380, y: this.height - 380, w: 80, h: 80 },
-      
-      // Central Block
-      { x: this.width / 2 - 100, y: this.height / 2 - 100, w: 200, h: 40 },
-      { x: this.width / 2 - 100, y: this.height / 2 + 60, w: 200, h: 40 },
-      
-      // Corridors / Dividers
-      { x: 120, y: this.height / 2 - 80, w: 120, h: 40 },
-      { x: this.width - 240, y: this.height / 2 - 80, w: 120, h: 40 }
-    ];
-
-    columns.forEach(col => {
-      this.walls.push({ ...col, type: 'wall' });
-    });
-
-    // 3. Destructible Crates (spawns synchronized via seed)
-    // We will attempt to spawn crates in valid grid cells that don't overlap static obstacles
-    const crateSize = 50;
-    const gridCols = Math.floor(this.width / crateSize);
-    const gridRows = Math.floor(this.height / crateSize);
-
-    // Let's spawn 15-20 crates
-    const numCrates = Math.floor(this.rng.range(16, 22));
-    let spawnedCrates = 0;
-    let attempts = 0;
-
-    while (spawnedCrates < numCrates && attempts < 200) {
-      attempts++;
-      // Get a random grid location (avoiding spawn zones of P1 & P2)
-      // Player 1 spawns around (150, 150), Player 2 around (width-150, height-150)
-      const gx = Math.floor(this.rng.range(2, gridCols - 2));
-      const gy = Math.floor(this.rng.range(2, gridRows - 2));
-
-      const cx = gx * crateSize;
-      const cy = gy * crateSize;
-
-      // Check Spawn Zones
-      if (cx < 250 && cy < 250) continue; // P1 Zone
-      if (cx > this.width - 250 && cy > this.height - 250) continue; // P2 Zone
-
-      // Check Overlap with existing walls
-      let overlaps = false;
-      const margin = 10;
-      for (const wall of this.walls) {
-        if (
-          cx + crateSize + margin > wall.x &&
-          cx - margin < wall.x + wall.w &&
-          cy + crateSize + margin > wall.y &&
-          cy - margin < wall.y + wall.h
-        ) {
-          overlaps = true;
-          break;
-        }
-      }
-
-      if (!overlaps) {
+    // 2. Load custom mapData from the 3D projected layout
+    mapData.forEach(item => {
+      if (item.type === 'crate') {
         this.walls.push({
-          x: cx,
-          y: cy,
-          w: crateSize,
-          h: crateSize,
+          x: item.x,
+          y: item.y,
+          w: item.w,
+          h: item.h,
           type: 'crate',
-          health: 50,
-          maxHealth: 50,
-          id: `crate_${spawnedCrates}`
+          health: item.health,
+          maxHealth: item.maxHealth,
+          id: item.id
         });
-        spawnedCrates++;
+      } else {
+        this.walls.push({
+          x: item.x,
+          y: item.y,
+          w: item.w,
+          h: item.h,
+          type: 'wall'
+        });
       }
-    }
+    });
 
     this.rebuildSegments();
   }
