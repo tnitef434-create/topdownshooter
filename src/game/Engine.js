@@ -433,16 +433,52 @@ export class Engine {
     }
   }
 
+  drawErrorOverlay(error) {
+    try {
+      this.ctx.restore(); // Reset any transformations
+    } catch(e) {}
+    
+    // Draw background
+    this.ctx.fillStyle = 'rgba(10, 10, 15, 0.95)';
+    this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    
+    // Draw title
+    this.ctx.fillStyle = '#ff3c3c';
+    this.ctx.font = 'bold 20px monospace';
+    this.ctx.fillText("TACTICSTRIKE RUNTIME ERROR DETECTED", 20, 50);
+    
+    // Draw stack trace lines
+    this.ctx.fillStyle = '#ffffff';
+    this.ctx.font = '12px monospace';
+    
+    const lines = (error.stack || error.toString()).split('\n');
+    let y = 90;
+    lines.forEach(line => {
+      // Split very long lines to wrap on canvas
+      const maxChars = Math.floor((this.canvas.width - 40) / 7);
+      for (let i = 0; i < line.length; i += maxChars) {
+        this.ctx.fillText(line.substring(i, i + maxChars), 20, y);
+        y += 18;
+      }
+    });
+  }
+
   // --- Main Loop tick ---
   loop() {
     if (!this.active) return;
     
     const now = performance.now();
-    const dt = now - this.lastTime;
     this.lastTime = now;
 
-    this.update(now);
-    this.render();
+    try {
+      this.update(now);
+      this.render();
+    } catch (e) {
+      console.error("Game Loop Crash:", e);
+      this.drawErrorOverlay(e);
+      this.active = false;
+      return;
+    }
 
     requestAnimationFrame(() => this.loop());
   }
