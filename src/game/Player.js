@@ -361,7 +361,7 @@ export class Player {
     const inCone = Math.abs(diff) <= (32.5 * Math.PI / 180); // 65-degree flashlight cone
 
     const hasLOS = hasRawLOS && (
-      distToPlayer < 100 || 
+      distToPlayer < 40 || 
       player.flashlightActive || 
       (this.flashlightActive && inCone)
     );

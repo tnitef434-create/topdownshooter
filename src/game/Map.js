@@ -472,12 +472,6 @@ export class Map {
       players.forEach(p => {
         if (p.health <= 0) return;
 
-        // A. Ambient circle cutout (dim personal space)
-        const ambientRadius = p.flashlightActive ? 75 : 55;
-        this.maskCtx.beginPath();
-        this.maskCtx.arc(p.x, p.y, ambientRadius, 0, Math.PI * 2);
-        this.maskCtx.fill();
-
         // B. Flashlight cone cutout (if active)
         if (p.flashlightActive && p.lightPoly && p.lightPoly.length > 0) {
           this.maskCtx.beginPath();

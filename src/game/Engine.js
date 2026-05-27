@@ -758,11 +758,9 @@ export class Engine {
       
       let visible = true;
       if (this.settings.shadows && this.localPlayer && this.localPlayer.health > 0 && !p.isLocal) {
-        const dist = Math.hypot(p.x - this.localPlayer.x, p.y - this.localPlayer.y);
-        const inAmbient = dist < (this.localPlayer.flashlightActive ? 75 : 55);
         const inFlashlight = this.localPlayer.flashlightActive && this.localPlayer.lightPoly && this.isPointInPolygon({ x: p.x, y: p.y }, this.localPlayer.lightPoly);
         const hasLOS = !this.map.getLineIntersection({ x: this.localPlayer.x, y: this.localPlayer.y }, { x: p.x, y: p.y });
-        visible = inAmbient || inFlashlight || p.isTeammate || (p.flashlightActive && hasLOS);
+        visible = inFlashlight || p.isTeammate || (p.flashlightActive && hasLOS);
       }
       
       if (visible) {

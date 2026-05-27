@@ -58,7 +58,8 @@ const btns = {
   leaveLobby: document.getElementById('btn-leave-lobby'),
   readyToggle: document.getElementById('btn-ready-toggle'),
   copyCode: document.getElementById('btn-copy-code'),
-  returnLobby: document.getElementById('btn-return-lobby')
+  returnLobby: document.getElementById('btn-return-lobby'),
+  toggleMute: document.getElementById('btn-toggle-mute')
 };
 
 const inputs = {
@@ -108,13 +109,46 @@ let myColor = 'cyan';
 let myMode = '1v1';
 let isReady = false;
 
+// Audio Background Music
+const menuMusic = new Audio('/Midnight_Deployment.mp3');
+menuMusic.loop = true;
+let musicStarted = false;
+let isMusicMuted = false;
+
+function startMusic() {
+  if (musicStarted || isMusicMuted) return;
+  menuMusic.play().then(() => {
+    musicStarted = true;
+    updateMusicVolume();
+  }).catch(err => {
+    console.warn("Autoplay blocked, waiting for user interaction:", err);
+  });
+}
+
+// Try to start music on first user interaction
+['click', 'keydown', 'touchstart'].forEach(evt => {
+  window.addEventListener(evt, startMusic, { once: true });
+});
+
+function updateMusicVolume() {
+  if (isMusicMuted) {
+    menuMusic.volume = 0;
+  } else {
+    const activeScreen = document.querySelector('.screen.active');
+    const isGameActive = activeScreen && activeScreen.id === 'game-screen';
+    menuMusic.volume = isGameActive ? 0.04 : 0.15;
+  }
+}
+
 // Global Game Settings
 const gameSettings = {
   volume: 0.5,
   blood: true,
   shadows: true,
   laser: true,
-  serverUrl: ''
+  serverUrl: '',
+  musicMuted: false,
+  sfxMuted: false
 };
 
 // 1. Initialize Settings
@@ -132,6 +166,16 @@ function initSettings() {
       if (settings.shadows) settings.shadows.checked = gameSettings.shadows;
       if (settings.laser) settings.laser.checked = gameSettings.laser;
       if (settings.serverUrl) settings.serverUrl.value = gameSettings.serverUrl || '';
+      
+      isMusicMuted = !!gameSettings.musicMuted;
+      const muteMusicCb = document.getElementById('setting-mute-music');
+      if (muteMusicCb) muteMusicCb.checked = isMusicMuted;
+      
+      const muteSfxCb = document.getElementById('setting-mute-sfx');
+      if (muteSfxCb) muteSfxCb.checked = !!gameSettings.sfxMuted;
+      
+      const toggleBtn = document.getElementById('btn-toggle-mute');
+      if (toggleBtn) toggleBtn.innerText = isMusicMuted ? 'UNMUTE MUSIC' : 'MUTE MUSIC';
     } catch (e) {
       console.error(e);
     }
@@ -175,6 +219,32 @@ function initSettings() {
     });
   }
 
+  const muteMusicCb = document.getElementById('setting-mute-music');
+  if (muteMusicCb) {
+    muteMusicCb.addEventListener('change', (e) => {
+      gameSettings.musicMuted = e.target.checked;
+      isMusicMuted = gameSettings.musicMuted;
+      if (isMusicMuted) {
+        menuMusic.pause();
+      } else {
+        menuMusic.play().catch(() => {});
+      }
+      updateMusicVolume();
+      
+      const toggleBtn = document.getElementById('btn-toggle-mute');
+      if (toggleBtn) toggleBtn.innerText = isMusicMuted ? 'UNMUTE MUSIC' : 'MUTE MUSIC';
+      saveSettings();
+    });
+  }
+
+  const muteSfxCb = document.getElementById('setting-mute-sfx');
+  if (muteSfxCb) {
+    muteSfxCb.addEventListener('change', (e) => {
+      gameSettings.sfxMuted = e.target.checked;
+      saveSettings();
+    });
+  }
+
   if (btns.openSettings) {
     btns.openSettings.addEventListener('click', () => {
       if (settings.modal) settings.modal.classList.add('active');
@@ -191,7 +261,8 @@ function initSettings() {
 function saveSettings() {
   safeStorage.setItem('tacticstrike_settings', JSON.stringify(gameSettings));
   if (gameEngine) {
-    gameEngine.updateSettings(gameSettings);
+    const sfxVol = gameSettings.sfxMuted ? 0 : gameSettings.volume;
+    gameEngine.updateSettings({ ...gameSettings, volume: sfxVol });
   }
 }
 
@@ -204,6 +275,7 @@ function showScreen(screenKey) {
       screens[key].classList.remove('active');
     }
   });
+  updateMusicVolume();
 }
 
 // 3. Weapon Selector UI setup
@@ -435,7 +507,7 @@ function connectSocket() {
       localPlayerIndex: myIndex,
       players: players,
       seed: seed,
-      settings: gameSettings,
+      settings: { ...gameSettings, volume: gameSettings.sfxMuted ? 0 : gameSettings.volume },
       matchMode: myMode,
       onMatchEnd: handleMatchEnd,
       onKillFeed: addKillFeedMessage
@@ -482,7 +554,7 @@ function startOfflineMode() {
     localPlayerIndex: 0,
     players: playersList,
     seed: Math.random(),
-    settings: gameSettings,
+    settings: { ...gameSettings, volume: gameSettings.sfxMuted ? 0 : gameSettings.volume },
     matchMode: myMode,
     onMatchEnd: handleMatchEnd,
     onKillFeed: addKillFeedMessage
@@ -544,6 +616,26 @@ function getRandomWeapon() {
 
 // UI Event Handlers
 function setupUIListeners() {
+  // Toggle music mute button in footer
+  if (btns.toggleMute) {
+    btns.toggleMute.addEventListener('click', () => {
+      gameSettings.musicMuted = !gameSettings.musicMuted;
+      isMusicMuted = gameSettings.musicMuted;
+      if (isMusicMuted) {
+        menuMusic.pause();
+      } else {
+        menuMusic.play().catch(() => {});
+      }
+      updateMusicVolume();
+      
+      const muteMusicCb = document.getElementById('setting-mute-music');
+      if (muteMusicCb) muteMusicCb.checked = isMusicMuted;
+      
+      btns.toggleMute.innerText = isMusicMuted ? 'UNMUTE MUSIC' : 'MUTE MUSIC';
+      saveSettings();
+    });
+  }
+
   // Set operative name change
   if (inputs.name) {
     inputs.name.addEventListener('change', () => {
