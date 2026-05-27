@@ -1,0 +1,6 @@
+name = "topdownshooter"
+compatibility_date = "2026-05-27"
+
+[assets]
+directory = "./dist"
+binding = "ASSETS"
