@@ -1020,11 +1020,12 @@ function setupUIListeners() {
     cancelMmBtn.addEventListener('click', () => {
       if (window.mmInterval) clearInterval(window.mmInterval);
       if (rankSearchTimer) clearTimeout(rankSearchTimer);
-      showScreen('menu');
       if (socket) {
         socket.emit('leave-room');
       }
       disconnectSocket();
+      window.stopAllMusic();
+      showScreen('menu');
     });
   }
 
