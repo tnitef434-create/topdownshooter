@@ -67,9 +67,10 @@ export class Network {
       shooter.angle = shootData.angle;
       this.particles.spawnGunCasing(shooter.x, shooter.y, shooter.angle, shootData.weaponKey);
 
-      // Play gunshot sound at opponent's location
+      // Play gunshot sound at opponent's location (muffled by distance to local player)
       if (this.sound) {
-        this.sound.playGunshot(shootData.weaponKey);
+        const dist = Math.hypot(shooter.x - this.localPlayer.x, shooter.y - this.localPlayer.y);
+        this.sound.playGunshot(shootData.weaponKey, dist);
       }
 
       // Add visual bullet tracers to engine

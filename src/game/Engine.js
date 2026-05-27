@@ -529,7 +529,7 @@ export class Engine {
 
     // 2. Update Operatives (Player / Opponent)
     if (this.gameState === 'playing' || this.gameState === 'countdown') {
-      this.localPlayer.update(this.keys, this.mouse, this.map, this.sound, currentTime, null);
+      this.localPlayer.update(this.keys, this.mouse, this.map, this.sound, currentTime, null, this.localPlayer);
       
       if (this.mode === 'offline') {
         this.players.forEach(p => {
@@ -539,9 +539,9 @@ export class Engine {
             
             if (targets.length > 0) {
               targets.sort((a, b) => Math.hypot(p.x - a.x, p.y - a.y) - Math.hypot(p.x - b.x, p.y - b.y));
-              p.update(null, null, this.map, this.sound, currentTime, targets[0]);
+              p.update(null, null, this.map, this.sound, currentTime, targets[0], this.localPlayer);
             } else {
-              p.update(null, null, this.map, this.sound, currentTime, null);
+              p.update(null, null, this.map, this.sound, currentTime, null, this.localPlayer);
             }
           }
         });

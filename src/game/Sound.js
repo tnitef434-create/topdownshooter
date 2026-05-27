@@ -36,7 +36,7 @@ export class Sound {
     }
   }
 
-  playGunshot(weaponType) {
+  playGunshot(weaponType, distance = 0) {
     this.init();
     if (!this.ctx) return;
     
@@ -46,6 +46,24 @@ export class Sound {
     }
 
     const t = this.ctx.currentTime;
+
+    let finalDest = this.masterVolume;
+    if (distance > 0) {
+      const muffleFilter = this.ctx.createBiquadFilter();
+      muffleFilter.type = 'lowpass';
+      // Lowpass cutoff frequency: further distance = lower cutoff (more muffled)
+      const cutoff = Math.max(220, 4500 * Math.pow(1 - Math.min(1, distance / 1300), 1.5));
+      muffleFilter.frequency.setValueAtTime(cutoff, t);
+
+      // Volume attenuation: further distance = quieter
+      const volScale = Math.max(0.01, Math.pow(1 - Math.min(1, distance / 1400), 1.2));
+      const distanceGain = this.ctx.createGain();
+      distanceGain.gain.setValueAtTime(volScale, t);
+
+      muffleFilter.connect(distanceGain);
+      distanceGain.connect(this.masterVolume);
+      finalDest = muffleFilter;
+    }
     
     // 1. Noise Source (High frequencies & explosion body)
     const noise = this.ctx.createBufferSource();
@@ -56,14 +74,14 @@ export class Sound {
 
     noise.connect(noiseFilter);
     noiseFilter.connect(noiseGain);
-    noiseGain.connect(this.masterVolume);
+    noiseGain.connect(finalDest);
 
     // 2. Sine Sweep Source (Low-frequency punch)
     const punch = this.ctx.createOscillator();
     const punchGain = this.ctx.createGain();
     
     punch.connect(punchGain);
-    punchGain.connect(this.masterVolume);
+    punchGain.connect(finalDest);
 
     // Profile variables based on weapon
     let noiseFilterFreq = 1000;
@@ -103,8 +121,8 @@ export class Sound {
         punchVol = 0.9;
         
         // Add a secondary crackle for shotgun spread
-        this.playMetallicClick(t + 0.05, 800, 0.08);
-        this.playMetallicClick(t + 0.1, 600, 0.05);
+        this.playMetallicClick(t + 0.05, 800, 0.08, 0.3, distance);
+        this.playMetallicClick(t + 0.1, 600, 0.05, 0.3, distance);
         break;
       case 'sniper':
         noiseFilterFreq = 1500;
@@ -406,7 +424,7 @@ export class Sound {
 
   // Audio Building Blocks
   // timeOffset: seconds from NOW (ctx.currentTime). Default 0 = play immediately.
-  playMetallicClick(timeOffset, frequency, duration, volume = 0.3) {
+  playMetallicClick(timeOffset, frequency, duration, volume = 0.3, distance = 0) {
     try {
       this.init();
       if (!this.ctx) return;
@@ -420,8 +438,24 @@ export class Sound {
       const osc = this.ctx.createOscillator();
       const gain = this.ctx.createGain();
 
+      let finalDest = this.masterVolume;
+      if (distance > 0) {
+        const muffle = this.ctx.createBiquadFilter();
+        muffle.type = 'lowpass';
+        const cutoff = Math.max(220, 3000 * (1 - Math.min(1, distance / 1200)));
+        muffle.frequency.setValueAtTime(cutoff, t);
+
+        const distGain = this.ctx.createGain();
+        const scale = Math.max(0.01, 1 - distance / 1300);
+        distGain.gain.setValueAtTime(scale, t);
+
+        muffle.connect(distGain);
+        distGain.connect(this.masterVolume);
+        finalDest = muffle;
+      }
+
       osc.connect(gain);
-      gain.connect(this.masterVolume);
+      gain.connect(finalDest);
 
       osc.type = 'square';
       osc.frequency.setValueAtTime(frequency, t);

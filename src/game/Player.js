@@ -51,8 +51,8 @@ export class Player {
     this.lastFiredTime = 0;
     
     // Movement configuration
-    this.accel = 0.45;
-    this.maxSpeed = 3.4;
+    this.accel = 0.20;
+    this.maxSpeed = 2.2;
     this.friction = 0.84;
     
     // Visual indicators
@@ -77,14 +77,14 @@ export class Player {
     this.isReloading = false;
   }
 
-  update(keys, mouse, map, soundEngine, currentTime, localPlayerRef) {
+  update(keys, mouse, map, soundEngine, currentTime, target, localPlayer) {
     if (this.health <= 0) return;
 
     // --- 1. Movement logic ---
     if (this.isLocal && !this.isBot) {
       this.handleLocalInput(keys, mouse, soundEngine, currentTime);
-    } else if (this.isBot && localPlayerRef) {
-      this.handleBotAI(map, soundEngine, currentTime, localPlayerRef);
+    } else if (this.isBot && target) {
+      this.handleBotAI(map, soundEngine, currentTime, target, localPlayer);
     }
 
     // Apply speed multiplier based on carrying weapon weight
@@ -117,8 +117,8 @@ export class Player {
         this.footstepTimer = 0;
         if (soundEngine) {
           // Play footstep sound (only if within close range of local player, or if it is local player)
-          const distToLocal = localPlayerRef 
-            ? Math.hypot(this.x - localPlayerRef.x, this.y - localPlayerRef.y) 
+          const distToLocal = localPlayer 
+            ? Math.hypot(this.x - localPlayer.x, this.y - localPlayer.y) 
             : 0;
           if (this.isLocal || distToLocal < 450) {
             soundEngine.playFootstep();
@@ -201,7 +201,7 @@ export class Player {
   }
 
   // Shoot weapon. Returns shootData if successful, or null
-  shoot(currentTime, soundEngine) {
+  shoot(currentTime, soundEngine, distance = 0) {
     if (this.health <= 0 || this.isReloading) return null;
 
     // Fire cooldown check
@@ -233,7 +233,7 @@ export class Player {
 
     // Play gunshot sound
     if (soundEngine) {
-      soundEngine.playGunshot(this.weaponKey);
+      soundEngine.playGunshot(this.weaponKey, distance);
     }
 
     if (this.isLocal && !this.isBot) {
@@ -343,7 +343,7 @@ export class Player {
   }
 
   // --- 8. Bot AI Logic (Single Player Offline Mode) ---
-  handleBotAI(map, soundEngine, currentTime, player) {
+  handleBotAI(map, soundEngine, currentTime, player, localPlayer) {
     // Check line of sight to player
     const distToPlayer = Math.hypot(this.x - player.x, this.y - player.y);
     const hasLOS = distToPlayer < 700 && this.checkLineOfSight(map, this.x, this.y, player.x, player.y);
@@ -442,8 +442,9 @@ export class Player {
     if (this.botState === 'chase' && hasLOS && !this.isReloading && this.ammoInMag > 0) {
       // Small reaction delay simulation
       if (Math.random() < 0.35) {
-        // Attempt shoot
-        const shootResult = this.shoot(currentTime, soundEngine);
+        // Calculate distance to local player (listener) for gunshot muffling
+        const dist = localPlayer ? Math.hypot(this.x - localPlayer.x, this.y - localPlayer.y) : 0;
+        const shootResult = this.shoot(currentTime, soundEngine, dist);
         if (shootResult && window.OnBotShootCallback) {
           window.OnBotShootCallback(shootResult);
         }
