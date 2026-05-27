@@ -95,7 +95,8 @@ export class Network {
     this.socket.on('opponent-health-sync', (healthData) => {
       if (this.opponent && healthData.playerId === this.opponent.id) {
         this.opponent.health = healthData.health;
-        document.getElementById('hud-opponent-hp').style.width = `${Math.max(0, this.opponent.health)}%`;
+        const bar = document.getElementById('hud-opponent-hp');
+        if (bar) bar.style.width = `${Math.max(0, this.opponent.health)}%`;
       }
     });
 
@@ -217,7 +218,8 @@ export class Network {
     }
 
     // Keep HUD updated
-    document.getElementById('hud-opponent-hp').style.width = `${Math.max(0, this.opponent.health)}%`;
+    const bar = document.getElementById('hud-opponent-hp');
+    if (bar) bar.style.width = `${Math.max(0, this.opponent.health)}%`;
   }
 
   // Smooth angle interpolation solving wrap-around issues

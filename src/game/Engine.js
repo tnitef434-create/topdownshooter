@@ -151,7 +151,8 @@ export class Engine {
     // Keyboard registers
     this.keydownHandler = (e) => {
       // Disable key bindings if typing in chat
-      if (document.activeElement === document.getElementById('chat-input')) {
+      const chatInput = document.getElementById('chat-input');
+      if (chatInput && document.activeElement === chatInput) {
         return;
       }
       this.keys[e.key.toLowerCase()] = true;
@@ -176,7 +177,8 @@ export class Engine {
 
     this.mousedownHandler = (e) => {
       if (e.button === 0) { // left click
-        if (document.activeElement === document.getElementById('chat-input')) return;
+        const chatInput = document.getElementById('chat-input');
+        if (chatInput && document.activeElement === chatInput) return;
         this.mouse.clicked = true;
       }
     };
@@ -282,7 +284,8 @@ export class Engine {
     if (this.matchTimerInterval) clearInterval(this.matchTimerInterval);
     this.matchTime = 120;
     
-    document.getElementById('hud-status').innerText = `ROUND ${this.roundNumber} - COOLDOWN`;
+    const hudStatus = document.getElementById('hud-status');
+    if (hudStatus) hudStatus.innerText = `ROUND ${this.roundNumber} - COOLDOWN`;
     
     // Sound FX init
     this.sound.playFrictionalScrape(performance.now()/1000, 0.5, 0.1);
@@ -292,7 +295,8 @@ export class Engine {
     this.gameState = 'playing';
     this.roundStartTime = performance.now();
     
-    document.getElementById('hud-status').innerText = 'ENGAGE TARGET';
+    const hudStatus = document.getElementById('hud-status');
+    if (hudStatus) hudStatus.innerText = 'ENGAGE TARGET';
     
     // Start countdown timer ticking down
     this.matchTimerInterval = setInterval(() => {
@@ -306,7 +310,8 @@ export class Engine {
         // Update clock HUD
         const mins = Math.floor(this.matchTime / 60).toString().padStart(2, '0');
         const secs = (this.matchTime % 60).toString().padStart(2, '0');
-        document.getElementById('game-timer').innerText = `${mins}:${secs}`;
+        const timerDisplay = document.getElementById('game-timer');
+        if (timerDisplay) timerDisplay.innerText = `${mins}:${secs}`;
       }
     }, 1000);
   }
@@ -322,21 +327,27 @@ export class Engine {
 
     if (winnerId === this.localPlayer.id) {
       this.scoreSelf++;
-      feedAlert.innerText = 'ROUND WON';
-      feedAlert.style.color = '#39ff14';
+      if (feedAlert) {
+        feedAlert.innerText = 'ROUND WON';
+        feedAlert.style.color = '#39ff14';
+      }
       if (this.onKillFeed && killFeedMsg) {
         this.onKillFeed(this.localPlayer.name, this.opponent.name, this.localPlayer.weaponKey);
       }
     } else if (winnerId === this.opponent.id) {
       this.scoreOpponent++;
-      feedAlert.innerText = 'ROUND LOST';
-      feedAlert.style.color = '#ff3c3c';
+      if (feedAlert) {
+        feedAlert.innerText = 'ROUND LOST';
+        feedAlert.style.color = '#ff3c3c';
+      }
       if (this.onKillFeed && killFeedMsg) {
         this.onKillFeed(this.opponent.name, this.localPlayer.name, this.opponent.weaponKey);
       }
     } else {
-      feedAlert.innerText = 'ROUND DRAW';
-      feedAlert.style.color = '#ffd700';
+      if (feedAlert) {
+        feedAlert.innerText = 'ROUND DRAW';
+        feedAlert.style.color = '#ffd700';
+      }
     }
 
     this.updateScoreboardHUD();
@@ -379,16 +390,25 @@ export class Engine {
     this.active = false;
     alert(msg);
     // Force return
-    document.getElementById('btn-return-lobby').click();
+    const returnBtn = document.getElementById('btn-return-lobby');
+    if (returnBtn) returnBtn.click();
   }
 
   updateScoreboardHUD() {
-    document.getElementById('score-self').innerText = this.scoreSelf;
-    document.getElementById('score-opponent').innerText = this.scoreOpponent;
+    const scoreSelf = document.getElementById('score-self');
+    if (scoreSelf) scoreSelf.innerText = this.scoreSelf;
     
-    document.getElementById('hud-self-name').innerText = this.localPlayer.name.toUpperCase();
-    document.getElementById('hud-opponent-name').innerText = this.opponent.name.toUpperCase();
-    document.getElementById('hud-opponent-weapon').innerText = this.opponent.weapon.name.toUpperCase();
+    const scoreOpponent = document.getElementById('score-opponent');
+    if (scoreOpponent) scoreOpponent.innerText = this.scoreOpponent;
+    
+    const selfName = document.getElementById('hud-self-name');
+    if (selfName) selfName.innerText = this.localPlayer.name.toUpperCase();
+    
+    const opponentName = document.getElementById('hud-opponent-name');
+    if (opponentName) opponentName.innerText = this.opponent.name.toUpperCase();
+    
+    const opponentWeapon = document.getElementById('hud-opponent-weapon');
+    if (opponentWeapon) opponentWeapon.innerText = this.opponent.weapon.name.toUpperCase();
     
     const opponentIndicator = document.getElementById('opponent-indicator');
     if (opponentIndicator) {
@@ -424,7 +444,8 @@ export class Engine {
       }
       
       if (count > 0) {
-        document.getElementById('hud-status').innerText = `DEPLOYING IN ${count}...`;
+        const hudStatus = document.getElementById('hud-status');
+        if (hudStatus) hudStatus.innerText = `DEPLOYING IN ${count}...`;
       } else {
         this.sound.playMetallicClick(currentTime/1000, 2000, 0.15, 0.35); // final beep
         this.startRoundAction();

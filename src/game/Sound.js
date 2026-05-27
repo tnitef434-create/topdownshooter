@@ -406,6 +406,9 @@ export class Sound {
 
   // Audio Building Blocks
   playMetallicClick(time, frequency, duration, volume = 0.3) {
+    this.init();
+    if (!this.ctx) return;
+    
     const osc = this.ctx.createOscillator();
     const gain = this.ctx.createGain();
     
@@ -423,6 +426,9 @@ export class Sound {
   }
 
   playFrictionalScrape(time, duration, volume = 0.2) {
+    this.init();
+    if (!this.ctx) return;
+    
     const noise = this.ctx.createBufferSource();
     noise.buffer = this.noiseBuffer;
     

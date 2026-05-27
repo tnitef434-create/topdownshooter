@@ -246,10 +246,17 @@ export class Player {
 
   // Sync HUD interface for local player
   updateHUD() {
-    document.getElementById('hud-self-hp').style.width = `${Math.max(0, this.health)}%`;
-    document.getElementById('hud-self-hp-text').innerText = Math.round(Math.max(0, this.health));
-    document.getElementById('hud-weapon-name').innerText = this.weapon.name.toUpperCase();
-    document.getElementById('hud-ammo-val').innerText = `${this.ammoInMag} / ${this.reserveAmmo}`;
+    const hpBar = document.getElementById('hud-self-hp');
+    if (hpBar) hpBar.style.width = `${Math.max(0, this.health)}%`;
+    
+    const hpText = document.getElementById('hud-self-hp-text');
+    if (hpText) hpText.innerText = Math.round(Math.max(0, this.health));
+    
+    const weaponName = document.getElementById('hud-weapon-name');
+    if (weaponName) weaponName.innerText = this.weapon.name.toUpperCase();
+    
+    const ammoVal = document.getElementById('hud-ammo-val');
+    if (ammoVal) ammoVal.innerText = `${this.ammoInMag} / ${this.reserveAmmo}`;
   }
 
   // Damage handling

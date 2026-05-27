@@ -185,7 +185,7 @@ function setupWeaponSelector() {
 
 function updateWeaponStatsUI(weaponKey) {
   const stats = WEAPON_STATS[weaponKey];
-  if (!stats) return;
+  if (!stats || !displays.weaponStats) return;
 
   displays.weaponStats.innerHTML = `
     <div class="stat-row">
@@ -210,13 +210,18 @@ function updateWeaponStatsUI(weaponKey) {
 // 4. Lobby UI Refresh
 function updateLobbyUI(players) {
   // Clear slots
-  displays.slot1.className = 'player-slot empty';
-  displays.slot1.innerHTML = '<div class="slot-status">WAITING FOR OPERATIVE 1...</div>';
-  displays.slot2.className = 'player-slot empty';
-  displays.slot2.innerHTML = '<div class="slot-status">WAITING FOR OPERATIVE 2...</div>';
+  if (displays.slot1) {
+    displays.slot1.className = 'player-slot empty';
+    displays.slot1.innerHTML = '<div class="slot-status">WAITING FOR OPERATIVE 1...</div>';
+  }
+  if (displays.slot2) {
+    displays.slot2.className = 'player-slot empty';
+    displays.slot2.innerHTML = '<div class="slot-status">WAITING FOR OPERATIVE 2...</div>';
+  }
 
   players.forEach((p, idx) => {
     const slot = idx === 0 ? displays.slot1 : displays.slot2;
+    if (!slot) return;
     slot.className = `player-slot active ${p.ready ? 'ready' : ''}`;
     
     const weaponName = WEAPON_STATS[p.weapon]?.name || p.weapon;
@@ -237,7 +242,7 @@ function updateLobbyUI(players) {
 
   // Update own ready button text
   const myState = players.find(p => p.id === socket.id);
-  if (myState) {
+  if (myState && btns.readyToggle) {
     isReady = myState.ready;
     btns.readyToggle.className = isReady ? 'btn secondary' : 'btn primary';
     btns.readyToggle.innerText = isReady ? 'CANCEL READY' : 'READY TO DEPLOY';
@@ -372,26 +377,41 @@ function startOfflineMode() {
 
 // Match Over Debriefing Display
 function handleMatchEnd(results) {
-  gameOverModal.classList.add('active');
+  if (gameOverModal) gameOverModal.classList.add('active');
   const isWin = results.winnerId === (socket ? socket.id : 'player');
   
   const resultTitle = document.getElementById('match-result-title');
   const resultSubtitle = document.getElementById('match-result-subtitle');
   
-  if (isWin) {
-    resultTitle.innerText = 'MISSION ACCOMPLISHED';
-    resultTitle.className = 'result-title win';
-    resultSubtitle.innerText = 'You successfully eliminated the target operative.';
-  } else {
-    resultTitle.innerText = 'MISSION FAILED';
-    resultTitle.className = 'result-title lose';
-    resultSubtitle.innerText = 'You were eliminated by the target operative.';
+  if (resultTitle) {
+    if (isWin) {
+      resultTitle.innerText = 'MISSION ACCOMPLISHED';
+      resultTitle.className = 'result-title win';
+    } else {
+      resultTitle.innerText = 'MISSION FAILED';
+      resultTitle.className = 'result-title lose';
+    }
   }
 
-  document.getElementById('stat-rounds-won').innerText = results.roundsWon || 0;
-  document.getElementById('stat-damage-dealt').innerText = Math.round(results.damageDealt || 0);
-  document.getElementById('stat-accuracy').innerText = `${Math.round(results.accuracy || 0)}%`;
-  document.getElementById('stat-shots-fired').innerText = results.shotsFired || 0;
+  if (resultSubtitle) {
+    if (isWin) {
+      resultSubtitle.innerText = 'You successfully eliminated the target operative.';
+    } else {
+      resultSubtitle.innerText = 'You were eliminated by the target operative.';
+    }
+  }
+
+  const roundsWonEl = document.getElementById('stat-rounds-won');
+  if (roundsWonEl) roundsWonEl.innerText = results.roundsWon || 0;
+
+  const damageDealtEl = document.getElementById('stat-damage-dealt');
+  if (damageDealtEl) damageDealtEl.innerText = Math.round(results.damageDealt || 0);
+
+  const accuracyEl = document.getElementById('stat-accuracy');
+  if (accuracyEl) accuracyEl.innerText = `${Math.round(results.accuracy || 0)}%`;
+
+  const shotsFiredEl = document.getElementById('stat-shots-fired');
+  if (shotsFiredEl) shotsFiredEl.innerText = results.shotsFired || 0;
 }
 
 // UI Event Handlers
@@ -535,6 +555,7 @@ function setupUIListeners() {
 
 // 7. Chat Utilities
 function sendChatMessage() {
+  if (!inputs.chat) return;
   const msg = inputs.chat.value.trim();
   if (msg) {
     // Append locally
@@ -562,15 +583,19 @@ function appendChatMessage(author, message, type) {
     `;
   }
   
-  displays.chatMessages.appendChild(msgEl);
-  displays.chatMessages.scrollTop = displays.chatMessages.scrollHeight;
+  if (displays.chatMessages) {
+    displays.chatMessages.appendChild(msgEl);
+    displays.chatMessages.scrollTop = displays.chatMessages.scrollHeight;
+  }
 
   // Temporarily show chat drawer if passive message received
-  displays.chatDrawer.classList.add('active');
+  if (displays.chatDrawer) {
+    displays.chatDrawer.classList.add('active');
+  }
   if (window.chatTimeout) clearTimeout(window.chatTimeout);
   window.chatTimeout = setTimeout(() => {
-    if (document.activeElement !== inputs.chat) {
-      displays.chatDrawer.classList.remove('active');
+    if (inputs.chat && document.activeElement !== inputs.chat) {
+      if (displays.chatDrawer) displays.chatDrawer.classList.remove('active');
     }
   }, 4000);
 }
@@ -581,6 +606,8 @@ function addSystemChatMessage(message) {
 
 function addKillFeedMessage(killer, victim, weaponKey) {
   const feed = document.getElementById('kill-feed');
+  if (!feed) return;
+  
   const killEl = document.createElement('div');
   killEl.className = 'kill-msg';
   
