@@ -115,19 +115,37 @@ menuMusic.loop = true;
 let musicStarted = false;
 let isMusicMuted = false;
 
+// Fallback looping guarantee
+menuMusic.addEventListener('ended', () => {
+  if (!isMusicMuted) {
+    menuMusic.currentTime = 0;
+    menuMusic.play().catch(() => {});
+  }
+});
+
 function startMusic() {
-  if (musicStarted || isMusicMuted) return;
+  if (musicStarted || isMusicMuted) {
+    cleanupMusicListeners();
+    return;
+  }
   menuMusic.play().then(() => {
     musicStarted = true;
     updateMusicVolume();
+    cleanupMusicListeners();
   }).catch(err => {
-    console.warn("Autoplay blocked, waiting for user interaction:", err);
+    console.warn("Autoplay / play blocked or not loaded yet, retrying on next interaction:", err);
   });
 }
 
-// Try to start music on first user interaction
+function cleanupMusicListeners() {
+  ['click', 'keydown', 'touchstart'].forEach(evt => {
+    window.removeEventListener(evt, startMusic);
+  });
+}
+
+// Try to start music on user interactions (keep trying until successful)
 ['click', 'keydown', 'touchstart'].forEach(evt => {
-  window.addEventListener(evt, startMusic, { once: true });
+  window.addEventListener(evt, startMusic);
 });
 
 function updateMusicVolume() {
