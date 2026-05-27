@@ -197,6 +197,16 @@ export class Engine {
         return;
       }
       this.keys[e.key.toLowerCase()] = true;
+
+      // Toggle flashlight
+      if (e.key.toLowerCase() === 'f') {
+        if (this.localPlayer && this.localPlayer.health > 0) {
+          this.localPlayer.flashlightActive = !this.localPlayer.flashlightActive;
+          try {
+            this.sound.playMetallicClick(0, 1800, 0.05, 0.15);
+          } catch (ex) {}
+        }
+      }
     };
     this.keyupHandler = (e) => {
       this.keys[e.key.toLowerCase()] = false;
@@ -647,11 +657,17 @@ export class Engine {
       const team2Alive = this.players.some(p => p.health > 0 && p.team === 2);
       
       if (team1Alive && !team2Alive) {
-        this.endRound(1, 'eliminated');
+        if (this.mode === 'offline') {
+          this.endRound(1, 'eliminated');
+        }
       } else if (!team1Alive && team2Alive) {
-        this.endRound(2, 'eliminated');
+        if (this.mode === 'offline') {
+          this.endRound(2, 'eliminated');
+        }
       } else if (!team1Alive && !team2Alive) {
-        this.endRound(null, 'both dead');
+        if (this.mode === 'offline') {
+          this.endRound(null, 'both dead');
+        }
       }
     }
 
@@ -716,18 +732,20 @@ export class Engine {
     const focusY = -this.camera.y + this.camera.shakeY;
     this.ctx.translate(focusX, focusY);
 
-    // Compute dynamic Visibility Light Field (FOV Shadows)
-    let visibilityPolygon = null;
-    if (this.settings.shadows && this.localPlayer.health > 0) {
-      // Cast rays from player coordinates (eyes) up to 720px vision range limit
-      visibilityPolygon = this.map.computeVisibilityPolygon(this.localPlayer.x, this.localPlayer.y, 720);
-    }
+    // Compute flashlight polygons for all living players with active flashlight
+    this.players.forEach(p => {
+      if (p.health > 0 && p.flashlightActive) {
+        p.lightPoly = this.map.computeVisibilityPolygon(p.x, p.y, 700, p.angle, 65 * Math.PI / 180);
+      } else {
+        p.lightPoly = null;
+      }
+    });
 
     // Render floor details & blood decals underneath players/obstacles
     this.particles.drawDecals(this.ctx);
 
     // Render static walls & crates. Overlay shadows using calculated visibility field
-    this.map.draw(this.ctx, this.settings, visibilityPolygon, this.localPlayer.x, this.localPlayer.y);
+    this.map.draw(this.ctx, this.settings, this.players, this.localPlayer);
 
     // Render dead operatives lying flat
     this.players.forEach(p => {
@@ -739,8 +757,12 @@ export class Engine {
       if (p.health <= 0) return;
       
       let visible = true;
-      if (this.settings.shadows && visibilityPolygon && !p.isLocal) {
-        visible = this.isPointInPolygon({ x: p.x, y: p.y }, visibilityPolygon) || p.isTeammate;
+      if (this.settings.shadows && this.localPlayer && this.localPlayer.health > 0 && !p.isLocal) {
+        const dist = Math.hypot(p.x - this.localPlayer.x, p.y - this.localPlayer.y);
+        const inAmbient = dist < (this.localPlayer.flashlightActive ? 75 : 55);
+        const inFlashlight = this.localPlayer.flashlightActive && this.localPlayer.lightPoly && this.isPointInPolygon({ x: p.x, y: p.y }, this.localPlayer.lightPoly);
+        const hasLOS = !this.map.getLineIntersection({ x: this.localPlayer.x, y: this.localPlayer.y }, { x: p.x, y: p.y });
+        visible = inAmbient || inFlashlight || p.isTeammate || (p.flashlightActive && hasLOS);
       }
       
       if (visible) {
@@ -848,5 +870,72 @@ export class Engine {
       if (intersect) inside = !inside;
     }
     return inside;
+  }
+
+  handleServerRoundOver(data) {
+    if (this.gameState !== 'playing') return;
+    
+    this.gameState = 'round-over';
+    if (this.matchTimerInterval) clearInterval(this.matchTimerInterval);
+
+    let feedAlert = document.getElementById('hud-status');
+    const myTeam = this.localPlayer.team;
+
+    if (data.winningTeam === myTeam) {
+      if (feedAlert) {
+        feedAlert.innerText = 'ROUND WON';
+        feedAlert.style.color = '#39ff14';
+      }
+    } else {
+      if (feedAlert) {
+        feedAlert.innerText = 'ROUND LOST';
+        feedAlert.style.color = '#ff3c3c';
+      }
+    }
+
+    if (myTeam === 1) {
+      this.scoreSelf = data.score1;
+      this.scoreOpponent = data.score2;
+    } else {
+      this.scoreSelf = data.score2;
+      this.scoreOpponent = data.score1;
+    }
+
+    this.updateScoreboardHUD();
+
+    this.roundNumber = data.roundNumber;
+    setTimeout(() => this.startRoundCycle(), 3000);
+  }
+
+  handleServerMatchOver(data) {
+    this.gameState = 'match-over';
+    this.active = false;
+    if (this.matchTimerInterval) clearInterval(this.matchTimerInterval);
+
+    const myTeam = this.localPlayer.team;
+    if (myTeam === 1) {
+      this.scoreSelf = data.score1;
+      this.scoreOpponent = data.score2;
+    } else {
+      this.scoreSelf = data.score2;
+      this.scoreOpponent = data.score1;
+    }
+    this.updateScoreboardHUD();
+
+    const totalShots = window.MatchStats.shotsFired || 1;
+    const accuracyVal = (window.MatchStats.hitsRegistered / totalShots) * 100;
+    window.MatchStats.accuracy = accuracyVal;
+    window.MatchStats.roundsWon = this.scoreSelf;
+    window.MatchStats.winnerId = data.winnerId;
+
+    if (data.winnerId === this.localPlayer.id) {
+      this.sound.playMatchWin();
+    } else {
+      this.sound.playMatchLose();
+    }
+
+    if (this.onMatchEnd) {
+      this.onMatchEnd(window.MatchStats);
+    }
   }
 }

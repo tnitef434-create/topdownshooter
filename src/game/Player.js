@@ -67,6 +67,11 @@ export class Player {
     this.botReactTime = 0;
     this.botLastDecisionTime = 0;
     this.botShootDelay = 0;
+
+    // Flashlight & strafing
+    this.flashlightActive = true;
+    this.botStrafeDir = Math.random() > 0.5 ? 1 : -1;
+    this.botLastStrafeToggle = 0;
   }
 
   changeWeapon(weaponKey) {
@@ -346,7 +351,30 @@ export class Player {
   handleBotAI(map, soundEngine, currentTime, player, localPlayer) {
     // Check line of sight to player
     const distToPlayer = Math.hypot(this.x - player.x, this.y - player.y);
-    const hasLOS = distToPlayer < 700 && this.checkLineOfSight(map, this.x, this.y, player.x, player.y);
+    const hasRawLOS = distToPlayer < 700 && this.checkLineOfSight(map, this.x, this.y, player.x, player.y);
+
+    // Bot can see player in the dark if close, if player has flashlight on, or if player is in bot's flashlight beam
+    let angleToPlayer = Math.atan2(player.y - this.y, player.x - this.x);
+    let diff = angleToPlayer - this.angle;
+    while (diff < -Math.PI) diff += Math.PI * 2;
+    while (diff > Math.PI) diff -= Math.PI * 2;
+    const inCone = Math.abs(diff) <= (32.5 * Math.PI / 180); // 65-degree flashlight cone
+
+    const hasLOS = hasRawLOS && (
+      distToPlayer < 100 || 
+      player.flashlightActive || 
+      (this.flashlightActive && inCone)
+    );
+
+    // Hear gunshot investigate behavior
+    const hearsGunshot = (currentTime - player.lastFiredTime < 60) && (distToPlayer < 900);
+    if (hearsGunshot && !hasLOS && this.botState !== 'chase') {
+      this.botState = 'search';
+      this.lastKnownPlayerPos = { x: player.x, y: player.y };
+      this.botTargetX = player.x;
+      this.botTargetY = player.y;
+      this.angle = Math.atan2(player.y - this.y, player.x - this.x); // turn towards shot
+    }
 
     const timeDiff = currentTime - this.botLastDecisionTime;
 
@@ -354,12 +382,16 @@ export class Player {
     if (timeDiff > 250) {
       this.botLastDecisionTime = currentTime;
 
-      // Dynamic weapon swapping (advanced AI)
-      if (this.health < 40 && Math.random() < 0.2) {
-        // steer to search for health pickups if low HP
+      // Strafe toggles every 800-1500ms
+      if (currentTime - this.botLastStrafeToggle > 1000) {
+        this.botStrafeDir = Math.random() > 0.5 ? 1 : -1;
+        this.botLastStrafeToggle = currentTime;
+      }
+
+      // Dynamic cover/health seeking
+      if (this.health < 35 && Math.random() < 0.3) {
         const healthItems = map.items.filter(i => i.active && i.type === 'health');
         if (healthItems.length > 0) {
-          // find nearest health
           healthItems.sort((a,b) => Math.hypot(this.x-a.x, this.y-a.y) - Math.hypot(this.x-b.x, this.y-b.y));
           this.botTargetX = healthItems[0].x;
           this.botTargetY = healthItems[0].y;
@@ -374,27 +406,27 @@ export class Player {
         // Face player
         this.angle = Math.atan2(player.y - this.y, player.x - this.x);
 
-        // Movement strategy depending on weapon range
-        if (this.weaponKey === 'sniper') {
-          // Sniper wants to keep distance
+        if (this.isReloading) {
+          // Tactical retreat while reloading
+          this.botTargetX = this.x - Math.cos(this.angle) * 220;
+          this.botTargetY = this.y - Math.sin(this.angle) * 220;
+        } else if (this.weaponKey === 'sniper') {
           if (distToPlayer < 400) {
-            // run backward
             this.botTargetX = this.x - Math.cos(this.angle) * 200;
             this.botTargetY = this.y - Math.sin(this.angle) * 200;
           } else {
-            // stand still and aim
             this.botTargetX = this.x;
             this.botTargetY = this.y;
           }
         } else if (this.weaponKey === 'shotgun') {
-          // Shotgun wants to rush the player
+          // Charge player
           this.botTargetX = player.x;
           this.botTargetY = player.y;
         } else {
-          // Rifle/Pistol circular strafing
-          const angleOffset = Math.random() > 0.5 ? Math.PI/2 : -Math.PI/2;
-          this.botTargetX = player.x + Math.cos(this.angle + angleOffset) * 200;
-          this.botTargetY = player.y + Math.sin(this.angle + angleOffset) * 200;
+          // Tactical strafe dodging
+          const strafeAngle = this.angle + (Math.PI / 2) * this.botStrafeDir;
+          this.botTargetX = player.x + Math.cos(strafeAngle) * 180 + (Math.random() - 0.5) * 60;
+          this.botTargetY = player.y + Math.sin(strafeAngle) * 180 + (Math.random() - 0.5) * 60;
         }
         
         // Auto-reloading for bot
@@ -408,16 +440,15 @@ export class Player {
           this.botTargetX = this.lastKnownPlayerPos.x;
           this.botTargetY = this.lastKnownPlayerPos.y;
         } else if (this.botState === 'search') {
-          // Reached last known pos but player is gone, patrol randomly
           const distToTarget = Math.hypot(this.x - this.botTargetX, this.y - this.botTargetY);
           if (distToTarget < 50) {
             this.botState = 'patrol';
             this.choosePatrolPoint(map);
           }
         } else {
-          // Patrol state
+          // Patrol state (actual roaming)
           const distToTarget = Math.hypot(this.x - this.botTargetX, this.y - this.botTargetY);
-          if (distToTarget < 50 || Math.random() < 0.05) {
+          if (distToTarget < 50 || Math.random() < 0.02) {
             this.choosePatrolPoint(map);
           }
         }
@@ -429,7 +460,6 @@ export class Player {
     if (distToTarget > 10) {
       const moveAngle = Math.atan2(this.botTargetY - this.y, this.botTargetX - this.x);
       
-      // Face movement direction if not in combat, otherwise face player
       if (this.botState !== 'chase') {
         this.angle = moveAngle;
       }
@@ -438,15 +468,22 @@ export class Player {
       this.vy += Math.sin(moveAngle) * this.accel;
     }
 
-    // Shooting behavior when chasing
+    // Shooting behavior when chasing (burst firing)
     if (this.botState === 'chase' && hasLOS && !this.isReloading && this.ammoInMag > 0) {
-      // Small reaction delay simulation
-      if (Math.random() < 0.35) {
-        // Calculate distance to local player (listener) for gunshot muffling
-        const dist = localPlayer ? Math.hypot(this.x - localPlayer.x, this.y - localPlayer.y) : 0;
-        const shootResult = this.shoot(currentTime, soundEngine, dist);
-        if (shootResult && window.OnBotShootCallback) {
-          window.OnBotShootCallback(shootResult);
+      // Simulate tactical trigger pulls (burst fire logic)
+      const isAuto = this.weapon.type === 'Automatic';
+      const timeSinceLast = currentTime - this.lastFiredTime;
+      const burstDelay = isAuto ? 100 : 350; // auto burst rate vs semi trigger rate
+
+      if (timeSinceLast > burstDelay && Math.random() < 0.45) {
+        // Stop shooting randomly to simulate burst breaks
+        const isBurstBreak = isAuto && (Math.floor(currentTime / 500) % 2 === 0);
+        if (!isBurstBreak) {
+          const dist = localPlayer ? Math.hypot(this.x - localPlayer.x, this.y - localPlayer.y) : 0;
+          const shootResult = this.shoot(currentTime, soundEngine, dist);
+          if (shootResult && window.OnBotShootCallback) {
+            window.OnBotShootCallback(shootResult);
+          }
         }
       }
     }

@@ -352,7 +352,7 @@ export class Map {
   // ─────────────────────────────────────────────────────────────────
   //  RAYCASTING (Visibility polygon)
   // ─────────────────────────────────────────────────────────────────
-  computeVisibilityPolygon(lx, ly, maxR) {
+  computeVisibilityPolygon(lx, ly, maxR, coneCenterAngle = null, coneWidth = null) {
     const angles = new Set();
     const normalizeAngle = (ang) => {
       let a = ang;
@@ -361,19 +361,42 @@ export class Map {
       return a;
     };
 
+    const isInsideCone = (ang) => {
+      if (coneCenterAngle === null || coneWidth === null) return true;
+      let diff = ang - coneCenterAngle;
+      while (diff < -Math.PI) diff += Math.PI * 2;
+      while (diff > Math.PI) diff -= Math.PI * 2;
+      return Math.abs(diff) <= coneWidth / 2;
+    };
+
     this.walls.forEach(w => {
       [{x:w.x,y:w.y},{x:w.x+w.w,y:w.y},{x:w.x+w.w,y:w.y+w.h},{x:w.x,y:w.y+w.h}]
         .forEach(v => {
           const a = Math.atan2(v.y-ly, v.x-lx);
-          angles.add(normalizeAngle(a-0.0001)); 
-          angles.add(a); 
-          angles.add(normalizeAngle(a+0.0001));
+          if (isInsideCone(a)) {
+            angles.add(normalizeAngle(a-0.0001)); 
+            angles.add(a); 
+            angles.add(normalizeAngle(a+0.0001));
+          }
         });
     });
 
-    // Add circle partitions in [-PI, PI] range
-    for (let a = -Math.PI; a < Math.PI; a += Math.PI / 10) {
-      angles.add(a);
+    if (coneCenterAngle !== null && coneWidth !== null) {
+      // Flashlight cone: cast rays along the cone boundary and inside it
+      const startA = coneCenterAngle - coneWidth / 2;
+      const endA = coneCenterAngle + coneWidth / 2;
+      angles.add(normalizeAngle(startA));
+      angles.add(normalizeAngle(endA));
+      
+      // Cast intermediate rays inside the cone
+      for (let a = startA; a < endA; a += Math.PI / 18) {
+        angles.add(normalizeAngle(a));
+      }
+    } else {
+      // Add circle partitions in [-PI, PI] range
+      for (let a = -Math.PI; a < Math.PI; a += Math.PI / 10) {
+        angles.add(a);
+      }
     }
 
     const ends = [];
@@ -382,14 +405,31 @@ export class Map {
       const hit  = this.getLineIntersection({x:lx,y:ly}, rEnd);
       ends.push(hit && hit.dist < maxR ? {x:hit.x,y:hit.y,angle} : {...rEnd,angle});
     });
-    ends.sort((a,b) => a.angle-b.angle);
+    
+    // Sort angles relative to center to avoid wrap-around sorting bugs
+    const center = coneCenterAngle !== null ? coneCenterAngle : 0;
+    ends.sort((a,b) => {
+      let diffA = a.angle - center;
+      while (diffA < -Math.PI) diffA += Math.PI * 2;
+      while (diffA > Math.PI) diffA -= Math.PI * 2;
+      
+      let diffB = b.angle - center;
+      while (diffB < -Math.PI) diffB += Math.PI * 2;
+      while (diffB > Math.PI) diffB -= Math.PI * 2;
+      
+      return diffA - diffB;
+    });
+    
+    if (coneCenterAngle !== null && coneWidth !== null) {
+      // Prepend and append player center to close the wedge
+      ends.unshift({ x: lx, y: ly, angle: -999 });
+      ends.push({ x: lx, y: ly, angle: 999 });
+    }
+    
     return ends;
   }
 
-  // ─────────────────────────────────────────────────────────────────
-  //  RENDERING
-  // ─────────────────────────────────────────────────────────────────
-  draw(ctx, configSettings = { shadows:true }, visibilityPolygon = null, px = null, py = null) {
+  draw(ctx, configSettings = { shadows:true }, players = [], localPlayer = null) {
     // 1. Draw room floors
     this.rooms.forEach(r => this._drawFloor(ctx, r));
 
@@ -403,43 +443,98 @@ export class Map {
     this.walls.forEach(w => this._drawWall(ctx, w));
 
     // 5. Fog of war & Light rendering
-    if (configSettings.shadows && visibilityPolygon && visibilityPolygon.length > 0) {
-      // Draw Fog of War (everything outside the visibility polygon is dark)
-      ctx.save();
-      ctx.beginPath();
-      // Bounding box covering a huge area around the map to handle camera pans/zooms
-      ctx.rect(-3000, -3000, 7400, 7400);
-      
-      // Draw visibility polygon
-      ctx.moveTo(visibilityPolygon[0].x, visibilityPolygon[0].y);
-      for (let i = 1; i < visibilityPolygon.length; i++) {
-        ctx.lineTo(visibilityPolygon[i].x, visibilityPolygon[i].y);
+    if (configSettings.shadows && players && players.length > 0) {
+      if (!this.maskCanvas) {
+        this.maskCanvas = document.createElement('canvas');
+        this.maskCtx = this.maskCanvas.getContext('2d');
       }
-      ctx.closePath();
       
-      ctx.fillStyle = 'rgba(4, 5, 8, 0.94)';
-      ctx.fill('evenodd');
+      const width = ctx.canvas.width;
+      const height = ctx.canvas.height;
+      
+      if (this.maskCanvas.width !== width || this.maskCanvas.height !== height) {
+        this.maskCanvas.width = width;
+        this.maskCanvas.height = height;
+      }
+
+      // Fill mask with near pitch black
+      this.maskCtx.fillStyle = 'rgba(3, 4, 6, 0.995)';
+      this.maskCtx.fillRect(0, 0, width, height);
+
+      // Save mask state and apply the current transform of the main context
+      this.maskCtx.save();
+      this.maskCtx.setTransform(ctx.getTransform());
+
+      // Cut out light fields using destination-out
+      this.maskCtx.globalCompositeOperation = 'destination-out';
+      this.maskCtx.fillStyle = 'white'; // Color doesn't matter for cutout
+
+      players.forEach(p => {
+        if (p.health <= 0) return;
+
+        // A. Ambient circle cutout (dim personal space)
+        const ambientRadius = p.flashlightActive ? 75 : 55;
+        this.maskCtx.beginPath();
+        this.maskCtx.arc(p.x, p.y, ambientRadius, 0, Math.PI * 2);
+        this.maskCtx.fill();
+
+        // B. Flashlight cone cutout (if active)
+        if (p.flashlightActive && p.lightPoly && p.lightPoly.length > 0) {
+          this.maskCtx.beginPath();
+          this.maskCtx.moveTo(p.lightPoly[0].x, p.lightPoly[0].y);
+          for (let i = 1; i < p.lightPoly.length; i++) {
+            this.maskCtx.lineTo(p.lightPoly[i].x, p.lightPoly[i].y);
+          }
+          this.maskCtx.closePath();
+          this.maskCtx.fill();
+        }
+      });
+
+      this.maskCtx.restore();
+
+      // Draw the mask on the main canvas (reset transform to draw screen-space mask)
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0); // Reset to identity
+      ctx.drawImage(this.maskCanvas, 0, 0);
       ctx.restore();
 
-      // Draw subtle light glow inside the visibility polygon (flashlight effect)
-      if (px !== null && py !== null) {
-        ctx.save();
-        ctx.beginPath();
-        ctx.moveTo(visibilityPolygon[0].x, visibilityPolygon[0].y);
-        for (let i = 1; i < visibilityPolygon.length; i++) {
-          ctx.lineTo(visibilityPolygon[i].x, visibilityPolygon[i].y);
-        }
-        ctx.closePath();
-        ctx.clip();
+      // 6. Draw soft yellow/warm flashlight beam gradients on the main canvas (only inside the light fields)
+      players.forEach(p => {
+        if (p.health > 0 && p.flashlightActive && p.lightPoly && p.lightPoly.length > 0) {
+          ctx.save();
+          ctx.beginPath();
+          ctx.moveTo(p.lightPoly[0].x, p.lightPoly[0].y);
+          for (let i = 1; i < p.lightPoly.length; i++) {
+            ctx.lineTo(p.lightPoly[i].x, p.lightPoly[i].y);
+          }
+          ctx.closePath();
+          ctx.clip();
 
-        const lightGrad = ctx.createRadialGradient(px, py, 20, px, py, 650);
-        lightGrad.addColorStop(0, 'rgba(255, 255, 225, 0.12)'); // Soft warm light near player
-        lightGrad.addColorStop(0.4, 'rgba(255, 255, 255, 0.03)');
-        lightGrad.addColorStop(1, 'rgba(255, 255, 255, 0.0)');
-        ctx.fillStyle = lightGrad;
-        ctx.fill();
-        ctx.restore();
-      }
+          // Flashlight beam linear gradient
+          const lx = p.x;
+          const ly = p.y;
+          const beamLength = 700;
+          const endX = lx + Math.cos(p.angle) * beamLength;
+          const endY = ly + Math.sin(p.angle) * beamLength;
+
+          const beamGrad = ctx.createLinearGradient(lx, ly, endX, endY);
+          beamGrad.addColorStop(0, 'rgba(255, 255, 230, 0.18)'); // Bright near player
+          beamGrad.addColorStop(0.35, 'rgba(255, 255, 245, 0.10)');
+          beamGrad.addColorStop(1, 'rgba(255, 255, 255, 0.0)');
+          
+          ctx.fillStyle = beamGrad;
+          ctx.fill();
+          
+          // Add a soft radial ambient glow near the player
+          const ambientGrad = ctx.createRadialGradient(lx, ly, 10, lx, ly, 100);
+          ambientGrad.addColorStop(0, 'rgba(255, 255, 220, 0.08)');
+          ambientGrad.addColorStop(1, 'rgba(255, 255, 220, 0.0)');
+          ctx.fillStyle = ambientGrad;
+          ctx.fill();
+
+          ctx.restore();
+        }
+      });
     }
   }
 

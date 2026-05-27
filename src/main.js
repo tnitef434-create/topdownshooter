@@ -657,6 +657,7 @@ function setupUIListeners() {
   // Keyboard binding for chat focus
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
+      e.preventDefault();
       if (inputs.chat && document.activeElement === inputs.chat) {
         // Send message
         sendChatMessage();

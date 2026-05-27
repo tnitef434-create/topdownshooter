@@ -169,7 +169,10 @@ io.on('connection', (socket) => {
         weapon: 'pistol',
         color: color || 'cyan'
       }],
-      status: 'lobby'
+      status: 'lobby',
+      score1: 0,
+      score2: 0,
+      roundNumber: 1
     };
 
     rooms.set(roomId, room);
@@ -261,7 +264,10 @@ io.on('connection', (socket) => {
           weapon: 'pistol',
           color: color || 'cyan'
         }],
-        status: 'lobby'
+        status: 'lobby',
+        score1: 0,
+        score2: 0,
+        roundNumber: 1
       };
 
       rooms.set(roomId, room);
@@ -315,6 +321,9 @@ io.on('connection', (socket) => {
       const allReady = room.players.every(p => p.ready) && room.players.length === maxPlayers;
       if (allReady) {
         room.status = 'playing';
+        room.score1 = 0;
+        room.score2 = 0;
+        room.roundNumber = 1;
         io.to(currentRoomId).emit('match-start', {
           players: room.players,
           seed: Math.random() // synchronized seed for map spawns / layouts
@@ -356,12 +365,49 @@ io.on('connection', (socket) => {
   socket.on('player-died', (deathData) => {
     if (!currentRoomId) return;
     const room = rooms.get(currentRoomId);
-    if (room) {
-      room.status = 'lobby';
-      // Reset ready states for next round
-      room.players.forEach(p => p.ready = false);
-      io.to(currentRoomId).emit('match-over', deathData);
-      io.to(currentRoomId).emit('players-update', { players: room.players });
+    if (room && room.status === 'playing') {
+      const loserId = deathData.loserId;
+      const loserIdx = room.players.findIndex(p => p.id === loserId);
+      if (loserIdx !== -1) {
+        const loserTeam = (loserIdx % 2 === 0) ? 1 : 2;
+        const winnerTeam = (loserTeam === 1) ? 2 : 1;
+
+        if (winnerTeam === 1) {
+          room.score1++;
+        } else {
+          room.score2++;
+        }
+
+        const matchFinished = (room.score1 >= 3 || room.score2 >= 3);
+        if (matchFinished) {
+          room.status = 'lobby';
+          // Reset ready states for next match
+          room.players.forEach(p => p.ready = false);
+          
+          const winnerPlayer = room.players.find(p => {
+            const idx = room.players.indexOf(p);
+            const team = (idx % 2 === 0) ? 1 : 2;
+            return team === winnerTeam;
+          });
+
+          io.to(currentRoomId).emit('match-over', {
+            winnerId: winnerPlayer ? winnerPlayer.id : deathData.winnerId,
+            score1: room.score1,
+            score2: room.score2
+          });
+          io.to(currentRoomId).emit('players-update', { players: room.players });
+          console.log(`Match finished in room: ${currentRoomId}. Score: ${room.score1}-${room.score2}`);
+        } else {
+          room.roundNumber++;
+          io.to(currentRoomId).emit('round-over', {
+            winningTeam: winnerTeam,
+            score1: room.score1,
+            score2: room.score2,
+            roundNumber: room.roundNumber
+          });
+          console.log(`Round finished in room: ${currentRoomId}. Round Winner Team: ${winnerTeam}. Score: ${room.score1}-${room.score2}`);
+        }
+      }
     }
   });
 

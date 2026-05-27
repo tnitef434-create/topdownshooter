@@ -48,7 +48,8 @@ export class Network {
         health: state.health,
         weaponKey: state.weaponKey,
         isReloading: state.isReloading,
-        muzzleFlash: state.muzzleFlash
+        muzzleFlash: state.muzzleFlash,
+        flashlightActive: state.flashlightActive
       });
 
       // Keep buffer small (last 30 frames)
@@ -142,6 +143,16 @@ export class Network {
       });
       window.dispatchEvent(chatEvent);
     });
+
+    // 8. Server Round Over Event
+    this.socket.on('round-over', (data) => {
+      this.engine.handleServerRoundOver(data);
+    });
+
+    // 9. Server Match Over Event
+    this.socket.on('match-over', (data) => {
+      this.engine.handleServerMatchOver(data);
+    });
   }
 
   // Send current state to opponent at 60Hz
@@ -160,7 +171,8 @@ export class Network {
         health: this.localPlayer.health,
         weaponKey: this.localPlayer.weaponKey,
         isReloading: this.localPlayer.isReloading,
-        muzzleFlash: this.localPlayer.muzzleFlash
+        muzzleFlash: this.localPlayer.muzzleFlash,
+        flashlightActive: this.localPlayer.flashlightActive
       };
 
       this.socket.emit('player-state', state);
@@ -217,6 +229,7 @@ export class Network {
         opponent.weaponKey = beforeState.weaponKey;
         opponent.isReloading = beforeState.isReloading;
         opponent.muzzleFlash = beforeState.muzzleFlash;
+        opponent.flashlightActive = beforeState.flashlightActive;
       } else {
         // Fallback: If lagging and don't have surround states, slide towards latest packet
         const latest = buffer[buffer.length - 1];
@@ -232,6 +245,7 @@ export class Network {
         opponent.weaponKey = latest.weaponKey;
         opponent.isReloading = latest.isReloading;
         opponent.muzzleFlash = latest.muzzleFlash;
+        opponent.flashlightActive = latest.flashlightActive;
       }
     });
   }
