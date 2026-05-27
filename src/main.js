@@ -169,6 +169,16 @@ function playMenuMusic() {
   } catch(e) {}
 }
 
+function playGameplayBackgroundMusic() {
+  try {
+    waitMusic.pause();
+    waitMusic.currentTime = 0;
+    if (isMusicMuted) return;
+    menuMusic.volume = 0.04;
+    menuMusic.play().catch(() => {});
+  } catch(e) {}
+}
+
 function playRankedStartVideo(callback) {
   const overlay = document.getElementById('ranked-video-overlay');
   const video = document.getElementById('ranked-video');
@@ -304,7 +314,8 @@ function updateMusicVolume() {
     menuMusic.volume = 0;
     waitMusic.volume = 0;
   } else {
-    menuMusic.volume = 0.15;
+    const isGameplay = screens.game && screens.game.classList.contains('active');
+    menuMusic.volume = isGameplay ? 0.04 : 0.15;
     waitMusic.volume = 0.15;
   }
 }
@@ -464,7 +475,7 @@ function showScreen(screenKey) {
   } else if (screenKey === 'lobby' || screenKey === 'matchmaking') {
     playWaitMusic();
   } else if (screenKey === 'game') {
-    window.stopAllMusic();
+    playGameplayBackgroundMusic();
   }
 
   updateMusicVolume();
@@ -886,6 +897,8 @@ function setupUIListeners() {
         const activeScreen = document.querySelector('.screen.active');
         if (activeScreen && (activeScreen.id === 'lobby-screen' || activeScreen.id === 'matchmaking-screen')) {
           playWaitMusic();
+        } else if (activeScreen && activeScreen.id === 'game-screen') {
+          playGameplayBackgroundMusic();
         } else {
           playMenuMusic();
         }

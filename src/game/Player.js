@@ -644,7 +644,7 @@ export class Player {
   }
 
   // Draw player operative on canvas
-  draw(ctx, configSettings = { laser: true }) {
+  draw(ctx, configSettings = { laser: true }, map = null) {
     if (this.health <= 0) {
       // Draw death pool / fallen character
       ctx.save();
@@ -667,19 +667,55 @@ export class Player {
 
     ctx.save();
 
+    // ── Muzzle flash ground glow ──
+    if (this.health > 0 && this.muzzleFlash > 0.15) {
+      ctx.save();
+      const flashRadius = 130 * this.muzzleFlash;
+      const groundGlow = ctx.createRadialGradient(this.x, this.y, 10, this.x, this.y, flashRadius);
+      groundGlow.addColorStop(0, 'rgba(255, 160, 40, 0.28)');
+      groundGlow.addColorStop(0.5, 'rgba(255, 100, 20, 0.10)');
+      groundGlow.addColorStop(1, 'rgba(255, 50, 0, 0.0)');
+      ctx.fillStyle = groundGlow;
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, flashRadius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
     // Laser Sight (only for local player, or if settings enabled)
     if (configSettings.laser && this.isLocal && !this.isReloading) {
-      ctx.strokeStyle = 'rgba(102, 252, 241, 0.45)';
-      ctx.lineWidth = 1.0;
+      const maxLaserDist = 1200;
+      let endX = this.x + Math.cos(this.angle) * maxLaserDist;
+      let endY = this.y + Math.sin(this.angle) * maxLaserDist;
+      
+      if (map) {
+        const intersection = map.getLineIntersection({ x: this.x, y: this.y }, { x: endX, y: endY });
+        if (intersection) {
+          endX = intersection.x;
+          endY = intersection.y;
+        }
+      }
+
+      ctx.save();
+      // Draw red/cyan laser line
+      ctx.strokeStyle = this.isLocal ? 'rgba(102, 252, 241, 0.5)' : 'rgba(255, 60, 60, 0.5)';
+      ctx.lineWidth = 1.2;
       ctx.beginPath();
       ctx.moveTo(this.x, this.y);
-      const maxLaserDist = 1200;
-      const laserEnd = {
-        x: this.x + Math.cos(this.angle) * maxLaserDist,
-        y: this.y + Math.sin(this.angle) * maxLaserDist
-      };
-      ctx.lineTo(laserEnd.x, laserEnd.y);
+      ctx.lineTo(endX, endY);
       ctx.stroke();
+      
+      // Draw bright glowing dot at impact point
+      const dotColor = this.isLocal ? '#66fcf1' : '#ff3c3c';
+      const glowGrad = ctx.createRadialGradient(endX, endY, 1, endX, endY, 6);
+      glowGrad.addColorStop(0, '#ffffff');
+      glowGrad.addColorStop(0.3, dotColor);
+      glowGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      ctx.fillStyle = glowGrad;
+      ctx.beginPath();
+      ctx.arc(endX, endY, 6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
     }
 
     ctx.restore();

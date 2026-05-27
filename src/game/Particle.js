@@ -30,8 +30,11 @@ class Particle {
       const nextY = this.y + this.vy;
       
       const check = map.checkCircleCollision(nextX, nextY, this.size);
-      if (check.collided && this.bounceCount < 2) {
+      const collided = (check.x !== nextX || check.y !== nextY);
+      if (collided && this.bounceCount < 2) {
         this.bounceCount++;
+        this.x = check.x;
+        this.y = check.y;
         // Reverse velocity with dampening
         this.vx = -this.vx * 0.4;
         this.vy = -this.vy * 0.4;

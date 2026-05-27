@@ -434,7 +434,7 @@ export class Map {
     return ends;
   }
 
-  draw(ctx, configSettings = { shadows:true }, players = [], localPlayer = null) {
+  draw(ctx, configSettings = { shadows:true }, players = [], localPlayer = null, bullets = []) {
     // 1. Draw room floors
     this.rooms.forEach(r => this._drawFloor(ctx, r));
 
@@ -444,8 +444,16 @@ export class Map {
     // 3. Items
     this.items.forEach(item => { if (item.active) this._drawItem(ctx, item); });
 
-    // 4. Walls / furniture / crates
+    // 4. Walls / furniture / crates with soft drop shadows (ambient occlusion)
+    ctx.save();
+    if (configSettings.shadows) {
+      ctx.shadowColor = 'rgba(2, 3, 5, 0.55)';
+      ctx.shadowBlur = 8;
+      ctx.shadowOffsetX = 5;
+      ctx.shadowOffsetY = 5;
+    }
     this.walls.forEach(w => this._drawWall(ctx, w));
+    ctx.restore();
 
     // 5. Fog of war & Light rendering
     if (configSettings.shadows && players && players.length > 0) {
@@ -516,6 +524,37 @@ export class Map {
           }
           this.maskCtx.closePath();
           this.maskCtx.fillStyle = 'white';
+          this.maskCtx.fill();
+        }
+      });
+
+      // D. Bullet tracer cutout (reveal brief light trails in dark rooms)
+      if (bullets && bullets.length > 0) {
+        bullets.forEach(b => {
+          if (!b.active) return;
+          const bulletGrad = this.maskCtx.createRadialGradient(b.x, b.y, 5, b.x, b.y, 60);
+          bulletGrad.addColorStop(0, 'rgba(255, 255, 255, 1.0)');
+          bulletGrad.addColorStop(0.5, 'rgba(255, 255, 255, 0.45)');
+          bulletGrad.addColorStop(1, 'rgba(255, 255, 255, 0.0)');
+          this.maskCtx.fillStyle = bulletGrad;
+          this.maskCtx.beginPath();
+          this.maskCtx.arc(b.x, b.y, 60, 0, Math.PI * 2);
+          this.maskCtx.fill();
+        });
+      }
+
+      // E. Muzzle flash lighting cutouts
+      players.forEach(p => {
+        if (p.health > 0 && p.muzzleFlash > 0.15) {
+          const bx = p.x + Math.cos(p.angle) * 28;
+          const by = p.y + Math.sin(p.angle) * 28;
+          const flashGrad = this.maskCtx.createRadialGradient(bx, by, 10, bx, by, 180 * p.muzzleFlash);
+          flashGrad.addColorStop(0, 'rgba(255, 255, 255, 1.0)');
+          flashGrad.addColorStop(0.4, 'rgba(255, 255, 255, 0.5)');
+          flashGrad.addColorStop(1, 'rgba(255, 255, 255, 0.0)');
+          this.maskCtx.fillStyle = flashGrad;
+          this.maskCtx.beginPath();
+          this.maskCtx.arc(bx, by, 180 * p.muzzleFlash, 0, Math.PI * 2);
           this.maskCtx.fill();
         }
       });

@@ -15,7 +15,6 @@ export class Engine {
       this.mode = config.mode; // 'online' | 'offline'
       this.socket = config.socket;
       this.isRanked = !!config.isRanked;
-      if (window.stopAllMusic) window.stopAllMusic();
       
       // Map dimensions
       this.mapWidth = 1400;
@@ -771,7 +770,7 @@ export class Engine {
     this.particles.drawDecals(this.ctx);
 
     // Render static walls & crates. Overlay shadows using calculated visibility field
-    this.map.draw(this.ctx, this.settings, this.players, this.localPlayer);
+    this.map.draw(this.ctx, this.settings, this.players, this.localPlayer, this.bullets);
 
     // Render dead operatives lying flat
     this.players.forEach(p => {
@@ -791,7 +790,7 @@ export class Engine {
       }
       
       if (visible) {
-        p.draw(this.ctx, this.settings);
+        p.draw(this.ctx, this.settings, this.map);
       }
     });
 
