@@ -42,7 +42,8 @@ const settings = {
   volumeVal: document.getElementById('volume-val'),
   blood: document.getElementById('setting-blood'),
   shadows: document.getElementById('setting-shadows'),
-  laser: document.getElementById('setting-laser')
+  laser: document.getElementById('setting-laser'),
+  serverUrl: document.getElementById('setting-server-url')
 };
 
 const gameOverModal = document.getElementById('game-over-modal');
@@ -68,7 +69,8 @@ const gameSettings = {
   volume: 0.5,
   blood: true,
   shadows: true,
-  laser: true
+  laser: true,
+  serverUrl: ''
 };
 
 // 1. Initialize Settings
@@ -85,12 +87,18 @@ function initSettings() {
       settings.blood.checked = gameSettings.blood;
       settings.shadows.checked = gameSettings.shadows;
       settings.laser.checked = gameSettings.laser;
+      settings.serverUrl.value = gameSettings.serverUrl || '';
     } catch (e) {
       console.error(e);
     }
   }
 
   // Bind settings UI changes
+  settings.serverUrl.addEventListener('input', (e) => {
+    gameSettings.serverUrl = e.target.value.trim();
+    saveSettings();
+  });
+
   settings.volume.addEventListener('input', (e) => {
     const val = parseInt(e.target.value);
     gameSettings.volume = val / 100;
@@ -226,10 +234,15 @@ function updateLobbyUI(players) {
 function connectSocket() {
   if (socket) return;
 
-  // In production, server is same origin. In development (Vite), point to server port 3000.
-  const serverUrl = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
-    ? 'http://localhost:3000' 
-    : window.location.origin;
+  // Resolve server connection URL
+  let serverUrl = gameSettings.serverUrl;
+  
+  if (!serverUrl) {
+    // Fallback: In production, server is same origin. In development (Vite), point to server port 3000.
+    serverUrl = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
+      ? 'http://localhost:3000' 
+      : window.location.origin;
+  }
 
   socket = io(serverUrl);
 
