@@ -85,6 +85,7 @@ export class Engine {
       });
 
       this.bullets = [];
+      this.replayFrames = [];
       
       // Network component
       this.network = null;
@@ -395,14 +396,16 @@ export class Engine {
 
     this.updateScoreboardHUD();
 
-    // Check if match over (First to 3 rounds won)
-    if (this.scoreSelf >= 3 || this.scoreOpponent >= 3) {
-      setTimeout(() => this.endMatch(), 2000);
-    } else {
-      this.roundNumber++;
-      // Restart round cycle after 3s
-      setTimeout(() => this.startRoundCycle(), 3000);
-    }
+    const transitionAction = () => {
+      if (this.scoreSelf >= 3 || this.scoreOpponent >= 3) {
+        this.endMatch();
+      } else {
+        this.roundNumber++;
+        this.startRoundCycle();
+      }
+    };
+
+    this.startReplay(transitionAction);
   }
 
   endMatch() {
@@ -542,6 +545,18 @@ export class Engine {
 
   // Core Game State Update
   update(currentTime) {
+    if (this.gameState === 'replay') {
+      this.replayIndex++;
+      if (this.replayIndex >= this.replayFrames.length) {
+        if (this.postReplayCallback) {
+          const cb = this.postReplayCallback;
+          this.postReplayCallback = null;
+          cb();
+        }
+      }
+      return;
+    }
+
     // 1. Process Round countdowns
     if (this.gameState === 'countdown') {
       const elapsed = (currentTime - this.countdownStart) / 1000;
@@ -734,10 +749,266 @@ export class Engine {
     if (this.mode === 'online' && (this.gameState === 'playing' || this.gameState === 'countdown')) {
       this.network.sendState(currentTime);
     }
+
+    // 8. Record snapshot for Killcam Replay
+    if (this.gameState === 'playing') {
+      const snapshot = {
+        players: this.players.map(p => ({
+          id: p.id,
+          x: p.x,
+          y: p.y,
+          angle: p.angle,
+          health: p.health,
+          maxHealth: p.maxHealth,
+          weaponKey: p.weaponKey,
+          muzzleFlash: p.muzzleFlash,
+          isLocal: p.isLocal,
+          isBot: p.isBot,
+          isTeammate: p.isTeammate,
+          color: p.colorTheme,
+          name: p.name,
+          flashlightActive: p.flashlightActive
+        })),
+        bullets: this.bullets.map(b => ({
+          x: b.x,
+          y: b.y,
+          prevX: b.prevX,
+          prevY: b.prevY,
+          angle: b.angle,
+          playerId: b.playerId,
+          active: b.active
+        })),
+        particles: this.particles.particles.map(p => ({
+          x: p.x,
+          y: p.y,
+          type: p.type,
+          angle: p.angle,
+          size: p.size,
+          color: p.color,
+          life: p.life
+        })),
+        decals: this.particles.decals.map(d => ({
+          x: d.x,
+          y: d.y,
+          type: d.type,
+          size: d.size,
+          color: d.color,
+          angle: d.angle,
+          scaleX: d.scaleX,
+          scaleY: d.scaleY
+        })),
+        camera: { x: this.camera.x, y: this.camera.y },
+        brokenLightOn: this.map.ambientLights.brokenCeiling.on
+      };
+      this.replayFrames.push(snapshot);
+      if (this.replayFrames.length > 300) { // 5 seconds at 60fps
+        this.replayFrames.shift();
+      }
+    }
   }
 
   // Core Render loop
+  startReplay(callback) {
+    const someoneDied = this.players.some(p => p.health <= 0);
+    if (this.replayFrames && this.replayFrames.length > 0 && someoneDied) {
+      this.gameState = 'replay';
+      this.replayIndex = 0;
+      this.postReplayCallback = callback;
+      const hudStatus = document.getElementById('hud-status');
+      if (hudStatus) {
+        hudStatus.innerText = '● REPLAY / KILLCAM';
+        hudStatus.style.color = '#ff3c3c';
+      }
+    } else {
+      callback();
+    }
+  }
+
+  drawSnapshotPlayer(p, isDead) {
+    this.ctx.save();
+    if (isDead) {
+      // Draw death pool
+      this.ctx.fillStyle = 'rgba(180, 0, 0, 0.35)';
+      this.ctx.beginPath();
+      this.ctx.ellipse(p.x, p.y, 26, 22, 0, 0, Math.PI * 2);
+      this.ctx.fill();
+      
+      if (CharacterRenderer.ready) {
+        this.ctx.save();
+        this.ctx.translate(p.x, p.y);
+        this.ctx.rotate(p.angle + Math.PI / 2);
+        this.ctx.globalAlpha = 0.55;
+        CharacterRenderer.draw(this.ctx, p.id + '_dead', 0, 0, 0, 0, false, p.isLocal ? 'blue' : 'red');
+        this.ctx.restore();
+      }
+      this.ctx.restore();
+      return;
+    }
+
+    // Laser Sight (only for local player, or if settings enabled)
+    if (this.settings.laser && p.isLocal) {
+      const maxLaserDist = 1200;
+      let endX = p.x + Math.cos(p.angle) * maxLaserDist;
+      let endY = p.y + Math.sin(p.angle) * maxLaserDist;
+      
+      const intersection = this.map.getLineIntersection({ x: p.x, y: p.y }, { x: endX, y: endY });
+      if (intersection) {
+        endX = intersection.x;
+        endY = intersection.y;
+      }
+
+      this.ctx.save();
+      this.ctx.strokeStyle = p.isLocal ? 'rgba(102, 252, 241, 0.5)' : 'rgba(255, 60, 60, 0.5)';
+      this.ctx.lineWidth = 1.2;
+      this.ctx.beginPath();
+      this.ctx.moveTo(p.x, p.y);
+      this.ctx.lineTo(endX, endY);
+      this.ctx.stroke();
+      
+      const dotColor = p.isLocal ? '#66fcf1' : '#ff3c3c';
+      const glowGrad = this.ctx.createRadialGradient(endX, endY, 1, endX, endY, 6);
+      glowGrad.addColorStop(0, '#ffffff');
+      glowGrad.addColorStop(0.3, dotColor);
+      glowGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      this.ctx.fillStyle = glowGrad;
+      this.ctx.beginPath();
+      this.ctx.arc(endX, endY, 6, 0, Math.PI * 2);
+      this.ctx.fill();
+      this.ctx.restore();
+    }
+
+    // Draw sprite using CharacterRenderer
+    const isShooting = p.muzzleFlash > 0.1;
+    const drewSprite = CharacterRenderer.draw(
+      this.ctx,
+      p.id,
+      p.x,
+      p.y,
+      p.angle,
+      0, // current speed not critical for replay stance
+      isShooting,
+      p.isLocal ? 'blue' : 'red'
+    );
+
+    // Fallback tactical circle
+    if (!drewSprite) {
+      this.ctx.save();
+      this.ctx.translate(p.x, p.y);
+      this.ctx.rotate(p.angle);
+      
+      const COLOR_THEMES = {
+        cyan: { body: '#3ba39f', armor: '#16202c', helmet: '#66fcf1' },
+        green: { body: '#39db14', armor: '#133d07', helmet: '#5eff39' },
+        purple: { body: '#9d3bff', armor: '#20083c', helmet: '#c47aff' },
+        orange: { body: '#ff7f3b', armor: '#3f1b07', helmet: '#ff9d7a' },
+        yellow: { body: '#ffd700', armor: '#3a3000', helmet: '#ffea70' },
+        red: { body: '#ff3c3c', armor: '#3a0707', helmet: '#ff7a7a' }
+      };
+
+      const theme = COLOR_THEMES[p.color] || COLOR_THEMES[p.isLocal ? 'cyan' : 'red'];
+      const bodyColor = theme.body;
+      const armorColor = theme.armor;
+      const helmetColor = theme.helmet;
+
+      let barrelLength = 18, barrelWidth = 4;
+      if (p.weaponKey === 'rifle')  { barrelLength = 24; barrelWidth = 5; }
+      if (p.weaponKey === 'shotgun'){ barrelLength = 22; barrelWidth = 6; }
+      if (p.weaponKey === 'sniper') { barrelLength = 32; barrelWidth = 4; }
+      if (p.weaponKey === 'smg')    { barrelLength = 16; barrelWidth = 4; }
+      if (p.weaponKey === 'lmg')    { barrelLength = 26; barrelWidth = 7; }
+      if (p.weaponKey === 'dmr')    { barrelLength = 28; barrelWidth = 5; }
+
+      this.ctx.fillStyle = '#444'; this.ctx.strokeStyle = '#000'; this.ctx.lineWidth = 1;
+      this.ctx.fillRect(10, -barrelWidth / 2, barrelLength, barrelWidth);
+      this.ctx.strokeRect(10, -barrelWidth / 2, barrelLength, barrelWidth);
+
+      this.ctx.fillStyle = armorColor; this.ctx.strokeStyle = '#000'; this.ctx.lineWidth = 1.5;
+      this.ctx.beginPath(); this.ctx.arc(8, -10, 5, 0, Math.PI*2); this.ctx.fill(); this.ctx.stroke();
+      this.ctx.beginPath(); this.ctx.arc(14, 6, 5, 0, Math.PI*2); this.ctx.fill(); this.ctx.stroke();
+
+      this.ctx.fillStyle = bodyColor;
+      this.ctx.beginPath(); this.ctx.ellipse(0, 0, 18, 21, 0, 0, Math.PI*2);
+      this.ctx.fill(); this.ctx.stroke();
+
+      this.ctx.fillStyle = armorColor;
+      this.ctx.beginPath(); this.ctx.ellipse(-3, 0, 14, 16, 0, 0, Math.PI*2);
+      this.ctx.fill();
+
+      this.ctx.fillStyle = helmetColor;
+      this.ctx.beginPath(); this.ctx.arc(-2, 0, 8, 0, Math.PI*2);
+      this.ctx.fill(); this.ctx.stroke();
+
+      this.ctx.fillStyle = '#111'; this.ctx.fillRect(1, -5, 3, 10);
+      this.ctx.restore();
+    }
+
+    // Draw weapon barrel & muzzle flash
+    this.ctx.save();
+    this.ctx.translate(p.x, p.y);
+    this.ctx.rotate(p.angle);
+
+    this.ctx.fillStyle = '#333';
+    this.ctx.strokeStyle = 'rgba(0,0,0,0.7)';
+    this.ctx.lineWidth = 1;
+    let barrelLength = 18, barrelWidth = 3;
+    if (p.weaponKey === 'rifle')  { barrelLength = 26; barrelWidth = 4; }
+    if (p.weaponKey === 'shotgun'){ barrelLength = 22; barrelWidth = 5; }
+    if (p.weaponKey === 'sniper') { barrelLength = 36; barrelWidth = 3; }
+    if (p.weaponKey === 'smg')    { barrelLength = 16; barrelWidth = 3; }
+    if (p.weaponKey === 'lmg')    { barrelLength = 28; barrelWidth = 5; }
+    if (p.weaponKey === 'dmr')    { barrelLength = 30; barrelWidth = 4; }
+
+    this.ctx.fillRect(12, -barrelWidth / 2, barrelLength, barrelWidth);
+    this.ctx.strokeRect(12, -barrelWidth / 2, barrelLength, barrelWidth);
+
+    // Muzzle Flash
+    if (p.muzzleFlash > 0) {
+      this.ctx.save();
+      this.ctx.translate(12 + barrelLength, 0);
+      const grad = this.ctx.createRadialGradient(0, 0, 2, 0, 0, 16);
+      grad.addColorStop(0, 'rgba(255, 255, 255, 1.0)');
+      grad.addColorStop(0.3, 'rgba(255, 220, 0, 0.9)');
+      grad.addColorStop(0.7, 'rgba(255, 80, 0, 0.5)');
+      grad.addColorStop(1, 'rgba(255, 0, 0, 0.0)');
+      this.ctx.fillStyle = grad;
+      this.ctx.beginPath();
+      this.ctx.arc(0, 0, 16, 0, Math.PI * 2);
+      this.ctx.fill();
+      this.ctx.restore();
+    }
+    this.ctx.restore();
+
+    // Floating name HUD
+    this.ctx.save();
+    this.ctx.textAlign = 'center';
+    const nameColor = p.isLocal 
+      ? '#66fcf1' 
+      : (p.isTeammate ? '#39db14' : '#ff3c3c');
+    this.ctx.fillStyle = nameColor;
+    this.ctx.font = '10px Orbitron';
+    this.ctx.fillText(p.name.toUpperCase(), p.x, p.y - 30);
+    
+    // Draw tiny mini healthbar above opponent/bot
+    if (!p.isLocal && p.health > 0) {
+      this.ctx.fillStyle = 'rgba(0,0,0,0.5)';
+      this.ctx.fillRect(p.x - 20, p.y - 26, 40, 4);
+      
+      const hpColor = p.isTeammate ? '#39db14' : '#ff3c3c';
+      this.ctx.fillStyle = hpColor;
+      this.ctx.fillRect(p.x - 20, p.y - 26, 40 * (p.health / p.maxHealth), 4);
+    }
+    this.ctx.restore();
+    this.ctx.restore();
+  }
+
   render() {
+    let frame = null;
+    if (this.gameState === 'replay') {
+      frame = this.replayFrames[this.replayIndex];
+    }
+    
+    if (this.gameState === 'replay' && !frame) return;
+
     // Clear canvas
     this.ctx.fillStyle = '#06070a';
     this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
@@ -753,12 +1024,23 @@ export class Engine {
     this.ctx.scale(this.zoom, this.zoom);
     
     // Apply camera centrings and screenshakes
-    const focusX = -this.camera.x + this.camera.shakeX;
-    const focusY = -this.camera.y + this.camera.shakeY;
+    const camX = frame ? frame.camera.x : this.camera.x;
+    const camY = frame ? frame.camera.y : this.camera.y;
+    const shakeX = frame ? 0 : this.camera.shakeX;
+    const shakeY = frame ? 0 : this.camera.shakeY;
+    
+    const focusX = -camX + shakeX;
+    const focusY = -camY + shakeY;
     this.ctx.translate(focusX, focusY);
 
     // Compute flashlight polygons for all living players with active flashlight
-    this.players.forEach(p => {
+    const renderPlayers = frame ? frame.players : this.players;
+    const renderBullets = frame ? frame.bullets : this.bullets;
+    const brokenLightOn = frame ? frame.brokenLightOn : this.map.ambientLights.brokenCeiling.on;
+    
+    this.map.ambientLights.brokenCeiling.on = brokenLightOn;
+
+    renderPlayers.forEach(p => {
       if (p.health > 0 && p.flashlightActive) {
         p.lightPoly = this.map.computeVisibilityPolygon(p.x, p.y, 700, p.angle, 65 * Math.PI / 180);
       } else {
@@ -767,37 +1049,71 @@ export class Engine {
     });
 
     // Render floor details & blood decals underneath players/obstacles
-    this.particles.drawDecals(this.ctx);
+    if (frame) {
+      frame.decals.forEach(d => {
+        this.ctx.save();
+        this.ctx.translate(d.x, d.y);
+        this.ctx.rotate(d.angle);
+        this.ctx.globalAlpha = d.type === 'blood' ? 0.75 : 0.9;
+        if (d.type === 'blood') {
+          this.ctx.fillStyle = d.color;
+          this.ctx.beginPath();
+          this.ctx.ellipse(0, 0, d.size * d.scaleX, d.size * d.scaleY, 0, 0, Math.PI * 2);
+          this.ctx.fill();
+        } else if (d.type === 'casing') {
+          this.ctx.fillStyle = '#b5921c';
+          this.ctx.fillRect(-d.size, -d.size / 2, d.size * 2, d.size);
+        } else if (d.type === 'splinter') {
+          this.ctx.fillStyle = '#6e441c';
+          this.ctx.fillRect(-d.size, -d.size / 3, d.size * 1.5, d.size * 0.7);
+        }
+        this.ctx.restore();
+      });
+    } else {
+      this.particles.drawDecals(this.ctx);
+    }
 
     // Render static walls & crates. Overlay shadows using calculated visibility field
-    this.map.draw(this.ctx, this.settings, this.players, this.localPlayer, this.bullets);
+    const fLocalPlayer = frame ? frame.players.find(p => p.isLocal) : this.localPlayer;
+    this.map.draw(this.ctx, this.settings, renderPlayers, fLocalPlayer, renderBullets);
 
     // Render dead operatives lying flat
-    this.players.forEach(p => {
-      if (p.health <= 0) p.draw(this.ctx);
+    renderPlayers.forEach(p => {
+      if (p.health <= 0) {
+        if (frame) {
+          this.drawSnapshotPlayer(p, true);
+        } else {
+          p.draw(this.ctx);
+        }
+      }
     });
 
     // Render active players (only draw enemies if visible in Line of Sight/flashlight)
-    this.players.forEach(p => {
+    renderPlayers.forEach(p => {
       if (p.health <= 0) return;
       
       let visible = true;
-      if (this.settings.shadows && this.localPlayer && this.localPlayer.health > 0 && !p.isLocal) {
-        const inFlashlight = this.localPlayer.flashlightActive && this.localPlayer.lightPoly && this.isPointInPolygon({ x: p.x, y: p.y }, this.localPlayer.lightPoly);
-        const hasLOS = !this.map.getLineIntersection({ x: this.localPlayer.x, y: this.localPlayer.y }, { x: p.x, y: p.y });
+      if (this.settings.shadows && fLocalPlayer && fLocalPlayer.health > 0 && !p.isLocal) {
+        const inFlashlight = fLocalPlayer.flashlightActive && fLocalPlayer.lightPoly && this.isPointInPolygon({ x: p.x, y: p.y }, fLocalPlayer.lightPoly);
+        const hasLOS = !this.map.getLineIntersection({ x: fLocalPlayer.x, y: fLocalPlayer.y }, { x: p.x, y: p.y });
         const inAmbientLight = this.map.isPointInAmbientLight(p.x, p.y);
         visible = inFlashlight || p.isTeammate || (p.flashlightActive && hasLOS) || (inAmbientLight && hasLOS);
       }
       
       if (visible) {
-        p.draw(this.ctx, this.settings, this.map);
+        if (frame) {
+          this.drawSnapshotPlayer(p, false);
+        } else {
+          p.draw(this.ctx, this.settings, this.map);
+        }
       }
     });
 
     // Render local player's rotating compass ring
-    if (this.localPlayer.health > 0) {
+    const localLiving = fLocalPlayer && fLocalPlayer.health > 0;
+    if (localLiving) {
       this.ctx.save();
-      this.ctx.translate(this.localPlayer.x, this.localPlayer.y);
+      this.ctx.translate(fLocalPlayer.x, fLocalPlayer.y);
       this.ctx.strokeStyle = 'rgba(102, 252, 241, 0.15)';
       this.ctx.lineWidth = 1;
       this.ctx.setLineDash([4, 8]);
@@ -810,8 +1126,74 @@ export class Engine {
     // Render Bullets and Particles with additive bloom glow
     this.ctx.save();
     this.ctx.globalCompositeOperation = 'lighter';
-    this.bullets.forEach(b => b.draw(this.ctx));
-    this.particles.drawParticles(this.ctx);
+    if (frame) {
+      frame.bullets.forEach(b => {
+        if (!b.active) return;
+        this.ctx.save();
+        this.ctx.lineWidth = 2.5;
+        this.ctx.lineCap = 'round';
+        const isLocalBullet = b.playerId === fLocalPlayer?.id;
+        const gradient = this.ctx.createLinearGradient(b.prevX, b.prevY, b.x, b.y);
+        if (isLocalBullet) {
+          gradient.addColorStop(0, 'rgba(102, 252, 241, 0.0)');
+          gradient.addColorStop(1, 'rgba(102, 252, 241, 1.0)');
+          this.ctx.strokeStyle = gradient;
+          this.ctx.shadowColor = '#66fcf1';
+        } else {
+          gradient.addColorStop(0, 'rgba(255, 60, 60, 0.0)');
+          gradient.addColorStop(1, 'rgba(255, 60, 60, 1.0)');
+          this.ctx.strokeStyle = gradient;
+          this.ctx.shadowColor = '#ff3c3c';
+        }
+        this.ctx.shadowBlur = 4;
+        this.ctx.beginPath();
+        this.ctx.moveTo(b.prevX, b.prevY);
+        this.ctx.lineTo(b.x, b.y);
+        this.ctx.stroke();
+        this.ctx.restore();
+      });
+      frame.particles.forEach(p => {
+        this.ctx.save();
+        this.ctx.globalAlpha = Math.max(0, p.life);
+        if (p.type === 'casing') {
+          this.ctx.translate(p.x, p.y);
+          this.ctx.rotate(p.angle);
+          this.ctx.fillStyle = '#d4af37';
+          this.ctx.strokeStyle = '#996515';
+          this.ctx.lineWidth = 0.5;
+          this.ctx.fillRect(-p.size, -p.size / 2, p.size * 2, p.size);
+          this.ctx.strokeRect(-p.size, -p.size / 2, p.size * 2, p.size);
+        } else if (p.type === 'splinter') {
+          this.ctx.translate(p.x, p.y);
+          this.ctx.rotate(p.angle);
+          this.ctx.fillStyle = '#8b5a2b';
+          this.ctx.beginPath();
+          this.ctx.moveTo(-p.size, 0);
+          this.ctx.lineTo(p.size, -p.size / 2);
+          this.ctx.lineTo(p.size / 2, p.size / 2);
+          this.ctx.closePath();
+          this.ctx.fill();
+        } else if (p.type === 'blood') {
+          this.ctx.fillStyle = p.color;
+          this.ctx.beginPath();
+          this.ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+          this.ctx.fill();
+        } else {
+          this.ctx.fillStyle = p.color;
+          if (p.color.startsWith('#66fc') || p.color.startsWith('#ff3c')) {
+            this.ctx.shadowColor = p.color;
+            this.ctx.shadowBlur = 4;
+          }
+          this.ctx.beginPath();
+          this.ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+          this.ctx.fill();
+        }
+        this.ctx.restore();
+      });
+    } else {
+      this.bullets.forEach(b => b.draw(this.ctx));
+      this.particles.drawParticles(this.ctx);
+    }
     this.ctx.restore();
 
     // Restore viewport translations
@@ -836,49 +1218,82 @@ export class Engine {
     this.ctx.restore();
 
     // 3. Zone indicator HUD (screen-space overlay)
-    const localZone = this.localPlayer && this.localPlayer.health > 0
-      ? this.map.checkZone(this.localPlayer.x, this.localPlayer.y)
-      : null;
+    if (!frame) {
+      const localZone = this.localPlayer && this.localPlayer.health > 0
+        ? this.map.checkZone(this.localPlayer.x, this.localPlayer.y)
+        : null;
 
-    if (localZone) {
-      try {
-        this.ctx.save();
-        const isHeal   = localZone.type === 'healing';
-        const pulse    = Math.sin(Date.now() / 400) * 0.25 + 0.75;
-        const textCol  = isHeal ? `rgba(80,255,130,${pulse})` : `rgba(255,100,60,${pulse})`;
-        const zoneCol  = isHeal ? `rgba(40,255,110,${pulse*0.18})` : `rgba(255,60,20,${pulse*0.18})`;
-        const borderC  = isHeal ? `rgba(80,255,130,${pulse*0.8})`  : `rgba(255,100,60,${pulse*0.8})`;
+      if (localZone) {
+        try {
+          this.ctx.save();
+          const isHeal   = localZone.type === 'healing';
+          const pulse    = Math.sin(Date.now() / 400) * 0.25 + 0.75;
+          const textCol  = isHeal ? `rgba(80,255,130,${pulse})` : `rgba(255,100,60,${pulse})`;
+          const zoneCol  = isHeal ? `rgba(40,255,110,${pulse*0.18})` : `rgba(255,60,20,${pulse*0.18})`;
+          const borderC  = isHeal ? `rgba(80,255,130,${pulse*0.8})`  : `rgba(255,100,60,${pulse*0.8})`;
 
-        const barW = 260, barH = 38;
-        const barX = this.canvas.width / 2 - barW / 2;
-        const barY = this.canvas.height - 130;
+          const barW = 260, barH = 38;
+          const barX = this.canvas.width / 2 - barW / 2;
+          const barY = this.canvas.height - 130;
 
-        // Background fill (plain rect)
-        this.ctx.fillStyle = zoneCol;
-        this.ctx.fillRect(barX, barY, barW, barH);
+          // Background fill
+          this.ctx.fillStyle = zoneCol;
+          this.ctx.fillRect(barX, barY, barW, barH);
 
-        // Border (plain rect)
-        this.ctx.strokeStyle = borderC;
-        this.ctx.lineWidth = 1.5;
-        this.ctx.strokeRect(barX, barY, barW, barH);
+          // Border
+          this.ctx.strokeStyle = borderC;
+          this.ctx.lineWidth = 1.5;
+          this.ctx.strokeRect(barX, barY, barW, barH);
 
-        // Label
-        this.ctx.textAlign = 'center';
-        this.ctx.font = 'bold 12px Orbitron';
-        this.ctx.fillStyle = textCol;
-        const icon = isHeal ? '+' : '!';
-        this.ctx.fillText(`${icon} ${localZone.label}`, this.canvas.width / 2, barY + 15);
+          // Label
+          this.ctx.textAlign = 'center';
+          this.ctx.font = 'bold 12px Orbitron';
+          this.ctx.fillStyle = textCol;
+          const icon = isHeal ? '+' : '!';
+          this.ctx.fillText(`${icon} ${localZone.label}`, this.canvas.width / 2, barY + 15);
 
-        // Sub-text
-        this.ctx.font = '9px Orbitron';
-        this.ctx.fillStyle = isHeal ? 'rgba(60,255,110,0.7)' : 'rgba(255,80,40,0.7)';
-        const sub = isHeal
-          ? `+${(localZone.healRate * 60).toFixed(0)} HP/s REGENERATION`
-          : `DAMAGE x${localZone.multiplier} -- DANGER`;
-        this.ctx.fillText(sub, this.canvas.width / 2, barY + 29);
+          // Sub-text
+          this.ctx.font = '9px Orbitron';
+          this.ctx.fillStyle = isHeal ? 'rgba(60,255,110,0.7)' : 'rgba(255,80,40,0.7)';
+          const sub = isHeal
+            ? `+${(localZone.healRate * 60).toFixed(0)} HP/s REGENERATION`
+            : `DAMAGE x${localZone.multiplier} -- DANGER`;
+          this.ctx.fillText(sub, this.canvas.width / 2, barY + 29);
 
-        this.ctx.restore();
-      } catch(e) { /* silently ignore zone HUD errors to protect render loop */ }
+          this.ctx.restore();
+        } catch(e) {}
+      }
+    }
+
+    // 4. Render Replay Overlay HUD (vibrant AAA style)
+    if (frame) {
+      this.ctx.save();
+      // Translucent red framing
+      this.ctx.strokeStyle = 'rgba(255, 60, 60, 0.6)';
+      this.ctx.lineWidth = 12;
+      this.ctx.strokeRect(0, 0, this.canvas.width, this.canvas.height);
+
+      // Flashing REC indicator and "KILLCAM REPLAY" text
+      const isFlash = Math.floor(Date.now() / 500) % 2 === 0;
+      this.ctx.fillStyle = isFlash ? '#ff3c3c' : 'rgba(255, 60, 60, 0.2)';
+      this.ctx.beginPath();
+      this.ctx.arc(40, 40, 8, 0, Math.PI * 2);
+      this.ctx.fill();
+
+      this.ctx.font = '900 16px Orbitron';
+      this.ctx.fillStyle = '#ffffff';
+      this.ctx.textAlign = 'left';
+      this.ctx.fillText('KILLCAM REPLAY', 60, 46);
+
+      // Replay progress bar at the bottom
+      const progress = this.replayIndex / this.replayFrames.length;
+      const barW = this.canvas.width - 80;
+      this.ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
+      this.ctx.fillRect(40, this.canvas.height - 40, barW, 6);
+      this.ctx.fillStyle = '#ff3c3c';
+      this.ctx.fillRect(40, this.canvas.height - 40, barW * progress, 6);
+      
+      this.ctx.restore();
     }
   }
 
@@ -928,7 +1343,7 @@ export class Engine {
     this.updateScoreboardHUD();
 
     this.roundNumber = data.roundNumber;
-    setTimeout(() => this.startRoundCycle(), 3000);
+    this.startReplay(() => this.startRoundCycle());
   }
 
   handleServerMatchOver(data) {
@@ -968,14 +1383,20 @@ export class Engine {
     window.MatchStats.rankChanged = rankChanged;
     window.MatchStats.oldRankLabel = oldRank;
 
-    if (isWin) {
-      this.sound.playMatchWin();
-    } else {
-      this.sound.playMatchLose();
-    }
+    const finishMatch = () => {
+      this.gameState = 'match-over';
+      this.active = false;
+      if (isWin) {
+        this.sound.playMatchWin();
+      } else {
+        this.sound.playMatchLose();
+      }
 
-    if (this.onMatchEnd) {
-      this.onMatchEnd(window.MatchStats);
-    }
+      if (this.onMatchEnd) {
+        this.onMatchEnd(window.MatchStats);
+      }
+    };
+
+    this.startReplay(finishMatch);
   }
 }

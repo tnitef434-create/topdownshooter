@@ -685,6 +685,19 @@ function connectSocket() {
     updateLobbyUI(players);
     addSystemChatMessage(message);
     if (gameEngine) {
+      if (gameEngine.active && gameEngine.mode === 'online') {
+        recordMatchResult(true);
+        if (gameEngine.isRanked) {
+          const myRP = parseInt(localStorage.getItem('tacticstrike_rp') || '0');
+          const nextRP = myRP + 80;
+          localStorage.setItem('tacticstrike_rp', String(nextRP));
+          if (gameEngine.localPlayer) {
+            gameEngine.localPlayer.rp = nextRP;
+            gameEngine.localPlayer.rank = gameEngine.localPlayer._calcRank(nextRP);
+          }
+        }
+      }
+      localStorage.removeItem('tacticstrike_active_match');
       gameEngine.endGameDueToDisconnect(message);
     }
   });
@@ -696,6 +709,9 @@ function connectSocket() {
       
       // Clear chat display for fresh round
       displays.chatMessages.innerHTML = '';
+      
+      // Set active match flag for crash protection
+      localStorage.setItem('tacticstrike_active_match', isRanked ? 'ranked' : 'casual');
       
       // Instantiate game engine
       if (gameEngine) {
@@ -720,11 +736,7 @@ function connectSocket() {
       });
     };
 
-    if (isRanked) {
-      playRankedStartVideo(initGame);
-    } else {
-      initGame();
-    }
+    playRankedStartVideo(initGame);
   });
 
   socket.on('opponent-requested-rematch', () => {
@@ -743,41 +755,45 @@ function disconnectSocket() {
 
 // 6. Gameplay triggers
 function startOfflineMode() {
-  showScreen('game');
-  displays.chatMessages.innerHTML = '';
+  const initGame = () => {
+    showScreen('game');
+    displays.chatMessages.innerHTML = '';
 
-  if (gameEngine) {
-    gameEngine.destroy();
-  }
+    if (gameEngine) {
+      gameEngine.destroy();
+    }
 
-  const playersList = [
-    { id: 'player', name: myName, weapon: myWeapon, color: myColor }
-  ];
-  
-  if (myMode === '2v2') {
-    playersList.push({ id: 'bot_enemy_1', name: 'Bot Miller (Enemy)', weapon: getRandomWeapon(), color: 'red' });
-    playersList.push({ id: 'bot_teammate', name: 'Bot Ramirez (Teammate)', weapon: getRandomWeapon(), color: 'green' });
-    playersList.push({ id: 'bot_enemy_2', name: 'Bot Cooper (Enemy)', weapon: getRandomWeapon(), color: 'orange' });
-  } else {
-    playersList.push({ id: 'bot_enemy_1', name: 'Bot Miller (Enemy)', weapon: getRandomWeapon(), color: 'red' });
-  }
+    const playersList = [
+      { id: 'player', name: myName, weapon: myWeapon, color: myColor }
+    ];
+    
+    if (myMode === '2v2') {
+      playersList.push({ id: 'bot_enemy_1', name: 'Bot Miller (Enemy)', weapon: getRandomWeapon(), color: 'red' });
+      playersList.push({ id: 'bot_teammate', name: 'Bot Ramirez (Teammate)', weapon: getRandomWeapon(), color: 'green' });
+      playersList.push({ id: 'bot_enemy_2', name: 'Bot Cooper (Enemy)', weapon: getRandomWeapon(), color: 'orange' });
+    } else {
+      playersList.push({ id: 'bot_enemy_1', name: 'Bot Miller (Enemy)', weapon: getRandomWeapon(), color: 'red' });
+    }
 
-  gameEngine = new Engine('game-canvas', {
-    mode: 'offline',
-    socket: null,
-    localPlayerId: 'player',
-    localPlayerName: myName,
-    localWeapon: myWeapon,
-    localColor: myColor,
-    localPlayerIndex: 0,
-    players: playersList,
-    seed: Math.random(),
-    settings: { ...gameSettings, volume: gameSettings.sfxMuted ? 0 : gameSettings.volume },
-    matchMode: myMode,
-    isRanked: false, // bots never ranked
-    onMatchEnd: handleMatchEnd,
-    onKillFeed: addKillFeedMessage
-  });
+    gameEngine = new Engine('game-canvas', {
+      mode: 'offline',
+      socket: null,
+      localPlayerId: 'player',
+      localPlayerName: myName,
+      localWeapon: myWeapon,
+      localColor: myColor,
+      localPlayerIndex: 0,
+      players: playersList,
+      seed: Math.random(),
+      settings: { ...gameSettings, volume: gameSettings.sfxMuted ? 0 : gameSettings.volume },
+      matchMode: myMode,
+      isRanked: false, // bots never ranked
+      onMatchEnd: handleMatchEnd,
+      onKillFeed: addKillFeedMessage
+    });
+  };
+
+  playRankedStartVideo(initGame);
 }
 
 function getRandomWeapon() {
@@ -786,6 +802,7 @@ function getRandomWeapon() {
 
 // Match Over Debriefing Display
   function handleMatchEnd(results) {
+    localStorage.removeItem('tacticstrike_active_match');
     if (gameOverModal) gameOverModal.classList.add('active');
     const isWin = !!results.isWin;
 
@@ -1124,6 +1141,15 @@ function setupUIListeners() {
     gameLeaveBtn.addEventListener('click', () => {
       gameMenuOverlay.style.display = 'none';
       if (gameEngine) {
+        if (gameEngine.active && gameEngine.mode === 'online') {
+          recordMatchResult(false);
+          if (gameEngine.isRanked) {
+            const myRP = parseInt(localStorage.getItem('tacticstrike_rp') || '0');
+            const nextRP = Math.max(0, myRP - 40);
+            localStorage.setItem('tacticstrike_rp', String(nextRP));
+          }
+        }
+        localStorage.removeItem('tacticstrike_active_match');
         gameEngine.destroy();
         gameEngine = null;
       }
@@ -1348,6 +1374,19 @@ function setupMainMenuWeaponSelector() {
 
 // App Bootstrap
 document.addEventListener('DOMContentLoaded', () => {
+  // Forfeit/crash detection
+  const activeMatch = localStorage.getItem('tacticstrike_active_match');
+  if (activeMatch) {
+    recordMatchResult(false);
+    if (activeMatch === 'ranked') {
+      const myRP = parseInt(localStorage.getItem('tacticstrike_rp') || '0');
+      const nextRP = Math.max(0, myRP - 40);
+      localStorage.setItem('tacticstrike_rp', String(nextRP));
+    }
+    localStorage.removeItem('tacticstrike_active_match');
+    alert('Forfeit detected: You disconnected from an active match. Recorded as a loss.');
+  }
+
   initSettings();
   setupWeaponSelector();
   setupMainMenuWeaponSelector();
