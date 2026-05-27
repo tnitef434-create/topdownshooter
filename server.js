@@ -3,9 +3,43 @@ import { createServer } from 'http';
 import { Server } from 'socket.io';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import fs from 'fs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// In-memory Users database and persistent file storage
+let users = {};
+const USERS_FILE = path.join(__dirname, 'users.json');
+
+function loadUsers() {
+  try {
+    if (fs.existsSync(USERS_FILE)) {
+      const data = fs.readFileSync(USERS_FILE, 'utf8');
+      users = JSON.parse(data || '{}');
+      console.log(`Loaded ${Object.keys(users).length} registered operatives.`);
+    } else {
+      users = {};
+      fs.writeFileSync(USERS_FILE, '{}', 'utf8');
+    }
+  } catch (e) {
+    console.error("Failed to load users database:", e);
+    users = {};
+  }
+}
+
+function saveUsers() {
+  try {
+    fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2), 'utf8');
+  } catch (e) {
+    console.error("Failed to save users database:", e);
+  }
+}
+
+loadUsers();
+
+// Socket session registry mapping socket ID to authenticated user key
+const socketToUser = new Map();
 
 const app = express();
 const httpServer = createServer(app);
@@ -53,6 +87,69 @@ function generateRoomId() {
 io.on('connection', (socket) => {
   console.log(`User connected: ${socket.id}`);
   let currentRoomId = null;
+
+  // 0. Authentication Events
+  socket.on('register', ({ username, password }) => {
+    const cleanUsername = username.trim();
+    if (!cleanUsername || cleanUsername.length < 3 || cleanUsername.length > 15) {
+      socket.emit('register-response', { success: false, error: 'Invalid codename length (3-15 chars).' });
+      return;
+    }
+    
+    // Check characters (alphanumeric and underscores only)
+    if (!/^[a-zA-Z0-9_]+$/.test(cleanUsername)) {
+      socket.emit('register-response', { success: false, error: 'Codename must contain only letters, numbers, and underscores.' });
+      return;
+    }
+
+    const lowerName = cleanUsername.toLowerCase();
+    if (users[lowerName]) {
+      socket.emit('register-response', { success: false, error: 'Codename already registered.' });
+      return;
+    }
+
+    users[lowerName] = {
+      username: cleanUsername,
+      password: password, // client sends hashed password
+      stats: { wins: 0, rounds: 0, hits: 0, shots: 0 }
+    };
+    saveUsers();
+    socket.emit('register-response', { success: true });
+    console.log(`Registered new operative: ${cleanUsername}`);
+  });
+
+  socket.on('login', ({ username, password }) => {
+    const cleanUsername = username.trim();
+    const lowerName = cleanUsername.toLowerCase();
+    const user = users[lowerName];
+    if (!user || user.password !== password) {
+      socket.emit('login-response', { success: false, error: 'Invalid Codename or Secure Passkey.' });
+      return;
+    }
+    
+    // Bind socket session to user record
+    socketToUser.set(socket.id, lowerName);
+    socket.emit('login-response', { 
+      success: true, 
+      username: user.username,
+      stats: user.stats
+    });
+    console.log(`Operative logged in: ${user.username} (${socket.id})`);
+  });
+
+  socket.on('match-stats', ({ isWin, rounds, shots, hits }) => {
+    const userKey = socketToUser.get(socket.id);
+    if (userKey && users[userKey]) {
+      const user = users[userKey];
+      if (isWin) user.stats.wins++;
+      user.stats.rounds += rounds;
+      user.stats.shots += shots;
+      user.stats.hits += hits;
+      saveUsers();
+      socket.emit('stats-updated', { stats: user.stats });
+      console.log(`Updated stats for ${user.username}: wins=${user.stats.wins}, rounds=${user.stats.rounds}`);
+    }
+  });
 
   // 1. Create a custom room
   socket.on('create-room', ({ playerName, mode, color }) => {
@@ -298,6 +395,7 @@ io.on('connection', (socket) => {
   // 15. Disconnection
   socket.on('disconnect', () => {
     console.log(`User disconnected: ${socket.id}`);
+    socketToUser.delete(socket.id);
     if (currentRoomId) {
       handleRoomLeave(socket, currentRoomId);
     }
