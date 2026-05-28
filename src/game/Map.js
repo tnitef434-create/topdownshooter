@@ -1336,12 +1336,15 @@ export class Map {
       const bookColors = ['#9e2a2b', '#3e5c76', '#ffe066', '#a3b18a', '#9b5de5', '#ff9f1c'];
       ctx.lineWidth = 1;
       
+      const seed = Math.round(w.x * 13 + w.y * 37);
+      const rng = new SeededRandom(seed);
+      
       if (w.w > w.h) {
         let currX = w.x + 4;
         while (currX < w.x + w.w - 6) {
-          const bookW = Math.floor(Math.random() * 4) + 3;
-          const bookH = Math.floor(Math.random() * 8) + 12;
-          ctx.fillStyle = bookColors[Math.floor(Math.random() * bookColors.length)];
+          const bookW = Math.floor(rng.next() * 4) + 3;
+          const bookH = Math.floor(rng.next() * 8) + 12;
+          ctx.fillStyle = bookColors[Math.floor(rng.next() * bookColors.length)];
           ctx.fillRect(currX, w.y + w.h - 2 - bookH, bookW, bookH);
           ctx.strokeRect(currX, w.y + w.h - 2 - bookH, bookW, bookH);
           currX += bookW + 1;
@@ -1349,9 +1352,9 @@ export class Map {
       } else {
         let currY = w.y + 4;
         while (currY < w.y + w.h - 6) {
-          const bookH = Math.floor(Math.random() * 4) + 3;
-          const bookW = Math.floor(Math.random() * 8) + 12;
-          ctx.fillStyle = bookColors[Math.floor(Math.random() * bookColors.length)];
+          const bookH = Math.floor(rng.next() * 4) + 3;
+          const bookW = Math.floor(rng.next() * 8) + 12;
+          ctx.fillStyle = bookColors[Math.floor(rng.next() * bookColors.length)];
           ctx.fillRect(w.x + 2, currY, bookW, bookH);
           ctx.strokeRect(w.x + 2, currY, bookW, bookH);
           currY += bookH + 1;
