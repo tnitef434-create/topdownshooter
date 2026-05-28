@@ -277,12 +277,12 @@ export class Player {
 
     // Muzzle flash decay
     if (this.muzzleFlash > 0) {
-      this.muzzleFlash -= 0.15;
+      this.muzzleFlash = Math.max(0, this.muzzleFlash - 0.15 * dtFactor);
     }
 
     // Flashbang opacity decay
     if (this.flashAlpha > 0) {
-      this.flashAlpha = Math.max(0, this.flashAlpha - 0.008);
+      this.flashAlpha = Math.max(0, this.flashAlpha - 0.008 * dtFactor);
     }
   }
 

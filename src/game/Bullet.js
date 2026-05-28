@@ -24,16 +24,16 @@ export class Bullet {
     this.active = true;
   }
 
-  update(map, players, particlesEngine, soundEngine) {
+  update(map, players, particlesEngine, soundEngine, dtFactor = 1.0) {
     if (!this.active) return;
 
     this.prevX = this.x;
     this.prevY = this.y;
 
     // Move bullet
-    this.x += this.vx;
-    this.y += this.vy;
-    this.rangeRemaining -= this.speed;
+    this.x += this.vx * dtFactor;
+    this.y += this.vy * dtFactor;
+    this.rangeRemaining -= this.speed * dtFactor;
 
     if (this.rangeRemaining <= 0) {
       this.active = false;

@@ -15,6 +15,7 @@ export class Map {
     this.items    = [];   // { id, x, y, type:'health'|'ammo', active }
     this.zones    = [];   // { x, y, w, h, type:'healing'|'damage', healRate|multiplier, label }
     this.rooms    = [];   // room meta (for drawing)
+    this.decorations = [];
     this.segments = [];   // raycasting segments
 
     this.ambientLights = {
@@ -36,6 +37,7 @@ export class Map {
     this.items  = [];
     this.zones  = [];
     this.rooms  = [];
+    this.decorations = [];
 
     const B  = 40;   // border/exterior wall thickness
     const W  = 22;   // interior wall thickness
@@ -107,6 +109,7 @@ export class Map {
 
     // ─────────────── FURNITURE PER ROOM ───────────────
     this._addFurniture(rooms);
+    this._addDecorations(rooms);
 
     // ─────────────── HEALING ZONES ───────────────
     // Bathroom — fast heal
@@ -174,37 +177,52 @@ export class Map {
     F({ x:K.x+12, y:K.y+12, w:K.w-24, h:28, label:'counter' });          // top counter
     F({ x:K.x+12, y:K.y+40, w:28, h:K.h/2-10, label:'counter' });         // left counter
     F({ x:K.x+80, y:K.y+K.h-110, w:110, h:60, label:'table' });           // kitchen table
+    F({ x:K.x+80+42, y:K.y+K.h-138, w:26, h:26, label:'chair' });         // kitchen chair top
+    F({ x:K.x+80+42, y:K.y+K.h-48, w:26, h:26, label:'chair' });          // kitchen chair bot
+    F({ x:K.x+18, y:K.y+K.h-50, w:24, h:24, label:'plant' });             // corner plant
     F({ x:K.x+K.w-60, y:K.y+12, w:40, h:80, label:'fridge' });            // fridge
 
     // 1 — Living Room
     const L = rooms[1];
     F({ x:L.x+55, y:L.y+55, w:190, h:42, label:'sofa' });                 // sofa back
     F({ x:L.x+55, y:L.y+97, w:42, h:90, label:'sofa' });                  // sofa arm-L
+    F({ x:L.x+18, y:L.y+110, w:38, h:42, label:'sofa' });                 // armchair
     F({ x:L.x+L.w/2-55, y:L.y+130, w:110, h:55, label:'table' });         // coffee table
     F({ x:L.x+L.w-55, y:L.y+65, w:30, h:120, label:'tv' });               // TV cabinet
     F({ x:L.x+L.w-55, y:L.y+L.h-100, w:30, h:80, label:'shelf' });        // bookshelf
+    F({ x:L.x+L.w-50, y:L.y+18, w:24, h:24, label:'plant' });             // plant
 
     // 2 — Office
     const O = rooms[2];
     F({ x:O.x+18, y:O.y+18, w:140, h:52, label:'desk' });                 // desk
+    F({ x:O.x+18+55, y:O.y+18+56, w:30, h:30, label:'chair' });           // desk chair
     F({ x:O.x+O.w-38, y:O.y+12, w:22, h:210, label:'shelf' });            // bookshelf
     F({ x:O.x+18, y:O.y+O.h-60, w:80, h:40, label:'cabinet' });           // file cabinet
+    F({ x:O.x+O.w-50, y:O.y+O.h-50, w:24, h:24, label:'plant' });         // plant
 
     // 3 — Bathroom
     const BA = rooms[3];
     F({ x:BA.x+12, y:BA.y+12, w:90, h:130, label:'tub' });                // bathtub
     F({ x:BA.x+12, y:BA.y+BA.h-58, w:65, h:38, label:'sink' });           // sink
     F({ x:BA.x+BA.w-50, y:BA.y+12, w:35, h:55, label:'cabinet' });        // medicine cabinet
+    F({ x:BA.x+BA.w-45, y:BA.y+BA.h-60, w:28, h:38, label:'toilet' });    // toilet
 
     // 4 — Hallway / Dining
     const H = rooms[4];
     F({ x:H.x+H.w/2-80, y:H.y+H.h/2-45, w:160, h:90, label:'table' });   // dining table
+    F({ x:H.x+H.w/2-60, y:H.y+H.h/2-80, w:26, h:26, label:'chair' });     // chair TL
+    F({ x:H.x+H.w/2+30, y:H.y+H.h/2-80, w:26, h:26, label:'chair' });     // chair TR
+    F({ x:H.x+H.w/2-60, y:H.y+H.h/2+90, w:26, h:26, label:'chair' });     // chair BL
+    F({ x:H.x+H.w/2+30, y:H.y+H.h/2+90, w:26, h:26, label:'chair' });     // chair BR
 
     // 5 — Bedroom 1
     const B1 = rooms[5];
     F({ x:B1.x+12, y:B1.y+20, w:115, h:80, label:'bed' });                // bed
+    F({ x:B1.x+12+120, y:B1.y+20, w:32, h:32, label:'dresser' });         // nightstand
     F({ x:B1.x+B1.w-52, y:B1.y+12, w:36, h:55, label:'dresser' });        // dresser
     F({ x:B1.x+B1.w-52, y:B1.y+80, w:36, h:55, label:'cabinet' });        // wardrobe
+    F({ x:B1.x+12, y:B1.y+B1.h-90, w:80, h:40, label:'desk' });            // desk
+    F({ x:B1.x+12+27, y:B1.y+B1.h-46, w:26, h:26, label:'chair' });       // chair
 
     // 6 — Garage
     const G = rooms[6];
@@ -217,13 +235,19 @@ export class Map {
     // 7 — Master Bedroom
     const MB = rooms[7];
     F({ x:MB.x+MB.w/2-90, y:MB.y+18, w:180, h:110, label:'bed' });        // king bed
+    F({ x:MB.x+MB.w/2-130, y:MB.y+18, w:32, h:32, label:'dresser' });     // nightstand L
+    F({ x:MB.x+MB.w/2+100, y:MB.y+18, w:32, h:32, label:'dresser' });     // nightstand R
     F({ x:MB.x+12, y:MB.y+12, w:45, h:65, label:'dresser' });             // dresser L
     F({ x:MB.x+MB.w-60, y:MB.y+12, w:45, h:65, label:'dresser' });        // dresser R
+    F({ x:MB.x+18, y:MB.y+MB.h-50, w:24, h:24, label:'plant' });          // plant
 
     // 8 — Bedroom 2
     const B2 = rooms[8];
     F({ x:B2.x+12, y:B2.y+20, w:130, h:90, label:'bed' });                // bed
+    F({ x:B2.x+12+135, y:B2.y+20, w:32, h:32, label:'dresser' });         // nightstand
     F({ x:B2.x+B2.w-55, y:B2.y+12, w:38, h:110, label:'shelf' });         // tall shelf
+    F({ x:B2.x+B2.w-110, y:B2.y+B2.h-60, w:90, h:40, label:'desk' });     // computer desk
+    F({ x:B2.x+B2.w-78, y:B2.y+B2.h-95, w:26, h:26, label:'chair' });     // desk chair
     F({ x:B2.x+12, y:B2.y+B2.h-55, w:80, h:38, label:'cabinet' });        // toy box / cabinet
   }
 
@@ -440,6 +464,9 @@ export class Map {
   draw(ctx, configSettings = { shadows:true }, players = [], localPlayer = null, bullets = []) {
     // 1. Draw room floors
     this.rooms.forEach(r => this._drawFloor(ctx, r));
+
+    // Draw decorations (rugs)
+    this.decorations.forEach(d => this._drawDecoration(ctx, d));
 
     // 2. Zone overlays (before walls so walls render on top)
     this.zones.forEach(z => this._drawZone(ctx, z));
@@ -810,6 +837,108 @@ export class Map {
     return false;
   }
 
+  _addDecorations(rooms) {
+    this.decorations = [];
+    
+    // Kitchen Mat
+    const K = rooms[0];
+    this.decorations.push({ x: K.x + 50, y: K.y + 55, w: 120, h: 40, type: 'rug', style: 'kitchen' });
+    
+    // Living Room Rug
+    const L = rooms[1];
+    this.decorations.push({ x: L.x + L.w/2 - 120, y: L.y + 110, w: 240, h: 160, type: 'rug', style: 'living' });
+    
+    // Office Rug
+    const O = rooms[2];
+    this.decorations.push({ x: O.x + 40, y: O.y + 80, w: 160, h: 120, type: 'rug', style: 'office' });
+    
+    // Bathroom Mat
+    const BA = rooms[3];
+    this.decorations.push({ x: BA.x + 110, y: BA.y + 40, w: 60, h: 90, type: 'rug', style: 'bath' });
+    
+    // Hallway Runner
+    const H = rooms[4];
+    this.decorations.push({ x: H.x + H.w/2 - 180, y: H.y + 40, w: 360, h: 60, type: 'rug', style: 'runner' });
+    
+    // Bedroom 1 Rug
+    const B1 = rooms[5];
+    this.decorations.push({ x: B1.x + 30, y: B1.y + 110, w: 140, h: 160, type: 'rug', style: 'bedroom' });
+    
+    // Master Bedroom Rug
+    const MB = rooms[7];
+    this.decorations.push({ x: MB.x + MB.w/2 - 120, y: MB.y + 80, w: 240, h: 220, type: 'rug', style: 'master' });
+    
+    // Bedroom 2 Rug
+    const B2 = rooms[8];
+    this.decorations.push({ x: B2.x + B2.w/2 - 70, y: B2.y + B2.h/2 - 70, w: 140, h: 140, type: 'rug', style: 'circular' });
+  }
+
+  _drawDecoration(ctx, d) {
+    ctx.save();
+    if (d.type === 'rug') {
+      ctx.fillStyle = 'rgba(0,0,0,0.15)'; // base shadow
+      ctx.fillRect(d.x + 2, d.y + 2, d.w, d.h);
+      
+      const styles = {
+        kitchen:  { bg: '#3a2d1f', border: '#aa8c66', text: '#55422d' },
+        living:   { bg: '#3b1c1c', border: '#d4af37', text: '#802020' },
+        office:   { bg: '#1c2d3b', border: '#66fcf1', text: '#204060' },
+        bath:     { bg: '#1f3c3a', border: '#39db14', text: '#152b2a' },
+        runner:   { bg: '#2b203c', border: '#9d3bff', text: '#4c2e73' },
+        bedroom:  { bg: '#3c3020', border: '#ffe6a3', text: '#5c4930' },
+        master:   { bg: '#222d32', border: '#66fcf1', text: '#435e6a' },
+        circular: { bg: '#2d1822', border: '#ff6ef7', text: '#5e2540' },
+      };
+      
+      const theme = styles[d.style] || { bg: '#222', border: '#444', text: '#333' };
+      
+      ctx.fillStyle = theme.bg;
+      ctx.strokeStyle = theme.border;
+      ctx.lineWidth = 2;
+      
+      if (d.style === 'circular') {
+        ctx.beginPath();
+        ctx.arc(d.x + d.w/2, d.y + d.h/2, d.w/2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        
+        // Inner detail ring
+        ctx.strokeStyle = theme.text;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(d.x + d.w/2, d.y + d.h/2, d.w/3, 0, Math.PI * 2);
+        ctx.stroke();
+      } else {
+        ctx.beginPath();
+        if (ctx.roundRect) {
+          ctx.roundRect(d.x, d.y, d.w, d.h, 6);
+        } else {
+          ctx.rect(d.x, d.y, d.w, d.h);
+        }
+        ctx.fill();
+        ctx.stroke();
+        
+        // Fringes on the ends
+        ctx.strokeStyle = theme.border;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        if (d.w > d.h) {
+          for (let fy = d.y + 4; fy < d.y + d.h; fy += 6) {
+            ctx.moveTo(d.x, fy); ctx.lineTo(d.x - 4, fy);
+            ctx.moveTo(d.x + d.w, fy); ctx.lineTo(d.x + d.w + 4, fy);
+          }
+        } else {
+          for (let fx = d.x + 4; fx < d.x + d.w; fx += 6) {
+            ctx.moveTo(fx, d.y); ctx.lineTo(fx, d.y - 4);
+            ctx.moveTo(fx, d.y + d.h); ctx.lineTo(fx, d.y + d.h + 4);
+          }
+        }
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
+
   // ── Floor textures ──
   _drawFloor(ctx, r) {
     ctx.save();
@@ -1032,7 +1161,6 @@ export class Map {
 
   _drawFurniturePiece(ctx, w) {
     const lbl = w.label || '';
-    // Pick colour scheme by furniture type
     const schemes = {
       sofa:    { fill:'#261637', stroke:'#4a2a70' },
       table:   { fill:'#241510', stroke:'#7a4a22' },
@@ -1048,55 +1176,286 @@ export class Map {
       fridge:  { fill:'#141c24', stroke:'#3a5a78' },
       cabinet: { fill:'#18100a', stroke:'#5a3a1a' },
       dresser: { fill:'#1e1408', stroke:'#6a4020' },
+      toilet:  { fill:'#eee',    stroke:'#555' },
+      chair:   { fill:'#2b1e16', stroke:'#5c402d' },
+      plant:   { fill:'#152d18', stroke:'#345a3a' }
     };
     const sc = schemes[lbl] || { fill:'#1a1a2a', stroke:'#4a4a80' };
 
     ctx.fillStyle = sc.fill;
     ctx.strokeStyle = sc.stroke;
     ctx.lineWidth = 1.5;
-    ctx.fillRect(w.x, w.y, w.w, w.h);
-    ctx.strokeRect(w.x, w.y, w.w, w.h);
+
+    ctx.beginPath();
+    if (ctx.roundRect) {
+      ctx.roundRect(w.x, w.y, w.w, w.h, 4);
+    } else {
+      ctx.rect(w.x, w.y, w.w, w.h);
+    }
+    ctx.fill();
+    ctx.stroke();
 
     // Extra decorative details per type
     if (lbl === 'bed') {
-      // Pillow
-      ctx.fillStyle = 'rgba(60,100,150,0.4)';
-      const pw = Math.min(50,w.w-16);
-      ctx.fillRect(w.x+8, w.y+8, pw, Math.floor(w.h*0.35));
+      // Headboard
+      ctx.fillStyle = 'rgba(255,255,255,0.05)';
+      ctx.fillRect(w.x, w.y, w.w, 10);
+      ctx.strokeStyle = sc.stroke;
+      ctx.strokeRect(w.x, w.y, w.w, 10);
+
+      // Pillows
+      ctx.fillStyle = '#223040';
+      ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+      ctx.lineWidth = 1;
+      const pillowW = Math.min(32, (w.w - 16) / 2);
+      const pillowH = Math.min(18, w.h * 0.18);
+      const pillowY = w.y + 16;
+      if (w.w > 80) {
+        ctx.fillRect(w.x + 8, pillowY, pillowW, pillowH);
+        ctx.strokeRect(w.x + 8, pillowY, pillowW, pillowH);
+        ctx.fillRect(w.x + w.w - 8 - pillowW, pillowY, pillowW, pillowH);
+        ctx.strokeRect(w.x + w.w - 8 - pillowW, pillowY, pillowW, pillowH);
+      } else {
+        ctx.fillRect(w.x + w.w/2 - pillowW/2, pillowY, pillowW, pillowH);
+        ctx.strokeRect(w.x + w.w/2 - pillowW/2, pillowY, pillowW, pillowH);
+      }
+
       // Blanket lines
-      ctx.strokeStyle = 'rgba(60,110,180,0.3)'; ctx.lineWidth=1;
-      for (let i=1;i<4;i++) { const ly=w.y+(w.h/4)*i; ctx.beginPath(); ctx.moveTo(w.x+5,ly); ctx.lineTo(w.x+w.w-5,ly); ctx.stroke(); }
-    } else if (lbl === 'sofa' && w.w > w.h) {
-      // Cushion dividers
-      ctx.strokeStyle = 'rgba(110,65,170,0.4)'; ctx.lineWidth=1;
-      for (let i=1;i<3;i++) { const lx=w.x+w.w*i/3; ctx.beginPath(); ctx.moveTo(lx,w.y+4); ctx.lineTo(lx,w.y+w.h-4); ctx.stroke(); }
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(w.x + 4, w.y + w.h * 0.45);
+      ctx.lineTo(w.x + w.w - 4, w.y + w.h * 0.45);
+      ctx.stroke();
+      
+      ctx.beginPath();
+      ctx.moveTo(w.x + 4, w.y + w.h * 0.45);
+      ctx.lineTo(w.x + w.w/3, w.y + w.h * 0.65);
+      ctx.moveTo(w.x + w.w - 4, w.y + w.h * 0.45);
+      ctx.lineTo(w.x + w.w * 0.66, w.y + w.h * 0.65);
+      ctx.stroke();
+
+    } else if (lbl === 'sofa') {
+      ctx.fillStyle = 'rgba(0,0,0,0.18)';
+      const padding = 10;
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.06)';
+      
+      if (w.w > w.h) {
+        ctx.fillRect(w.x, w.y, padding, w.h);
+        ctx.strokeRect(w.x, w.y, padding, w.h);
+        ctx.fillRect(w.x + w.w - padding, w.y, padding, w.h);
+        ctx.strokeRect(w.x + w.w - padding, w.y, padding, w.h);
+        ctx.fillRect(w.x + padding, w.y, w.w - padding*2, padding);
+        ctx.strokeRect(w.x + padding, w.y, w.w - padding*2, padding);
+        
+        const seatW = (w.w - padding * 2) / 3;
+        for (let i = 1; i < 3; i++) {
+          ctx.beginPath();
+          ctx.moveTo(w.x + padding + seatW * i, w.y + padding);
+          ctx.lineTo(w.x + padding + seatW * i, w.y + w.h);
+          ctx.stroke();
+        }
+      } else {
+        ctx.fillRect(w.x, w.y, w.w, padding);
+        ctx.strokeRect(w.x, w.y, w.w, padding);
+        ctx.fillRect(w.x, w.y + w.h - padding, w.w, padding);
+        ctx.strokeRect(w.x, w.y + w.h - padding, w.w, padding);
+        ctx.fillRect(w.x, w.y + padding, padding, w.h - padding*2);
+        ctx.strokeRect(w.x, w.y + padding, padding, w.h - padding*2);
+        
+        const seatH = (w.h - padding * 2) / 2;
+        for (let i = 1; i < 2; i++) {
+          ctx.beginPath();
+          ctx.moveTo(w.x + padding, w.y + padding + seatH * i);
+          ctx.lineTo(w.x + w.w, w.y + padding + seatH * i);
+          ctx.stroke();
+        }
+      }
+
+    } else if (lbl === 'counter') {
+      ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+      ctx.lineWidth = 1;
+      
+      if (w.w > w.h) {
+        ctx.fillStyle = '#111b22';
+        ctx.fillRect(w.x + w.w*0.2, w.y + 4, 30, w.h - 8);
+        ctx.strokeRect(w.x + w.w*0.2, w.y + 4, 30, w.h - 8);
+        ctx.strokeStyle = '#8fa4b3';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(w.x + w.w*0.2 + 15, w.y + 2);
+        ctx.lineTo(w.x + w.w*0.2 + 15, w.y + 8);
+        ctx.stroke();
+        
+        ctx.strokeStyle = '#ff5c28';
+        ctx.lineWidth = 1;
+        const bx = w.x + w.w*0.7;
+        const by = w.y + w.h/2;
+        ctx.beginPath();
+        ctx.arc(bx - 12, by - 6, 4, 0, Math.PI*2);
+        ctx.arc(bx + 12, by - 6, 5, 0, Math.PI*2);
+        ctx.arc(bx - 12, by + 6, 5, 0, Math.PI*2);
+        ctx.arc(bx + 12, by + 6, 4, 0, Math.PI*2);
+        ctx.stroke();
+      } else {
+        ctx.fillStyle = '#111b22';
+        ctx.fillRect(w.x + 4, w.y + w.h*0.3, w.w - 8, 30);
+        ctx.strokeRect(w.x + 4, w.y + w.h*0.3, w.w - 8, 30);
+        ctx.strokeStyle = '#8fa4b3';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(w.x + 2, w.y + w.h*0.3 + 15);
+        ctx.lineTo(w.x + 8, w.y + w.h*0.3 + 15);
+        ctx.stroke();
+      }
+
     } else if (lbl === 'desk') {
-      // Monitor
-      ctx.fillStyle='#060612'; ctx.fillRect(w.x+w.w-52,w.y+6,36,24);
-      ctx.strokeStyle='rgba(80,180,255,0.35)'; ctx.strokeRect(w.x+w.w-52,w.y+6,36,24);
+      ctx.fillStyle = 'rgba(0,0,0,0.15)';
+      ctx.fillRect(w.x + 4, w.y + 4, w.w - 8, w.h - 8);
+      
+      ctx.fillStyle = '#05050a';
+      ctx.strokeStyle = '#66fcf1';
+      ctx.lineWidth = 1.5;
+      
+      if (w.w > w.h) {
+        ctx.fillRect(w.x + w.w/2 - 25, w.y + 6, 50, 4);
+        ctx.strokeRect(w.x + w.w/2 - 25, w.y + 6, 50, 4);
+        ctx.fillStyle = '#222';
+        ctx.fillRect(w.x + w.w/2 - 20, w.y + 15, 40, 10);
+      } else {
+        ctx.fillRect(w.x + 6, w.y + w.h/2 - 25, 4, 50);
+        ctx.strokeRect(w.x + 6, w.y + w.h/2 - 25, 4, 50);
+        ctx.fillStyle = '#222';
+        ctx.fillRect(w.x + 15, w.y + w.h/2 - 20, 10, 40);
+      }
+
+    } else if (lbl === 'shelf') {
+      ctx.fillStyle = '#3c2415';
+      ctx.fillRect(w.x + 2, w.y + 2, w.w - 4, w.h - 4);
+      
+      const bookColors = ['#9e2a2b', '#3e5c76', '#ffe066', '#a3b18a', '#9b5de5', '#ff9f1c'];
+      ctx.lineWidth = 1;
+      
+      if (w.w > w.h) {
+        let currX = w.x + 4;
+        while (currX < w.x + w.w - 6) {
+          const bookW = Math.floor(Math.random() * 4) + 3;
+          const bookH = Math.floor(Math.random() * 8) + 12;
+          ctx.fillStyle = bookColors[Math.floor(Math.random() * bookColors.length)];
+          ctx.fillRect(currX, w.y + w.h - 2 - bookH, bookW, bookH);
+          ctx.strokeRect(currX, w.y + w.h - 2 - bookH, bookW, bookH);
+          currX += bookW + 1;
+        }
+      } else {
+        let currY = w.y + 4;
+        while (currY < w.y + w.h - 6) {
+          const bookH = Math.floor(Math.random() * 4) + 3;
+          const bookW = Math.floor(Math.random() * 8) + 12;
+          ctx.fillStyle = bookColors[Math.floor(Math.random() * bookColors.length)];
+          ctx.fillRect(w.x + 2, currY, bookW, bookH);
+          ctx.strokeRect(w.x + 2, currY, bookW, bookH);
+          currY += bookH + 1;
+        }
+      }
+
+    } else if (lbl === 'dresser' || lbl === 'cabinet') {
+      ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+      ctx.lineWidth = 1;
+      
+      if (w.w > w.h) {
+        const numDrawers = 2;
+        const dw = w.w / numDrawers;
+        for (let i = 0; i < numDrawers; i++) {
+          ctx.strokeRect(w.x + dw * i + 2, w.y + 2, dw - 4, w.h - 4);
+          ctx.fillStyle = '#ffd700';
+          ctx.beginPath();
+          ctx.arc(w.x + dw * i + dw/2, w.y + w.h - 5, 2, 0, Math.PI*2);
+          ctx.fill();
+        }
+      } else {
+        const numDrawers = 3;
+        const dh = w.h / numDrawers;
+        for (let i = 0; i < numDrawers; i++) {
+          ctx.strokeRect(w.x + 2, w.y + dh * i + 2, w.w - 4, dh - 4);
+          ctx.fillStyle = '#ffd700';
+          ctx.beginPath();
+          ctx.arc(w.x + w.w - 5, w.y + dh * i + dh/2, 2, 0, Math.PI*2);
+          ctx.fill();
+        }
+      }
+
+    } else if (lbl === 'toilet') {
+      ctx.fillStyle = '#eee';
+      ctx.strokeStyle = '#555';
+      ctx.lineWidth = 1.5;
+      
+      ctx.fillRect(w.x + 4, w.y, w.w - 8, 12);
+      ctx.strokeRect(w.x + 4, w.y, w.w - 8, 12);
+      
+      ctx.beginPath();
+      ctx.arc(w.x + w.w/2, w.y + 24, 9, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      
+      ctx.fillStyle = '#66c0f4';
+      ctx.beginPath();
+      ctx.arc(w.x + w.w/2, w.y + 24, 5, 0, Math.PI * 2);
+      ctx.fill();
+
+    } else if (lbl === 'chair') {
+      ctx.fillStyle = 'rgba(0,0,0,0.1)';
+      ctx.fillRect(w.x + 4, w.y + 4, w.w - 8, w.h - 8);
+      
+      ctx.strokeStyle = sc.stroke;
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(w.x + 2, w.y + 2);
+      ctx.lineTo(w.x + w.w - 2, w.y + 2);
+      ctx.stroke();
+
+    } else if (lbl === 'plant') {
+      const cx = w.x + w.w/2;
+      const cy = w.y + w.h/2;
+      
+      ctx.fillStyle = '#8c5a3c';
+      ctx.strokeStyle = '#5c3a26';
+      ctx.beginPath();
+      ctx.arc(cx, cy, 10, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      
+      ctx.fillStyle = '#2a7c36';
+      ctx.beginPath();
+      ctx.arc(cx - 6, cy - 4, 7, 0, Math.PI * 2);
+      ctx.arc(cx + 6, cy - 4, 6, 0, Math.PI * 2);
+      ctx.arc(cx, cy + 6, 8, 0, Math.PI * 2);
+      ctx.arc(cx - 3, cy + 5, 6, 0, Math.PI * 2);
+      ctx.fill();
+      
+      ctx.fillStyle = '#4ea35b';
+      ctx.beginPath();
+      ctx.arc(cx - 4, cy - 2, 4, 0, Math.PI * 2);
+      ctx.arc(cx + 4, cy - 2, 3, 0, Math.PI * 2);
+      ctx.arc(cx, cy + 3, 4, 0, Math.PI * 2);
+      ctx.fill();
     } else if (lbl === 'tub') {
-      // Inner basin
       ctx.fillStyle='#0d2535'; ctx.fillRect(w.x+7,w.y+7,w.w-14,w.h-14);
       ctx.strokeStyle='rgba(50,170,255,0.25)'; ctx.strokeRect(w.x+7,w.y+7,w.w-14,w.h-14);
     } else if (lbl === 'car') {
-      // Windshields
       ctx.fillStyle='#0a1828';
       ctx.fillRect(w.x+28,w.y+18,65,38);
       ctx.fillRect(w.x+w.w-95,w.y+18,65,38);
       ctx.strokeStyle='rgba(80,120,200,0.3)';
       ctx.strokeRect(w.x+28,w.y+18,65,38);
       ctx.strokeRect(w.x+w.w-95,w.y+18,65,38);
-      // Roof outline
       ctx.strokeStyle='rgba(100,100,180,0.4)'; ctx.lineWidth=2;
       ctx.strokeRect(w.x+10,w.y+10,w.w-20,w.h-20);
     } else if (lbl === 'fridge') {
-      // Handle
       ctx.strokeStyle='rgba(160,200,255,0.4)'; ctx.lineWidth=2;
       ctx.beginPath(); ctx.moveTo(w.x+w.w/2-10,w.y+12); ctx.lineTo(w.x+w.w/2+10,w.y+12); ctx.stroke();
-    } else if (lbl === 'shelf') {
-      // Shelf planks
-      ctx.fillStyle='rgba(100,60,20,0.5)';
-      for (let i=1;i<4;i++) ctx.fillRect(w.x,w.y+(w.h/4)*i,w.w,3);
+    } else {
+      ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+      ctx.strokeRect(w.x + 3, w.y + 3, w.w - 6, w.h - 6);
     }
   }
 

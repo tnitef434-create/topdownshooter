@@ -1,0 +1,10 @@
+feat: optimize performance, fix online lag and health sync glitch, add performance mode, FPS counter, mobile blocks, and expand ambient lighting
+
+- Normalized movement physics with dtFactor in Player.js for frame-rate independence.
+- Added a 1.25x speed and acceleration boost for ranked matchmaking.
+- Prevented old state packets from restoring HP in Network.js by validating health updates.
+- Added Performance Mode to settings, disabling shadows and shadowBlur on bullets, players, and particles.
+- Added dynamic FPS counter checkbox toggle and top-left HUD overlay.
+- Added a mobile block page to prevent mobile users from launching the game.
+- Added 3 new ambient light glow sources (kitchen, garage, bedroom2) and fixtures around the map.
+- Triggered top-right notification toasts on startup for game updates and Performance Mode.

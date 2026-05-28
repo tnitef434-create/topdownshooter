@@ -195,7 +195,7 @@ io.on('connection', (socket) => {
       return;
     }
 
-    const maxPlayers = (room.mode === '2v2') ? 4 : 2;
+    const maxPlayers = (room.mode && room.mode.startsWith('2v2')) ? 4 : 2;
     if (room.players.length >= maxPlayers) {
       socket.emit('room-error', 'Room is full.');
       return;
@@ -222,8 +222,11 @@ io.on('connection', (socket) => {
 
   // 3. Auto-matchmaking (Ranked)
   socket.on('auto-match', ({ playerName, mode, color, rp, rankStrict }) => {
-    const searchMode = (mode === '2v2') ? '2v2' : '1v1';
-    const maxPlayers = (searchMode === '2v2') ? 4 : 2;
+    let searchMode = mode;
+    if (!['1v1_realistic', '1v1_competitive', '2v2_realistic', '2v2_competitive'].includes(searchMode)) {
+      searchMode = '1v1_realistic';
+    }
+    const maxPlayers = searchMode.startsWith('2v2') ? 4 : 2;
     const playerRP = typeof rp === 'number' ? rp : 0;
     
     // Find a room with space in lobby status and matching mode
@@ -333,7 +336,7 @@ io.on('connection', (socket) => {
       io.to(currentRoomId).emit('players-update', { players: room.players });
 
       // Start match if all players are ready and lobby is full
-      const maxPlayers = (room.mode === '2v2') ? 4 : 2;
+      const maxPlayers = (room.mode && room.mode.startsWith('2v2')) ? 4 : 2;
       const allReady = room.players.every(p => p.ready) && room.players.length === maxPlayers;
       if (allReady) {
         room.status = 'playing';
@@ -344,7 +347,8 @@ io.on('connection', (socket) => {
         io.to(currentRoomId).emit('match-start', {
           players: room.players,
           seed: Math.random(), // synchronized seed for map spawns / layouts
-          isRanked: room.isRanked
+          isRanked: room.isRanked,
+          mode: room.mode
         });
         console.log(`Match started in room: ${currentRoomId} (${room.mode}, Ranked: ${room.isRanked})`);
       }
@@ -375,7 +379,8 @@ io.on('connection', (socket) => {
         io.to(currentRoomId).emit('match-start', {
           players: room.players,
           seed: Math.random(),
-          isRanked: room.isRanked
+          isRanked: room.isRanked,
+          mode: room.mode
         });
         console.log(`Rematch started in room: ${currentRoomId} (Ranked: ${room.isRanked})`);
       }

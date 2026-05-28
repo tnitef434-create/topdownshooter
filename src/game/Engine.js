@@ -97,9 +97,29 @@ export class Engine {
       this.sound.setVolume((config.settings.volume !== undefined) ? config.settings.volume : 0.5);
       this.particles = new ParticleEngine();
       this.particles.setBloodEnabled(config.settings.blood);
-      this.settings = config.settings;
-      if (this.settings && this.settings.performanceMode) {
+      // Determine rendering performance style based on match mode
+      let forcePerformanceMode = false;
+      const matchModeString = config.matchMode || config.mode || '';
+      this.matchMode = matchModeString;
+      this.qpRenderStyle = config.qpRenderStyle;
+      
+      if (this.isRanked) {
+        if (matchModeString.includes('competitive')) {
+          forcePerformanceMode = true;
+        }
+      } else {
+        if (config.qpRenderStyle === 'competitive') {
+          forcePerformanceMode = true;
+        }
+      }
+      
+      this.settings = { ...config.settings };
+      if (forcePerformanceMode) {
+        this.settings.performanceMode = true;
         this.settings.shadows = false;
+      } else {
+        this.settings.performanceMode = false;
+        this.settings.shadows = true;
       }
       
       // Start loading the 3D character model (async, non-blocking)
@@ -558,10 +578,27 @@ export class Engine {
   updateSettings(settings) {
     if (this.sound) this.sound.setVolume(settings.volume);
     if (this.particles) this.particles.setBloodEnabled(settings.blood);
-    if (settings && settings.performanceMode) {
-      settings.shadows = false;
+    
+    let forcePerformanceMode = false;
+    const matchModeString = this.matchMode || this.mode || '';
+    if (this.isRanked) {
+      if (matchModeString.includes('competitive')) {
+        forcePerformanceMode = true;
+      }
+    } else {
+      if (this.qpRenderStyle === 'competitive') {
+        forcePerformanceMode = true;
+      }
     }
-    this.settings = settings;
+    
+    this.settings = { ...settings };
+    if (forcePerformanceMode) {
+      this.settings.performanceMode = true;
+      this.settings.shadows = false;
+    } else {
+      this.settings.performanceMode = false;
+      this.settings.shadows = true;
+    }
   }
 
   // Camera Shake trigger
@@ -897,6 +934,14 @@ export class Engine {
 
   // Core Game State Update
   update(currentTime) {
+    if (!this.lastUpdateTime) {
+      this.lastUpdateTime = currentTime;
+    }
+    const dt = currentTime - this.lastUpdateTime;
+    this.lastUpdateTime = currentTime;
+    const clampedDt = Math.max(1, Math.min(150, dt));
+    this.dtFactor = clampedDt / 16.67;
+
     if (this.gameState === 'replay') {
       this.replayIndex++;
       if (this.replayIndex >= this.replayFrames.length) {
@@ -1053,7 +1098,7 @@ export class Engine {
     // 3. Update Bullets and resolve hits
     for (let i = this.bullets.length - 1; i >= 0; i--) {
       const b = this.bullets[i];
-      b.update(this.map, this.players, this.particles, this.sound);
+      b.update(this.map, this.players, this.particles, this.sound, this.dtFactor);
       
       if (!b.active) {
         // Collect local hits statistics for accuracy
@@ -1130,7 +1175,7 @@ export class Engine {
     if (this.zone.active && this.gameState === 'playing') {
       // Slowly shrink radius each frame
       if (this.zone.currentRadius > this.zone.targetRadius) {
-        this.zone.currentRadius = Math.max(this.zone.targetRadius, this.zone.currentRadius - this.zone.shrinkSpeed);
+        this.zone.currentRadius = Math.max(this.zone.targetRadius, this.zone.currentRadius - this.zone.shrinkSpeed * this.dtFactor);
       }
 
       // Apply damage to all players outside the zone every second
@@ -1192,14 +1237,15 @@ export class Engine {
     const camTargetX = this.localPlayer.x + (this.mouse.x - this.canvas.width / 2) * mouseOffsetMax;
     const camTargetY = this.localPlayer.y + (this.mouse.y - this.canvas.height / 2) * mouseOffsetMax;
     
-    this.camera.x += (camTargetX - this.camera.x) * 0.085;
-    this.camera.y += (camTargetY - this.camera.y) * 0.085;
+    const camLerp = 1 - Math.pow(1 - 0.085, this.dtFactor);
+    this.camera.x += (camTargetX - this.camera.x) * camLerp;
+    this.camera.y += (camTargetY - this.camera.y) * camLerp;
 
     // Decay camera shake
     if (this.cameraShake > 0.1) {
       this.camera.shakeX = (Math.random() - 0.5) * this.cameraShake;
       this.camera.shakeY = (Math.random() - 0.5) * this.cameraShake;
-      this.cameraShake *= 0.88; // decay
+      this.cameraShake *= Math.pow(0.88, this.dtFactor); // decay
     } else {
       this.camera.shakeX = 0;
       this.camera.shakeY = 0;

@@ -29,7 +29,8 @@ const screens = {
 };
 
 const btns = {
-  quickMatch: document.getElementById('btn-ranked-match'),
+  rankedRealistic: document.getElementById('btn-ranked-realistic'),
+  rankedCompetitive: document.getElementById('btn-ranked-competitive'),
   createRoom: document.getElementById('btn-create-room'),
   joinRoom: document.getElementById('btn-join-room'),
   practiceBot: document.getElementById('btn-practice-bot'),
@@ -216,6 +217,7 @@ let myMode = '1v1';
 let isReady = false;
 let lobbyPlayers = [];
 let currentMatchSource = 'menu'; // 'ranked', 'casual', 'practice'
+let qpRenderStyle = safeStorage.getItem('tacticstrike_qp_style') || 'realistic';
 
 // ── Career Stats (localStorage) ────────────────────────────────────────────
 function loadCareerStats() {
@@ -563,7 +565,6 @@ function initSettings() {
   // Load from LocalStorage if available
   const savedSettings = safeStorage.getItem('tacticstrike_settings');
   const showFpsCb = document.getElementById('setting-show-fps');
-  const perfModeCb = document.getElementById('setting-performance-mode');
 
   if (savedSettings) {
     try {
@@ -577,7 +578,6 @@ function initSettings() {
       if (settings.laser) settings.laser.checked = gameSettings.laser;
       if (settings.serverUrl) settings.serverUrl.value = gameSettings.serverUrl || '';
       if (showFpsCb) showFpsCb.checked = !!gameSettings.showFps;
-      if (perfModeCb) perfModeCb.checked = !!gameSettings.performanceMode;
       
       const counter = document.getElementById('fps-counter');
       if (counter) {
@@ -606,13 +606,6 @@ function initSettings() {
       if (counter) {
         counter.style.display = gameSettings.showFps ? 'block' : 'none';
       }
-      saveSettings();
-    });
-  }
-
-  if (perfModeCb) {
-    perfModeCb.addEventListener('change', (e) => {
-      gameSettings.performanceMode = e.target.checked;
       saveSettings();
     });
   }
@@ -1018,7 +1011,7 @@ function connectSocket() {
     }
   });
 
-  socket.on('match-start', ({ players, seed, isRanked }) => {
+  socket.on('match-start', ({ players, seed, isRanked, mode }) => {
     currentMatchSource = isRanked ? 'ranked' : 'casual';
     const initGame = () => {
       showScreen('game');
@@ -1046,8 +1039,9 @@ function connectSocket() {
         players: players,
         seed: seed,
         settings: { ...gameSettings, volume: gameSettings.sfxMuted ? 0 : gameSettings.volume },
-        matchMode: myMode,
+        matchMode: mode || myMode,
         isRanked: !!isRanked, // Pass isRanked
+        qpRenderStyle: qpRenderStyle,
         onMatchEnd: handleMatchEnd,
         onKillFeed: addKillFeedMessage
       });
@@ -1116,6 +1110,7 @@ function startOfflineMode() {
       settings: { ...gameSettings, volume: gameSettings.sfxMuted ? 0 : gameSettings.volume },
       matchMode: myMode,
       isRanked: false, // bots never ranked
+      qpRenderStyle: qpRenderStyle,
       onMatchEnd: handleMatchEnd,
       onKillFeed: addKillFeedMessage
     });
@@ -1303,73 +1298,80 @@ function setupUIListeners() {
     });
   }
 
-  // Quick Match — ranked matchmaking with 15-second rank expansion
-  if (btns.quickMatch) {
-    btns.quickMatch.addEventListener('click', () => {
-      if (inputs.name) myName = inputs.name.value.trim() || 'Operative';
-      safeStorage.setItem('tacticstrike_player_name', myName);
-      connectSocket();
-      if (socket) {
-        // Get current RP from localStorage
-        const myRP = parseInt(localStorage.getItem('tacticstrike_rp') || '0');
-        rankSearchExpanded = false;
+  // Ranked matchmaking with 15-second rank expansion
+  function startRankedMatchmaking(searchStyle) {
+    if (inputs.name) myName = inputs.name.value.trim() || 'Operative';
+    safeStorage.setItem('tacticstrike_player_name', myName);
+    connectSocket();
+    if (socket) {
+      // Get current RP from localStorage
+      const myRP = parseInt(localStorage.getItem('tacticstrike_rp') || '0');
+      rankSearchExpanded = false;
 
-        // Emit first with strict rank bracket
-        socket.emit('auto-match', { playerName: myName, mode: myMode, color: myColor, rp: myRP, rankStrict: true });
-        
-        // Show matchmaking screen
-        showScreen('matchmaking');
-        
-        // Update matchmaking overlay details
-        const mmRankDisplay = document.getElementById('mm-rank-display');
-        const mmRankIcon = document.getElementById('mm-rank-icon');
-        const mmTimer = document.getElementById('mm-timer');
-        const mmExpandNotice = document.getElementById('mm-expand-notice');
-        
-        const myRank = getRankForRP(myRP);
-        if (mmRankDisplay) mmRankDisplay.innerText = myRank.label;
-        if (mmRankIcon) {
-          mmRankIcon.innerText = myRank.icon;
-          mmRankIcon.style.color = myRank.color;
-        }
-        if (mmTimer) mmTimer.innerText = '0s';
-        if (mmExpandNotice) mmExpandNotice.innerText = 'Searching within your skill bracket...';
-        
-        let seconds = 0;
-        if (window.mmInterval) clearInterval(window.mmInterval);
-        window.mmInterval = setInterval(() => {
-          seconds++;
-          if (mmTimer) mmTimer.innerText = `${seconds}s`;
-        }, 1000);
+      const searchMode = myMode + '_' + searchStyle;
 
-        // Start MM dots animation
-        let dotCount = 0;
-        const mmDots = document.getElementById('mm-dots');
-        if (window.mmDotsInterval) clearInterval(window.mmDotsInterval);
-        window.mmDotsInterval = setInterval(() => {
-          dotCount = (dotCount + 1) % 4;
-          if (mmDots) mmDots.innerText = '.'.repeat(dotCount);
-        }, 500);
-
-        // After 15 s, expand search to any rank
-        if (rankSearchTimer) clearTimeout(rankSearchTimer);
-        rankSearchTimer = setTimeout(() => {
-          if (!rankSearchExpanded && socket && socket.connected) {
-            if (!currentRoom || (lobbyPlayers && lobbyPlayers.length === 1)) {
-              rankSearchExpanded = true;
-              addSystemChatMessage('⚡ Rank filter removed — expanding search to all ranks...');
-              if (mmExpandNotice) mmExpandNotice.innerText = '⚡ Search expanded to all skill ranks!';
-              
-              if (currentRoom) {
-                socket.emit('leave-room');
-                currentRoom = null;
-              }
-              socket.emit('auto-match', { playerName: myName, mode: myMode, color: myColor, rp: myRP, rankStrict: false });
-            }
-          }
-        }, 15000);
+      // Emit first with strict rank bracket
+      socket.emit('auto-match', { playerName: myName, mode: searchMode, color: myColor, rp: myRP, rankStrict: true });
+      
+      // Show matchmaking screen
+      showScreen('matchmaking');
+      
+      // Update matchmaking overlay details
+      const mmRankDisplay = document.getElementById('mm-rank-display');
+      const mmRankIcon = document.getElementById('mm-rank-icon');
+      const mmTimer = document.getElementById('mm-timer');
+      const mmExpandNotice = document.getElementById('mm-expand-notice');
+      
+      const myRank = getRankForRP(myRP);
+      if (mmRankDisplay) mmRankDisplay.innerText = myRank.label;
+      if (mmRankIcon) {
+        mmRankIcon.innerText = myRank.icon;
+        mmRankIcon.style.color = myRank.color;
       }
-    });
+      if (mmTimer) mmTimer.innerText = '0s';
+      if (mmExpandNotice) mmExpandNotice.innerText = 'Searching within your skill bracket...';
+      
+      let seconds = 0;
+      if (window.mmInterval) clearInterval(window.mmInterval);
+      window.mmInterval = setInterval(() => {
+        seconds++;
+        if (mmTimer) mmTimer.innerText = `${seconds}s`;
+      }, 1000);
+
+      // Start MM dots animation
+      let dotCount = 0;
+      const mmDots = document.getElementById('mm-dots');
+      if (window.mmDotsInterval) clearInterval(window.mmDotsInterval);
+      window.mmDotsInterval = setInterval(() => {
+        dotCount = (dotCount + 1) % 4;
+        if (mmDots) mmDots.innerText = '.'.repeat(dotCount);
+      }, 500);
+
+      // After 15 s, expand search to any rank
+      if (rankSearchTimer) clearTimeout(rankSearchTimer);
+      rankSearchTimer = setTimeout(() => {
+        if (!rankSearchExpanded && socket && socket.connected) {
+          if (!currentRoom || (lobbyPlayers && lobbyPlayers.length === 1)) {
+            rankSearchExpanded = true;
+            addSystemChatMessage('⚡ Rank filter removed — expanding search to all ranks...');
+            if (mmExpandNotice) mmExpandNotice.innerText = '⚡ Search expanded to all skill ranks!';
+            
+            if (currentRoom) {
+              socket.emit('leave-room');
+              currentRoom = null;
+            }
+            socket.emit('auto-match', { playerName: myName, mode: searchMode, color: myColor, rp: myRP, rankStrict: false });
+          }
+        }
+      }, 15000);
+    }
+  }
+
+  if (btns.rankedRealistic) {
+    btns.rankedRealistic.addEventListener('click', () => startRankedMatchmaking('realistic'));
+  }
+  if (btns.rankedCompetitive) {
+    btns.rankedCompetitive.addEventListener('click', () => startRankedMatchmaking('competitive'));
   }
 
   // Cancel matchmaking
@@ -1668,6 +1670,44 @@ function setupModeSelector() {
   });
 }
 
+function setupQpStyleSelector() {
+  const btnQpRealistic = document.getElementById('btn-qp-style-realistic');
+  const btnQpCompetitive = document.getElementById('btn-qp-style-competitive');
+  
+  if (!btnQpRealistic || !btnQpCompetitive) return;
+
+  function updateQpStyleUI() {
+    if (qpRenderStyle === 'competitive') {
+      btnQpCompetitive.style.background = '#66fcf1';
+      btnQpCompetitive.style.color = '#000';
+      btnQpRealistic.style.background = 'transparent';
+      btnQpRealistic.style.color = 'var(--text-muted)';
+    } else {
+      btnQpRealistic.style.background = '#66fcf1';
+      btnQpRealistic.style.color = '#000';
+      btnQpCompetitive.style.background = 'transparent';
+      btnQpCompetitive.style.color = 'var(--text-muted)';
+    }
+  }
+
+  btnQpRealistic.addEventListener('click', () => {
+    qpRenderStyle = 'realistic';
+    safeStorage.setItem('tacticstrike_qp_style', 'realistic');
+    updateQpStyleUI();
+    playMenuClick();
+  });
+
+  btnQpCompetitive.addEventListener('click', () => {
+    qpRenderStyle = 'competitive';
+    safeStorage.setItem('tacticstrike_qp_style', 'competitive');
+    updateQpStyleUI();
+    playMenuClick();
+  });
+
+  // Init
+  updateQpStyleUI();
+}
+
 function setupMainMenuWeaponSelector() {
   const wBtns = document.querySelectorAll('#menu-weapon-selector .weapon-btn');
   wBtns.forEach(btn => {
@@ -1811,6 +1851,7 @@ document.addEventListener('DOMContentLoaded', () => {
   setupMainMenuWeaponSelector();
   setupColorSelector();
   setupModeSelector();
+  setupQpStyleSelector();
   setupUIListeners();
   initTipSystem();
 
