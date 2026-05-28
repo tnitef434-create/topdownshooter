@@ -335,5 +335,52 @@ export class ParticleEngine {
       ));
     }
   }
+
+  // 6. Dash visual effects (wind trails and dust puff)
+  spawnDashParticles(x, y, angle, colorThemeKey = 'cyan') {
+    const themeColors = {
+      cyan: '#66fcf1',
+      green: '#5eff39',
+      purple: '#c47aff',
+      orange: '#ff9d7a',
+      yellow: '#ffea70',
+      red: '#ff7a7a'
+    };
+    const primaryColor = themeColors[colorThemeKey] || '#66fcf1';
+    
+    // Dust clouds shooting backwards
+    const oppositeAngle = angle + Math.PI;
+    const numDust = 12;
+    for (let i = 0; i < numDust; i++) {
+      const pAngle = oppositeAngle + (Math.random() - 0.5) * 0.6;
+      const speed = Math.random() * 2.5 + 1.2;
+      const vx = Math.cos(pAngle) * speed;
+      const vy = Math.sin(pAngle) * speed;
+      const size = Math.random() * 7 + 4;
+      const decay = Math.random() * 0.05 + 0.03;
+      this.particles.push(new Particle(
+        x, y, vx, vy,
+        'rgba(200, 200, 200, 0.18)',
+        size, 1.0, decay, 'smoke'
+      ));
+    }
+
+    // Speed streaks/sparks shooting forward/outward along player direction
+    const numSparks = 18;
+    for (let i = 0; i < numSparks; i++) {
+      const pAngle = angle + (Math.random() - 0.5) * 0.7;
+      const speed = Math.random() * 8 + 4;
+      const vx = Math.cos(pAngle) * speed;
+      const vy = Math.sin(pAngle) * speed;
+      const size = Math.random() * 2.5 + 1.0;
+      const decay = Math.random() * 0.06 + 0.04;
+      this.particles.push(new Particle(
+        x, y, vx, vy,
+        primaryColor,
+        size, 1.0, decay, 'spark'
+      ));
+    }
+  }
 }
+
 

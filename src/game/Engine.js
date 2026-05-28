@@ -746,9 +746,7 @@ export class Engine {
       this.localPlayer.update(this.keys, this.mouse, this.map, this.sound, currentTime, null, this.localPlayer);
       if (this.localPlayer.justDashed) {
         this.localPlayer.justDashed = false;
-        for (let i = 0; i < 15; i++) {
-          this.particles.spawnCasingDink(this.localPlayer.x, this.localPlayer.y);
-        }
+        this.particles.spawnDashParticles(this.localPlayer.x, this.localPlayer.y, this.localPlayer.angle, this.localPlayer.colorTheme);
       }
       
       if (this.mode === 'offline') {
@@ -768,6 +766,18 @@ export class Engine {
       } else {
         this.network.interpolateOpponents();
       }
+
+      // Check remote/opponent player dashes to trigger visual & sound effects
+      this.players.forEach(p => {
+        if (p !== this.localPlayer && p.justDashed) {
+          p.justDashed = false;
+          this.particles.spawnDashParticles(p.x, p.y, p.angle, p.colorTheme);
+          if (this.sound) {
+            const dist = Math.hypot(p.x - this.localPlayer.x, p.y - this.localPlayer.y);
+            this.sound.playDashSound(dist);
+          }
+        }
+      });
 
       // Check item collisions
       this.localPlayer.checkPickups(this.map, this.sound);

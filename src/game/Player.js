@@ -100,6 +100,10 @@ export class Player {
     this.flashlightActive = true;
     this.botStrafeDir = Math.random() > 0.5 ? 1 : -1;
     this.botLastStrafeToggle = 0;
+
+    // Dash trail effects & sync
+    this.dashTrails = [];
+    this.networkJustDashed = false;
   }
 
   // ─── Rank helpers ────────────────────────────────────────────────────────────
@@ -187,6 +191,17 @@ export class Player {
     const isDashing = this.lastDashTime && (currentTime - this.lastDashTime) < dashDuration;
     if (isDashing) {
       currentMaxSpeed = 22;
+      // Record trail position every 25ms
+      if (!this.lastTrailSpawnTime || (currentTime - this.lastTrailSpawnTime) > 25) {
+        if (!this.dashTrails) this.dashTrails = [];
+        this.dashTrails.push({ x: this.x, y: this.y, angle: this.angle, time: currentTime });
+        this.lastTrailSpawnTime = currentTime;
+      }
+    }
+
+    // Clean up old dash trails
+    if (this.dashTrails && this.dashTrails.length > 0) {
+      this.dashTrails = this.dashTrails.filter(t => (currentTime - t.time) < 180);
     }
 
     // Apply physics
@@ -288,6 +303,7 @@ export class Player {
     if (keys && keys[' '] && (!this.lastDashTime || (currentTime - this.lastDashTime) > dashCooldown)) {
       this.lastDashTime = currentTime;
       this.justDashed = true;
+      this.networkJustDashed = true;
 
       const dashSpeed = 22;
       this.vx = Math.cos(this.angle) * dashSpeed;
@@ -295,7 +311,7 @@ export class Player {
 
       if (soundEngine) {
         try {
-          soundEngine.playMetallicClick(0, 300, 0.25, 0.15);
+          soundEngine.playDashSound(0);
         } catch(e) {}
       }
     }
@@ -863,6 +879,45 @@ export class Player {
     }
 
     ctx.restore();
+
+    // ── Draw dash trails/afterimages ──
+    const drawTime = performance.now();
+    if (this.dashTrails && this.dashTrails.length > 0) {
+      this.dashTrails.forEach((trail) => {
+        const age = drawTime - trail.time;
+        const opacity = Math.max(0, 0.35 * (1 - age / 180));
+        if (opacity <= 0) return;
+
+        ctx.save();
+        ctx.globalAlpha = opacity;
+        
+        // Draw the ghost sprite at trail position
+        const drewSprite = CharacterRenderer.draw(
+          ctx,
+          this.id + '_trail',
+          trail.x,
+          trail.y,
+          trail.angle,
+          0, // static walk frame
+          false
+        );
+
+        // Fallback vector drawing if sprite not ready
+        if (!drewSprite) {
+          ctx.save();
+          ctx.translate(trail.x, trail.y);
+          ctx.rotate(trail.angle);
+          const theme = COLOR_THEMES[this.colorTheme] || COLOR_THEMES[this.isLocal ? 'cyan' : 'red'];
+          ctx.fillStyle = theme.helmet || '#66fcf1';
+          ctx.beginPath();
+          ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
+
+        ctx.restore();
+      });
+    }
 
     // ── Try drawing elf girl 3D sprite ──────────────────────────────────
     const isShooting = this.muzzleFlash > 0.1;

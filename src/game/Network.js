@@ -31,6 +31,10 @@ export class Network {
       const remotePlayer = this.engine.remotePlayers.get(state.id);
       if (!remotePlayer) return;
 
+      if (state.justDashed) {
+        remotePlayer.justDashed = true;
+      }
+
       let buffer = this.opponentStateBuffers.get(state.id);
       if (!buffer) {
         buffer = [];
@@ -174,8 +178,11 @@ export class Network {
         weaponKey: this.localPlayer.weaponKey,
         isReloading: this.localPlayer.isReloading,
         muzzleFlash: this.localPlayer.muzzleFlash,
-        flashlightActive: this.localPlayer.flashlightActive
+        flashlightActive: this.localPlayer.flashlightActive,
+        justDashed: this.localPlayer.networkJustDashed || false
       };
+
+      this.localPlayer.networkJustDashed = false;
 
       this.socket.emit('player-state', state);
     }

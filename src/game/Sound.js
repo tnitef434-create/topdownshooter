@@ -551,4 +551,46 @@ export class Sound {
       ring.stop(t + 2.6);
     } catch(e) {}
   }
+
+  playDashSound(distance = 0) {
+    try {
+      this.init();
+      if (!this.ctx) return;
+      if (this.ctx.state === 'suspended') this.ctx.resume();
+
+      const t = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+
+      let finalDest = this.masterVolume;
+      if (distance > 0) {
+        const muffle = this.ctx.createBiquadFilter();
+        muffle.type = 'lowpass';
+        const cutoff = Math.max(220, 3000 * (1 - Math.min(1, distance / 1200)));
+        muffle.frequency.setValueAtTime(cutoff, t);
+
+        const distGain = this.ctx.createGain();
+        const scale = Math.max(0.01, 1 - distance / 1300);
+        distGain.gain.setValueAtTime(scale, t);
+
+        muffle.connect(distGain);
+        distGain.connect(this.masterVolume);
+        finalDest = muffle;
+      }
+
+      osc.connect(gain);
+      gain.connect(finalDest);
+
+      // Cyber/wind sweep whoosh
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(800, t);
+      osc.frequency.exponentialRampToValueAtTime(150, t + 0.2);
+
+      gain.gain.setValueAtTime(0.35, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
+
+      osc.start(t);
+      osc.stop(t + 0.25);
+    } catch(e) {}
+  }
 }
