@@ -205,6 +205,54 @@ export class Bullet {
       return;
     }
 
+    // Plasma orb
+    if (this.weaponKey === 'plasma') {
+      ctx.save();
+      if (!perf) {
+        ctx.shadowColor = '#ff6ef7';
+        ctx.shadowBlur = 18;
+      }
+      const grad = ctx.createRadialGradient(this.x, this.y, 1, this.x, this.y, 7);
+      grad.addColorStop(0, 'rgba(255, 200, 255, 1.0)');
+      grad.addColorStop(0.4, 'rgba(230, 80, 255, 0.9)');
+      grad.addColorStop(1, 'rgba(120, 0, 180, 0.0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, 7, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+      return;
+    }
+
+    // Railgun beam
+    if (this.weaponKey === 'railgun') {
+      ctx.save();
+      if (!perf) {
+        ctx.shadowColor = '#66fcf1';
+        ctx.shadowBlur = 20;
+      }
+      ctx.lineWidth = 5;
+      ctx.lineCap = 'round';
+      const rGrad = ctx.createLinearGradient(this.prevX, this.prevY, this.x, this.y);
+      rGrad.addColorStop(0, 'rgba(102, 252, 241, 0.0)');
+      rGrad.addColorStop(0.3, 'rgba(102, 252, 241, 0.7)');
+      rGrad.addColorStop(1, 'rgba(255, 255, 255, 1.0)');
+      ctx.strokeStyle = rGrad;
+      ctx.beginPath();
+      ctx.moveTo(this.prevX, this.prevY);
+      ctx.lineTo(this.x, this.y);
+      ctx.stroke();
+      // Inner white core
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+      ctx.beginPath();
+      ctx.moveTo(this.prevX, this.prevY);
+      ctx.lineTo(this.x, this.y);
+      ctx.stroke();
+      ctx.restore();
+      return;
+    }
+
     ctx.save();
     
     // Draw glowing bullet tracer path

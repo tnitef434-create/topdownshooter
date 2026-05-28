@@ -83,6 +83,10 @@
             <button class="btn secondary weapon-btn btn-3d" data-weapon="smg" style="font-size:9px; padding:6px 2px; text-transform:uppercase;">SMG</button>
             <button class="btn secondary weapon-btn btn-3d" data-weapon="lmg" style="font-size:9px; padding:6px 2px; text-transform:uppercase;">LMG</button>
             <button class="btn secondary weapon-btn btn-3d" data-weapon="dmr" style="font-size:9px; padding:6px 2px; text-transform:uppercase;">DMR</button>
+            <button class="btn secondary weapon-btn btn-3d" data-weapon="vector" style="font-size:9px; padding:6px 2px; text-transform:uppercase;">Vector</button>
+            <button class="btn secondary weapon-btn btn-3d" data-weapon="famas" style="font-size:9px; padding:6px 2px; text-transform:uppercase;">FAMAS</button>
+            <button class="btn secondary weapon-btn btn-3d" data-weapon="plasma" style="font-size:9px; padding:6px 2px; text-transform:uppercase; color:#ff6ef7;">Plasma</button>
+            <button class="btn secondary weapon-btn btn-3d" data-weapon="railgun" style="font-size:9px; padding:6px 2px; text-transform:uppercase; color:#66fcf1;">Railgun</button>
           </div>
         </div>
 
@@ -260,6 +264,30 @@
                 <div class="weapon-info">
                   <span class="weapon-name">DMR (M14 EBR)</span>
                   <span class="weapon-type">Semi-Auto</span>
+                </div>
+              </div>
+              <div class="weapon-option" data-weapon="vector">
+                <div class="weapon-info">
+                  <span class="weapon-name">Vector SMG</span>
+                  <span class="weapon-type">Automatic</span>
+                </div>
+              </div>
+              <div class="weapon-option" data-weapon="famas">
+                <div class="weapon-info">
+                  <span class="weapon-name">FAMAS Burst</span>
+                  <span class="weapon-type">Burst-Fire</span>
+                </div>
+              </div>
+              <div class="weapon-option" data-weapon="plasma" style="border-color: rgba(255,110,247,0.25);">
+                <div class="weapon-info">
+                  <span class="weapon-name" style="color:#ff6ef7;">Plasma Rifle PL-45</span>
+                  <span class="weapon-type" style="color:#c44fba;">Energy • Auto</span>
+                </div>
+              </div>
+              <div class="weapon-option" data-weapon="railgun" style="border-color: rgba(102,252,241,0.25);">
+                <div class="weapon-info">
+                  <span class="weapon-name" style="color:#66fcf1;">Railgun RG-X</span>
+                  <span class="weapon-type" style="color:#38cbc7;">Energy • Single</span>
                 </div>
               </div>
             </div>
@@ -597,6 +625,11 @@
     <div style="border: 1px solid rgba(102, 252, 241, 0.2); background: rgba(102, 252, 241, 0.05); padding: 12px 24px; border-radius: 4px; font-family: 'Inter', sans-serif; font-size: 11px; color: #66fcf1; letter-spacing: 1.5px; text-transform: uppercase;">
       Please connect from a PC or laptop
     </div>
+  </div>
+
+  <!-- Ranked Match Transition Video Overlay -->
+  <div id="ranked-video-overlay" style="position: fixed; inset: 0; z-index: 9999; background: #000; opacity: 0; pointer-events: none; transition: opacity 0.5s ease; display: none; align-items: center; justify-content: center;">
+    <video id="ranked-video" src="/fbee.mp4" style="width: 100%; height: 100%; object-fit: cover;" playsinline></video>
   </div>
 
   <!-- Client-side Socket.io is imported dynamically inside main.js via build. -->

@@ -73,30 +73,42 @@ const gameOverModal = document.getElementById('game-over-modal');
 
 // Weapon Stats DB
 const WEAPON_STATS = {
-  pistol: { name: 'Tactical 9mm', damage: 22, fireRate: 35, accuracy: 90, magSize: 12, range: 400, reloadTime: 1200, speedMultiplier: 1.0, type: 'Semi-Auto' },
-  rifle: { name: 'Assault Rifle (M4A1)', damage: 28, fireRate: 75, accuracy: 70, magSize: 30, range: 600, reloadTime: 2200, speedMultiplier: 1.0, type: 'Automatic' },
-  shotgun: { name: 'Shotgun (Remington 870)', damage: 15, fireRate: 20, accuracy: 40, magSize: 6, range: 250, reloadTime: 3000, speedMultiplier: 1.0, type: 'Pump-Action', pellets: 8 },
-  sniper: { name: 'Sniper Rifle (AWM)', damage: 95, fireRate: 10, accuracy: 98, magSize: 5, range: 1000, reloadTime: 2800, speedMultiplier: 1.0, type: 'Bolt-Action' },
-  smg: { name: 'SMG (MP5)', damage: 18, fireRate: 85, accuracy: 82, magSize: 30, range: 350, reloadTime: 1500, speedMultiplier: 1.0, type: 'Automatic' },
-  lmg: { name: 'LMG (M249)', damage: 25, fireRate: 80, accuracy: 75, magSize: 100, range: 550, reloadTime: 4500, speedMultiplier: 1.0, type: 'Automatic' },
-  dmr: { name: 'DMR (M14 EBR)', damage: 45, fireRate: 30, accuracy: 94, magSize: 20, range: 800, reloadTime: 2400, speedMultiplier: 1.0, type: 'Semi-Auto' }
+  pistol:  { name: 'Tactical 9mm',          damage: 22, fireRate: 35,  accuracy: 90, magSize: 12,  range: 400,  reloadTime: 1200, speedMultiplier: 1.0,  type: 'Semi-Auto',   damagePct: 33, fireRatePct: 45 },
+  rifle:   { name: 'Assault Rifle (M4A1)',   damage: 28, fireRate: 75,  accuracy: 70, magSize: 30,  range: 600,  reloadTime: 2200, speedMultiplier: 1.0,  type: 'Automatic',   damagePct: 65, fireRatePct: 85 },
+  shotgun: { name: 'Shotgun (Remington 870)',damage: 15, fireRate: 20,  accuracy: 40, magSize: 6,   range: 250,  reloadTime: 3000, speedMultiplier: 1.0,  type: 'Pump-Action', damagePct: 80, fireRatePct: 20, pellets: 8 },
+  sniper:  { name: 'Sniper Rifle (AWM)',     damage: 95, fireRate: 10,  accuracy: 98, magSize: 5,   range: 1000, reloadTime: 2800, speedMultiplier: 1.0,  type: 'Bolt-Action', damagePct: 100, fireRatePct: 10 },
+  smg:     { name: 'SMG (MP5)',              damage: 18, fireRate: 85,  accuracy: 82, magSize: 30,  range: 350,  reloadTime: 1500, speedMultiplier: 1.0,  type: 'Automatic',   damagePct: 30, fireRatePct: 95 },
+  lmg:     { name: 'LMG (M249)',             damage: 25, fireRate: 80,  accuracy: 75, magSize: 100, range: 550,  reloadTime: 4500, speedMultiplier: 1.0,  type: 'Automatic',   damagePct: 55, fireRatePct: 90 },
+  dmr:     { name: 'DMR (M14 EBR)',          damage: 45, fireRate: 30,  accuracy: 94, magSize: 20,  range: 800,  reloadTime: 2400, speedMultiplier: 1.0,  type: 'Semi-Auto',   damagePct: 75, fireRatePct: 35 },
+  vector:  { name: 'Vector SMG',             damage: 14, fireRate: 95,  accuracy: 85, magSize: 33,  range: 320,  reloadTime: 1100, speedMultiplier: 1.0,  type: 'Automatic',   damagePct: 25, fireRatePct: 98 },
+  famas:   { name: 'FAMAS Burst Carbine',    damage: 20, fireRate: 55,  accuracy: 91, magSize: 25,  range: 550,  reloadTime: 1800, speedMultiplier: 1.0,  type: 'Burst-Fire',  damagePct: 45, fireRatePct: 60 },
+  plasma:  { name: 'Plasma Rifle PL-45',     damage: 32, fireRate: 65,  accuracy: 90, magSize: 20,  range: 600,  reloadTime: 2000, speedMultiplier: 1.0,  type: 'Automatic',   damagePct: 60, fireRatePct: 70 },
+  railgun: { name: 'Railgun RG-X',           damage: 85, fireRate: 8,   accuracy: 99, magSize: 5,   range: 1200, reloadTime: 3500, speedMultiplier: 0.95, type: 'Single-Shot', damagePct: 95, fireRatePct: 8  }
 };
 
 // Weapon locks requirements
 const WEAPON_LOCKS = {
-  dmr: { rp: 1000, rank: 'VETERAN' },
-  sniper: { rp: 1000, rank: 'VETERAN' },
-  lmg: { rp: 4000, rank: 'ELITE' }
+  dmr:     { rp: 1000, rank: 'VETERAN' },
+  sniper:  { rp: 1000, rank: 'VETERAN' },
+  lmg:     { rp: 4000, rank: 'ELITE' },
+  vector:  { rp: 1000, rank: 'VETERAN' },
+  famas:   { rp: 1000, rank: 'VETERAN' },
+  plasma:  { rp: 4000, rank: 'ELITE' },
+  railgun: { rp: 4000, rank: 'ELITE' }
 };
 
 const WEAPON_NAMES = {
-  pistol: 'Pistol',
-  rifle: 'Rifle',
+  pistol:  'Pistol',
+  rifle:   'Rifle',
   shotgun: 'Shotgun',
-  sniper: 'Sniper',
-  smg: 'SMG',
-  lmg: 'LMG',
-  dmr: 'DMR'
+  sniper:  'Sniper',
+  smg:     'SMG',
+  lmg:     'LMG',
+  dmr:     'DMR',
+  vector:  'Vector',
+  famas:   'FAMAS',
+  plasma:  'Plasma',
+  railgun: 'Railgun'
 };
 
 // Device UUID double-redundant persistence helpers
@@ -777,18 +789,26 @@ function updateWeaponStatsUI(weaponKey) {
   const stats = WEAPON_STATS[weaponKey];
   if (!stats || !displays.weaponStats) return;
 
+  const dmgPct   = stats.damagePct   ?? Math.min(100, Math.round(stats.damage / 95 * 100));
+  const firePct  = stats.fireRatePct ?? Math.min(100, Math.round(stats.fireRate));
+  const accPct   = stats.accuracy    ?? 75;
+
+  const isEnergy = weaponKey === 'plasma' || weaponKey === 'railgun';
+  const barColor = isEnergy ? '#ff6ef7' : '';
+  const barStyle = barColor ? `background: ${barColor};` : '';
+
   displays.weaponStats.innerHTML = `
     <div class="stat-row">
       <span>DAMAGE:</span>
-      <div class="stat-bar"><div class="bar-fill" style="width: ${weaponKey === 'sniper' ? 100 : weaponKey === 'dmr' ? 75 : weaponKey === 'rifle' ? 65 : weaponKey === 'shotgun' ? 80 : weaponKey === 'smg' ? 30 : weaponKey === 'lmg' ? 55 : 35}%"></div></div>
+      <div class="stat-bar"><div class="bar-fill" style="width: ${dmgPct}%; ${barStyle}"></div></div>
     </div>
     <div class="stat-row">
       <span>FIRE RATE:</span>
-      <div class="stat-bar"><div class="bar-fill" style="width: ${weaponKey === 'smg' ? 95 : weaponKey === 'rifle' ? 85 : weaponKey === 'lmg' ? 90 : weaponKey === 'pistol' ? 45 : weaponKey === 'shotgun' ? 25 : weaponKey === 'dmr' ? 35 : 10}%"></div></div>
+      <div class="stat-bar"><div class="bar-fill" style="width: ${firePct}%; ${barStyle}"></div></div>
     </div>
     <div class="stat-row">
       <span>ACCURACY:</span>
-      <div class="stat-bar"><div class="bar-fill" style="width: ${stats.accuracy}%"></div></div>
+      <div class="stat-bar"><div class="bar-fill" style="width: ${accPct}%; ${barStyle}"></div></div>
     </div>
     <div class="stat-row">
       <span>MAG CAPACITY:</span>
@@ -1161,7 +1181,7 @@ function startOfflineMode() {
 }
 
 function getRandomWeapon() {
-  return ['pistol', 'rifle', 'shotgun', 'sniper', 'smg', 'lmg', 'dmr'][Math.floor(Math.random() * 7)];
+  return ['pistol', 'rifle', 'shotgun', 'sniper', 'smg', 'lmg', 'dmr', 'vector', 'famas'][Math.floor(Math.random() * 9)];
 }
 
 // Match Over Debriefing Display
@@ -1388,7 +1408,7 @@ function setupUIListeners() {
         if (mmDots) mmDots.innerText = '.'.repeat(dotCount);
       }, 500);
 
-      // After 15 s, expand search to any rank
+      // After 2s, expand search to any rank
       if (rankSearchTimer) clearTimeout(rankSearchTimer);
       rankSearchTimer = setTimeout(() => {
         if (!rankSearchExpanded && socket && socket.connected) {
@@ -1404,7 +1424,7 @@ function setupUIListeners() {
             socket.emit('auto-match', { playerName: myName, mode: searchMode, color: myColor, rp: myRP, rankStrict: false });
           }
         }
-      }, 15000);
+      }, 2000);
     }
   }
 

@@ -1340,7 +1340,7 @@ export class Engine {
           scaleY: d.scaleY
         })),
         camera: { x: this.camera.x, y: this.camera.y },
-        brokenLightOn: this.map.ambientLights.brokenCeiling.on
+        brokenLightOn: this.map.ambientLights.brokenCeiling ? this.map.ambientLights.brokenCeiling.on : true
       };
       this.replayFrames.push(snapshot);
       if (this.replayFrames.length > 300) { // 5 seconds at 60fps
@@ -1580,9 +1580,13 @@ export class Engine {
     // Compute flashlight polygons for all living players with active flashlight
     const renderPlayers = frame ? frame.players : this.players;
     const renderBullets = frame ? frame.bullets : this.bullets;
-    const brokenLightOn = frame ? frame.brokenLightOn : this.map.ambientLights.brokenCeiling.on;
-    
-    this.map.ambientLights.brokenCeiling.on = brokenLightOn;
+    const brokenLightOn = frame
+      ? frame.brokenLightOn
+      : (this.map.ambientLights.brokenCeiling ? this.map.ambientLights.brokenCeiling.on : true);
+
+    if (this.map.ambientLights.brokenCeiling) {
+      this.map.ambientLights.brokenCeiling.on = brokenLightOn;
+    }
 
     renderPlayers.forEach(p => {
       if (p.health > 0 && p.flashlightActive) {

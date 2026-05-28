@@ -11,14 +11,19 @@ export const RP_LOSS = -40;   // RP lost on match loss (negative)
 // ─────────────────────────────────────────────────────────────────────────────
 
 const WEAPON_DEFS = {
-  pistol: { name: 'Tactical 9mm', damage: 22, fireRate: 300, accuracy: 0.95, magSize: 12, range: 400, reloadTime: 1200, speedMultiplier: 1.0, type: 'Semi-Auto', recoil: 3, bulletSpeed: 14 },
-  rifle: { name: 'Assault Rifle (M4A1)', damage: 26, fireRate: 110, accuracy: 0.88, magSize: 30, range: 600, reloadTime: 2200, speedMultiplier: 1.0, type: 'Automatic', recoil: 4.5, bulletSpeed: 16 },
-  shotgun: { name: 'Shotgun (Remington 870)', damage: 14, fireRate: 850, accuracy: 0.65, magSize: 6, range: 250, reloadTime: 2800, speedMultiplier: 1.0, type: 'Pump-Action', pellets: 7, recoil: 12, bulletSpeed: 12 },
-  sniper: { name: 'Sniper Rifle (AWM)', damage: 95, fireRate: 1500, accuracy: 0.99, magSize: 5, range: 1200, reloadTime: 2800, speedMultiplier: 1.0, type: 'Bolt-Action', recoil: 18, bulletSpeed: 24 },
-  smg: { name: 'SMG (MP5)', damage: 18, fireRate: 75, accuracy: 0.82, magSize: 30, range: 350, reloadTime: 1500, speedMultiplier: 1.0, type: 'Automatic', recoil: 2.2, bulletSpeed: 13 },
-  lmg: { name: 'LMG (M249)', damage: 25, fireRate: 85, accuracy: 0.75, magSize: 100, range: 550, reloadTime: 4500, speedMultiplier: 1.0, type: 'Automatic', recoil: 6.0, bulletSpeed: 15 },
-  dmr: { name: 'DMR (M14 EBR)', damage: 45, fireRate: 400, accuracy: 0.94, magSize: 20, range: 800, reloadTime: 2400, speedMultiplier: 1.0, type: 'Semi-Auto', recoil: 8.5, bulletSpeed: 20 },
-  knife: { name: 'Tactical Knife', damage: 55, fireRate: 350, accuracy: 1.0, magSize: 1, range: 60, reloadTime: 0, speedMultiplier: 1.15, type: 'Melee', recoil: 0, bulletSpeed: 20 }
+  pistol:  { name: 'Tactical 9mm',          damage: 22, fireRate: 300,  accuracy: 0.95, magSize: 12,  range: 400,  reloadTime: 1200, speedMultiplier: 1.0,  type: 'Semi-Auto',   recoil: 3,    bulletSpeed: 14 },
+  rifle:   { name: 'Assault Rifle (M4A1)',   damage: 26, fireRate: 110,  accuracy: 0.88, magSize: 30,  range: 600,  reloadTime: 2200, speedMultiplier: 1.0,  type: 'Automatic',   recoil: 4.5,  bulletSpeed: 16 },
+  shotgun: { name: 'Shotgun (Remington 870)',damage: 14, fireRate: 850,  accuracy: 0.65, magSize: 6,   range: 250,  reloadTime: 2800, speedMultiplier: 1.0,  type: 'Pump-Action', pellets: 7, recoil: 12,   bulletSpeed: 12 },
+  sniper:  { name: 'Sniper Rifle (AWM)',     damage: 95, fireRate: 1500, accuracy: 0.99, magSize: 5,   range: 1200, reloadTime: 2800, speedMultiplier: 1.0,  type: 'Bolt-Action', recoil: 18,   bulletSpeed: 24 },
+  smg:     { name: 'SMG (MP5)',              damage: 18, fireRate: 75,   accuracy: 0.82, magSize: 30,  range: 350,  reloadTime: 1500, speedMultiplier: 1.0,  type: 'Automatic',   recoil: 2.2,  bulletSpeed: 13 },
+  lmg:     { name: 'LMG (M249)',             damage: 25, fireRate: 85,   accuracy: 0.75, magSize: 100, range: 550,  reloadTime: 4500, speedMultiplier: 1.0,  type: 'Automatic',   recoil: 6.0,  bulletSpeed: 15 },
+  dmr:     { name: 'DMR (M14 EBR)',          damage: 45, fireRate: 400,  accuracy: 0.94, magSize: 20,  range: 800,  reloadTime: 2400, speedMultiplier: 1.0,  type: 'Semi-Auto',   recoil: 8.5,  bulletSpeed: 20 },
+  knife:   { name: 'Tactical Knife',         damage: 55, fireRate: 350,  accuracy: 1.0,  magSize: 1,   range: 60,   reloadTime: 0,    speedMultiplier: 1.15, type: 'Melee',       recoil: 0,    bulletSpeed: 20 },
+  // ─── Rank-Locked Weapons ───────────────────────────────────────────────────
+  vector:  { name: 'Vector SMG',             damage: 14, fireRate: 48,   accuracy: 0.87, magSize: 33,  range: 320,  reloadTime: 1100, speedMultiplier: 1.02, type: 'Automatic',   recoil: 1.8,  bulletSpeed: 14 },
+  famas:   { name: 'FAMAS Burst Carbine',    damage: 20, fireRate: 450,  accuracy: 0.93, magSize: 25,  range: 550,  reloadTime: 1800, speedMultiplier: 1.0,  type: 'Automatic',   pellets: 3, recoil: 3.5,  bulletSpeed: 17 },
+  plasma:  { name: 'Plasma Rifle PL-45',     damage: 32, fireRate: 150,  accuracy: 0.92, magSize: 20,  range: 600,  reloadTime: 2000, speedMultiplier: 1.0,  type: 'Automatic',   recoil: 2.0,  bulletSpeed: 10 },
+  railgun: { name: 'Railgun RG-X',           damage: 85, fireRate: 1400, accuracy: 0.99, magSize: 5,   range: 1200, reloadTime: 3500, speedMultiplier: 0.95, type: 'Automatic',   recoil: 22,   bulletSpeed: 32 }
 };
 
 const COLOR_THEMES = {
@@ -973,12 +978,16 @@ export class Player {
       const helmetColor = theme.helmet;
 
       let barrelLength = 18, barrelWidth = 4;
-      if (this.weaponKey === 'rifle')  { barrelLength = 24; barrelWidth = 5; }
-      if (this.weaponKey === 'shotgun'){ barrelLength = 22; barrelWidth = 6; }
-      if (this.weaponKey === 'sniper') { barrelLength = 32; barrelWidth = 4; ctx.fillStyle='#444'; ctx.fillRect(8,-5,6,3); }
-      if (this.weaponKey === 'smg')    { barrelLength = 16; barrelWidth = 4; }
-      if (this.weaponKey === 'lmg')    { barrelLength = 26; barrelWidth = 7; ctx.fillStyle='#222'; ctx.fillRect(6,-8,6,16); }
-      if (this.weaponKey === 'dmr')    { barrelLength = 28; barrelWidth = 5; ctx.fillRect(10,-4,5,2); }
+      if (this.weaponKey === 'rifle')   { barrelLength = 24; barrelWidth = 5; }
+      if (this.weaponKey === 'shotgun') { barrelLength = 22; barrelWidth = 6; }
+      if (this.weaponKey === 'sniper')  { barrelLength = 32; barrelWidth = 4; ctx.fillStyle='#444'; ctx.fillRect(8,-5,6,3); }
+      if (this.weaponKey === 'smg')     { barrelLength = 16; barrelWidth = 4; }
+      if (this.weaponKey === 'lmg')     { barrelLength = 26; barrelWidth = 7; ctx.fillStyle='#222'; ctx.fillRect(6,-8,6,16); }
+      if (this.weaponKey === 'dmr')     { barrelLength = 28; barrelWidth = 5; ctx.fillRect(10,-4,5,2); }
+      if (this.weaponKey === 'vector')  { barrelLength = 14; barrelWidth = 4; ctx.fillStyle='#333'; ctx.fillRect(4,-6,5,12); }
+      if (this.weaponKey === 'famas')   { barrelLength = 20; barrelWidth = 5; ctx.fillStyle='#555'; ctx.fillRect(6,-3,8,6); }
+      if (this.weaponKey === 'plasma')  { ctx.fillStyle='#9b1fe8'; barrelLength = 20; barrelWidth = 5; }
+      if (this.weaponKey === 'railgun') { ctx.fillStyle='#0d8a8a'; barrelLength = 30; barrelWidth = 6; ctx.fillStyle='#066'; ctx.fillRect(6,-7,8,14); }
 
       ctx.fillStyle = '#444'; ctx.strokeStyle = '#000'; ctx.lineWidth = 1;
       ctx.fillRect(10, -barrelWidth / 2, barrelLength, barrelWidth);
@@ -1013,13 +1022,17 @@ export class Player {
     ctx.strokeStyle = 'rgba(0,0,0,0.7)';
     ctx.lineWidth = 1;
     let barrelLength = 18, barrelWidth = 3;
-    if (this.weaponKey === 'rifle')  { barrelLength = 26; barrelWidth = 4; }
-    if (this.weaponKey === 'shotgun'){ barrelLength = 22; barrelWidth = 5; }
-    if (this.weaponKey === 'sniper') { barrelLength = 36; barrelWidth = 3; }
-    if (this.weaponKey === 'smg')    { barrelLength = 16; barrelWidth = 3; }
-    if (this.weaponKey === 'lmg')    { barrelLength = 28; barrelWidth = 5; }
-    if (this.weaponKey === 'dmr')    { barrelLength = 30; barrelWidth = 4; }
-    if (this.weaponKey === 'knife')  { barrelLength = 10; barrelWidth = 2; }
+    if (this.weaponKey === 'rifle')   { barrelLength = 26; barrelWidth = 4; }
+    if (this.weaponKey === 'shotgun') { barrelLength = 22; barrelWidth = 5; }
+    if (this.weaponKey === 'sniper')  { barrelLength = 36; barrelWidth = 3; }
+    if (this.weaponKey === 'smg')     { barrelLength = 16; barrelWidth = 3; }
+    if (this.weaponKey === 'lmg')     { barrelLength = 28; barrelWidth = 5; }
+    if (this.weaponKey === 'dmr')     { barrelLength = 30; barrelWidth = 4; }
+    if (this.weaponKey === 'knife')   { barrelLength = 10; barrelWidth = 2; }
+    if (this.weaponKey === 'vector')  { barrelLength = 14; barrelWidth = 3; ctx.fillStyle='#2a2a2a'; ctx.fillRect(4,-5,4,10); }
+    if (this.weaponKey === 'famas')   { barrelLength = 20; barrelWidth = 4; ctx.fillStyle='#444'; ctx.fillRect(5,-4,7,8); }
+    if (this.weaponKey === 'plasma')  { ctx.fillStyle='#9b1fe8'; barrelLength = 20; barrelWidth = 5; ctx.fillStyle='#c455ff'; ctx.fillRect(6,-4,6,8); }
+    if (this.weaponKey === 'railgun') { ctx.fillStyle='#0d8a8a'; barrelLength = 30; barrelWidth = 6; ctx.fillStyle='#0af'; ctx.fillRect(4,-6,8,12); }
 
     ctx.fillRect(12, -barrelWidth / 2, barrelLength, barrelWidth);
     ctx.strokeRect(12, -barrelWidth / 2, barrelLength, barrelWidth);

@@ -142,7 +142,78 @@ export class Sound {
         punchDecay = 0.01;
         punchVol = 0.0;
         break;
-    }
+      case 'vector':
+        // Very fast light cracks
+        noiseFilterFreq = 1600;
+        noiseDecay = 0.08;
+        noiseVol = 0.42;
+        punchStartFreq = 200;
+        punchEndFreq = 80;
+        punchDecay = 0.05;
+        punchVol = 0.25;
+        break;
+      case 'famas':
+        // Tight burst — slightly sharper than rifle
+        noiseFilterFreq = 1000;
+        noiseDecay = 0.14;
+        noiseVol = 0.55;
+        punchStartFreq = 160;
+        punchEndFreq = 50;
+        punchDecay = 0.09;
+        punchVol = 0.42;
+        break;
+      case 'plasma': {
+        // Futuristic energy zap — high-pitched descending whine
+        noiseFilterFreq = 3000;
+        noiseDecay = 0.18;
+        noiseVol = 0.3;
+        punchStartFreq = 600;
+        punchEndFreq = 120;
+        punchDecay = 0.18;
+        punchVol = 0.55;
+        // Extra harmonic shimmer
+        try {
+          const shimmer = this.ctx.createOscillator();
+          const shimmerGain = this.ctx.createGain();
+          shimmer.type = 'sawtooth';
+          shimmer.frequency.setValueAtTime(800, t);
+          shimmer.frequency.exponentialRampToValueAtTime(200, t + 0.15);
+          shimmerGain.gain.setValueAtTime(0.08, t);
+          shimmerGain.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+          shimmer.connect(shimmerGain);
+          shimmerGain.connect(finalDest);
+          shimmer.start(t);
+          shimmer.stop(t + 0.17);
+        } catch(e) {}
+        break;
+      }
+      case 'railgun': {
+        // Heavy electromagnetic rail BOOM
+        noiseFilterFreq = 600;
+        noiseDecay = 0.55;
+        noiseVol = 1.0;
+        punchStartFreq = 320;
+        punchEndFreq = 18;
+        punchDecay = 0.45;
+        punchVol = 1.0;
+        // Electromagnetic crackle tail
+        try {
+          const crack = this.ctx.createOscillator();
+          const crackGain = this.ctx.createGain();
+          crack.type = 'square';
+          crack.frequency.setValueAtTime(180, t);
+          crack.frequency.exponentialRampToValueAtTime(40, t + 0.3);
+          crackGain.gain.setValueAtTime(0.15, t);
+          crackGain.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+          crack.connect(crackGain);
+          crackGain.connect(finalDest);
+          crack.start(t);
+          crack.stop(t + 0.32);
+        } catch(e) {}
+        break;
+      }
+
+    } // end switch
 
     // Configure Noise Envelope
     noiseFilter.type = 'bandpass';
