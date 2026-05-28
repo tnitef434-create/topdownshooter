@@ -83,6 +83,10 @@ export class Bullet {
     for (const player of players) {
       if (player.id === this.playerId || player.health <= 0) continue;
 
+      // Prevent friendly fire (bullets pass through teammates)
+      const shooter = players.find(p => p.id === this.playerId);
+      if (shooter && shooter.team === player.team) continue;
+
       // Calculate distance from player center to bullet path segment
       const intersectPoint = this.getSegmentCircleIntersection(lineStart, lineEnd, player);
       
@@ -94,43 +98,51 @@ export class Bullet {
         // Spawn flesh blood splatter
         particlesEngine.spawnBloodSplatter(this.x, this.y, this.angle);
 
-        // Apply damage if we are the local player shooting (or if it's offline bot shooting)
-        // Hit detection is resolved client-side by the shooter
-        if (this.playerId === window.LocalPlayerId) {
-          // Check for damage multiplier zone at bullet hit position
+        // Apply damage
+        if (window.IsOfflineMode) {
+          // Offline mode: any valid enemy bullet hit deals damage!
           const zone = map.checkZone ? map.checkZone(this.x, this.y) : null;
           const dmgMult = (zone && zone.type === 'damage') ? zone.multiplier : 1.0;
           const finalDamage = Math.round(this.damage * dmgMult);
 
           player.takeDamage(finalDamage, soundEngine);
-          if (soundEngine) soundEngine.playHitMarker();
-
-          // Show zone damage indicator
-          if (dmgMult > 1.0 && player.showTextNotification) {
-            player.showTextNotification(`×${dmgMult} ZONE!`);
+          
+          if (this.playerId === window.LocalPlayerId) {
+            if (soundEngine) soundEngine.playHitMarker();
+            if (dmgMult > 1.0 && player.showTextNotification) {
+              player.showTextNotification(`×${dmgMult} ZONE!`);
+            }
+            if (window.MatchStats) {
+              window.MatchStats.damageDealt += finalDamage;
+            }
           }
+        } else {
+          // Online mode: shooter verifies and transmits hit
+          if (this.playerId === window.LocalPlayerId) {
+            const zone = map.checkZone ? map.checkZone(this.x, this.y) : null;
+            const dmgMult = (zone && zone.type === 'damage') ? zone.multiplier : 1.0;
+            const finalDamage = Math.round(this.damage * dmgMult);
 
-          // Collect match accuracy stat
-          if (window.MatchStats) {
-            window.MatchStats.damageDealt += finalDamage;
-          }
+            player.takeDamage(finalDamage, soundEngine);
+            if (soundEngine) soundEngine.playHitMarker();
 
-          // Emit hit damage to target player
-          if (window.AppSocket) {
-            window.AppSocket.emit('hit', {
-              damage: finalDamage,
-              shooterId: this.playerId,
-              targetId: player.id,
-              x: this.x,
-              y: this.y
-            });
-          }
-        } else if (player.id === window.LocalPlayerId) {
-          // Offline: bot bullets can also be multiplied by zone
-          if (window.IsOfflineMode) {
-            const zone2 = map.checkZone ? map.checkZone(this.x, this.y) : null;
-            const dmgMult2 = (zone2 && zone2.type === 'damage') ? zone2.multiplier : 1.0;
-            player.takeDamage(Math.round(this.damage * dmgMult2), soundEngine);
+            if (dmgMult > 1.0 && player.showTextNotification) {
+              player.showTextNotification(`×${dmgMult} ZONE!`);
+            }
+
+            if (window.MatchStats) {
+              window.MatchStats.damageDealt += finalDamage;
+            }
+
+            if (window.AppSocket) {
+              window.AppSocket.emit('hit', {
+                damage: finalDamage,
+                shooterId: this.playerId,
+                targetId: player.id,
+                x: this.x,
+                y: this.y
+              });
+            }
           }
         }
         

@@ -215,6 +215,7 @@ let myColor = 'cyan';
 let myMode = '1v1';
 let isReady = false;
 let lobbyPlayers = [];
+let currentMatchSource = 'menu'; // 'ranked', 'casual', 'practice'
 
 // ── Career Stats (localStorage) ────────────────────────────────────────────
 function loadCareerStats() {
@@ -253,16 +254,41 @@ waitMusic.loop = true;
 let musicStarted = false;
 let isMusicMuted = false;
 
-// Weapon Select Music (plays once when a weapon card is clicked)
+// Weapon Select Music / Lobby Music (loops in lobby and gameplay)
 const weaponSelectMusic = new Audio('/Deployment_Sequence.mp3');
-weaponSelectMusic.loop = false;
-weaponSelectMusic.volume = 0.18;
+weaponSelectMusic.loop = true;
+weaponSelectMusic.volume = 0.15;
 
-function playWeaponSelectMusic() {
+function playLobbyMusic() {
   if (isMusicMuted) return;
   try {
-    weaponSelectMusic.currentTime = 0;
+    menuMusic.pause();
+    menuMusic.currentTime = 0;
+    waitMusic.pause();
+    waitMusic.currentTime = 0;
+    
+    weaponSelectMusic.volume = 0.15;
+    weaponSelectMusic.loop = true;
     weaponSelectMusic.play().catch(() => {});
+  } catch(e) {}
+}
+
+function playMenuClick() {
+  try {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return;
+    const ctx = new AudioContextClass();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(1200, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(600, ctx.currentTime + 0.08);
+    gain.gain.setValueAtTime(0.1, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.08);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.08);
   } catch(e) {}
 }
 
@@ -321,6 +347,8 @@ window.stopAllMusic = function() {
     menuMusic.currentTime = 0;
     waitMusic.pause();
     waitMusic.currentTime = 0;
+    weaponSelectMusic.pause();
+    weaponSelectMusic.currentTime = 0;
   } catch(e) {}
 };
 
@@ -329,6 +357,8 @@ function playWaitMusic() {
   try {
     menuMusic.pause();
     menuMusic.currentTime = 0;
+    weaponSelectMusic.pause();
+    weaponSelectMusic.currentTime = 0;
     waitMusic.currentTime = 0;
     waitMusic.play().catch(() => {});
   } catch(e) {}
@@ -339,6 +369,8 @@ function playMenuMusic() {
   try {
     waitMusic.pause();
     waitMusic.currentTime = 0;
+    weaponSelectMusic.pause();
+    weaponSelectMusic.currentTime = 0;
     menuMusic.currentTime = 0;
     menuMusic.play().catch(() => {});
   } catch(e) {}
@@ -346,11 +378,26 @@ function playMenuMusic() {
 
 function playGameplayBackgroundMusic() {
   try {
-    waitMusic.pause();
-    waitMusic.currentTime = 0;
     if (isMusicMuted) return;
-    menuMusic.volume = 0.04;
-    menuMusic.play().catch(() => {});
+
+    if (currentMatchSource === 'casual') {
+      menuMusic.pause();
+      menuMusic.currentTime = 0;
+      waitMusic.pause();
+      waitMusic.currentTime = 0;
+      
+      weaponSelectMusic.volume = 0.04;
+      weaponSelectMusic.loop = true;
+      weaponSelectMusic.play().catch(() => {});
+    } else {
+      weaponSelectMusic.pause();
+      weaponSelectMusic.currentTime = 0;
+      waitMusic.pause();
+      waitMusic.currentTime = 0;
+      
+      menuMusic.volume = 0.04;
+      menuMusic.play().catch(() => {});
+    }
   } catch(e) {}
 }
 
@@ -650,7 +697,9 @@ function showScreen(screenKey) {
   // Transition music based on screen
   if (screenKey === 'menu') {
     playMenuMusic();
-  } else if (screenKey === 'lobby' || screenKey === 'matchmaking') {
+  } else if (screenKey === 'lobby') {
+    playLobbyMusic();
+  } else if (screenKey === 'matchmaking') {
     playWaitMusic();
   } else if (screenKey === 'game') {
     playGameplayBackgroundMusic();
@@ -685,7 +734,7 @@ function setupWeaponSelector() {
       myWeapon = opt.dataset.weapon;
       safeStorage.setItem('tacticstrike_player_weapon', myWeapon);
       updateWeaponStatsUI(myWeapon);
-      playWeaponSelectMusic();   // ← play deployment music on weapon pick
+      playMenuClick();   // ← play click sound on weapon pick
 
       // Notify server if in a lobby
       if (socket && currentRoom) {
@@ -917,7 +966,7 @@ function connectSocket() {
     updateLobbyUI(players);
     addSystemChatMessage(message);
     if (gameEngine) {
-      if (gameEngine.active && gameEngine.mode === 'online') {
+      if (gameEngine.active && gameEngine.mode === 'online' && (gameEngine.gameState === 'playing' || gameEngine.gameState === 'countdown' || gameEngine.gameState === 'replay')) {
         recordMatchResult(true);
         if (gameEngine.isRanked) {
           const myRP = parseInt(localStorage.getItem('tacticstrike_rp') || '0');
@@ -935,6 +984,7 @@ function connectSocket() {
   });
 
   socket.on('match-start', ({ players, seed, isRanked }) => {
+    currentMatchSource = isRanked ? 'ranked' : 'casual';
     const initGame = () => {
       showScreen('game');
       const myIndex = players.findIndex(p => p.id === socket.id);
@@ -996,6 +1046,7 @@ function disconnectSocket() {
 
 // 6. Gameplay triggers
 function startOfflineMode() {
+  currentMatchSource = 'practice';
   const initGame = () => {
     showScreen('game');
     displays.chatMessages.innerHTML = '';
@@ -1320,7 +1371,11 @@ function setupUIListeners() {
         if (nextReadyState) {
           window.stopAllMusic();
         } else {
-          playWaitMusic();
+          if (currentRoom) {
+            playLobbyMusic();
+          } else {
+            playWaitMusic();
+          }
         }
       }
     });
@@ -1598,7 +1653,7 @@ function setupMainMenuWeaponSelector() {
       btn.classList.add('active');
       myWeapon = btn.dataset.weapon;
       safeStorage.setItem('tacticstrike_player_weapon', myWeapon);
-      playWeaponSelectMusic();
+      playMenuClick();
       
       // Sync with lobby weapon option selected
       const lobbyOpts = document.querySelectorAll('.weapon-option');

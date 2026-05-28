@@ -35,6 +35,10 @@ export class Network {
         remotePlayer.justDashed = true;
       }
 
+      if (state.health !== undefined) {
+        remotePlayer.health = state.health;
+      }
+
       let buffer = this.opponentStateBuffers.get(state.id);
       if (!buffer) {
         buffer = [];
@@ -234,7 +238,6 @@ export class Network {
         // Fast sync status flags
         opponent.vx = beforeState.vx + (afterState.vx - beforeState.vx) * ratio;
         opponent.vy = beforeState.vy + (afterState.vy - beforeState.vy) * ratio;
-        opponent.health = beforeState.health;
         opponent.weaponKey = beforeState.weaponKey;
         opponent.isReloading = beforeState.isReloading;
         opponent.muzzleFlash = beforeState.muzzleFlash;
@@ -250,7 +253,6 @@ export class Network {
         
         opponent.vx = latest.vx;
         opponent.vy = latest.vy;
-        opponent.health = latest.health;
         opponent.weaponKey = latest.weaponKey;
         opponent.isReloading = latest.isReloading;
         opponent.muzzleFlash = latest.muzzleFlash;

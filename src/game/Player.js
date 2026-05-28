@@ -520,6 +520,12 @@ export class Player {
           if (this.isLocal && !this.isBot) {
             this.updateHUD();
             this.showTextNotification('+35 HEALTH');
+            if (window.AppSocket) {
+              window.AppSocket.emit('sync-health', {
+                playerId: this.id,
+                health: this.health
+              });
+            }
           }
         } else {
           const maxAmmo = this.weapon.magSize * 2;

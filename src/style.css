@@ -533,11 +533,11 @@ footer {
 }
 
 .weapon-selector {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
   gap: 8px;
   overflow-y: auto;
-  max-height: 220px;
+  max-height: 280px;
   padding-right: 4px;
 }
 
@@ -554,7 +554,7 @@ footer {
   background: rgba(0, 0, 0, 0.25);
   border: 1px solid rgba(255, 255, 255, 0.05);
   border-radius: 6px;
-  padding: 10px 14px;
+  padding: 8px 12px;
   cursor: pointer;
   display: flex;
   justify-content: space-between;
@@ -581,11 +581,11 @@ footer {
 
 .weapon-name {
   font-weight: 600;
-  font-size: 14px;
+  font-size: 12px;
 }
 
 .weapon-type {
-  font-size: 11px;
+  font-size: 10px;
   color: var(--neon-teal);
 }
 
