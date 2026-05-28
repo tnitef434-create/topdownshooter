@@ -407,108 +407,96 @@ export class Engine {
   }
 
   // ── Gamepad / PS5 DualSense support ─────────────────────────────────────────
+  // State is initialized here; actual polling happens in pollGamepad() called
+  // from update() every frame so it is guaranteed to run after this.active=true.
   setupGamepad() {
-    this._gamepadState = {
+    this._gpState = {
       prevButtons: [],
       deadzone: 0.18,
       aimAngle: 0,
       aimActive: false
     };
+  }
 
-    const GP = this._gamepadState;
+  // Called once per frame from update(). Reads all gamepad axes/buttons and
+  // maps them to the same keys/mouse state that keyboard/mouse use.
+  pollGamepad() {
+    if (!navigator.getGamepads) return;
+    const gamepads = navigator.getGamepads();
+    let gp = null;
+    for (let i = 0; i < gamepads.length; i++) {
+      if (gamepads[i]) { gp = gamepads[i]; break; }
+    }
+    if (!gp) {
+      // No controller connected — clear any stale axis-injected keys so the
+      // keyboard remains the authoritative source of input
+      return;
+    }
+    if (!this.localPlayer || this.localPlayer.health <= 0) return;
 
-    const tickGamepad = () => {
-      if (!this.active) return;
-      this._gamepadLoopId = requestAnimationFrame(tickGamepad);
+    const GP  = this._gpState;
+    const dz  = GP.deadzone;
+    const btn = (i) => gp.buttons[i];
+    const pressed = (i) => !!(btn(i) && btn(i).pressed);
+    const value   = (i) =>  btn(i) ? btn(i).value : 0;
+    const prev    = (i) => !!GP.prevButtons[i];
 
-      const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
-      let gp = null;
-      for (let i = 0; i < gamepads.length; i++) {
-        if (gamepads[i]) { gp = gamepads[i]; break; }
-      }
-      if (!gp || !this.localPlayer || this.localPlayer.health <= 0) return;
+    // ── Left stick → WASD movement ───────────────────────────────────────────
+    const lx = Math.abs(gp.axes[0]) > dz ? gp.axes[0] : 0;
+    const ly = Math.abs(gp.axes[1]) > dz ? gp.axes[1] : 0;
+    this.keys['w'] = ly < -dz;
+    this.keys['s'] = ly >  dz;
+    this.keys['a'] = lx < -dz;
+    this.keys['d'] = lx >  dz;
 
-      const { deadzone } = GP;
-      const btn = (i) => gp.buttons[i];
-      const pressed = (i) => btn(i) && btn(i).pressed;
-      const value   = (i) => btn(i) ? btn(i).value : 0;
+    // L3 (button 10) = sprint
+    this.keys['shift'] = pressed(10);
 
-      // ── Left stick: move ───────────────────────────────────────────────────
-      const lx = Math.abs(gp.axes[0]) > deadzone ? gp.axes[0] : 0;
-      const ly = Math.abs(gp.axes[1]) > deadzone ? gp.axes[1] : 0;
+    // ── Right stick → aim angle ───────────────────────────────────────────────
+    const rx = Math.abs(gp.axes[2]) > dz ? gp.axes[2] : 0;
+    const ry = Math.abs(gp.axes[3]) > dz ? gp.axes[3] : 0;
+    if (Math.hypot(rx, ry) > dz) {
+      GP.aimAngle  = Math.atan2(ry, rx);
+      GP.aimActive = true;
+    } else {
+      GP.aimActive = false;
+    }
+    if (GP.aimActive) {
+      this.mouse.angle = GP.aimAngle;
+      this.localPlayer.angle = GP.aimAngle;
+    }
 
-      // Inject into keyboard state so Player.update() handles movement
-      this.keys['w'] = ly < -deadzone;
-      this.keys['s'] = ly >  deadzone;
-      this.keys['a'] = lx < -deadzone;
-      this.keys['d'] = lx >  deadzone;
+    // ── R2 (button 7) = shoot ─────────────────────────────────────────────────
+    this.mouse.clicked = value(7) > 0.3;
 
-      // Left-stick click (L3) = sprint
-      // PS5: button 10 = L3
-      this.keys['shift'] = pressed(10);
+    // ── L1 (button 4) = primary slot, R1 (button 5) = secondary slot ─────────
+    if (pressed(4) && !prev(4)) this.localPlayer.switchSlot(1);
+    if (pressed(5) && !prev(5)) this.localPlayer.switchSlot(2);
 
-      // ── Right stick: aim ──────────────────────────────────────────────────
-      const rx = Math.abs(gp.axes[2]) > deadzone ? gp.axes[2] : 0;
-      const ry = Math.abs(gp.axes[3]) > deadzone ? gp.axes[3] : 0;
-      if (Math.hypot(rx, ry) > deadzone) {
-        GP.aimAngle = Math.atan2(ry, rx);
-        GP.aimActive = true;
-      } else {
-        GP.aimActive = false;
-      }
-      if (GP.aimActive) {
-        this.mouse.angle = GP.aimAngle;
-        this.localPlayer.angle = GP.aimAngle;
-      }
+    // ── Circle / O (button 1) = reload ───────────────────────────────────────
+    if (pressed(1) && !prev(1)) {
+      this.keys['r'] = true;
+      setTimeout(() => { this.keys['r'] = false; }, 80);
+    }
 
-      // ── R2 (button 7) = shoot ─────────────────────────────────────────────
-      this.mouse.clicked = value(7) > 0.3;
+    // ── Cross / X (button 0) = dash ───────────────────────────────────────────
+    if (pressed(0) && !prev(0)) {
+      this.localPlayer.dashRequest = true;
+    }
 
-      // ── L1 / R1 (buttons 4/5) = cycle inventory slots ────────────────────
-      const prevL1 = GP.prevButtons[4] || false;
-      const prevR1 = GP.prevButtons[5] || false;
-      if (pressed(4) && !prevL1) {
-        // L1 → switch to primary
-        this.localPlayer.switchSlot(1);
-      }
-      if (pressed(5) && !prevR1) {
-        // R1 → switch to knife (slot 2)
-        this.localPlayer.switchSlot(2);
-      }
+    // ── Triangle (button 3) = flashlight toggle ───────────────────────────────
+    if (pressed(3) && !prev(3)) {
+      this.localPlayer.flashlightActive = !this.localPlayer.flashlightActive;
+      try { this.sound.playMetallicClick(0, 1800, 0.05, 0.15); } catch(e) {}
+    }
 
-      // ── O (button 1) = reload ─────────────────────────────────────────────
-      const prevO = GP.prevButtons[1] || false;
-      if (pressed(1) && !prevO) {
-        this.keys['r'] = true;
-        setTimeout(() => { this.keys['r'] = false; }, 80);
-      }
+    // ── Square (button 2) = throw flashbang ──────────────────────────────────
+    if (pressed(2) && !prev(2) && this.localPlayer.flashGrenades > 0) {
+      this.localPlayer.throwFlashbangRequest = true;
+    }
 
-      // ── X (button 0) = dash ───────────────────────────────────────────────
-      const prevX = GP.prevButtons[0] || false;
-      if (pressed(0) && !prevX) {
-        this.localPlayer.dashRequest = true;
-      }
-
-      // ── Triangle (button 3) = flashlight toggle ──────────────────────────
-      const prevTri = GP.prevButtons[3] || false;
-      if (pressed(3) && !prevTri) {
-        this.localPlayer.flashlightActive = !this.localPlayer.flashlightActive;
-        try { this.sound.playMetallicClick(0, 1800, 0.05, 0.15); } catch(e) {}
-      }
-
-      // ── Square (button 2) = throw flash grenade ──────────────────────────
-      const prevSq = GP.prevButtons[2] || false;
-      if (pressed(2) && !prevSq) {
-        if (this.localPlayer.flashGrenades > 0) {
-          this.localPlayer.throwFlashbangRequest = true;
-        }
-      }
-
-      // Store previous button states for edge detection
-      GP.prevButtons = gp.buttons.map(b => b && b.pressed);
-    };
-
-    tickGamepad();
+    // Snapshot button states for next-frame edge detection
+    GP.prevButtons = Array.from(gp.buttons).map(b => !!(b && b.pressed));
   }
 
   destroy() {
@@ -536,10 +524,8 @@ export class Engine {
       clearTimeout(this.zoneTimer);
       this.zoneTimer = null;
     }
-    if (this._gamepadLoopId) {
-      cancelAnimationFrame(this._gamepadLoopId);
-      this._gamepadLoopId = null;
-    }
+    // Note: gamepad polling is part of the main update() loop;
+    // no separate RAF to cancel.
     
     if (this.network) {
       this.network.destroy();
@@ -891,6 +877,9 @@ export class Engine {
       }
       return;
     }
+
+    // 0. Poll gamepad every frame (runs on same RAF as main loop)
+    this.pollGamepad();
 
     // 1. Process Round countdowns
     if (this.gameState === 'countdown') {
