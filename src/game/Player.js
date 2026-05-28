@@ -172,6 +172,7 @@ export class Player {
     // --- 1. Movement logic ---
     if (this.isLocal && !this.isBot) {
       this.handleLocalInput(keys, mouse, soundEngine, currentTime);
+      this.updateDashHUD(currentTime);
     } else if (this.isBot && target) {
       this.handleBotAI(map, soundEngine, currentTime, target, localPlayer);
     }
@@ -180,6 +181,13 @@ export class Player {
     const isSprinting = this.isLocal && keys && keys['shift'];
     const speedMod = this.weapon.speedMultiplier * (isSprinting ? 1.35 : 1.0);
     let currentMaxSpeed = this.maxSpeed * speedMod;
+
+    // Check if player is currently in a dash (lasts for 200ms)
+    const dashDuration = 200;
+    const isDashing = this.lastDashTime && (currentTime - this.lastDashTime) < dashDuration;
+    if (isDashing) {
+      currentMaxSpeed = 22;
+    }
 
     // Apply physics
     this.vx *= this.friction;
@@ -274,6 +282,23 @@ export class Player {
     // Point angle towards mouse cursor
     // Mouse coords are screen-space relative to player offset
     this.angle = mouse.angle;
+
+    // Spacebar dash forward (10s cooldown)
+    const dashCooldown = 10000;
+    if (keys && keys[' '] && (!this.lastDashTime || (currentTime - this.lastDashTime) > dashCooldown)) {
+      this.lastDashTime = currentTime;
+      this.justDashed = true;
+
+      const dashSpeed = 22;
+      this.vx = Math.cos(this.angle) * dashSpeed;
+      this.vy = Math.sin(this.angle) * dashSpeed;
+
+      if (soundEngine) {
+        try {
+          soundEngine.playMetallicClick(0, 300, 0.25, 0.15);
+        } catch(e) {}
+      }
+    }
 
     // Reload trigger (R key)
     if ((keys['r'] || keys['R']) && !this.isReloading && this.ammoInMag < this.weapon.magSize && this.reserveAmmo > 0) {
@@ -413,6 +438,30 @@ export class Player {
           slotEl.style.color = 'rgba(255,255,255,0.5)';
           slotEl.style.boxShadow = 'none';
         }
+      }
+    }
+  }
+
+  updateDashHUD(currentTime) {
+    const dashCooldown = 10000;
+    const statusEl = document.getElementById('hud-dash-status');
+    const iconEl = document.getElementById('hud-dash-icon');
+    if (!statusEl) return;
+
+    if (!this.lastDashTime || (currentTime - this.lastDashTime) >= dashCooldown) {
+      statusEl.innerText = 'DASH READY (SPACE)';
+      statusEl.style.color = 'var(--neon-cyan)';
+      if (iconEl) {
+        iconEl.innerText = '⚡';
+        iconEl.style.color = 'var(--neon-cyan)';
+      }
+    } else {
+      const remaining = Math.ceil((dashCooldown - (currentTime - this.lastDashTime)) / 1000);
+      statusEl.innerText = `DASH COOLDOWN: ${remaining}s`;
+      statusEl.style.color = '#ff3c3c';
+      if (iconEl) {
+        iconEl.innerText = '⏳';
+        iconEl.style.color = '#ff3c3c';
       }
     }
   }

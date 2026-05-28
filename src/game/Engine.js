@@ -282,6 +282,9 @@ export class Engine {
       if (chatInput && document.activeElement === chatInput) {
         return;
       }
+      if (e.key === ' ') {
+        e.preventDefault();
+      }
       this.keys[e.key.toLowerCase()] = true;
 
       // Toggle flashlight
@@ -741,6 +744,12 @@ export class Engine {
     // 2. Update Operatives (Player / Opponent)
     if (this.gameState === 'playing' || this.gameState === 'countdown') {
       this.localPlayer.update(this.keys, this.mouse, this.map, this.sound, currentTime, null, this.localPlayer);
+      if (this.localPlayer.justDashed) {
+        this.localPlayer.justDashed = false;
+        for (let i = 0; i < 15; i++) {
+          this.particles.spawnCasingDink(this.localPlayer.x, this.localPlayer.y);
+        }
+      }
       
       if (this.mode === 'offline') {
         this.players.forEach(p => {
@@ -1732,11 +1741,15 @@ export class Engine {
 
     this.updateScoreboardHUD();
 
+    const losingTeam = data.winningTeam === 1 ? 2 : 1;
+    this.players.forEach(p => {
+      if (p.team === losingTeam) {
+        p.health = 0;
+      }
+    });
+
     this.roundNumber = data.roundNumber;
-    setTimeout(() => {
-      if (!this.active) return;
-      this.startReplay(() => this.startRoundCycle());
-    }, 3000);
+    this.startReplay(() => this.startRoundCycle());
   }
 
   handleServerMatchOver(data) {
@@ -1776,6 +1789,14 @@ export class Engine {
     window.MatchStats.rankChanged = rankChanged;
     window.MatchStats.oldRankLabel = oldRank;
 
+    const winningTeam = data.score1 >= 3 ? 1 : 2;
+    const losingTeam = winningTeam === 1 ? 2 : 1;
+    this.players.forEach(p => {
+      if (p.team === losingTeam) {
+        p.health = 0;
+      }
+    });
+
     const finishMatch = () => {
       this.gameState = 'match-over';
       this.active = false;
@@ -1790,9 +1811,6 @@ export class Engine {
       }
     };
 
-    setTimeout(() => {
-      if (!this.active) return;
-      this.startReplay(finishMatch);
-    }, 3000);
+    this.startReplay(finishMatch);
   }
 }

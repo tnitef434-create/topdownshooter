@@ -11,7 +11,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=Orbitron:wght@500;700;900&display=swap" rel="stylesheet">
   <!-- Style sheet -->
   <!-- Socket.io client (loaded dynamically via bundler or server, or we can just import from socket.io-client) -->
-  <script type="module" crossorigin src="/assets/index-DaOpC8Bi.js"></script>
+  <script type="module" crossorigin src="/assets/index-BJ58CF3D.js"></script>
   <link rel="stylesheet" crossorigin href="/assets/index-CSowvY-o.css">
 </head>
 <body>
@@ -315,6 +315,18 @@
             <div id="hud-status" class="status-alert">GET READY!</div>
           </div>
 
+          <!-- Gameplay Tips Panel -->
+          <div id="gameplay-tips-panel" style="position: absolute; bottom: 200px; left: 30px; z-index: 100; display: none; pointer-events: auto;">
+            <div id="tip-card" style="background: rgba(11, 12, 16, 0.9); border: 1px solid var(--neon-cyan); border-radius: 4px; padding: 8px 12px; display: flex; align-items: center; gap: 10px; box-shadow: 0 0 15px rgba(102,252,241,0.1); width: 260px;">
+              <span id="tip-icon" style="font-size: 14px;">💡</span>
+              <div style="flex: 1; display: flex; flex-direction: column; gap: 2px;">
+                <span id="tip-title" style="font-family: var(--font-title); font-size: 9px; font-weight: 700; color: var(--neon-cyan); letter-spacing: 1px;">TACTICAL TIP</span>
+                <span id="tip-text" style="font-family: var(--font-body); font-size: 9.5px; color: #fff; line-height: 1.3;">Press 2 to switch to Melee Knife for faster movement.</span>
+              </div>
+              <button id="btn-dismiss-tip" style="background: none; border: none; color: rgba(255,255,255,0.4); font-size: 11px; cursor: pointer; padding: 2px 6px; transition: color 0.2s;" onmouseover="this.style.color='#ff3c3c'" onmouseout="this.style.color='rgba(255,255,255,0.4)'">✖</button>
+            </div>
+          </div>
+
           <!-- Bottom Left: Self Status -->
           <div class="hud-bottom-left">
             <div class="operative-badge">
@@ -336,6 +348,12 @@
                 <div class="reload-wheel"></div>
                 <span>RELOADING</span>
               </div>
+            </div>
+
+            <!-- Dash Cooldown Display -->
+            <div id="hud-dash-container" style="display: flex; align-items: center; gap: 6px; margin-top: 6px; font-family: var(--font-title); font-size: 10px; color: var(--neon-cyan); letter-spacing: 0.5px; pointer-events: none;">
+              <span id="hud-dash-icon">⚡</span>
+              <span id="hud-dash-status">DASH READY (SPACE)</span>
             </div>
             
             <!-- Small Inventory Display -->

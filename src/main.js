@@ -266,6 +266,55 @@ function playWeaponSelectMusic() {
   } catch(e) {}
 }
 
+// Gameplay Tip System
+let activeTipKey = null;
+const gameplayTips = [
+  { key: 'knife', text: 'Equip your Melee Knife (Press 2) to move 15% faster.' },
+  { key: 'flashbang', text: 'Throw a Flash Grenade (Press 3) to blind enemies in line-of-sight.' },
+  { key: 'dash', text: 'Press Space to dash forward in the direction you are facing (10s CD).' },
+  { key: 'flashlight', text: 'Toggle your Flashlight (Press F) to spot enemies in dark rooms.' }
+];
+
+function showNextGameplayTip() {
+  const panel = document.getElementById('gameplay-tips-panel');
+  if (!panel) return;
+
+  const availableTips = gameplayTips.filter(tip => {
+    return localStorage.getItem(`tacticstrike_hide_tip_${tip.key}`) !== 'true';
+  });
+
+  if (availableTips.length === 0) {
+    panel.style.display = 'none';
+    activeTipKey = null;
+    return;
+  }
+
+  const tip = availableTips[Math.floor(Math.random() * availableTips.length)];
+  activeTipKey = tip.key;
+
+  const tipTextEl = document.getElementById('tip-text');
+  if (tipTextEl) tipTextEl.innerText = tip.text;
+
+  panel.style.display = 'flex';
+}
+
+function initTipSystem() {
+  const dismissBtn = document.getElementById('btn-dismiss-tip');
+  if (dismissBtn) {
+    dismissBtn.addEventListener('click', () => {
+      if (activeTipKey) {
+        localStorage.setItem(`tacticstrike_hide_tip_${activeTipKey}`, 'true');
+        const panel = document.getElementById('gameplay-tips-panel');
+        if (panel) panel.style.display = 'none';
+        
+        // Show another tip after a short delay
+        setTimeout(showNextGameplayTip, 1000);
+      }
+    });
+  }
+}
+
+
 window.stopAllMusic = function() {
   try {
     menuMusic.pause();
@@ -605,6 +654,16 @@ function showScreen(screenKey) {
     playWaitMusic();
   } else if (screenKey === 'game') {
     playGameplayBackgroundMusic();
+    if (window.tipInterval) clearInterval(window.tipInterval);
+    showNextGameplayTip();
+    window.tipInterval = setInterval(showNextGameplayTip, 18000);
+  } else {
+    if (window.tipInterval) {
+      clearInterval(window.tipInterval);
+      window.tipInterval = null;
+    }
+    const panel = document.getElementById('gameplay-tips-panel');
+    if (panel) panel.style.display = 'none';
   }
 
   updateMusicVolume();
@@ -1580,6 +1639,7 @@ document.addEventListener('DOMContentLoaded', () => {
   setupColorSelector();
   setupModeSelector();
   setupUIListeners();
+  initTipSystem();
 
   // Load or generate operative codename
   const savedName = safeStorage.getItem('tacticstrike_player_name');
