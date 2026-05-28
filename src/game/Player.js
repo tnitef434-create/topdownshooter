@@ -173,17 +173,32 @@ export class Player {
   update(keys, mouse, map, soundEngine, currentTime, target, localPlayer) {
     if (this.health <= 0) return;
 
+    if (!this.lastUpdateTime) {
+      this.lastUpdateTime = currentTime;
+    }
+    const dt = currentTime - this.lastUpdateTime;
+    this.lastUpdateTime = currentTime;
+
+    // Normalize to 60 FPS (16.67 ms)
+    // Avoid division by zero, cap dt between 1ms and 150ms to prevent huge jumps/warps
+    const clampedDt = Math.max(1, Math.min(150, dt));
+    const dtFactor = clampedDt / 16.67;
+
+    // Check for ranked speed boost
+    const isRanked = window.gameEngine && window.gameEngine.isRanked;
+    const modeSpeedMult = isRanked ? 1.25 : 1.0;
+
     // --- 1. Movement logic ---
     if (this.isLocal && !this.isBot) {
-      this.handleLocalInput(keys, mouse, soundEngine, currentTime);
+      this.handleLocalInput(keys, mouse, soundEngine, currentTime, dtFactor);
       this.updateDashHUD(currentTime);
     } else if (this.isBot && target) {
-      this.handleBotAI(map, soundEngine, currentTime, target, localPlayer);
+      this.handleBotAI(map, soundEngine, currentTime, target, localPlayer, dtFactor);
     }
 
     // Apply speed multiplier based on carrying weapon weight and sprint speed mult
     const isSprinting = this.isLocal && keys && keys['shift'];
-    const speedMod = this.weapon.speedMultiplier * (isSprinting ? 1.75 : 1.0);  // was 1.35
+    const speedMod = this.weapon.speedMultiplier * (isSprinting ? 1.75 : 1.0) * modeSpeedMult;
     let currentMaxSpeed = this.maxSpeed * speedMod;
 
     // Check if player is currently in a dash (lasts for 200ms)
@@ -204,9 +219,9 @@ export class Player {
       this.dashTrails = this.dashTrails.filter(t => (currentTime - t.time) < 180);
     }
 
-    // Apply physics
-    this.vx *= this.friction;
-    this.vy *= this.friction;
+    // Apply physics friction normalized to delta time
+    this.vx *= Math.pow(this.friction, dtFactor);
+    this.vy *= Math.pow(this.friction, dtFactor);
 
     // Clamp speed
     const speed = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
@@ -216,9 +231,9 @@ export class Player {
     }
     this.currentSpeed = speed; // track for walk animation
 
-    // Collision detection against map walls & sliding response
-    const nextX = this.x + this.vx;
-    const nextY = this.y + this.vy;
+    // Collision detection against map walls & sliding response using delta time
+    const nextX = this.x + this.vx * dtFactor;
+    const nextY = this.y + this.vy * dtFactor;
     
     const collisionResponse = map.checkCircleCollision(nextX, nextY, this.radius);
     this.x = collisionResponse.x;
@@ -271,19 +286,23 @@ export class Player {
     }
   }
 
-  handleLocalInput(keys, mouse, soundEngine, currentTime) {
+  handleLocalInput(keys, mouse, soundEngine, currentTime, dtFactor) {
     // Sprint check
     const isSprinting = keys && keys['shift'];
     const sprintSpeedMult = isSprinting ? 1.75 : 1.0;   // was 1.35
     const sprintAccelMult = isSprinting ? 1.75 : 1.0;   // was 1.35
 
+    const isRanked = window.gameEngine && window.gameEngine.isRanked;
+    const modeAccelMult = isRanked ? 1.25 : 1.0;
+    const currentAccel = this.accel * modeAccelMult;
+
     // WASD movement inputs
     let ax = 0;
     let ay = 0;
-    if (keys['w'] || keys['arrowup']) ay -= this.accel * sprintAccelMult;
-    if (keys['s'] || keys['arrowdown']) ay += this.accel * sprintAccelMult;
-    if (keys['a'] || keys['arrowleft']) ax -= this.accel * sprintAccelMult;
-    if (keys['d'] || keys['arrowright']) ax += this.accel * sprintAccelMult;
+    if (keys['w'] || keys['arrowup']) ay -= currentAccel * sprintAccelMult;
+    if (keys['s'] || keys['arrowdown']) ay += currentAccel * sprintAccelMult;
+    if (keys['a'] || keys['arrowleft']) ax -= currentAccel * sprintAccelMult;
+    if (keys['d'] || keys['arrowright']) ax += currentAccel * sprintAccelMult;
 
     // Normalize diagonal acceleration
     if (ax !== 0 && ay !== 0) {
@@ -291,8 +310,8 @@ export class Player {
       ay *= 0.7071;
     }
 
-    this.vx += ax;
-    this.vy += ay;
+    this.vx += ax * dtFactor;
+    this.vy += ay * dtFactor;
 
     // Point angle towards mouse cursor
     // Mouse coords are screen-space relative to player offset
@@ -554,7 +573,7 @@ export class Player {
   }
 
   // --- 8. Bot AI Logic (Single Player Offline Mode) ---
-  handleBotAI(map, soundEngine, currentTime, player, localPlayer) {
+  handleBotAI(map, soundEngine, currentTime, player, localPlayer, dtFactor) {
     // Check line of sight to player
     const distToPlayer = Math.hypot(this.x - player.x, this.y - player.y);
     const hasRawLOS = distToPlayer < 700 && this.checkLineOfSight(map, this.x, this.y, player.x, player.y);
@@ -679,6 +698,10 @@ export class Player {
     }
 
     // Steering movement towards target
+    const isRanked = window.gameEngine && window.gameEngine.isRanked;
+    const modeAccelMult = isRanked ? 1.25 : 1.0;
+    const currentAccel = this.accel * modeAccelMult;
+
     const distToTarget = Math.hypot(this.x - this.botTargetX, this.y - this.botTargetY);
     if (distToTarget > 10) {
       const moveAngle = Math.atan2(this.botTargetY - this.y, this.botTargetX - this.x);
@@ -687,8 +710,8 @@ export class Player {
         this.angle = moveAngle;
       }
       
-      this.vx += Math.cos(moveAngle) * this.accel;
-      this.vy += Math.sin(moveAngle) * this.accel;
+      this.vx += Math.cos(moveAngle) * currentAccel * dtFactor;
+      this.vy += Math.sin(moveAngle) * currentAccel * dtFactor;
     }
 
     // Proximity wall avoidance force to prevent sliding sticking
@@ -706,8 +729,8 @@ export class Player {
         avoidForceY += (dY / d) * force * 0.45;
       }
     }
-    this.vx += avoidForceX;
-    this.vy += avoidForceY;
+    this.vx += avoidForceX * dtFactor;
+    this.vy += avoidForceY * dtFactor;
 
     // Shooting behavior when chasing (burst firing)
     if (this.botState === 'chase' && hasLOS && !this.isReloading && this.ammoInMag > 0) {

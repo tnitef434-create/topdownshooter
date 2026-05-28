@@ -11,7 +11,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=Orbitron:wght@500;700;900&display=swap" rel="stylesheet">
   <!-- Style sheet -->
   <!-- Socket.io client (loaded dynamically via bundler or server, or we can just import from socket.io-client) -->
-  <script type="module" crossorigin src="/assets/index-BGVMMJQb.js"></script>
+  <script type="module" crossorigin src="/assets/index-WSu5J83a.js"></script>
   <link rel="stylesheet" crossorigin href="/assets/index-BTQUugCg.css">
 </head>
 <body>
@@ -499,6 +499,23 @@
             </label>
           </div>
 
+          <div class="setting-group checkbox-group">
+            <label class="checkbox-container">
+              Performance Mode (Disable shadows & slow blur effects for max FPS)
+              <input type="checkbox" id="setting-performance-mode">
+              <span class="checkmark"></span>
+            </label>
+          </div>
+
+          <div class="setting-group checkbox-group">
+            <label class="checkbox-container">
+              Show FPS Counter
+              <input type="checkbox" id="setting-show-fps">
+              <span class="checkmark"></span>
+            </label>
+          </div>
+
+
           <div style="display: flex; gap: 20px; margin-top: 20px;">
             <div class="controls-guide" style="flex: 1;">
               <h3>KEYBOARD & MOUSE</h3>
@@ -541,9 +558,22 @@
 
   </div>
 
-  <!-- Ranked Matchmaking Transition Video Overlay -->
-  <div id="ranked-video-overlay" style="position: fixed; inset: 0; z-index: 9999; background: #000; opacity: 0; pointer-events: none; transition: opacity 0.5s ease; display: none; align-items: center; justify-content: center;">
-    <video id="ranked-video" src="/fbee.mp4" style="width: 100%; height: 100%; object-fit: cover;" playsinline></video>
+  <!-- FPS Counter HUD Overlay -->
+  <div id="fps-counter" style="display: none; position: fixed; top: 12px; left: 12px; z-index: 9000; font: bold 12px 'Orbitron', monospace; color: #66fcf1; text-shadow: 0 0 6px #66fcf1; pointer-events: none; background: rgba(0, 0, 0, 0.5); padding: 4px 10px; border: 1px solid rgba(102, 252, 241, 0.25); border-radius: 4px; letter-spacing: 1px;">FPS: --</div>
+
+  <!-- Notification Container Top Right -->
+  <div id="notification-container" style="position: fixed; top: 20px; right: 20px; z-index: 10000; display: flex; flex-direction: column; gap: 10px; pointer-events: none;"></div>
+
+  <!-- Mobile Warning Screen Overlay -->
+  <div id="mobile-warning-screen" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #0a0c10; z-index: 99999; flex-direction: column; justify-content: center; align-items: center; color: #fff; text-align: center; padding: 30px; box-sizing: border-box; font-family: 'Orbitron', sans-serif;">
+    <div style="font-size: 70px; color: #ff3c3c; margin-bottom: 20px; filter: drop-shadow(0 0 10px rgba(255, 60, 60, 0.6));">⚠️</div>
+    <h1 style="font-size: 26px; font-weight: 900; letter-spacing: 2px; margin-bottom: 15px; color: #66fcf1; text-shadow: 0 0 8px rgba(102, 252, 241, 0.4);">DESKTOP ONLY REQUIRED</h1>
+    <p style="font-family: 'Inter', sans-serif; max-width: 480px; font-size: 13px; line-height: 1.6; color: #a2aab8; margin-bottom: 30px;">
+      TacticStrike is a high-speed competitive top-down tactical shooter optimized for desktop displays, keyboard/mouse, and gamepads. Mobile devices are currently not supported.
+    </p>
+    <div style="border: 1px solid rgba(102, 252, 241, 0.2); background: rgba(102, 252, 241, 0.05); padding: 12px 24px; border-radius: 4px; font-family: 'Inter', sans-serif; font-size: 11px; color: #66fcf1; letter-spacing: 1.5px; text-transform: uppercase;">
+      Please connect from a PC or laptop
+    </div>
   </div>
 
   <!-- Client-side Socket.io is imported dynamically inside main.js via build. -->

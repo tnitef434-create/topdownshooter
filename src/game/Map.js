@@ -19,7 +19,10 @@ export class Map {
 
     this.ambientLights = {
       brokenCeiling: { x: 731, y: 701, radius: 240, on: true },
-      lantern: { x: 1171, y: 250, radius: 180 }
+      lantern: { x: 1171, y: 250, radius: 180 },
+      kitchen: { x: 260, y: 250, radius: 200 },
+      garage: { x: 260, y: 1150, radius: 220 },
+      bedroom2: { x: 1171, y: 1150, radius: 190 }
     };
 
     this.generateMap();
@@ -512,6 +515,40 @@ export class Map {
         this.maskCtx.fill();
       }
 
+      // C. Cut out Kitchen Light (steady cyan light)
+      const kit = this.ambientLights.kitchen;
+      const kitchenGrad = this.maskCtx.createRadialGradient(kit.x, kit.y, 10, kit.x, kit.y, kit.radius);
+      kitchenGrad.addColorStop(0, 'rgba(255, 255, 255, 1.0)');
+      kitchenGrad.addColorStop(0.5, 'rgba(255, 255, 255, 0.45)');
+      kitchenGrad.addColorStop(1, 'rgba(255, 255, 255, 0.0)');
+      this.maskCtx.fillStyle = kitchenGrad;
+      this.maskCtx.beginPath();
+      this.maskCtx.arc(kit.x, kit.y, kit.radius, 0, Math.PI * 2);
+      this.maskCtx.fill();
+
+      // D. Cut out Garage Light (pulsing warning light)
+      const gar = this.ambientLights.garage;
+      const garagePulse = 1.0 + Math.sin(time / 300) * 0.05;
+      const garageGrad = this.maskCtx.createRadialGradient(gar.x, gar.y, 10, gar.x, gar.y, gar.radius * garagePulse);
+      garageGrad.addColorStop(0, 'rgba(255, 255, 255, 1.0)');
+      garageGrad.addColorStop(0.5, 'rgba(255, 255, 255, 0.45)');
+      garageGrad.addColorStop(1, 'rgba(255, 255, 255, 0.0)');
+      this.maskCtx.fillStyle = garageGrad;
+      this.maskCtx.beginPath();
+      this.maskCtx.arc(gar.x, gar.y, gar.radius * garagePulse, 0, Math.PI * 2);
+      this.maskCtx.fill();
+
+      // E. Cut out Bedroom 2 Light (steady warm lamp)
+      const bed2 = this.ambientLights.bedroom2;
+      const bed2Grad = this.maskCtx.createRadialGradient(bed2.x, bed2.y, 10, bed2.x, bed2.y, bed2.radius);
+      bed2Grad.addColorStop(0, 'rgba(255, 255, 255, 1.0)');
+      bed2Grad.addColorStop(0.5, 'rgba(255, 255, 255, 0.45)');
+      bed2Grad.addColorStop(1, 'rgba(255, 255, 255, 0.0)');
+      this.maskCtx.fillStyle = bed2Grad;
+      this.maskCtx.beginPath();
+      this.maskCtx.arc(bed2.x, bed2.y, bed2.radius, 0, Math.PI * 2);
+      this.maskCtx.fill();
+
       players.forEach(p => {
         if (p.health <= 0) return;
 
@@ -656,6 +693,78 @@ export class Map {
       ctx.shadowBlur = brokenLightOn ? 10 : 0;
       ctx.fillRect(bcl.x - 12, bcl.y - 2, 24, 4);
       ctx.shadowBlur = 0; // reset shadow
+
+      // C. Kitchen Light cold fluorescent cyan glow
+      const kitLight = this.ambientLights.kitchen;
+      const kGrad = ctx.createRadialGradient(kitLight.x, kitLight.y, 10, kitLight.x, kitLight.y, kitLight.radius);
+      kGrad.addColorStop(0, 'rgba(102, 252, 241, 0.20)');
+      kGrad.addColorStop(0.5, 'rgba(102, 252, 241, 0.08)');
+      kGrad.addColorStop(1, 'rgba(102, 252, 241, 0.0)');
+      ctx.fillStyle = kGrad;
+      ctx.beginPath();
+      ctx.arc(kitLight.x, kitLight.y, kitLight.radius, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Draw Kitchen fixture
+      ctx.fillStyle = '#333';
+      ctx.strokeStyle = '#555';
+      ctx.lineWidth = 1;
+      ctx.fillRect(kitLight.x - 12, kitLight.y - 12, 24, 24);
+      ctx.strokeRect(kitLight.x - 12, kitLight.y - 12, 24, 24);
+      ctx.fillStyle = '#66fcf1';
+      ctx.beginPath();
+      ctx.arc(kitLight.x, kitLight.y, 5, 0, Math.PI * 2);
+      ctx.fill();
+
+      // D. Garage Light pulsing warning red/orange glow
+      const garLight = this.ambientLights.garage;
+      const gPulse = 1.0 + Math.sin(time / 300) * 0.06;
+      const gGrad = ctx.createRadialGradient(garLight.x, garLight.y, 10, garLight.x, garLight.y, garLight.radius * gPulse);
+      gGrad.addColorStop(0, 'rgba(255, 60, 60, 0.22)');
+      gGrad.addColorStop(0.5, 'rgba(255, 60, 60, 0.09)');
+      gGrad.addColorStop(1, 'rgba(255, 60, 60, 0.0)');
+      ctx.fillStyle = gGrad;
+      ctx.beginPath();
+      ctx.arc(garLight.x, garLight.y, garLight.radius * gPulse, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Draw Garage fixture
+      ctx.fillStyle = '#222';
+      ctx.strokeStyle = '#ff3c3c';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(garLight.x, garLight.y, 8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#ff3c3c';
+      ctx.beginPath();
+      ctx.arc(garLight.x, garLight.y, 3.5, 0, Math.PI * 2);
+      ctx.fill();
+
+      // E. Bedroom 2 Light warm magenta/pink lamp glow
+      const bed2Light = this.ambientLights.bedroom2;
+      const b2Grad = ctx.createRadialGradient(bed2Light.x, bed2Light.y, 10, bed2Light.x, bed2Light.y, bed2Light.radius);
+      b2Grad.addColorStop(0, 'rgba(255, 110, 247, 0.20)');
+      b2Grad.addColorStop(0.5, 'rgba(255, 110, 247, 0.08)');
+      b2Grad.addColorStop(1, 'rgba(255, 110, 247, 0.0)');
+      ctx.fillStyle = b2Grad;
+      ctx.beginPath();
+      ctx.arc(bed2Light.x, bed2Light.y, bed2Light.radius, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Draw Bedroom 2 fixture
+      ctx.fillStyle = '#2d1822';
+      ctx.strokeStyle = '#ff6ef7';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(bed2Light.x, bed2Light.y, 9, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#ff6ef7';
+      ctx.beginPath();
+      ctx.arc(bed2Light.x, bed2Light.y, 4, 0, Math.PI * 2);
+      ctx.fill();
+
       ctx.restore();
     }
   }
@@ -665,7 +774,6 @@ export class Map {
     const lat = this.ambientLights.lantern;
     const distLat = Math.hypot(x - lat.x, y - lat.y);
     if (distLat < lat.radius + r) {
-      // Must also have line of sight from lantern to point
       return !this.getLineIntersection({ x: lat.x, y: lat.y }, { x, y });
     }
 
@@ -676,6 +784,27 @@ export class Map {
       if (distBcl < bcl.radius + r) {
         return !this.getLineIntersection({ x: bcl.x, y: bcl.y }, { x, y });
       }
+    }
+
+    // 3. Check Kitchen light
+    const kit = this.ambientLights.kitchen;
+    const distKit = Math.hypot(x - kit.x, y - kit.y);
+    if (distKit < kit.radius + r) {
+      return !this.getLineIntersection({ x: kit.x, y: kit.y }, { x, y });
+    }
+
+    // 4. Check Garage light
+    const gar = this.ambientLights.garage;
+    const distGar = Math.hypot(x - gar.x, y - gar.y);
+    if (distGar < gar.radius + r) {
+      return !this.getLineIntersection({ x: gar.x, y: gar.y }, { x, y });
+    }
+
+    // 5. Check Bedroom 2 light
+    const bed2 = this.ambientLights.bedroom2;
+    const distBed2 = Math.hypot(x - bed2.x, y - bed2.y);
+    if (distBed2 < bed2.radius + r) {
+      return !this.getLineIntersection({ x: bed2.x, y: bed2.y }, { x, y });
     }
 
     return false;

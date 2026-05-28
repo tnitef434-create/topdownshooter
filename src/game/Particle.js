@@ -85,7 +85,8 @@ class Particle {
     } else {
       // Standard glowing spark / smoke
       ctx.fillStyle = this.color;
-      if (this.color.startsWith('#66fc') || this.color.startsWith('#ff3c')) {
+      const perf = window.gameEngine && window.gameEngine.settings && window.gameEngine.settings.performanceMode;
+      if (!perf && (this.color.startsWith('#66fc') || this.color.startsWith('#ff3c'))) {
         ctx.shadowColor = this.color;
         ctx.shadowBlur = 4;
       }
@@ -190,10 +191,11 @@ export class ParticleEngine {
 
   // 1. Spawning sparks off wall bullet impacts
   spawnWallImpact(x, y, bulletAngle) {
+    const perf = window.gameEngine && window.gameEngine.settings && window.gameEngine.settings.performanceMode;
     const bounceAngle = bulletAngle + Math.PI; // push backwards
     
     // Sparks
-    const numSparks = Math.floor(Math.random() * 4) + 3;
+    const numSparks = perf ? 1 : Math.floor(Math.random() * 4) + 3;
     for (let i = 0; i < numSparks; i++) {
       const angle = bounceAngle + (Math.random() - 0.5) * 1.2;
       const speed = Math.random() * 3 + 2;
@@ -210,21 +212,24 @@ export class ParticleEngine {
     }
 
     // Small smoke puff
-    this.particles.push(new Particle(
-      x, y, 
-      (Math.random() - 0.5) * 0.3, 
-      (Math.random() - 0.5) * 0.3, 
-      'rgba(197, 198, 199, 0.25)', 
-      Math.random() * 6 + 4, 1.0, 0.03, 'smoke'
-    ));
+    if (!perf) {
+      this.particles.push(new Particle(
+        x, y, 
+        (Math.random() - 0.5) * 0.3, 
+        (Math.random() - 0.5) * 0.3, 
+        'rgba(197, 198, 199, 0.25)', 
+        Math.random() * 6 + 4, 1.0, 0.03, 'smoke'
+      ));
+    }
   }
 
   // 2. Splattering blood when operatives are shot
   spawnBloodSplatter(x, y, bulletAngle) {
     if (!this.bloodEnabled) return;
+    const perf = window.gameEngine && window.gameEngine.settings && window.gameEngine.settings.performanceMode;
 
     // Fleshy red splatters spraying along bullet trajectory
-    const numSplatters = Math.floor(Math.random() * 6) + 6;
+    const numSplatters = perf ? 2 : Math.floor(Math.random() * 6) + 6;
     for (let i = 0; i < numSplatters; i++) {
       const angle = bulletAngle + (Math.random() - 0.5) * 1.1; // spray forward
       const speed = Math.random() * 4.5 + 2.5;
@@ -246,6 +251,9 @@ export class ParticleEngine {
 
   // 3. Ejecting brass shells from gun ejection ports
   spawnGunCasing(x, y, playerAngle, weaponKey) {
+    const perf = window.gameEngine && window.gameEngine.settings && window.gameEngine.settings.performanceMode;
+    if (perf) return; // Skip casing & smoke completely in Performance Mode
+
     // Eject to the right side of gun barrel (playerAngle + 90 deg)
     const ejectAngle = playerAngle + Math.PI / 2 + (Math.random() - 0.5) * 0.5;
     const speed = Math.random() * 2.0 + 1.8;
@@ -277,7 +285,8 @@ export class ParticleEngine {
 
   // 4. Debris when wooden crates break
   spawnCrateSplinters(x, y) {
-    const numSplinters = Math.floor(Math.random() * 12) + 10;
+    const perf = window.gameEngine && window.gameEngine.settings && window.gameEngine.settings.performanceMode;
+    const numSplinters = perf ? 3 : Math.floor(Math.random() * 12) + 10;
     
     for (let i = 0; i < numSplinters; i++) {
       const angle = Math.random() * Math.PI * 2;
@@ -294,21 +303,25 @@ export class ParticleEngine {
     }
 
     // Large smoke cloud on break
-    for (let i = 0; i < 4; i++) {
-      this.particles.push(new Particle(
-        x + (Math.random() - 0.5) * 10,
-        y + (Math.random() - 0.5) * 10,
-        (Math.random() - 0.5) * 0.8,
-        (Math.random() - 0.5) * 0.8,
-        'rgba(140, 130, 120, 0.2)',
-        Math.random() * 12 + 8, 1.0, 0.02, 'smoke'
-      ));
+    if (!perf) {
+      for (let i = 0; i < 4; i++) {
+        this.particles.push(new Particle(
+          x + (Math.random() - 0.5) * 10,
+          y + (Math.random() - 0.5) * 10,
+          (Math.random() - 0.5) * 0.8,
+          (Math.random() - 0.5) * 0.8,
+          'rgba(140, 130, 120, 0.2)',
+          Math.random() * 12 + 8, 1.0, 0.02, 'smoke'
+        ));
+      }
     }
   }
 
   // 5. Spawning bright flashbang particles
   spawnFlashbangBurst(x, y) {
-    const numSparks = 30;
+    const perf = window.gameEngine && window.gameEngine.settings && window.gameEngine.settings.performanceMode;
+    const numSparks = perf ? 8 : 30;
+    
     for (let i = 0; i < numSparks; i++) {
       const angle = Math.random() * Math.PI * 2;
       const speed = Math.random() * 7 + 3;
@@ -323,21 +336,24 @@ export class ParticleEngine {
       ));
     }
     // Add white smoke puffs
-    for (let i = 0; i < 10; i++) {
-      const angle = Math.random() * Math.PI * 2;
-      const speed = Math.random() * 2.5;
-      const vx = Math.cos(angle) * speed;
-      const vy = Math.sin(angle) * speed;
-      this.particles.push(new Particle(
-        x, y, vx, vy,
-        'rgba(255, 255, 255, 0.4)',
-        Math.random() * 20 + 10, 1.0, 0.015, 'smoke'
-      ));
+    if (!perf) {
+      for (let i = 0; i < 10; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = Math.random() * 2.5;
+        const vx = Math.cos(angle) * speed;
+        const vy = Math.sin(angle) * speed;
+        this.particles.push(new Particle(
+          x, y, vx, vy,
+          'rgba(255, 255, 255, 0.4)',
+          Math.random() * 20 + 10, 1.0, 0.015, 'smoke'
+        ));
+      }
     }
   }
 
   // 6. Dash visual effects (wind trails and dust puff)
   spawnDashParticles(x, y, angle, colorThemeKey = 'cyan') {
+    const perf = window.gameEngine && window.gameEngine.settings && window.gameEngine.settings.performanceMode;
     const themeColors = {
       cyan: '#66fcf1',
       green: '#5eff39',
@@ -350,7 +366,7 @@ export class ParticleEngine {
     
     // Dust clouds shooting backwards
     const oppositeAngle = angle + Math.PI;
-    const numDust = 12;
+    const numDust = perf ? 2 : 12;
     for (let i = 0; i < numDust; i++) {
       const pAngle = oppositeAngle + (Math.random() - 0.5) * 0.6;
       const speed = Math.random() * 2.5 + 1.2;
@@ -366,7 +382,7 @@ export class ParticleEngine {
     }
 
     // Speed streaks/sparks shooting forward/outward along player direction
-    const numSparks = 18;
+    const numSparks = perf ? 3 : 18;
     for (let i = 0; i < numSparks; i++) {
       const pAngle = angle + (Math.random() - 0.5) * 0.7;
       const speed = Math.random() * 8 + 4;

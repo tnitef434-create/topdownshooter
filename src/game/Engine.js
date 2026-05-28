@@ -98,6 +98,9 @@ export class Engine {
       this.particles = new ParticleEngine();
       this.particles.setBloodEnabled(config.settings.blood);
       this.settings = config.settings;
+      if (this.settings && this.settings.performanceMode) {
+        this.settings.shadows = false;
+      }
       
       // Start loading the 3D character model (async, non-blocking)
       CharacterRenderer.init().catch(e => console.warn('[Engine] CharacterRenderer init failed:', e));
@@ -203,11 +206,19 @@ export class Engine {
       this.countdownTimer = 3; // countdown seconds
       this.matchTime = 120; // 2 minutes round time limit
       
-      // Timing
+      // timing
       this.lastTime = performance.now();
       this.roundStartTime = 0;
       this.countdownStart = 0;
       this.matchTimerInterval = null;
+      
+      // Global engine reference for player speed logic
+      window.gameEngine = this;
+
+      // FPS tracking variables
+      this.fpsFrameCount = 0;
+      this.fpsLastTick = performance.now();
+      this.currentFPS = 0;
       
       // Controls binding
       this.keys = {};
@@ -547,6 +558,9 @@ export class Engine {
   updateSettings(settings) {
     if (this.sound) this.sound.setVolume(settings.volume);
     if (this.particles) this.particles.setBloodEnabled(settings.blood);
+    if (settings && settings.performanceMode) {
+      settings.shadows = false;
+    }
     this.settings = settings;
   }
 
@@ -854,6 +868,19 @@ export class Engine {
     
     const now = performance.now();
     this.lastTime = now;
+
+    // Track FPS
+    this.fpsFrameCount++;
+    if (now - this.fpsLastTick >= 1000) {
+      this.currentFPS = Math.round((this.fpsFrameCount * 1000) / (now - this.fpsLastTick));
+      this.fpsFrameCount = 0;
+      this.fpsLastTick = now;
+      
+      const counterEl = document.getElementById('fps-counter');
+      if (counterEl && this.settings && this.settings.showFps) {
+        counterEl.innerText = `FPS: ${this.currentFPS}`;
+      }
+    }
 
     try {
       this.update(now);

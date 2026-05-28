@@ -36,7 +36,13 @@ export class Network {
       }
 
       if (state.health !== undefined) {
-        remotePlayer.health = state.health;
+        // Only accept health updates from state packets if they are lower or equal to current health,
+        // or if they indicate a round reset (health === 100).
+        // This prevents the "health goes back up" glitch after hitting someone.
+        // Healing (health going up) is handled authoritatively by 'opponent-health-sync' when items are picked up.
+        if (state.health <= remotePlayer.health || state.health === 100) {
+          remotePlayer.health = state.health;
+        }
       }
 
       let buffer = this.opponentStateBuffers.get(state.id);
@@ -202,6 +208,15 @@ export class Network {
   // --- Entity Interpolation loop ---
   // Interpolates all remote players' positions and rotations based on delayed server ticks
   interpolateOpponents() {
+    const nowMs = Date.now();
+    if (!this.lastInterpolateTime) {
+      this.lastInterpolateTime = nowMs;
+    }
+    const dt = nowMs - this.lastInterpolateTime;
+    this.lastInterpolateTime = nowMs;
+    const clampedDt = Math.max(1, Math.min(100, dt));
+    const dtFactor = clampedDt / 16.67;
+
     this.engine.remotePlayers.forEach((opponent, id) => {
       const buffer = this.opponentStateBuffers.get(id);
       if (!opponent || !buffer || buffer.length === 0) return;
@@ -246,10 +261,11 @@ export class Network {
         // Fallback: If lagging and don't have surround states, slide towards latest packet
         const latest = buffer[buffer.length - 1];
         const lerpFactor = 0.25; // responsive snap
+        const currentLerp = 1 - Math.pow(1 - lerpFactor, dtFactor);
         
-        opponent.x += (latest.x - opponent.x) * lerpFactor;
-        opponent.y += (latest.y - opponent.y) * lerpFactor;
-        opponent.angle = this.lerpAngle(opponent.angle, latest.angle, lerpFactor);
+        opponent.x += (latest.x - opponent.x) * currentLerp;
+        opponent.y += (latest.y - opponent.y) * currentLerp;
+        opponent.angle = this.lerpAngle(opponent.angle, latest.angle, currentLerp);
         
         opponent.vx = latest.vx;
         opponent.vy = latest.vy;

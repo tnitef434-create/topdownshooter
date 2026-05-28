@@ -187,13 +187,17 @@ export class Bullet {
   draw(ctx) {
     if (!this.active) return;
 
+    const perf = window.gameEngine && window.gameEngine.settings && window.gameEngine.settings.performanceMode;
+
     if (this.weaponKey === 'knife') {
       ctx.save();
       ctx.lineWidth = 3.5;
       ctx.lineCap = 'round';
       ctx.strokeStyle = 'rgba(230, 235, 255, 0.85)';
-      ctx.shadowColor = '#66fcf1';
-      ctx.shadowBlur = 6;
+      if (!perf) {
+        ctx.shadowColor = '#66fcf1';
+        ctx.shadowBlur = 6;
+      }
       ctx.beginPath();
       ctx.arc(this.x, this.y, 18, this.angle - 0.6, this.angle + 0.6);
       ctx.stroke();
@@ -215,14 +219,14 @@ export class Bullet {
       gradient.addColorStop(0, 'rgba(102, 252, 241, 0.0)');
       gradient.addColorStop(1, 'rgba(102, 252, 241, 1.0)');
       ctx.strokeStyle = gradient;
-      ctx.shadowColor = '#66fcf1';
+      if (!perf) ctx.shadowColor = '#66fcf1';
     } else {
       gradient.addColorStop(0, 'rgba(255, 60, 60, 0.0)');
       gradient.addColorStop(1, 'rgba(255, 60, 60, 1.0)');
       ctx.strokeStyle = gradient;
-      ctx.shadowColor = '#ff3c3c';
+      if (!perf) ctx.shadowColor = '#ff3c3c';
     }
-    ctx.shadowBlur = 4;
+    if (!perf) ctx.shadowBlur = 4;
 
     ctx.beginPath();
     ctx.moveTo(this.prevX, this.prevY);

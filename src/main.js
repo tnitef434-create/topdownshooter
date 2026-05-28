@@ -553,13 +553,18 @@ const gameSettings = {
   laser: true,
   serverUrl: '',
   musicMuted: false,
-  sfxMuted: false
+  sfxMuted: false,
+  performanceMode: false,
+  showFps: false
 };
 
 // 1. Initialize Settings
 function initSettings() {
   // Load from LocalStorage if available
   const savedSettings = safeStorage.getItem('tacticstrike_settings');
+  const showFpsCb = document.getElementById('setting-show-fps');
+  const perfModeCb = document.getElementById('setting-performance-mode');
+
   if (savedSettings) {
     try {
       const parsed = JSON.parse(savedSettings);
@@ -571,6 +576,13 @@ function initSettings() {
       if (settings.shadows) settings.shadows.checked = gameSettings.shadows;
       if (settings.laser) settings.laser.checked = gameSettings.laser;
       if (settings.serverUrl) settings.serverUrl.value = gameSettings.serverUrl || '';
+      if (showFpsCb) showFpsCb.checked = !!gameSettings.showFps;
+      if (perfModeCb) perfModeCb.checked = !!gameSettings.performanceMode;
+      
+      const counter = document.getElementById('fps-counter');
+      if (counter) {
+        counter.style.display = gameSettings.showFps ? 'block' : 'none';
+      }
       
       isMusicMuted = !!gameSettings.musicMuted;
       const muteMusicCb = document.getElementById('setting-mute-music');
@@ -587,6 +599,24 @@ function initSettings() {
   }
 
   // Bind settings UI changes safely
+  if (showFpsCb) {
+    showFpsCb.addEventListener('change', (e) => {
+      gameSettings.showFps = e.target.checked;
+      const counter = document.getElementById('fps-counter');
+      if (counter) {
+        counter.style.display = gameSettings.showFps ? 'block' : 'none';
+      }
+      saveSettings();
+    });
+  }
+
+  if (perfModeCb) {
+    perfModeCb.addEventListener('change', (e) => {
+      gameSettings.performanceMode = e.target.checked;
+      saveSettings();
+    });
+  }
+
   if (settings.serverUrl) {
     settings.serverUrl.addEventListener('input', (e) => {
       gameSettings.serverUrl = e.target.value.trim();
@@ -1672,8 +1702,97 @@ function setupMainMenuWeaponSelector() {
   });
 }
 
+function showNotification(message, duration = 8000) {
+  const container = document.getElementById('notification-container');
+  if (!container) return;
+
+  const toast = document.createElement('div');
+  toast.className = 'custom-toast';
+  toast.style.cssText = `
+    background: rgba(10, 15, 25, 0.95);
+    border: 1px solid #66fcf1;
+    box-shadow: 0 0 15px rgba(102, 252, 241, 0.25);
+    border-radius: 6px;
+    padding: 14px 20px;
+    color: #fff;
+    font-family: 'Inter', sans-serif;
+    font-size: 12px;
+    letter-spacing: 0.5px;
+    line-height: 1.5;
+    min-width: 280px;
+    max-width: 360px;
+    pointer-events: auto;
+    cursor: pointer;
+    opacity: 0;
+    transform: translateX(50px);
+    transition: all 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    position: relative;
+    overflow: hidden;
+  `;
+  
+  // Left color border bar
+  const borderBar = document.createElement('div');
+  borderBar.style.cssText = `
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 4px;
+    background: #66fcf1;
+  `;
+  toast.appendChild(borderBar);
+
+  const textNode = document.createElement('div');
+  textNode.style.paddingLeft = '6px';
+  textNode.innerText = message;
+  toast.appendChild(textNode);
+
+  // Click to close
+  toast.addEventListener('click', () => {
+    toast.style.opacity = '0';
+    toast.style.transform = 'translateX(50px)';
+    setTimeout(() => toast.remove(), 350);
+  });
+
+  container.appendChild(toast);
+
+  // Trigger animation next frame
+  requestAnimationFrame(() => {
+    toast.style.opacity = '1';
+    toast.style.transform = 'translateX(0)';
+  });
+
+  // Auto remove
+  setTimeout(() => {
+    if (toast.parentNode) {
+      toast.style.opacity = '0';
+      toast.style.transform = 'translateX(50px)';
+      setTimeout(() => toast.remove(), 350);
+    }
+  }, duration);
+}
+
 // App Bootstrap
 document.addEventListener('DOMContentLoaded', () => {
+  // Mobile check
+  const isMobile = /Mobi|Android|iPhone|iPad|iPod|Windows Phone|webOS/i.test(navigator.userAgent) || window.innerWidth < 800;
+  if (isMobile) {
+    const warning = document.getElementById('mobile-warning-screen');
+    if (warning) {
+      warning.style.display = 'flex';
+    }
+    return; // Block initialization
+  }
+
+  // Show standard update and performance notification
+  setTimeout(() => {
+    showNotification("The game is actively being updated and fixed, sorry for any issues you run into!", 12000);
+  }, 1000);
+
+  setTimeout(() => {
+    showNotification("Low FPS? Try enabling the new 'Performance Mode' in Settings to boost your frame rate!", 14000);
+  }, 3500);
+
   // Forfeit/crash detection
   const activeMatch = localStorage.getItem('tacticstrike_active_match');
   if (activeMatch) {
