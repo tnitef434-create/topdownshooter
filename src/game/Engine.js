@@ -479,10 +479,10 @@ export class Engine {
       setTimeout(() => { this.keys['r'] = false; }, 80);
     }
 
-    // ── Cross / X (button 0) = dash ───────────────────────────────────────────
-    if (pressed(0) && !prev(0)) {
-      this.localPlayer.dashRequest = true;
-    }
+    // ── Cross / X (button 0) = dash (injects spacebar key, which Player.js reads) ──
+    // Hold spacebar key active for one frame when X is newly pressed,
+    // but only if the dash cooldown has expired (mirrors what keyboard does).
+    this.keys[' '] = pressed(0);
 
     // ── Triangle (button 3) = flashlight toggle ───────────────────────────────
     if (pressed(3) && !prev(3)) {
