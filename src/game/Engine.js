@@ -1021,7 +1021,8 @@ export class Engine {
           color: p.colorTheme,
           name: p.name,
           flashlightActive: p.flashlightActive,
-          flashAlpha: p.flashAlpha
+          flashAlpha: p.flashAlpha,
+          radius: p.radius
         })),
         bullets: this.bullets.map(b => ({
           x: b.x,
@@ -1357,7 +1358,7 @@ export class Engine {
       if (this.settings.shadows && fLocalPlayer && fLocalPlayer.health > 0 && !p.isLocal) {
         const inFlashlight = fLocalPlayer.flashlightActive && fLocalPlayer.lightPoly && this.isPointInPolygon({ x: p.x, y: p.y }, fLocalPlayer.lightPoly);
         const hasLOS = !this.map.getLineIntersection({ x: fLocalPlayer.x, y: fLocalPlayer.y }, { x: p.x, y: p.y });
-        const inAmbientLight = this.map.isPointInAmbientLight(p.x, p.y);
+        const inAmbientLight = this.map.isPointInAmbientLight(p.x, p.y, p.radius || 18);
         visible = inFlashlight || p.isTeammate || (p.flashlightActive && hasLOS) || (inAmbientLight && hasLOS);
       }
       

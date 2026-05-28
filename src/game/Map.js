@@ -660,11 +660,11 @@ export class Map {
     }
   }
 
-  isPointInAmbientLight(x, y) {
+  isPointInAmbientLight(x, y, r = 0) {
     // 1. Check lantern (always active)
     const lat = this.ambientLights.lantern;
     const distLat = Math.hypot(x - lat.x, y - lat.y);
-    if (distLat < lat.radius) {
+    if (distLat < lat.radius + r) {
       // Must also have line of sight from lantern to point
       return !this.getLineIntersection({ x: lat.x, y: lat.y }, { x, y });
     }
@@ -673,7 +673,7 @@ export class Map {
     const bcl = this.ambientLights.brokenCeiling;
     if (bcl.on) {
       const distBcl = Math.hypot(x - bcl.x, y - bcl.y);
-      if (distBcl < bcl.radius) {
+      if (distBcl < bcl.radius + r) {
         return !this.getLineIntersection({ x: bcl.x, y: bcl.y }, { x, y });
       }
     }
