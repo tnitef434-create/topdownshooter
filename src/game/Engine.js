@@ -217,6 +217,20 @@ export class Engine {
       this.lastSprintTime = performance.now();
       this.sprintTipVisible = false;
 
+      // --- Shrinking Zone (battle-royale circle) ---
+      this.zone = {
+        active: false,
+        currentRadius: 0,
+        targetRadius: 0,
+        centerX: this.mapWidth / 2,
+        centerY: this.mapHeight / 2,
+        shrinkSpeed: 0,
+        damage: 20,          // HP/s when outside
+        lastDamageTick: 0,
+        warnShown: false
+      };
+      this.zoneTimer = null;
+
       // Setup
       this.resizeCanvas();
       this.setupControls();
@@ -387,6 +401,114 @@ export class Engine {
     if (slot1) slot1.addEventListener('click', this.invSlot1Handler);
     if (slot2) slot2.addEventListener('click', this.invSlot2Handler);
     if (slot3) slot3.addEventListener('click', this.invSlot3Handler);
+
+    // Gamepad / PS5 DualSense support
+    this.setupGamepad();
+  }
+
+  // ── Gamepad / PS5 DualSense support ─────────────────────────────────────────
+  setupGamepad() {
+    this._gamepadState = {
+      prevButtons: [],
+      deadzone: 0.18,
+      aimAngle: 0,
+      aimActive: false
+    };
+
+    const GP = this._gamepadState;
+
+    const tickGamepad = () => {
+      if (!this.active) return;
+      this._gamepadLoopId = requestAnimationFrame(tickGamepad);
+
+      const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+      let gp = null;
+      for (let i = 0; i < gamepads.length; i++) {
+        if (gamepads[i]) { gp = gamepads[i]; break; }
+      }
+      if (!gp || !this.localPlayer || this.localPlayer.health <= 0) return;
+
+      const { deadzone } = GP;
+      const btn = (i) => gp.buttons[i];
+      const pressed = (i) => btn(i) && btn(i).pressed;
+      const value   = (i) => btn(i) ? btn(i).value : 0;
+
+      // ── Left stick: move ───────────────────────────────────────────────────
+      const lx = Math.abs(gp.axes[0]) > deadzone ? gp.axes[0] : 0;
+      const ly = Math.abs(gp.axes[1]) > deadzone ? gp.axes[1] : 0;
+
+      // Inject into keyboard state so Player.update() handles movement
+      this.keys['w'] = ly < -deadzone;
+      this.keys['s'] = ly >  deadzone;
+      this.keys['a'] = lx < -deadzone;
+      this.keys['d'] = lx >  deadzone;
+
+      // Left-stick click (L3) = sprint
+      // PS5: button 10 = L3
+      this.keys['shift'] = pressed(10);
+
+      // ── Right stick: aim ──────────────────────────────────────────────────
+      const rx = Math.abs(gp.axes[2]) > deadzone ? gp.axes[2] : 0;
+      const ry = Math.abs(gp.axes[3]) > deadzone ? gp.axes[3] : 0;
+      if (Math.hypot(rx, ry) > deadzone) {
+        GP.aimAngle = Math.atan2(ry, rx);
+        GP.aimActive = true;
+      } else {
+        GP.aimActive = false;
+      }
+      if (GP.aimActive) {
+        this.mouse.angle = GP.aimAngle;
+        this.localPlayer.angle = GP.aimAngle;
+      }
+
+      // ── R2 (button 7) = shoot ─────────────────────────────────────────────
+      this.mouse.clicked = value(7) > 0.3;
+
+      // ── L1 / R1 (buttons 4/5) = cycle inventory slots ────────────────────
+      const prevL1 = GP.prevButtons[4] || false;
+      const prevR1 = GP.prevButtons[5] || false;
+      if (pressed(4) && !prevL1) {
+        // L1 → switch to primary
+        this.localPlayer.switchSlot(1);
+      }
+      if (pressed(5) && !prevR1) {
+        // R1 → switch to knife (slot 2)
+        this.localPlayer.switchSlot(2);
+      }
+
+      // ── O (button 1) = reload ─────────────────────────────────────────────
+      const prevO = GP.prevButtons[1] || false;
+      if (pressed(1) && !prevO) {
+        this.keys['r'] = true;
+        setTimeout(() => { this.keys['r'] = false; }, 80);
+      }
+
+      // ── X (button 0) = dash ───────────────────────────────────────────────
+      const prevX = GP.prevButtons[0] || false;
+      if (pressed(0) && !prevX) {
+        this.localPlayer.dashRequest = true;
+      }
+
+      // ── Triangle (button 3) = flashlight toggle ──────────────────────────
+      const prevTri = GP.prevButtons[3] || false;
+      if (pressed(3) && !prevTri) {
+        this.localPlayer.flashlightActive = !this.localPlayer.flashlightActive;
+        try { this.sound.playMetallicClick(0, 1800, 0.05, 0.15); } catch(e) {}
+      }
+
+      // ── Square (button 2) = throw flash grenade ──────────────────────────
+      const prevSq = GP.prevButtons[2] || false;
+      if (pressed(2) && !prevSq) {
+        if (this.localPlayer.flashGrenades > 0) {
+          this.localPlayer.throwFlashbangRequest = true;
+        }
+      }
+
+      // Store previous button states for edge detection
+      GP.prevButtons = gp.buttons.map(b => b && b.pressed);
+    };
+
+    tickGamepad();
   }
 
   destroy() {
@@ -409,6 +531,14 @@ export class Engine {
     
     if (this.matchTimerInterval) {
       clearInterval(this.matchTimerInterval);
+    }
+    if (this.zoneTimer) {
+      clearTimeout(this.zoneTimer);
+      this.zoneTimer = null;
+    }
+    if (this._gamepadLoopId) {
+      cancelAnimationFrame(this._gamepadLoopId);
+      this._gamepadLoopId = null;
     }
     
     if (this.network) {
@@ -497,6 +627,18 @@ export class Engine {
     const hudStatus = document.getElementById('hud-status');
     if (hudStatus) hudStatus.innerText = `ROUND ${this.roundNumber} - COOLDOWN`;
     
+    // Reset shrinking zone
+    if (this.zoneTimer) { clearTimeout(this.zoneTimer); this.zoneTimer = null; }
+    const halfMap = Math.max(this.mapWidth, this.mapHeight) / 2;
+    this.zone.active = false;
+    this.zone.currentRadius = halfMap * 1.05;  // starts fully covering map
+    this.zone.targetRadius  = halfMap * 1.05;
+    this.zone.centerX = this.mapWidth  / 2;
+    this.zone.centerY = this.mapHeight / 2;
+    this.zone.shrinkSpeed = 0;
+    this.zone.lastDamageTick = 0;
+    this.zone.warnShown = false;
+
     // Sound FX init (0 = play immediately from AudioContext.currentTime)
     try { this.sound.playFrictionalScrape(0, 0.5, 0.1); } catch(e) {}
   }
@@ -524,6 +666,35 @@ export class Engine {
         if (timerDisplay) timerDisplay.innerText = `${mins}:${secs}`;
       }
     }, 1000);
+
+    // ── Shrinking Zone: activate after 40 seconds ──────────────────────────
+    if (this.zoneTimer) clearTimeout(this.zoneTimer);
+    this.zoneTimer = setTimeout(() => {
+      if (this.gameState !== 'playing') return;
+      // Final circle radius = 15% of map half so players must converge
+      const halfMap = Math.max(this.mapWidth, this.mapHeight) / 2;
+      this.zone.active       = true;
+      this.zone.currentRadius = halfMap * 1.05;
+      this.zone.targetRadius  = halfMap * 0.12;  // final tight radius
+      // Shrink over 60 seconds to final size
+      this.zone.shrinkSpeed  = (this.zone.currentRadius - this.zone.targetRadius) / (60 * 60); // per frame @60fps
+      this.zone.lastDamageTick = performance.now();
+      this.zone.centerX = this.mapWidth  / 2;
+      this.zone.centerY = this.mapHeight / 2;
+
+      // Flash warning to HUD
+      const ws = document.getElementById('hud-status');
+      if (ws) {
+        ws.innerText = '⚠ ZONE CLOSING IN!';
+        ws.style.color = '#ff3c3c';
+        setTimeout(() => {
+          if (this.gameState === 'playing' && ws) {
+            ws.innerText = 'ENGAGE TARGET';
+            ws.style.color = '';
+          }
+        }, 2500);
+      }
+    }, 40000);
   }
 
   // Triggered when a team dies or time runs out
@@ -934,6 +1105,32 @@ export class Engine {
     const avgTeam2HP = team2List.reduce((sum, p) => sum + p.health, 0) / team2List.length;
     const oppHpBar = document.getElementById('hud-opponent-hp');
     if (oppHpBar) oppHpBar.style.width = `${Math.max(0, avgTeam2HP)}%`;
+
+    // ── Zone shrink tick ─────────────────────────────────────────────────────
+    if (this.zone.active && this.gameState === 'playing') {
+      // Slowly shrink radius each frame
+      if (this.zone.currentRadius > this.zone.targetRadius) {
+        this.zone.currentRadius = Math.max(this.zone.targetRadius, this.zone.currentRadius - this.zone.shrinkSpeed);
+      }
+
+      // Apply damage to all players outside the zone every second
+      const now = currentTime;
+      if (now - this.zone.lastDamageTick >= 1000) {
+        this.zone.lastDamageTick = now;
+        this.players.forEach(p => {
+          if (p.health <= 0) return;
+          const dx = p.x - this.zone.centerX;
+          const dy = p.y - this.zone.centerY;
+          const distFromCenter = Math.sqrt(dx * dx + dy * dy);
+          if (distFromCenter > this.zone.currentRadius) {
+            p.takeDamage(this.zone.damage, this.sound);
+            if (p.isLocal && !p.isBot) {
+              if (p.showTextNotification) p.showTextNotification('-20 ZONE DAMAGE');
+            }
+          }
+        });
+      }
+    }
 
     // 5. Check team-wide wipeout conditions
     if (this.gameState === 'playing') {
@@ -1503,6 +1700,42 @@ export class Engine {
       });
     } else if (this.grenades) {
       this.grenades.forEach(g => g.draw(this.ctx));
+    }
+
+    // ── Draw shrinking zone circle ──────────────────────────────────────────
+    if (!frame && this.zone && this.zone.active) {
+      const z = this.zone;
+      const now = Date.now();
+      const pulse = Math.sin(now / 300) * 0.15 + 0.85;
+
+      this.ctx.save();
+      // Danger fill outside the safe zone — draw as a large disc minus inner circle
+      // We use a clip-path trick: draw full rect then punch safe circle out
+      this.ctx.beginPath();
+      // Outer boundary (entire map with margin)
+      this.ctx.rect(-100, -100, this.mapWidth + 200, this.mapHeight + 200);
+      // Inner safe zone (cut out)
+      this.ctx.arc(z.centerX, z.centerY, z.currentRadius, 0, Math.PI * 2, true);
+      this.ctx.fillStyle = `rgba(255, 30, 30, ${0.12 * pulse})`;
+      this.ctx.fill('evenodd');
+
+      // Safe zone border ring
+      this.ctx.beginPath();
+      this.ctx.arc(z.centerX, z.centerY, z.currentRadius, 0, Math.PI * 2);
+      this.ctx.strokeStyle = `rgba(255, 50, 50, ${0.85 * pulse})`;
+      this.ctx.lineWidth = 4;
+      this.ctx.shadowColor = '#ff2222';
+      this.ctx.shadowBlur = 18;
+      this.ctx.stroke();
+      this.ctx.shadowBlur = 0;
+
+      // Inner glow ring
+      this.ctx.beginPath();
+      this.ctx.arc(z.centerX, z.centerY, z.currentRadius, 0, Math.PI * 2);
+      this.ctx.strokeStyle = `rgba(255, 150, 150, ${0.3 * pulse})`;
+      this.ctx.lineWidth = 12;
+      this.ctx.stroke();
+      this.ctx.restore();
     }
 
     // Restore viewport translations
