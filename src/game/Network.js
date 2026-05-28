@@ -80,6 +80,7 @@ export class Network {
 
     // 3. Receive hit notification (the opponent shot us)
     this.socket.on('damage-taken', (hitData) => {
+      if (this.engine.gameState !== 'playing') return;
       if (hitData.targetId === this.localPlayer.id) {
         // Take damage locally
         this.localPlayer.takeDamage(hitData.damage, this.sound);
