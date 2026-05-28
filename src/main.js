@@ -46,7 +46,9 @@ const btns = {
 const inputs = {
   name: document.getElementById('player-name-input'),
   roomCode: document.getElementById('room-code-input'),
-  chat: document.getElementById('chat-input')
+  chat: document.getElementById('chat-input'),
+  qpMapSelect: document.getElementById('qp-map-select'),
+  lobbyMapSelect: document.getElementById('lobby-map-select')
 };
 
 const displays = {
@@ -218,6 +220,7 @@ let isReady = false;
 let lobbyPlayers = [];
 let currentMatchSource = 'menu'; // 'ranked', 'casual', 'practice'
 let qpRenderStyle = safeStorage.getItem('tacticstrike_qp_style') || 'realistic';
+let selectedMapId = safeStorage.getItem('tacticstrike_selected_map') || 'manor';
 
 // ── Career Stats (localStorage) ────────────────────────────────────────────
 function loadCareerStats() {
@@ -864,6 +867,19 @@ function updateLobbyUI(players) {
     btns.readyToggle.className = isReady ? 'btn secondary' : 'btn primary';
     btns.readyToggle.innerText = isReady ? 'CANCEL READY' : 'READY TO DEPLOY';
   }
+
+  // Update map select dropdown visibility and accessibility
+  const lobbyMapContainer = document.getElementById('lobby-map-selector-container');
+  const lobbyMapSelect = document.getElementById('lobby-map-select');
+  if (lobbyMapContainer && lobbyMapSelect) {
+    if (currentMatchSource === 'ranked') {
+      lobbyMapContainer.style.display = 'none';
+    } else {
+      lobbyMapContainer.style.display = 'block';
+      const isHost = players[0] && players[0].id === socket.id;
+      lobbyMapSelect.disabled = !isHost;
+    }
+  }
 }
 
 // 5. Connect to Socket.io Server
@@ -938,10 +954,17 @@ function connectSocket() {
   });
 
   // Socket Events
-  socket.on('room-created', ({ roomId, players, autoMatch, mode }) => {
+  socket.on('room-created', ({ roomId, players, autoMatch, mode, mapId }) => {
     currentRoom = roomId;
     if (mode) myMode = mode;
     displays.roomCode.innerText = roomId;
+    
+    // Sync map choice
+    const lobbyMapSelect = document.getElementById('lobby-map-select');
+    if (lobbyMapSelect && mapId) {
+      lobbyMapSelect.value = mapId;
+    }
+
     if (autoMatch) {
       updateLobbyUI(players);
       addSystemChatMessage('Created matchmaking room. Waiting for opponent...');
@@ -952,12 +975,19 @@ function connectSocket() {
     }
   });
 
-  socket.on('room-joined', ({ roomId, players, mode }) => {
+  socket.on('room-joined', ({ roomId, players, mode, mapId }) => {
     currentRoom = roomId;
     if (mode) myMode = mode;
     displays.roomCode.innerText = roomId;
     showScreen('lobby');
     updateLobbyUI(players);
+    
+    // Sync map choice
+    const lobbyMapSelect = document.getElementById('lobby-map-select');
+    if (lobbyMapSelect && mapId) {
+      lobbyMapSelect.value = mapId;
+    }
+
     addSystemChatMessage(`Joined lobby: ${roomId}`);
     // Cancel rank expansion timer
     if (rankSearchTimer) { clearTimeout(rankSearchTimer); rankSearchTimer = null; }
@@ -986,6 +1016,15 @@ function connectSocket() {
     updateLobbyUI(players);
   });
 
+  socket.on('lobby-map-update', ({ mapId }) => {
+    const lobbyMapSelect = document.getElementById('lobby-map-select');
+    if (lobbyMapSelect) {
+      lobbyMapSelect.value = mapId;
+    }
+    const mapName = mapId === 'cyberlab' ? 'Neon Cyber-Lab' : 'Residential Manor';
+    addSystemChatMessage(`Host updated mission area to: ${mapName}`);
+  });
+
   socket.on('player-left', ({ players, message }) => {
     updateLobbyUI(players);
     addSystemChatMessage(message);
@@ -1011,7 +1050,7 @@ function connectSocket() {
     }
   });
 
-  socket.on('match-start', ({ players, seed, isRanked, mode }) => {
+  socket.on('match-start', ({ players, seed, isRanked, mode, mapId }) => {
     currentMatchSource = isRanked ? 'ranked' : 'casual';
     const initGame = () => {
       showScreen('game');
@@ -1038,6 +1077,7 @@ function connectSocket() {
         localPlayerIndex: myIndex,
         players: players,
         seed: seed,
+        mapId: mapId || 'manor',
         settings: { ...gameSettings, volume: gameSettings.sfxMuted ? 0 : gameSettings.volume },
         matchMode: mode || myMode,
         isRanked: !!isRanked, // Pass isRanked
@@ -1107,6 +1147,7 @@ function startOfflineMode() {
       localPlayerIndex: 0,
       players: playersList,
       seed: Math.random(),
+      mapId: selectedMapId,
       settings: { ...gameSettings, volume: gameSettings.sfxMuted ? 0 : gameSettings.volume },
       matchMode: myMode,
       isRanked: false, // bots never ranked
@@ -1276,7 +1317,7 @@ function setupUIListeners() {
       safeStorage.setItem('tacticstrike_player_name', myName);
       connectSocket();
       if (socket) {
-        socket.emit('create-room', { playerName: myName, mode: myMode, color: myColor });
+        socket.emit('create-room', { playerName: myName, mode: myMode, color: myColor, mapId: selectedMapId });
       }
     });
   }
@@ -1535,6 +1576,26 @@ function setupUIListeners() {
           if (displays.chatDrawer) displays.chatDrawer.classList.remove('active');
         }
       }, 100);
+    });
+  }
+
+  // Map select change listeners
+  if (inputs.qpMapSelect) {
+    inputs.qpMapSelect.value = selectedMapId;
+    inputs.qpMapSelect.addEventListener('change', (e) => {
+      selectedMapId = e.target.value;
+      safeStorage.setItem('tacticstrike_selected_map', selectedMapId);
+      playMenuClick();
+    });
+  }
+
+  if (inputs.lobbyMapSelect) {
+    inputs.lobbyMapSelect.addEventListener('change', (e) => {
+      const newMapId = e.target.value;
+      if (socket && currentRoom) {
+        socket.emit('select-map', { mapId: newMapId });
+      }
+      playMenuClick();
     });
   }
 }

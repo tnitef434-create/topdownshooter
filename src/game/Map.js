@@ -6,10 +6,11 @@ class SeededRandom {
 }
 
 export class Map {
-  constructor(width, height, seed) {
+  constructor(width, height, seed, mapId = 'manor') {
     this.width  = width;
     this.height = height;
     this.rng    = new SeededRandom(seed);
+    this.mapId  = mapId;
 
     this.walls    = [];   // { x, y, w, h, type:'wall'|'crate', material, health, ... }
     this.items    = [];   // { id, x, y, type:'health'|'ammo', active }
@@ -17,14 +18,7 @@ export class Map {
     this.rooms    = [];   // room meta (for drawing)
     this.decorations = [];
     this.segments = [];   // raycasting segments
-
-    this.ambientLights = {
-      brokenCeiling: { x: 731, y: 701, radius: 240, on: true },
-      lantern: { x: 1171, y: 250, radius: 180 },
-      kitchen: { x: 260, y: 250, radius: 200 },
-      garage: { x: 260, y: 1150, radius: 220 },
-      bedroom2: { x: 1171, y: 1150, radius: 190 }
-    };
+    this.ambientLights = {};
 
     this.generateMap();
   }
@@ -39,6 +33,16 @@ export class Map {
     this.rooms  = [];
     this.decorations = [];
 
+    if (this.mapId === 'cyberlab') {
+      this.generateCyberLabMap();
+    } else {
+      this.generateManorMap();
+    }
+
+    this.rebuildSegments();
+  }
+
+  generateManorMap() {
     const B  = 40;   // border/exterior wall thickness
     const W  = 22;   // interior wall thickness
     const DW = 88;   // doorway opening width
@@ -63,9 +67,6 @@ export class Map {
     const rowB = iB  - hy2 - W;        // bot row height    = 418
 
     // ─────────────── ROOM DEFINITIONS ───────────────
-    //  index: 0=Kitchen  1=Living Room  2=Office
-    //         3=Bathroom 4=Hallway      5=Bedroom 1
-    //         6=Garage   7=Master Bed   8=Bedroom 2
     const rooms = [
       { x: iL,       y: iT,       w: colL, h: rowT, name: 'Kitchen',         floor: 'tiles'    },
       { x: vx1+W,    y: iT,       w: colC, h: rowT, name: 'Living Room',     floor: 'carpet'   },
@@ -86,23 +87,19 @@ export class Map {
     this._push({ x:iR,      y:B,       w:B,  h:this.height-B*2, type:'wall', material:'exterior' });
 
     // ─────────────── VERTICAL INTERIOR WALLS ───────────────
-    // Wall at vx1 — 3 sections (top, mid, bot)
     this._addWallWithDoorway(vx1, iT,      W, rowT, 'v', Math.round(rowT*0.5  - DW/2), DW, 'wall', 'interior');
     this._addWallWithDoorway(vx1, hy1+W,   W, rowM, 'v', Math.round(rowM*0.35 - DW/2), DW, 'wall', 'interior');
     this._addWallWithDoorway(vx1, hy2+W,   W, rowB, 'v', Math.round(rowB*0.5  - DW/2), DW, 'wall', 'interior');
 
-    // Wall at vx2
     this._addWallWithDoorway(vx2, iT,      W, rowT, 'v', Math.round(rowT*0.5  - DW/2), DW, 'wall', 'interior');
     this._addWallWithDoorway(vx2, hy1+W,   W, rowM, 'v', Math.round(rowM*0.65 - DW/2), DW, 'wall', 'interior');
     this._addWallWithDoorway(vx2, hy2+W,   W, rowB, 'v', Math.round(rowB*0.5  - DW/2), DW, 'wall', 'interior');
 
     // ─────────────── HORIZONTAL INTERIOR WALLS ───────────────
-    // Wall at hy1 — 3 sections
     this._addWallWithDoorway(iL,    hy1, colL, W, 'h', Math.round(colL*0.5  - DW/2), DW, 'wall', 'interior');
     this._addWallWithDoorway(vx1+W, hy1, colC, W, 'h', Math.round(colC*0.35 - DW/2), DW, 'wall', 'interior');
     this._addWallWithDoorway(vx2+W, hy1, colR, W, 'h', Math.round(colR*0.5  - DW/2), DW, 'wall', 'interior');
 
-    // Wall at hy2
     this._addWallWithDoorway(iL,    hy2, colL, W, 'h', Math.round(colL*0.5  - DW/2), DW, 'wall', 'interior');
     this._addWallWithDoorway(vx1+W, hy2, colC, W, 'h', Math.round(colC*0.65 - DW/2), DW, 'wall', 'interior');
     this._addWallWithDoorway(vx2+W, hy2, colR, W, 'h', Math.round(colR*0.5  - DW/2), DW, 'wall', 'interior');
@@ -112,21 +109,16 @@ export class Map {
     this._addDecorations(rooms);
 
     // ─────────────── HEALING ZONES ───────────────
-    // Bathroom — fast heal
     { const r = rooms[3];
       this.zones.push({ x:r.x+30,y:r.y+30, w:r.w-60, h:r.h-60, type:'healing', healRate:0.06, label:'MEDIC STATION' }); }
-    // Bedroom 1 — slow heal
     { const r = rooms[5];
       this.zones.push({ x:r.x+30,y:r.y+30, w:r.w-60, h:r.h-60, type:'healing', healRate:0.025, label:'REST ZONE' }); }
-    // Master Bedroom — medium heal
     { const r = rooms[7];
       this.zones.push({ x:r.x+30,y:r.y+30, w:r.w-60, h:r.h-60, type:'healing', healRate:0.04, label:'RECOVERY ZONE' }); }
 
     // ─────────────── DAMAGE MULTIPLIER ZONES ───────────────
-    // Garage — explosive barrels area
     { const r = rooms[6];
       this.zones.push({ x:r.x+60,y:r.y+60, w:r.w-120, h:r.h-120, type:'damage', multiplier:1.75, label:'EXPLOSIVE ZONE' }); }
-    // Living Room centre — open field exposure
     { const r = rooms[1];
       this.zones.push({ x:r.x+r.w/4,y:r.y+r.h/4, w:r.w/2, h:r.h/2, type:'damage', multiplier:1.4, label:'EXPOSED AREA' }); }
 
@@ -144,7 +136,178 @@ export class Map {
     // ─────────────── DESTRUCTIBLE CRATES ───────────────
     this._spawnCrates();
 
-    this.rebuildSegments();
+    // ─────────────── AMBIENT LIGHTS ───────────────
+    this.ambientLights = {
+      brokenCeiling: { x: 731, y: 701, radius: 240, on: true, innerRadius: 20, color: 'rgba(200, 230, 255, 0.25)', colorMid: 'rgba(200, 230, 255, 0.08)', pulseType: 'none', fixtureType: 'brokenCeiling' },
+      lantern: { x: 1171, y: 250, radius: 180, on: true, innerRadius: 5, color: 'rgba(255, 140, 40, 0.22)', colorMid: 'rgba(255, 140, 40, 0.10)', pulseType: 'lantern', fixtureType: 'lantern' },
+      kitchen: { x: 260, y: 250, radius: 200, on: true, innerRadius: 10, color: 'rgba(102, 252, 241, 0.20)', colorMid: 'rgba(102, 252, 241, 0.08)', pulseType: 'none', fixtureType: 'kitchen' },
+      garage: { x: 260, y: 1150, radius: 220, on: true, innerRadius: 10, color: 'rgba(255, 60, 60, 0.22)', colorMid: 'rgba(255, 60, 60, 0.09)', pulseType: 'garage', fixtureType: 'garage' },
+      bedroom2: { x: 1171, y: 1150, radius: 190, on: true, innerRadius: 10, color: 'rgba(255, 110, 247, 0.20)', colorMid: 'rgba(255, 110, 247, 0.08)', pulseType: 'none', fixtureType: 'bedroom2' }
+    };
+  }
+
+  generateCyberLabMap() {
+    const B  = 40;   // border/exterior wall thickness
+    const W  = 22;   // interior wall thickness
+    const DW = 88;   // doorway opening width
+
+    const iL = B, iT = B, iR = this.width - B, iB = this.height - B;
+
+    const vx1 = 450;
+    const vx2 = 950;
+    const hy1 = 450;
+    const hy2 = 950;
+
+    const colL = vx1 - iL;
+    const colC = vx2 - vx1 - W;
+    const colR = iR - vx2 - W;
+
+    const rowT = hy1 - iT;
+    const rowM = hy2 - hy1 - W;
+    const rowB = iB - hy2 - W;
+
+    // ─────────────── CYBER LAB ROOMS ───────────────
+    const rooms = [
+      { x: iL,       y: iT,       w: colL, h: rowT, name: 'Cyber Lounge',    floor: 'cybercarpet' },
+      { x: vx1+W,    y: iT,       w: colC, h: rowT, name: 'Quantum Lab',     floor: 'cybergrid'   },
+      { x: vx2+W,    y: iT,       w: colR, h: rowT, name: 'Security Hub',    floor: 'nanogrid'    },
+      { x: iL,       y: hy1+W,    w: colL, h: rowM, name: 'Server Room',     floor: 'cybergrid'   },
+      { x: vx1+W,    y: hy1+W,    w: colC, h: rowM, name: 'AI Core',         floor: 'cybergrid'   },
+      { x: vx2+W,    y: hy1+W,    w: colR, h: rowM, name: 'Cryo Chambers',   floor: 'nanogrid'    },
+      { x: iL,       y: hy2+W,    w: colL, h: rowB, name: 'Weaponry Depot',  floor: 'concrete'    },
+      { x: vx1+W,    y: hy2+W,    w: colC, h: rowB, name: 'Reactor Matrix',  floor: 'reactor'     },
+      { x: vx2+W,    y: hy2+W,    w: colR, h: rowB, name: 'Matrix Hall',     floor: 'cybercarpet' },
+    ];
+    this.rooms = rooms;
+
+    // ─────────────── EXTERIOR WALLS ───────────────
+    this._push({ x:0,       y:0,       w:this.width, h:B,   type:'wall', material:'exterior' });
+    this._push({ x:0,       y:iB,      w:this.width, h:B,   type:'wall', material:'exterior' });
+    this._push({ x:0,       y:B,       w:B,  h:this.height-B*2, type:'wall', material:'exterior' });
+    this._push({ x:iR,      y:B,       w:B,  h:this.height-B*2, type:'wall', material:'exterior' });
+
+    // ─────────────── VERTICAL INTERIOR WALLS ───────────────
+    this._addWallWithDoorway(vx1, iT,      W, rowT, 'v', Math.round(rowT*0.5  - DW/2), DW, 'wall', 'interior');
+    this._addWallWithDoorway(vx1, hy1+W,   W, rowM, 'v', Math.round(rowM*0.45 - DW/2), DW, 'wall', 'interior');
+    this._addWallWithDoorway(vx1, hy2+W,   W, rowB, 'v', Math.round(rowB*0.5  - DW/2), DW, 'wall', 'interior');
+
+    this._addWallWithDoorway(vx2, iT,      W, rowT, 'v', Math.round(rowT*0.5  - DW/2), DW, 'wall', 'interior');
+    this._addWallWithDoorway(vx2, hy1+W,   W, rowM, 'v', Math.round(rowM*0.55 - DW/2), DW, 'wall', 'interior');
+    this._addWallWithDoorway(vx2, hy2+W,   W, rowB, 'v', Math.round(rowB*0.5  - DW/2), DW, 'wall', 'interior');
+
+    // ─────────────── HORIZONTAL INTERIOR WALLS ───────────────
+    this._addWallWithDoorway(iL,    hy1, colL, W, 'h', Math.round(colL*0.5  - DW/2), DW, 'wall', 'interior');
+    this._addWallWithDoorway(vx1+W, hy1, colC, W, 'h', Math.round(colC*0.45 - DW/2), DW, 'wall', 'interior');
+    this._addWallWithDoorway(vx2+W, hy1, colR, W, 'h', Math.round(colR*0.5  - DW/2), DW, 'wall', 'interior');
+
+    this._addWallWithDoorway(iL,    hy2, colL, W, 'h', Math.round(colL*0.5  - DW/2), DW, 'wall', 'interior');
+    this._addWallWithDoorway(vx1+W, hy2, colC, W, 'h', Math.round(colC*0.55 - DW/2), DW, 'wall', 'interior');
+    this._addWallWithDoorway(vx2+W, hy2, colR, W, 'h', Math.round(colR*0.5  - DW/2), DW, 'wall', 'interior');
+
+    // ─────────────── FURNITURE PER ROOM ───────────────
+    this._addCyberLabFurniture(rooms);
+
+    // ─────────────── HEALING ZONES ───────────────
+    { const r = rooms[1];
+      this.zones.push({ x:r.x+30,y:r.y+30, w:r.w-60, h:r.h-60, type:'healing', healRate:0.05, label:'QUANTUM STABILIZER' }); }
+    { const r = rooms[5];
+      this.zones.push({ x:r.x+30,y:r.y+30, w:r.w-60, h:r.h-60, type:'healing', healRate:0.035, label:'CRYO RECOVERY' }); }
+
+    // ─────────────── DAMAGE MULTIPLIER ZONES ───────────────
+    { const r = rooms[7];
+      this.zones.push({ x:r.x+50,y:r.y+50, w:r.w-100, h:r.h-100, type:'damage', multiplier:2.0, label:'REACTOR ENERGY CORE' }); }
+
+    // ─────────────── FIXED ITEM PICKUPS ───────────────
+    [
+      { x: rooms[0].x + rooms[0].w/2, y: rooms[0].y + rooms[0].h/2, type:'health' },
+      { x: rooms[1].x + rooms[1].w/4, y: rooms[1].y + rooms[1].h/2, type:'ammo' },
+      { x: rooms[2].x + rooms[2].w/2, y: rooms[2].y + rooms[2].h/2, type:'health' },
+      { x: rooms[3].x + rooms[3].w/2, y: rooms[3].y + rooms[3].h/2, type:'ammo'   },
+      { x: rooms[5].x + rooms[5].w/2, y: rooms[5].y + rooms[5].h/2, type:'health' },
+      { x: rooms[6].x + rooms[6].w/2, y: rooms[6].y + rooms[6].h/2, type:'ammo'   },
+      { x: rooms[8].x + rooms[8].w/2, y: rooms[8].y + rooms[8].h/2, type:'health' },
+    ].forEach((s, i) => {
+      this.items.push({ id:`pickup_cyber_${i}`, x:s.x, y:s.y, type:s.type, active:true });
+    });
+
+    // ─────────────── DESTRUCTIBLE CRATES ───────────────
+    this._spawnCrates();
+
+    // ─────────────── AMBIENT LIGHTS ───────────────
+    this.ambientLights = {
+      aiCore: { x: 700, y: 700, radius: 260, on: true, innerRadius: 20, color: 'rgba(102, 252, 241, 0.28)', colorMid: 'rgba(102, 252, 241, 0.12)', pulseType: 'quantum', fixtureType: 'reactor_light' },
+      quantumLab: { x: 700, y: 250, radius: 220, on: true, innerRadius: 10, color: 'rgba(157, 59, 255, 0.26)', colorMid: 'rgba(157, 59, 255, 0.10)', pulseType: 'none', fixtureType: 'quantum' },
+      reactor: { x: 700, y: 1150, radius: 240, on: true, innerRadius: 15, color: 'rgba(255, 127, 59, 0.28)', colorMid: 'rgba(255, 127, 59, 0.12)', pulseType: 'garage', fixtureType: 'reactor_light' },
+      serverRoom: { x: 250, y: 700, radius: 220, on: true, innerRadius: 10, color: 'rgba(57, 219, 20, 0.24)', colorMid: 'rgba(57, 219, 20, 0.09)', pulseType: 'none', fixtureType: 'server_rack_light' },
+      cryo: { x: 1150, y: 700, radius: 220, on: true, innerRadius: 10, color: 'rgba(102, 252, 241, 0.24)', colorMid: 'rgba(102, 252, 241, 0.09)', pulseType: 'none', fixtureType: 'cryo_light' }
+    };
+  }
+
+  _addCyberLabFurniture(rooms) {
+    const F = (obj) => this._push({ ...obj, type:'wall', material:'furniture' });
+
+    // 0 — Cyber Lounge
+    const CL = rooms[0];
+    F({ x: CL.x + 50, y: CL.y + 50, w: 90, h: 32, label: 'cyber_couch' });       // Top couch
+    F({ x: CL.x + 50, y: CL.y + 120, w: 90, h: 32, label: 'cyber_couch' });      // Mid couch
+    F({ x: CL.x + CL.w - 82, y: CL.y + 50, w: 32, h: 100, label: 'cyber_couch' }); // Right couch
+    F({ x: CL.x + CL.w - 150, y: CL.y + 80, w: 45, h: 45, label: 'table' });     // Glass coffee table
+    F({ x: CL.x + 20, y: CL.y + CL.h - 60, w: 24, h: 24, label: 'plant' });       // Corner plants
+    F({ x: CL.x + CL.w - 50, y: CL.y + CL.h - 60, w: 24, h: 24, label: 'plant' });
+
+    // 1 — Quantum Lab
+    const QL = rooms[1];
+    F({ x: QL.x + 30, y: QL.y + 30, w: 35, h: 35, label: 'containment_pod' });   // Tube 1
+    F({ x: QL.x + QL.w - 65, y: QL.y + 30, w: 35, h: 35, label: 'containment_pod' }); // Tube 2
+    F({ x: QL.x + QL.w / 2 - 40, y: QL.y + QL.h - 40, w: 80, h: 28, label: 'cyber_console' }); // Lab terminal console
+    F({ x: QL.x + 30, y: QL.y + QL.h - 100, w: 35, h: 35, label: 'nano_charger' }); // Nano charge dock
+
+    // 2 — Security Hub
+    const SH = rooms[2];
+    F({ x: SH.x + 20, y: SH.y + 20, w: 25, h: 180, label: 'shelf' });            // Cyber files / databases
+    F({ x: SH.x + 70, y: SH.y + 60, w: 100, h: 40, label: 'desk' });             // Monitor security desk
+    F({ x: SH.x + 105, y: SH.y + 110, w: 30, h: 30, label: 'chair' });           // Swivel chair
+
+    // 3 — Server Room
+    const SR = rooms[3];
+    F({ x: SR.x + 40, y: SR.y + 30, w: 24, h: 100, label: 'server_rack' });
+    F({ x: SR.x + 110, y: SR.y + 30, w: 24, h: 100, label: 'server_rack' });
+    F({ x: SR.x + 40, y: SR.y + 190, w: 24, h: 100, label: 'server_rack' });
+    F({ x: SR.x + 110, y: SR.y + 190, w: 24, h: 100, label: 'server_rack' });
+    F({ x: SR.x + SR.w - 50, y: SR.y + SR.h / 2 - 30, w: 32, h: 60, label: 'cyber_console' });
+
+    // 4 — AI Core (Center Room)
+    const AC = rooms[4];
+    F({ x: AC.x + AC.w / 2 - 40, y: AC.y + AC.h / 2 - 40, w: 80, h: 80, label: 'reactor_core' }); // Big central core
+    F({ x: AC.x + 40, y: AC.y + AC.h / 2 - 15, w: 45, h: 30, label: 'cyber_console' });
+    F({ x: AC.x + AC.w - 85, y: AC.y + AC.h / 2 - 15, w: 45, h: 30, label: 'cyber_console' });
+    F({ x: AC.x + AC.w / 2 - 22, y: AC.y + 40, w: 44, h: 28, label: 'cyber_console' });
+    F({ x: AC.x + AC.w / 2 - 22, y: AC.y + AC.h - 68, w: 44, h: 28, label: 'cyber_console' });
+
+    // 5 — Cryo Chambers
+    const CC = rooms[5];
+    F({ x: CC.x + 30, y: CC.y + 30, w: 35, h: 55, label: 'containment_pod' });
+    F({ x: CC.x + 85, y: CC.y + 30, w: 35, h: 55, label: 'containment_pod' });
+    F({ x: CC.x + 140, y: CC.y + 30, w: 35, h: 55, label: 'containment_pod' });
+    F({ x: CC.x + CC.w - 50, y: CC.y + CC.h - 100, w: 32, h: 65, label: 'cyber_console' });
+
+    // 6 — Weaponry Depot
+    const WD = rooms[6];
+    F({ x: WD.x + 30, y: WD.y + 30, w: 120, h: 45, label: 'desk' });             // Armory desk/racks
+    F({ x: WD.x + 30, y: WD.y + 110, w: 35, h: 80, label: 'cabinet' });          // Ammo storage locker
+    F({ x: WD.x + WD.w - 60, y: WD.y + 30, w: 40, h: 100, label: 'shelf' });      // Gun racks
+
+    // 7 — Reactor Matrix
+    const RM = rooms[7];
+    F({ x: RM.x + RM.w / 2 - 30, y: RM.y + RM.h / 2 - 30, w: 60, h: 60, label: 'reactor_core' }); // secondary power source
+    F({ x: RM.x + 30, y: RM.y + 30, w: 24, h: 24, label: 'plant' });             // Synthetic decorative plants
+    F({ x: RM.x + RM.w - 54, y: RM.y + 30, w: 24, h: 24, label: 'plant' });
+
+    // 8 — Matrix Hall
+    const MH = rooms[8];
+    F({ x: MH.x + MH.w / 2 - 25, y: MH.y + 40, w: 50, h: 50, label: 'table' }); // Hologram projector pedestal
+    F({ x: MH.x + 50, y: MH.y + MH.h - 70, w: 80, h: 32, label: 'cyber_couch' });
+    F({ x: MH.x + MH.w - 130, y: MH.y + MH.h - 70, w: 80, h: 32, label: 'cyber_couch' });
   }
 
   _push(wall) { this.walls.push(wall); }
@@ -508,73 +671,34 @@ export class Map {
       this.maskCtx.save();
       this.maskCtx.setTransform(ctx.getTransform());
 
-      // Deterministic synchronized flicker calculation
       const time = Date.now();
       const rawFlicker = Math.sin(time * 0.04) * Math.cos(time * 0.007) + Math.sin(time * 0.1) * 0.5;
       const brokenLightOn = rawFlicker > -0.45;
-      this.ambientLights.brokenCeiling.on = brokenLightOn;
+      if (this.ambientLights.brokenCeiling) this.ambientLights.brokenCeiling.on = brokenLightOn;
 
       // Cut out light fields using destination-out
       this.maskCtx.globalCompositeOperation = 'destination-out';
       this.maskCtx.fillStyle = 'white'; // Color doesn't matter for cutout
 
-      // A. Cut out Lantern (steady warm light)
-      const lat = this.ambientLights.lantern;
-      const lanternGrad = this.maskCtx.createRadialGradient(lat.x, lat.y, 10, lat.x, lat.y, lat.radius);
-      lanternGrad.addColorStop(0, 'rgba(255, 255, 255, 1.0)');
-      lanternGrad.addColorStop(0.5, 'rgba(255, 255, 255, 0.45)');
-      lanternGrad.addColorStop(1, 'rgba(255, 255, 255, 0.0)');
-      this.maskCtx.fillStyle = lanternGrad;
-      this.maskCtx.beginPath();
-      this.maskCtx.arc(lat.x, lat.y, lat.radius, 0, Math.PI * 2);
-      this.maskCtx.fill();
-
-      // B. Cut out Broken Ceiling Light (flickering light)
-      if (brokenLightOn) {
-        const bcl = this.ambientLights.brokenCeiling;
-        const ceilingGrad = this.maskCtx.createRadialGradient(bcl.x, bcl.y, 20, bcl.x, bcl.y, bcl.radius);
-        ceilingGrad.addColorStop(0, 'rgba(255, 255, 255, 1.0)');
-        ceilingGrad.addColorStop(0.6, 'rgba(255, 255, 255, 0.35)');
-        ceilingGrad.addColorStop(1, 'rgba(255, 255, 255, 0.0)');
-        this.maskCtx.fillStyle = ceilingGrad;
+      for (const [key, light] of Object.entries(this.ambientLights)) {
+        if (!light.on) continue;
+        const pulse = light.pulseType === 'garage'
+          ? 1.0 + Math.sin(time / 300) * 0.05
+          : light.pulseType === 'lantern'
+            ? 1.0 + Math.sin(time / 200) * 0.04
+            : light.pulseType === 'quantum'
+              ? 1.0 + Math.sin(time / 150) * 0.03
+              : 1.0;
+        const rad = light.radius * pulse;
+        const grad = this.maskCtx.createRadialGradient(light.x, light.y, light.innerRadius || 10, light.x, light.y, rad);
+        grad.addColorStop(0, 'rgba(255, 255, 255, 1.0)');
+        grad.addColorStop(0.5, 'rgba(255, 255, 255, 0.45)');
+        grad.addColorStop(1, 'rgba(255, 255, 255, 0.0)');
+        this.maskCtx.fillStyle = grad;
         this.maskCtx.beginPath();
-        this.maskCtx.arc(bcl.x, bcl.y, bcl.radius, 0, Math.PI * 2);
+        this.maskCtx.arc(light.x, light.y, rad, 0, Math.PI * 2);
         this.maskCtx.fill();
       }
-
-      // C. Cut out Kitchen Light (steady cyan light)
-      const kit = this.ambientLights.kitchen;
-      const kitchenGrad = this.maskCtx.createRadialGradient(kit.x, kit.y, 10, kit.x, kit.y, kit.radius);
-      kitchenGrad.addColorStop(0, 'rgba(255, 255, 255, 1.0)');
-      kitchenGrad.addColorStop(0.5, 'rgba(255, 255, 255, 0.45)');
-      kitchenGrad.addColorStop(1, 'rgba(255, 255, 255, 0.0)');
-      this.maskCtx.fillStyle = kitchenGrad;
-      this.maskCtx.beginPath();
-      this.maskCtx.arc(kit.x, kit.y, kit.radius, 0, Math.PI * 2);
-      this.maskCtx.fill();
-
-      // D. Cut out Garage Light (pulsing warning light)
-      const gar = this.ambientLights.garage;
-      const garagePulse = 1.0 + Math.sin(time / 300) * 0.05;
-      const garageGrad = this.maskCtx.createRadialGradient(gar.x, gar.y, 10, gar.x, gar.y, gar.radius * garagePulse);
-      garageGrad.addColorStop(0, 'rgba(255, 255, 255, 1.0)');
-      garageGrad.addColorStop(0.5, 'rgba(255, 255, 255, 0.45)');
-      garageGrad.addColorStop(1, 'rgba(255, 255, 255, 0.0)');
-      this.maskCtx.fillStyle = garageGrad;
-      this.maskCtx.beginPath();
-      this.maskCtx.arc(gar.x, gar.y, gar.radius * garagePulse, 0, Math.PI * 2);
-      this.maskCtx.fill();
-
-      // E. Cut out Bedroom 2 Light (steady warm lamp)
-      const bed2 = this.ambientLights.bedroom2;
-      const bed2Grad = this.maskCtx.createRadialGradient(bed2.x, bed2.y, 10, bed2.x, bed2.y, bed2.radius);
-      bed2Grad.addColorStop(0, 'rgba(255, 255, 255, 1.0)');
-      bed2Grad.addColorStop(0.5, 'rgba(255, 255, 255, 0.45)');
-      bed2Grad.addColorStop(1, 'rgba(255, 255, 255, 0.0)');
-      this.maskCtx.fillStyle = bed2Grad;
-      this.maskCtx.beginPath();
-      this.maskCtx.arc(bed2.x, bed2.y, bed2.radius, 0, Math.PI * 2);
-      this.maskCtx.fill();
 
       players.forEach(p => {
         if (p.health <= 0) return;
@@ -671,169 +795,147 @@ export class Map {
 
       // 7. Draw ambient light color glow on the main canvas
       ctx.save();
-      // Lantern warm orange-yellow glow
-      const latPulse = 1.0 + Math.sin(time / 200) * 0.04; // subtle pulsation
-      const lGrad = ctx.createRadialGradient(lat.x, lat.y, 5, lat.x, lat.y, lat.radius * latPulse);
-      lGrad.addColorStop(0, 'rgba(255, 140, 40, 0.22)');
-      lGrad.addColorStop(0.4, 'rgba(255, 140, 40, 0.10)');
-      lGrad.addColorStop(1, 'rgba(255, 140, 40, 0.0)');
-      ctx.fillStyle = lGrad;
-      ctx.beginPath();
-      ctx.arc(lat.x, lat.y, lat.radius * latPulse, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Draw the lantern object
-      ctx.fillStyle = '#222';
-      ctx.strokeStyle = '#d4af37'; // gold trim
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.arc(lat.x, lat.y, 8, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-      ctx.fillStyle = 'rgba(255, 180, 50, 0.9)'; // flame core
-      ctx.beginPath();
-      ctx.arc(lat.x, lat.y, 3, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Broken Ceiling Light cold fluorescent white-blue flickering glow
-      const bcl = this.ambientLights.brokenCeiling;
-      if (brokenLightOn) {
-        const cGrad = ctx.createRadialGradient(bcl.x, bcl.y, 10, bcl.x, bcl.y, bcl.radius);
-        cGrad.addColorStop(0, 'rgba(200, 230, 255, 0.25)');
-        cGrad.addColorStop(0.5, 'rgba(200, 230, 255, 0.08)');
-        cGrad.addColorStop(1, 'rgba(200, 230, 255, 0.0)');
-        ctx.fillStyle = cGrad;
+      for (const [key, light] of Object.entries(this.ambientLights)) {
+        if (!light.on) continue;
+        const pulse = light.pulseType === 'garage'
+          ? 1.0 + Math.sin(time / 300) * 0.05
+          : light.pulseType === 'lantern'
+            ? 1.0 + Math.sin(time / 200) * 0.04
+            : light.pulseType === 'quantum'
+              ? 1.0 + Math.sin(time / 150) * 0.03
+              : 1.0;
+        const rad = light.radius * pulse;
+        const grad = ctx.createRadialGradient(light.x, light.y, light.innerRadius || 5, light.x, light.y, rad);
+        
+        grad.addColorStop(0, light.color);
+        grad.addColorStop(0.5, light.colorMid);
+        grad.addColorStop(1, 'rgba(0, 0, 0, 0.0)');
+        
+        ctx.fillStyle = grad;
         ctx.beginPath();
-        ctx.arc(bcl.x, bcl.y, bcl.radius, 0, Math.PI * 2);
+        ctx.arc(light.x, light.y, rad, 0, Math.PI * 2);
         ctx.fill();
+
+        this._drawLightFixture(ctx, light, time);
       }
-
-      // Draw the ceiling light fixture
-      ctx.fillStyle = '#333';
-      ctx.strokeStyle = '#555';
-      ctx.lineWidth = 1;
-      ctx.fillRect(bcl.x - 16, bcl.y - 4, 32, 8);
-      ctx.strokeRect(bcl.x - 16, bcl.y - 4, 32, 8);
-      // Bulb
-      ctx.fillStyle = brokenLightOn ? '#fff' : '#111';
-      ctx.shadowColor = brokenLightOn ? '#6cf' : 'transparent';
-      ctx.shadowBlur = brokenLightOn ? 10 : 0;
-      ctx.fillRect(bcl.x - 12, bcl.y - 2, 24, 4);
-      ctx.shadowBlur = 0; // reset shadow
-
-      // C. Kitchen Light cold fluorescent cyan glow
-      const kitLight = this.ambientLights.kitchen;
-      const kGrad = ctx.createRadialGradient(kitLight.x, kitLight.y, 10, kitLight.x, kitLight.y, kitLight.radius);
-      kGrad.addColorStop(0, 'rgba(102, 252, 241, 0.20)');
-      kGrad.addColorStop(0.5, 'rgba(102, 252, 241, 0.08)');
-      kGrad.addColorStop(1, 'rgba(102, 252, 241, 0.0)');
-      ctx.fillStyle = kGrad;
-      ctx.beginPath();
-      ctx.arc(kitLight.x, kitLight.y, kitLight.radius, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Draw Kitchen fixture
-      ctx.fillStyle = '#333';
-      ctx.strokeStyle = '#555';
-      ctx.lineWidth = 1;
-      ctx.fillRect(kitLight.x - 12, kitLight.y - 12, 24, 24);
-      ctx.strokeRect(kitLight.x - 12, kitLight.y - 12, 24, 24);
-      ctx.fillStyle = '#66fcf1';
-      ctx.beginPath();
-      ctx.arc(kitLight.x, kitLight.y, 5, 0, Math.PI * 2);
-      ctx.fill();
-
-      // D. Garage Light pulsing warning red/orange glow
-      const garLight = this.ambientLights.garage;
-      const gPulse = 1.0 + Math.sin(time / 300) * 0.06;
-      const gGrad = ctx.createRadialGradient(garLight.x, garLight.y, 10, garLight.x, garLight.y, garLight.radius * gPulse);
-      gGrad.addColorStop(0, 'rgba(255, 60, 60, 0.22)');
-      gGrad.addColorStop(0.5, 'rgba(255, 60, 60, 0.09)');
-      gGrad.addColorStop(1, 'rgba(255, 60, 60, 0.0)');
-      ctx.fillStyle = gGrad;
-      ctx.beginPath();
-      ctx.arc(garLight.x, garLight.y, garLight.radius * gPulse, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Draw Garage fixture
-      ctx.fillStyle = '#222';
-      ctx.strokeStyle = '#ff3c3c';
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.arc(garLight.x, garLight.y, 8, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-      ctx.fillStyle = '#ff3c3c';
-      ctx.beginPath();
-      ctx.arc(garLight.x, garLight.y, 3.5, 0, Math.PI * 2);
-      ctx.fill();
-
-      // E. Bedroom 2 Light warm magenta/pink lamp glow
-      const bed2Light = this.ambientLights.bedroom2;
-      const b2Grad = ctx.createRadialGradient(bed2Light.x, bed2Light.y, 10, bed2Light.x, bed2Light.y, bed2Light.radius);
-      b2Grad.addColorStop(0, 'rgba(255, 110, 247, 0.20)');
-      b2Grad.addColorStop(0.5, 'rgba(255, 110, 247, 0.08)');
-      b2Grad.addColorStop(1, 'rgba(255, 110, 247, 0.0)');
-      ctx.fillStyle = b2Grad;
-      ctx.beginPath();
-      ctx.arc(bed2Light.x, bed2Light.y, bed2Light.radius, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Draw Bedroom 2 fixture
-      ctx.fillStyle = '#2d1822';
-      ctx.strokeStyle = '#ff6ef7';
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.arc(bed2Light.x, bed2Light.y, 9, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-      ctx.fillStyle = '#ff6ef7';
-      ctx.beginPath();
-      ctx.arc(bed2Light.x, bed2Light.y, 4, 0, Math.PI * 2);
-      ctx.fill();
-
       ctx.restore();
     }
   }
 
-  isPointInAmbientLight(x, y, r = 0) {
-    // 1. Check lantern (always active)
-    const lat = this.ambientLights.lantern;
-    const distLat = Math.hypot(x - lat.x, y - lat.y);
-    if (distLat < lat.radius + r) {
-      return !this.getLineIntersection({ x: lat.x, y: lat.y }, { x, y });
+  _drawLightFixture(ctx, light, time) {
+    const type = light.fixtureType;
+    ctx.save();
+    if (type === 'lantern') {
+      ctx.fillStyle = '#222';
+      ctx.strokeStyle = '#d4af37'; // gold trim
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(light.x, light.y, 8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(255, 180, 50, 0.9)'; // flame core
+      ctx.beginPath();
+      ctx.arc(light.x, light.y, 3, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (type === 'brokenCeiling') {
+      ctx.fillStyle = '#333';
+      ctx.strokeStyle = '#555';
+      ctx.lineWidth = 1;
+      ctx.fillRect(light.x - 16, light.y - 4, 32, 8);
+      ctx.strokeRect(light.x - 16, light.y - 4, 32, 8);
+      ctx.fillStyle = light.on ? '#fff' : '#111';
+      ctx.shadowColor = light.on ? '#6cf' : 'transparent';
+      ctx.shadowBlur = light.on ? 10 : 0;
+      ctx.fillRect(light.x - 12, light.y - 2, 24, 4);
+      ctx.shadowBlur = 0; // reset shadow
+    } else if (type === 'kitchen') {
+      ctx.fillStyle = '#333';
+      ctx.strokeStyle = '#555';
+      ctx.lineWidth = 1;
+      ctx.fillRect(light.x - 12, light.y - 12, 24, 24);
+      ctx.strokeRect(light.x - 12, light.y - 12, 24, 24);
+      ctx.fillStyle = '#66fcf1';
+      ctx.beginPath();
+      ctx.arc(light.x, light.y, 5, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (type === 'garage') {
+      ctx.fillStyle = '#222';
+      ctx.strokeStyle = '#ff3c3c';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(light.x, light.y, 8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#ff3c3c';
+      ctx.beginPath();
+      ctx.arc(light.x, light.y, 3.5, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (type === 'bedroom2') {
+      ctx.fillStyle = '#2d1822';
+      ctx.strokeStyle = '#ff6ef7';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(light.x, light.y, 9, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#ff6ef7';
+      ctx.beginPath();
+      ctx.arc(light.x, light.y, 4, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (type === 'quantum') {
+      ctx.fillStyle = '#100c1e';
+      ctx.strokeStyle = '#9d3bff';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(light.x, light.y, 10, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      
+      const beamRot = (time / 100) % (Math.PI * 2);
+      ctx.strokeStyle = '#d473ff';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(light.x - Math.cos(beamRot) * 8, light.y - Math.sin(beamRot) * 8);
+      ctx.lineTo(light.x + Math.cos(beamRot) * 8, light.y + Math.sin(beamRot) * 8);
+      ctx.stroke();
+    } else if (type === 'reactor_light') {
+      ctx.fillStyle = '#201005';
+      ctx.strokeStyle = '#ff7f3b';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(light.x, light.y, 12, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      
+      ctx.fillStyle = '#ffd700';
+      ctx.beginPath();
+      ctx.arc(light.x, light.y, 6 + Math.sin(time / 200) * 1.5, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (type === 'server_rack_light' || type === 'cryo_light') {
+      ctx.fillStyle = '#111';
+      ctx.strokeStyle = type === 'cryo_light' ? '#66fcf1' : '#39db14';
+      ctx.lineWidth = 1.5;
+      ctx.fillRect(light.x - 6, light.y - 6, 12, 12);
+      ctx.strokeRect(light.x - 6, light.y - 6, 12, 12);
+      
+      ctx.fillStyle = type === 'cryo_light' ? '#66fcf1' : '#39db14';
+      ctx.beginPath();
+      ctx.arc(light.x, light.y, 3, 0, Math.PI * 2);
+      ctx.fill();
     }
+    ctx.restore();
+  }
 
-    // 2. Check broken ceiling light (if ON)
-    const bcl = this.ambientLights.brokenCeiling;
-    if (bcl.on) {
-      const distBcl = Math.hypot(x - bcl.x, y - bcl.y);
-      if (distBcl < bcl.radius + r) {
-        return !this.getLineIntersection({ x: bcl.x, y: bcl.y }, { x, y });
+  isPointInAmbientLight(x, y, r = 0) {
+    for (const [key, light] of Object.entries(this.ambientLights)) {
+      if (!light.on) continue;
+      const dist = Math.hypot(x - light.x, y - light.y);
+      if (dist < light.radius + r) {
+        if (!this.getLineIntersection({ x: light.x, y: light.y }, { x, y })) {
+          return true;
+        }
       }
     }
-
-    // 3. Check Kitchen light
-    const kit = this.ambientLights.kitchen;
-    const distKit = Math.hypot(x - kit.x, y - kit.y);
-    if (distKit < kit.radius + r) {
-      return !this.getLineIntersection({ x: kit.x, y: kit.y }, { x, y });
-    }
-
-    // 4. Check Garage light
-    const gar = this.ambientLights.garage;
-    const distGar = Math.hypot(x - gar.x, y - gar.y);
-    if (distGar < gar.radius + r) {
-      return !this.getLineIntersection({ x: gar.x, y: gar.y }, { x, y });
-    }
-
-    // 5. Check Bedroom 2 light
-    const bed2 = this.ambientLights.bedroom2;
-    const distBed2 = Math.hypot(x - bed2.x, y - bed2.y);
-    if (distBed2 < bed2.radius + r) {
-      return !this.getLineIntersection({ x: bed2.x, y: bed2.y }, { x, y });
-    }
-
     return false;
   }
 
@@ -1015,14 +1117,148 @@ export class Map {
       for (let ty = r.y; ty <= r.y+r.h; ty += CS2) {
         ctx.beginPath(); ctx.moveTo(r.x,ty); ctx.lineTo(r.x+r.w,ty); ctx.stroke();
       }
-      // Oil/grease stain patches in garage
+      // Oil/grease stain patches in garage or yellow stripes in cyber weaponry depot
       if (r.name === 'Garage') {
         ctx.fillStyle = 'rgba(30,25,10,0.4)';
         ctx.beginPath();
         ctx.ellipse(r.x+150, r.y+230, 60, 30, 0.3, 0, Math.PI*2); ctx.fill();
         ctx.beginPath();
         ctx.ellipse(r.x+80,  r.y+150, 40, 20, -0.2, 0, Math.PI*2); ctx.fill();
+      } else if (r.name === 'Weaponry Depot') {
+        ctx.strokeStyle = 'rgba(212, 175, 55, 0.15)';
+        ctx.lineWidth = 12;
+        ctx.beginPath();
+        for (let tx = r.x; tx < r.x + r.w; tx += 60) {
+          ctx.moveTo(tx, r.y);
+          ctx.lineTo(tx + 40, r.y + 40);
+          ctx.moveTo(tx, r.y + r.h - 40);
+          ctx.lineTo(tx + 40, r.y + r.h);
+        }
+        ctx.stroke();
       }
+    } else if (r.floor === 'cybergrid') {
+      ctx.fillStyle = '#060a12'; // Carbon black
+      ctx.fillRect(r.x, r.y, r.w, r.h);
+      
+      ctx.strokeStyle = 'rgba(102, 252, 241, 0.08)';
+      ctx.lineWidth = 1;
+      const step = 50;
+      for (let tx = r.x; tx <= r.x + r.w; tx += step) {
+        ctx.beginPath(); ctx.moveTo(tx, r.y); ctx.lineTo(tx, r.y + r.h); ctx.stroke();
+      }
+      for (let ty = r.y; ty <= r.y + r.h; ty += step) {
+        ctx.beginPath(); ctx.moveTo(r.x, ty); ctx.lineTo(r.x + r.w, ty); ctx.stroke();
+      }
+      
+      const time = Date.now();
+      const nodePulse = 2 + Math.sin(time / 400) * 0.8;
+      ctx.fillStyle = 'rgba(102, 252, 241, 0.45)';
+      for (let tx = r.x + step; tx < r.x + r.w; tx += step) {
+        for (let ty = r.y + step; ty < r.y + r.h; ty += step) {
+          ctx.beginPath();
+          ctx.arc(tx, ty, nodePulse, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    } else if (r.floor === 'reactor') {
+      ctx.fillStyle = '#0f0a07'; // Deep dark copper background
+      ctx.fillRect(r.x, r.y, r.w, r.h);
+      
+      const time = Date.now();
+      const cx = r.x + r.w / 2;
+      const cy = r.y + r.h / 2;
+      
+      ctx.strokeStyle = 'rgba(255, 127, 59, 0.15)';
+      ctx.lineWidth = 4;
+      ctx.strokeRect(r.x + 8, r.y + 8, r.w - 16, r.h - 16);
+      
+      ctx.lineWidth = 2.5;
+      const numRings = 5;
+      for (let i = 1; i <= numRings; i++) {
+        const radius = i * 28;
+        const ringPulse = Math.sin(time / 250 - i * 0.5) * 0.15 + 0.85;
+        ctx.strokeStyle = `rgba(255, 127, 59, ${0.08 + (1 - i / numRings) * 0.22})`;
+        ctx.beginPath();
+        ctx.arc(cx, cy, radius * ringPulse, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      
+      ctx.strokeStyle = 'rgba(255, 150, 80, 0.4)';
+      ctx.lineWidth = 1.5;
+      const arcRot = (time / 800) % (Math.PI * 2);
+      ctx.beginPath();
+      ctx.arc(cx, cy, 70, arcRot, arcRot + Math.PI * 0.4);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(cx, cy, 110, arcRot + Math.PI, arcRot + Math.PI * 1.4);
+      ctx.stroke();
+    } else if (r.floor === 'nanogrid') {
+      ctx.fillStyle = '#050c08'; // Deep forest tech green
+      ctx.fillRect(r.x, r.y, r.w, r.h);
+      
+      ctx.strokeStyle = 'rgba(57, 219, 20, 0.08)';
+      ctx.lineWidth = 1;
+      const laneStep = 60;
+      for (let tx = r.x + 30; tx < r.x + r.w; tx += laneStep) {
+        ctx.beginPath();
+        ctx.moveTo(tx, r.y);
+        ctx.lineTo(tx, r.y + r.h);
+        ctx.stroke();
+      }
+      
+      ctx.strokeStyle = 'rgba(57, 219, 20, 0.05)';
+      for (let ty = r.y + 40; ty < r.y + r.h; ty += 80) {
+        ctx.beginPath();
+        ctx.moveTo(r.x, ty);
+        ctx.lineTo(r.x + r.w * 0.35, ty);
+        ctx.lineTo(r.x + r.w * 0.45, ty - 25);
+        ctx.lineTo(r.x + r.w, ty - 25);
+        ctx.stroke();
+      }
+      
+      const time = Date.now();
+      ctx.fillStyle = 'rgba(57, 219, 20, 0.6)';
+      const seed = Math.floor(r.x * 0.7 + r.y * 1.3);
+      for (let i = 0; i < 6; i++) {
+        const nodex = r.x + 30 + ((seed + i * 39) % (r.w - 60));
+        const nodey = r.y + 30 + ((seed * 11 + i * 87) % (r.h - 60));
+        const active = Math.floor(time / 200 + i) % 3 === 0;
+        if (active) {
+          ctx.fillRect(nodex - 2, nodey - 2, 4, 4);
+        }
+      }
+    } else if (r.floor === 'cybercarpet') {
+      ctx.fillStyle = '#0f081d'; // Hex deep purple
+      ctx.fillRect(r.x, r.y, r.w, r.h);
+      
+      ctx.strokeStyle = 'rgba(157, 59, 255, 0.04)';
+      ctx.lineWidth = 1.5;
+      const size = 30;
+      const hWidth = size * Math.sqrt(3);
+      const hHeight = size * 2;
+      
+      for (let tx = r.x - hWidth; tx < r.x + r.w + hWidth; tx += hWidth) {
+        for (let ty = r.y - hHeight; ty < r.y + r.h + hHeight; ty += hHeight * 0.75) {
+          const offsetX = (Math.floor(ty / (hHeight * 0.75)) % 2) * (hWidth / 2);
+          const cx = tx + offsetX;
+          const cy = ty;
+          
+          ctx.beginPath();
+          for (let side = 0; side < 6; side++) {
+            const angle = (side * Math.PI) / 3;
+            const x = cx + size * Math.cos(angle);
+            const y = cy + size * Math.sin(angle);
+            if (side === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+          }
+          ctx.closePath();
+          ctx.stroke();
+        }
+      }
+      
+      ctx.strokeStyle = 'rgba(157, 59, 255, 0.12)';
+      ctx.lineWidth = 3;
+      ctx.strokeRect(r.x + 20, r.y + 20, r.w - 40, r.h - 40);
     }
 
     // Room label
@@ -1178,7 +1414,13 @@ export class Map {
       dresser: { fill:'#1e1408', stroke:'#6a4020' },
       toilet:  { fill:'#eee',    stroke:'#555' },
       chair:   { fill:'#2b1e16', stroke:'#5c402d' },
-      plant:   { fill:'#152d18', stroke:'#345a3a' }
+      plant:   { fill:'#152d18', stroke:'#345a3a' },
+      cyber_couch:     { fill:'#110a24', stroke:'#9d3bff' },
+      containment_pod: { fill:'#08181a', stroke:'#66fcf1' },
+      server_rack:     { fill:'#080c10', stroke:'#39db14' },
+      cyber_console:   { fill:'#050c18', stroke:'#1a7cd8' },
+      reactor_core:    { fill:'#150c05', stroke:'#ff7f3b' },
+      nano_charger:    { fill:'#051a0c', stroke:'#39db14' }
     };
     const sc = schemes[lbl] || { fill:'#1a1a2a', stroke:'#4a4a80' };
 
@@ -1453,6 +1695,188 @@ export class Map {
       ctx.strokeRect(w.x+w.w-95,w.y+18,65,38);
       ctx.strokeStyle='rgba(100,100,180,0.4)'; ctx.lineWidth=2;
       ctx.strokeRect(w.x+10,w.y+10,w.w-20,w.h-20);
+    } else if (lbl === 'cyber_couch') {
+      ctx.fillStyle = 'rgba(0,0,0,0.2)';
+      ctx.fillRect(w.x + 4, w.y + 4, w.w - 8, w.h - 8);
+      ctx.strokeStyle = 'rgba(157, 59, 255, 0.25)';
+      ctx.lineWidth = 1;
+      
+      if (w.w > w.h) {
+        ctx.strokeRect(w.x + 6, w.y + 4, w.w - 12, 6);
+        ctx.beginPath();
+        ctx.moveTo(w.x + 4, w.y + w.h - 4);
+        ctx.lineTo(w.x + w.w - 4, w.y + w.h - 4);
+        ctx.strokeStyle = '#9d3bff';
+        ctx.stroke();
+      } else {
+        ctx.strokeRect(w.x + 4, w.y + 6, 6, w.h - 12);
+        ctx.beginPath();
+        ctx.moveTo(w.x + w.w - 4, w.y + 4);
+        ctx.lineTo(w.x + w.w - 4, w.y + w.h - 4);
+        ctx.strokeStyle = '#9d3bff';
+        ctx.stroke();
+      }
+    } else if (lbl === 'containment_pod') {
+      ctx.fillStyle = 'rgba(102, 252, 241, 0.05)';
+      ctx.fillRect(w.x + 2, w.y + 2, w.w - 4, w.h - 4);
+      
+      ctx.fillStyle = '#222';
+      ctx.strokeStyle = '#66fcf1';
+      ctx.lineWidth = 1.5;
+      
+      if (w.w > w.h) {
+        ctx.fillRect(w.x, w.y, 8, w.h);
+        ctx.strokeRect(w.x, w.y, 8, w.h);
+        ctx.fillRect(w.x + w.w - 8, w.y, 8, w.h);
+        ctx.strokeRect(w.x + w.w - 8, w.y, 8, w.h);
+      } else {
+        ctx.fillRect(w.x, w.y, w.w, 8);
+        ctx.strokeRect(w.x, w.y, w.w, 8);
+        ctx.fillRect(w.x, w.y + w.h - 8, w.w, 8);
+        ctx.strokeRect(w.x, w.y + w.h - 8, w.w, 8);
+      }
+      
+      const time = Date.now();
+      ctx.fillStyle = 'rgba(102, 252, 241, 0.4)';
+      const bubbleSeed = Math.floor(w.x * 2.3 + w.y * 1.7);
+      for (let i = 0; i < 4; i++) {
+        const bubbleX = w.x + 10 + ((bubbleSeed + i * 29) % (w.w - 20));
+        const bubbleY = w.y + 10 + ((bubbleSeed * 7 + i * 41 - (time * 0.04)) % (w.h - 20) + (w.h - 20)) % (w.h - 20);
+        ctx.beginPath();
+        ctx.arc(bubbleX, bubbleY, 1.5 + (i % 2), 0, Math.PI * 2);
+        ctx.fill();
+      }
+    } else if (lbl === 'server_rack') {
+      ctx.fillStyle = '#0a0d14';
+      ctx.fillRect(w.x + 2, w.y + 2, w.w - 4, w.h - 4);
+      
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.04)';
+      ctx.lineWidth = 1;
+      
+      const time = Date.now();
+      const numModules = Math.floor(w.h / 14);
+      
+      if (w.h > w.w) {
+        for (let i = 0; i < numModules; i++) {
+          const my = w.y + 4 + i * 14;
+          ctx.strokeRect(w.x + 3, my, w.w - 6, 10);
+          
+          const activeGreen = Math.floor(time / 200 + i) % 4 !== 0;
+          const activeRed = Math.floor(time / 450 + i * 2) % 6 === 0;
+          const activeBlue = Math.floor(time / 300 - i) % 5 === 0;
+          
+          ctx.fillStyle = activeGreen ? '#39db14' : '#053005';
+          ctx.fillRect(w.x + 6, my + 4, 3, 3);
+          
+          ctx.fillStyle = activeRed ? '#ff3c3c' : '#400505';
+          ctx.fillRect(w.x + 12, my + 4, 3, 3);
+          
+          ctx.fillStyle = activeBlue ? '#66fcf1' : '#052028';
+          ctx.fillRect(w.x + 18, my + 4, 3, 3);
+        }
+      } else {
+        const numModulesW = Math.floor(w.w / 14);
+        for (let i = 0; i < numModulesW; i++) {
+          const mx = w.x + 4 + i * 14;
+          ctx.strokeRect(mx, w.y + 3, 10, w.h - 6);
+          
+          const activeGreen = Math.floor(time / 200 + i) % 4 !== 0;
+          const activeRed = Math.floor(time / 450 + i * 2) % 6 === 0;
+          
+          ctx.fillStyle = activeGreen ? '#39db14' : '#053005';
+          ctx.fillRect(mx + 4, w.y + 6, 3, 3);
+          
+          ctx.fillStyle = activeRed ? '#ff3c3c' : '#400505';
+          ctx.fillRect(mx + 4, w.y + 12, 3, 3);
+        }
+      }
+    } else if (lbl === 'cyber_console') {
+      ctx.fillStyle = 'rgba(0,0,0,0.35)';
+      ctx.fillRect(w.x + 3, w.y + 3, w.w - 6, w.h - 6);
+      
+      ctx.fillStyle = '#09152b';
+      ctx.strokeStyle = '#1a7cd8';
+      ctx.lineWidth = 1.5;
+      
+      if (w.w > w.h) {
+        ctx.fillRect(w.x + 5, w.y + w.h - 12, w.w - 10, 8);
+        ctx.strokeRect(w.x + 5, w.y + w.h - 12, w.w - 10, 8);
+        
+        ctx.fillStyle = 'rgba(26, 124, 216, 0.15)';
+        ctx.fillRect(w.x + 10, w.y + 4, w.w - 20, w.h - 18);
+        ctx.strokeRect(w.x + 10, w.y + 4, w.w - 20, w.h - 18);
+        
+        ctx.strokeStyle = '#66fcf1';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        const time = Date.now();
+        for (let sx = w.x + 14; sx < w.x + w.w - 14; sx += 4) {
+          const sy = w.y + 10 + Math.sin(time * 0.005 + sx * 0.1) * 3;
+          if (sx === w.x + 14) ctx.moveTo(sx, sy);
+          else ctx.lineTo(sx, sy);
+        }
+        ctx.stroke();
+      } else {
+        ctx.fillRect(w.x + 4, w.y + 5, 8, w.h - 10);
+        ctx.strokeRect(w.x + 4, w.y + 5, 8, w.h - 10);
+        
+        ctx.fillStyle = 'rgba(26, 124, 216, 0.15)';
+        ctx.fillRect(w.x + 14, w.y + 10, w.w - 18, w.h - 20);
+        ctx.strokeRect(w.x + 14, w.y + 10, w.w - 18, w.h - 20);
+      }
+    } else if (lbl === 'reactor_core') {
+      const cx = w.x + w.w / 2;
+      const cy = w.y + w.h / 2;
+      const r = Math.min(w.w, w.h) / 2;
+      const time = Date.now();
+      
+      ctx.fillStyle = '#100a05';
+      ctx.strokeStyle = '#ff7f3b';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r - 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      
+      const cells = 3;
+      const baseRot = (time / 400) % (Math.PI * 2);
+      ctx.fillStyle = '#ff7f3b';
+      for (let i = 0; i < cells; i++) {
+        const rot = baseRot + (i * Math.PI * 2) / cells;
+        const cellX = cx + Math.cos(rot) * (r - 12);
+        const cellY = cy + Math.sin(rot) * (r - 12);
+        ctx.beginPath();
+        ctx.arc(cellX, cellY, 4, 0, Math.PI * 2);
+        ctx.fill();
+        
+        ctx.strokeStyle = 'rgba(255, 215, 0, 0.25)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(cellX, cellY);
+        ctx.stroke();
+      }
+      
+      ctx.fillStyle = '#ffd700';
+      ctx.shadowColor = '#ff7f3b';
+      ctx.shadowBlur = 12;
+      ctx.beginPath();
+      ctx.arc(cx, cy, 6 + Math.sin(time / 150) * 1.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+    } else if (lbl === 'nano_charger') {
+      ctx.fillStyle = '#06100a';
+      ctx.fillRect(w.x + 2, w.y + 2, w.w - 4, w.h - 4);
+      
+      ctx.fillStyle = 'rgba(57, 219, 20, 0.1)';
+      ctx.strokeStyle = '#39db14';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(w.x + 4, w.y + 4, w.w - 8, w.h - 8);
+      
+      const time = Date.now();
+      const barH = (w.h - 12) * (0.5 + Math.sin(time / 250) * 0.35);
+      ctx.fillStyle = '#39db14';
+      ctx.fillRect(w.x + 6, w.y + w.h - 6 - barH, w.w - 12, barH);
     } else if (lbl === 'fridge') {
       ctx.strokeStyle='rgba(160,200,255,0.4)'; ctx.lineWidth=2;
       ctx.beginPath(); ctx.moveTo(w.x+w.w/2-10,w.y+12); ctx.lineTo(w.x+w.w/2+10,w.y+12); ctx.stroke();

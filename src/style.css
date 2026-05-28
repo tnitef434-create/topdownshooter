@@ -1423,3 +1423,34 @@ footer {
     box-shadow: 0 0 25px rgba(212, 175, 55, 0.45);
   }
 }
+
+/* Cyberpunk Selector Styling */
+.cyber-select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-image: url("data:image/svg+xml;charset=UTF-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2212%22%20height%3D%2212%22%20viewBox%3D%220%200%2012%2012%22%3E%3Cpath%20fill%3D%22%23d4af37%22%20d%3D%22M1.5%203.5l4.5%204.5%204.5-4.5z%22%2F%3E%3C%2Fsvg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 10px;
+  padding-right: 32px !important;
+  transition: all 0.25s ease;
+}
+
+.cyber-select:hover {
+  background-color: rgba(255, 255, 255, 0.04) !important;
+  border-color: var(--neon-cyan) !important;
+  box-shadow: 0 0 10px rgba(212, 175, 55, 0.25);
+}
+
+.cyber-select:focus {
+  border-color: var(--neon-cyan) !important;
+  box-shadow: 0 0 15px rgba(212, 175, 55, 0.4);
+}
+
+.cyber-select option {
+  background: var(--bg-secondary);
+  color: white;
+  font-family: var(--font-title);
+  padding: 8px;
+}

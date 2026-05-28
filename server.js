@@ -152,7 +152,7 @@ io.on('connection', (socket) => {
   });
 
   // 1. Create a custom room
-  socket.on('create-room', ({ playerName, mode, color }) => {
+  socket.on('create-room', ({ playerName, mode, color, mapId }) => {
     let roomId = generateRoomId();
     while (rooms.has(roomId)) {
       roomId = generateRoomId();
@@ -163,6 +163,7 @@ io.on('connection', (socket) => {
       id: roomId,
       mode: roomMode,
       isRanked: false, // Custom rooms are never ranked
+      mapId: mapId || 'manor',
       players: [{
         id: socket.id,
         name: playerName || 'Player 1',
@@ -181,8 +182,21 @@ io.on('connection', (socket) => {
     socket.join(roomId);
     currentRoomId = roomId;
 
-    socket.emit('room-created', { roomId, players: room.players, mode: roomMode });
-    console.log(`Room created: ${roomId} (${roomMode}) by player: ${playerName} (${socket.id})`);
+    socket.emit('room-created', { roomId, players: room.players, mode: roomMode, mapId: room.mapId });
+    console.log(`Room created: ${roomId} (${roomMode}, Map: ${room.mapId}) by player: ${playerName} (${socket.id})`);
+  });
+
+  // 1.1 Select map (Quick Play Custom Lobby)
+  socket.on('select-map', ({ mapId }) => {
+    if (!currentRoomId) return;
+    const room = rooms.get(currentRoomId);
+    if (!room) return;
+    // Check if sender is admin/host
+    if (room.players[0] && room.players[0].id === socket.id) {
+      room.mapId = mapId;
+      io.to(currentRoomId).emit('lobby-map-update', { mapId });
+      console.log(`[Server] Map updated to ${mapId} in room: ${currentRoomId}`);
+    }
   });
 
   // 2. Join a room via code
@@ -215,7 +229,7 @@ io.on('connection', (socket) => {
     socket.join(cleanRoomId);
     currentRoomId = cleanRoomId;
 
-    socket.emit('room-joined', { roomId: cleanRoomId, players: room.players, mode: room.mode });
+    socket.emit('room-joined', { roomId: cleanRoomId, players: room.players, mode: room.mode, mapId: room.mapId || 'manor' });
     socket.to(cleanRoomId).emit('player-joined', { players: room.players });
     console.log(`Player ${playerName} (${socket.id}) joined room: ${cleanRoomId}`);
   });
@@ -344,11 +358,15 @@ io.on('connection', (socket) => {
         room.score2 = 0;
         room.roundNumber = 1;
         room.players.forEach(p => p.wantsRematch = false); // clear any old rematch tags
+        const startMapId = room.isRanked
+          ? (Math.random() < 0.5 ? 'manor' : 'cyberlab')
+          : (room.mapId || 'manor');
         io.to(currentRoomId).emit('match-start', {
           players: room.players,
           seed: Math.random(), // synchronized seed for map spawns / layouts
           isRanked: room.isRanked,
-          mode: room.mode
+          mode: room.mode,
+          mapId: startMapId
         });
         console.log(`Match started in room: ${currentRoomId} (${room.mode}, Ranked: ${room.isRanked})`);
       }
@@ -376,11 +394,15 @@ io.on('connection', (socket) => {
           p.ready = false;
           p.wantsRematch = false;
         });
+        const rematchMapId = room.isRanked
+          ? (Math.random() < 0.5 ? 'manor' : 'cyberlab')
+          : (room.mapId || 'manor');
         io.to(currentRoomId).emit('match-start', {
           players: room.players,
           seed: Math.random(),
           isRanked: room.isRanked,
-          mode: room.mode
+          mode: room.mode,
+          mapId: rematchMapId
         });
         console.log(`Rematch started in room: ${currentRoomId} (Ranked: ${room.isRanked})`);
       }

@@ -90,7 +90,7 @@ export class Engine {
       this.mapHeight = 1400;
       
       // Seeded map & item configuration
-      this.map = new GameMap(this.mapWidth, this.mapHeight, config.seed);
+      this.map = new GameMap(this.mapWidth, this.mapHeight, config.seed, config.mapId);
       
       // Sound & particles setup
       this.sound = new Sound();
@@ -781,7 +781,7 @@ export class Engine {
     setTimeout(() => {
       if (!this.active) return;
       this.startReplay(transitionAction);
-    }, 3000);
+    }, 0);
   }
 
   endMatch() {
