@@ -99,7 +99,8 @@ export class Network {
           this.socket.emit('player-died', {
             winnerId: hitData.shooterId,
             winnerName: 'Opponents',
-            loserId: this.localPlayer.id
+            loserId: this.localPlayer.id,
+            roundNumber: this.engine.roundNumber
           });
         }
       }

@@ -416,6 +416,10 @@ io.on('connection', (socket) => {
     if (!currentRoomId) return;
     const room = rooms.get(currentRoomId);
     if (room && room.status === 'playing') {
+      if (deathData && deathData.roundNumber !== undefined && deathData.roundNumber !== room.roundNumber) {
+        console.log(`[Server] Ignored duplicate/late death event for round ${deathData.roundNumber} (current server round: ${room.roundNumber})`);
+        return;
+      }
       const loserId = deathData.loserId;
       const loserIdx = room.players.findIndex(p => p.id === loserId);
       if (loserIdx !== -1) {

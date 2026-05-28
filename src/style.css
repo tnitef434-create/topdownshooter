@@ -1385,3 +1385,37 @@ footer {
   border: 1px solid rgba(255,60,60,0.3);
   margin-left: 8px;
 }
+
+/* --- Gameplay HUD Fixes & Animations --- */
+.game-hud button,
+.game-hud .btn,
+.game-hud .inv-slot {
+  pointer-events: auto !important;
+}
+
+.inv-slot {
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.inv-slot:hover {
+  background: rgba(255, 255, 255, 0.08) !important;
+  border-color: rgba(255, 255, 255, 0.25) !important;
+  color: #fff !important;
+  transform: translateY(-1px);
+}
+
+.inv-slot:active {
+  transform: translateY(1px);
+}
+
+@keyframes pulse-border {
+  0% {
+    border-color: rgba(212, 175, 55, 0.4);
+    box-shadow: 0 0 10px rgba(212, 175, 55, 0.15);
+  }
+  100% {
+    border-color: rgba(212, 175, 55, 1.0);
+    box-shadow: 0 0 25px rgba(212, 175, 55, 0.45);
+  }
+}

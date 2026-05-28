@@ -133,6 +133,15 @@ export class Sound {
         punchDecay = 0.4;
         punchVol = 1.0;
         break;
+      case 'knife':
+        noiseFilterFreq = 2000;
+        noiseDecay = 0.12;
+        noiseVol = 0.45;
+        punchStartFreq = 100;
+        punchEndFreq = 100;
+        punchDecay = 0.01;
+        punchVol = 0.0;
+        break;
     }
 
     // Configure Noise Envelope

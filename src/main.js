@@ -411,6 +411,9 @@ function startMusic() {
     return;
   }
   const activeScreen = document.querySelector('.screen.active');
+  const isGameplay = (activeScreen && activeScreen.id === 'game') || (screens.game && screens.game.classList.contains('active'));
+  if (isGameplay) return;
+
   if (activeScreen && (activeScreen.id === 'lobby-screen' || activeScreen.id === 'matchmaking-screen')) {
     waitMusic.play().then(() => {
       musicStarted = true;
@@ -909,9 +912,18 @@ function connectSocket() {
     playRankedStartVideo(initGame);
   });
 
-  socket.on('opponent-requested-rematch', () => {
+  socket.on('opponent-requested-rematch', (data) => {
     const rStatus = document.getElementById('rematch-status');
-    if (rStatus) rStatus.innerText = 'Opponent requested a rematch! Click REMATCH to accept.';
+    let oppName = 'Opponent';
+    if (gameEngine && data && data.playerId) {
+      const opp = gameEngine.players.find(p => p.id === data.playerId);
+      if (opp) {
+        oppName = opp.name;
+      }
+    }
+    if (rStatus) {
+      rStatus.innerText = `${oppName} requested a rematch! Click REMATCH to accept.`;
+    }
   });
 }
 
@@ -1299,17 +1311,17 @@ function setupUIListeners() {
 
   if (gameMenuBtn && gameMenuOverlay) {
     gameMenuBtn.addEventListener('click', () => {
-      gameMenuOverlay.style.display = 'flex';
+      gameMenuOverlay.classList.add('active');
     });
   }
   if (gameResumeBtn && gameMenuOverlay) {
     gameResumeBtn.addEventListener('click', () => {
-      gameMenuOverlay.style.display = 'none';
+      gameMenuOverlay.classList.remove('active');
     });
   }
   if (gameLeaveBtn && gameMenuOverlay) {
     gameLeaveBtn.addEventListener('click', () => {
-      gameMenuOverlay.style.display = 'none';
+      gameMenuOverlay.classList.remove('active');
       if (gameEngine) {
         if (gameEngine.active && gameEngine.mode === 'online') {
           recordMatchResult(false);

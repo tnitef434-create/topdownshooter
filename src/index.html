@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>TacticStrike 1v1 | Realistic Top-Down Multiplayer Shooter</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><circle cx=%2250%22 cy=%2250%22 r=%2235%22 fill=%22none%22 stroke=%22%2366fcf1%22 stroke-width=%228%22/><circle cx=%2250%22 cy=%2250%22 r=%228%22 fill=%22%23ff3c3c%22/><path d=%22M 50 5 L 50 25 M 50 75 L 50 95 M 5 50 L 25 50 M 75 50 L 95 50%22 stroke=%22%2366fcf1%22 stroke-width=%228%22 stroke-linecap=%22round%22/></svg>">
   <!-- Google Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -289,6 +290,12 @@
 
         <!-- Dynamic Game HUD Overlay -->
         <div class="game-hud">
+          <!-- Sprint Tip Popup Overlay -->
+          <div id="sprint-tip-popup" style="display: none; position: absolute; bottom: 180px; left: 50%; transform: translateX(-50%); background: rgba(10, 15, 28, 0.9); border: 2px solid #ffd700; border-radius: 6px; padding: 12px 24px; z-index: 100; font-family: var(--font-title); font-size: 13px; color: #fff; align-items: center; gap: 10px; box-shadow: 0 0 20px rgba(255, 215, 0, 0.25); animation: pulse-border 1.5s infinite alternate; pointer-events: none;">
+            <span style="font-size: 16px;">⚡</span>
+            <span>HOLD <strong style="color: #ffd700; text-shadow: 0 0 5px rgba(255,215,0,0.5);">SHIFT</strong> TO GO FASTER</span>
+          </div>
+
           <!-- Top Left Menu / Leave Button -->
           <div style="position: absolute; top: 20px; left: 20px; z-index: 10;">
             <button id="btn-game-menu" class="btn secondary btn-3d" style="padding: 6px 12px; font-size: 11px; border: 1px solid rgba(255,255,255,0.12);">MENU</button>
@@ -329,6 +336,13 @@
                 <span>RELOADING</span>
               </div>
             </div>
+            
+            <!-- Small Inventory Display -->
+            <div class="inventory-display" style="display: flex; gap: 6px; margin-top: 8px; font-family: var(--font-title); pointer-events: auto;">
+              <div id="inv-slot-1" class="inv-slot active" style="background: rgba(102, 252, 241, 0.12); border: 1px solid var(--neon-cyan); border-radius: 4px; padding: 4px 10px; font-size: 9px; letter-spacing: 1px; color: #fff; cursor: pointer; transition: all 0.2s; box-shadow: 0 0 8px rgba(102,252,241,0.2);">[1] PRIMARY</div>
+              <div id="inv-slot-2" class="inv-slot" style="background: rgba(0, 0, 0, 0.4); border: 1px solid rgba(255,255,255,0.08); border-radius: 4px; padding: 4px 10px; font-size: 9px; letter-spacing: 1px; color: rgba(255,255,255,0.5); cursor: pointer; transition: all 0.2s;">[2] KNIFE</div>
+              <div id="inv-slot-3" class="inv-slot" style="background: rgba(0, 0, 0, 0.4); border: 1px solid rgba(255,255,255,0.08); border-radius: 4px; padding: 4px 10px; font-size: 9px; letter-spacing: 1px; color: rgba(255,255,255,0.5); cursor: pointer; transition: all 0.2s;">[3] FLASH (1)</div>
+            </div>
           </div>
 
           <!-- Bottom Right: Opponent Status -->
@@ -359,7 +373,7 @@
         </div>
 
         <!-- Pause/Leave Menu Overlay inside game screen -->
-        <div id="game-menu-overlay" class="modal-overlay" style="display:none; align-items:center; justify-content:center; z-index:100; background:rgba(0,0,0,0.85);">
+        <div id="game-menu-overlay" class="modal-overlay" style="align-items:center; justify-content:center; z-index:100; background:rgba(0,0,0,0.85);">
           <div class="modal-card" style="max-width:300px; text-align:center; padding:30px 20px; border: 1px solid rgba(212,175,55,0.15);">
             <h3 style="font-family:var(--font-title); color:#fff; letter-spacing:2px; margin-bottom:20px; font-size:16px;">GAME MENU</h3>
             <div style="display:flex; flex-direction:column; gap:12px;">

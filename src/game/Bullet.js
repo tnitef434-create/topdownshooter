@@ -11,6 +11,7 @@ export class Bullet {
     this.speed = shootData.bulletSpeed;
     this.damage = shootData.damage;
     this.rangeRemaining = shootData.range;
+    this.weaponKey = shootData.weaponKey;
     
     // Spread offset calculation (applies spread based on weapon accuracy)
     const accuracy = shootData.accuracy;
@@ -173,6 +174,20 @@ export class Bullet {
 
   draw(ctx) {
     if (!this.active) return;
+
+    if (this.weaponKey === 'knife') {
+      ctx.save();
+      ctx.lineWidth = 3.5;
+      ctx.lineCap = 'round';
+      ctx.strokeStyle = 'rgba(230, 235, 255, 0.85)';
+      ctx.shadowColor = '#66fcf1';
+      ctx.shadowBlur = 6;
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, 18, this.angle - 0.6, this.angle + 0.6);
+      ctx.stroke();
+      ctx.restore();
+      return;
+    }
 
     ctx.save();
     

@@ -17,7 +17,8 @@ const WEAPON_DEFS = {
   sniper: { name: 'Sniper Rifle (AWM)', damage: 95, fireRate: 1500, accuracy: 0.99, magSize: 5, range: 1200, reloadTime: 2800, speedMultiplier: 1.0, type: 'Bolt-Action', recoil: 18, bulletSpeed: 24 },
   smg: { name: 'SMG (MP5)', damage: 18, fireRate: 75, accuracy: 0.82, magSize: 30, range: 350, reloadTime: 1500, speedMultiplier: 1.0, type: 'Automatic', recoil: 2.2, bulletSpeed: 13 },
   lmg: { name: 'LMG (M249)', damage: 25, fireRate: 85, accuracy: 0.75, magSize: 100, range: 550, reloadTime: 4500, speedMultiplier: 1.0, type: 'Automatic', recoil: 6.0, bulletSpeed: 15 },
-  dmr: { name: 'DMR (M14 EBR)', damage: 45, fireRate: 400, accuracy: 0.94, magSize: 20, range: 800, reloadTime: 2400, speedMultiplier: 1.0, type: 'Semi-Auto', recoil: 8.5, bulletSpeed: 20 }
+  dmr: { name: 'DMR (M14 EBR)', damage: 45, fireRate: 400, accuracy: 0.94, magSize: 20, range: 800, reloadTime: 2400, speedMultiplier: 1.0, type: 'Semi-Auto', recoil: 8.5, bulletSpeed: 20 },
+  knife: { name: 'Tactical Knife', damage: 55, fireRate: 350, accuracy: 1.0, magSize: 1, range: 60, reloadTime: 0, speedMultiplier: 1.15, type: 'Melee', recoil: 0, bulletSpeed: 20 }
 };
 
 const COLOR_THEMES = {
@@ -56,6 +57,12 @@ export class Player {
 
     this.weaponKey = weaponKey;
     this.weapon = { ...WEAPON_DEFS[weaponKey] };
+    
+    // Inventory slots
+    this.primaryWeaponKey = weaponKey;
+    this.activeSlot = 1; // 1 = Primary, 2 = Knife
+    this.primaryAmmoInMag = this.weapon.magSize;
+    this.primaryReserveAmmo = this.weapon.magSize * 3;
     
     // Ammunition
     this.ammoInMag = this.weapon.magSize;
@@ -122,6 +129,41 @@ export class Player {
     this.ammoInMag = this.weapon.magSize;
     this.reserveAmmo = this.weapon.magSize * 3;
     this.isReloading = false;
+    
+    if (weaponKey !== 'knife') {
+      this.primaryWeaponKey = weaponKey;
+      this.primaryAmmoInMag = this.ammoInMag;
+      this.primaryReserveAmmo = this.reserveAmmo;
+    }
+  }
+
+  switchSlot(slot) {
+    if (slot === this.activeSlot) return;
+    
+    // Save current slot ammo state if switching from primary
+    if (this.activeSlot === 1) {
+      this.primaryAmmoInMag = this.ammoInMag;
+      this.primaryReserveAmmo = this.reserveAmmo;
+    }
+    
+    this.activeSlot = slot;
+    
+    if (slot === 1) {
+      this.changeWeapon(this.primaryWeaponKey);
+      this.ammoInMag = this.primaryAmmoInMag;
+      this.reserveAmmo = this.primaryReserveAmmo;
+    } else if (slot === 2) {
+      this.changeWeapon('knife');
+      this.ammoInMag = 1;
+      this.reserveAmmo = Infinity;
+    }
+    
+    if (this.isLocal && !this.isBot) {
+      this.updateHUD();
+      if (window.AppSocket) {
+        window.AppSocket.emit('select-weapon', { weapon: this.weaponKey });
+      }
+    }
   }
 
   update(keys, mouse, map, soundEngine, currentTime, target, localPlayer) {
@@ -269,7 +311,7 @@ export class Player {
     }
 
     // Ammo check
-    if (this.ammoInMag <= 0) {
+    if (this.weaponKey !== 'knife' && this.ammoInMag <= 0) {
       if (soundEngine) soundEngine.playDryFire();
       this.lastFiredTime = currentTime;
       
@@ -281,9 +323,11 @@ export class Player {
     }
 
     // Success fire
-    this.ammoInMag--;
+    if (this.weaponKey !== 'knife') {
+      this.ammoInMag--;
+    }
     this.lastFiredTime = currentTime;
-    this.muzzleFlash = 1.0;
+    this.muzzleFlash = this.weaponKey === 'knife' ? 0.0 : 1.0;
 
     // Gun Physical recoil force pushing player backwards
     const recoilForce = this.weapon.recoil;
@@ -344,6 +388,31 @@ export class Player {
       } else {
         flashVal.style.color = '#ffd700';
         flashVal.style.borderColor = 'rgba(255, 215, 0, 0.3)';
+      }
+    }
+
+    // Update inventory slots UI
+    for (let slotNum = 1; slotNum <= 3; slotNum++) {
+      const slotEl = document.getElementById(`inv-slot-${slotNum}`);
+      if (slotEl) {
+        if (slotNum === 3) {
+          slotEl.innerText = `[3] FLASH (${this.flashGrenades !== undefined ? this.flashGrenades : 1})`;
+        } else if (slotNum === 1) {
+          const wName = this.primaryWeaponKey ? this.primaryWeaponKey.toUpperCase() : 'PRIMARY';
+          slotEl.innerText = `[1] ${wName}`;
+        }
+        
+        if (this.activeSlot === slotNum) {
+          slotEl.style.background = 'rgba(102, 252, 241, 0.12)';
+          slotEl.style.borderColor = 'var(--neon-cyan)';
+          slotEl.style.color = '#fff';
+          slotEl.style.boxShadow = '0 0 8px rgba(102,252,241,0.2)';
+        } else {
+          slotEl.style.background = 'rgba(0, 0, 0, 0.4)';
+          slotEl.style.borderColor = 'rgba(255,255,255,0.08)';
+          slotEl.style.color = 'rgba(255,255,255,0.5)';
+          slotEl.style.boxShadow = 'none';
+        }
       }
     }
   }
@@ -807,7 +876,7 @@ export class Player {
     ctx.translate(this.x, this.y);
     ctx.rotate(this.angle);
 
-    ctx.fillStyle = '#333';
+    ctx.fillStyle = this.weaponKey === 'knife' ? '#b0b8c0' : '#333';
     ctx.strokeStyle = 'rgba(0,0,0,0.7)';
     ctx.lineWidth = 1;
     let barrelLength = 18, barrelWidth = 3;
@@ -817,6 +886,7 @@ export class Player {
     if (this.weaponKey === 'smg')    { barrelLength = 16; barrelWidth = 3; }
     if (this.weaponKey === 'lmg')    { barrelLength = 28; barrelWidth = 5; }
     if (this.weaponKey === 'dmr')    { barrelLength = 30; barrelWidth = 4; }
+    if (this.weaponKey === 'knife')  { barrelLength = 10; barrelWidth = 2; }
 
     ctx.fillRect(12, -barrelWidth / 2, barrelLength, barrelWidth);
     ctx.strokeRect(12, -barrelWidth / 2, barrelLength, barrelWidth);

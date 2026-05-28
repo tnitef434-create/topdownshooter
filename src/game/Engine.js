@@ -213,6 +213,10 @@ export class Engine {
       this.keys = {};
       this.mouse = { x: 0, y: 0, gameX: 0, gameY: 0, angle: 0, clicked: false };
       
+      // Sprint Popup variables
+      this.lastSprintTime = performance.now();
+      this.sprintTipVisible = false;
+
       // Setup
       this.resizeCanvas();
       this.setupControls();
@@ -290,6 +294,18 @@ export class Engine {
         }
       }
 
+      // Switch weapon slots
+      if (e.key === '1') {
+        if (this.localPlayer && this.localPlayer.health > 0) {
+          this.localPlayer.switchSlot(1);
+        }
+      }
+      if (e.key === '2') {
+        if (this.localPlayer && this.localPlayer.health > 0) {
+          this.localPlayer.switchSlot(2);
+        }
+      }
+
       // Throw flash grenade
       if (e.key === '3') {
         if (this.localPlayer && this.localPlayer.health > 0) {
@@ -319,6 +335,10 @@ export class Engine {
       if (e.button === 0) { // left click
         const chatInput = document.getElementById('chat-input');
         if (chatInput && document.activeElement === chatInput) return;
+        // Block shooting when clicking on interactive HUD elements
+        if (e.target.closest('#btn-game-menu') || e.target.closest('.inv-slot') || e.target.closest('button') || e.target.closest('input') || e.target.closest('.inventory-display')) {
+          return;
+        }
         this.mouse.clicked = true;
       }
     };
@@ -340,6 +360,30 @@ export class Engine {
     window.addEventListener('mousedown', this.mousedownHandler);
     window.addEventListener('mouseup', this.mouseupHandler);
     window.addEventListener('wheel', this.wheelHandler, { passive: true });
+
+    // Inventory slots UI clicking
+    this.invSlot1Handler = () => {
+      if (this.localPlayer && this.localPlayer.health > 0) {
+        this.localPlayer.switchSlot(1);
+      }
+    };
+    this.invSlot2Handler = () => {
+      if (this.localPlayer && this.localPlayer.health > 0) {
+        this.localPlayer.switchSlot(2);
+      }
+    };
+    this.invSlot3Handler = () => {
+      if (this.localPlayer && this.localPlayer.health > 0) {
+        this.localPlayer.throwFlashbangRequest = true;
+      }
+    };
+
+    const slot1 = document.getElementById('inv-slot-1');
+    const slot2 = document.getElementById('inv-slot-2');
+    const slot3 = document.getElementById('inv-slot-3');
+    if (slot1) slot1.addEventListener('click', this.invSlot1Handler);
+    if (slot2) slot2.addEventListener('click', this.invSlot2Handler);
+    if (slot3) slot3.addEventListener('click', this.invSlot3Handler);
   }
 
   destroy() {
@@ -351,6 +395,14 @@ export class Engine {
     window.removeEventListener('mousedown', this.mousedownHandler);
     window.removeEventListener('mouseup', this.mouseupHandler);
     window.removeEventListener('wheel', this.wheelHandler);
+    
+    // Clean up inventory click handlers
+    const slot1 = document.getElementById('inv-slot-1');
+    const slot2 = document.getElementById('inv-slot-2');
+    const slot3 = document.getElementById('inv-slot-3');
+    if (slot1 && this.invSlot1Handler) slot1.removeEventListener('click', this.invSlot1Handler);
+    if (slot2 && this.invSlot2Handler) slot2.removeEventListener('click', this.invSlot2Handler);
+    if (slot3 && this.invSlot3Handler) slot3.removeEventListener('click', this.invSlot3Handler);
     
     if (this.matchTimerInterval) {
       clearInterval(this.matchTimerInterval);
@@ -398,6 +450,12 @@ export class Engine {
     this.countdownTimer = 3;
     this.countdownStart = performance.now();
     
+    // Reset sprint warning popup
+    this.lastSprintTime = performance.now();
+    this.sprintTipVisible = false;
+    const popup = document.getElementById('sprint-tip-popup');
+    if (popup) popup.style.display = 'none';
+
     // Reset all operatives
     this.players.forEach((p, idx) => {
       const spawn = this.spawns[idx % this.spawns.length];
@@ -505,7 +563,10 @@ export class Engine {
       }
     };
 
-    this.startReplay(transitionAction);
+    setTimeout(() => {
+      if (!this.active) return;
+      this.startReplay(transitionAction);
+    }, 3000);
   }
 
   endMatch() {
@@ -909,6 +970,34 @@ export class Engine {
       this.cameraShake = 0;
     }
 
+    // Update sprint warning popup
+    if (this.gameState === 'playing') {
+      const isSprinting = this.keys['shift'];
+      const popup = document.getElementById('sprint-tip-popup');
+      
+      if (isSprinting) {
+        this.lastSprintTime = currentTime;
+        if (this.sprintTipVisible) {
+          this.sprintTipVisible = false;
+          if (popup) popup.style.display = 'none';
+        }
+      } else {
+        // Check if local player is actively moving
+        const isMoving = this.localPlayer && (Math.abs(this.localPlayer.vx) > 0.2 || Math.abs(this.localPlayer.vy) > 0.2);
+        if (isMoving) {
+          if (currentTime - this.lastSprintTime > 9000) {
+            if (!this.sprintTipVisible) {
+              this.sprintTipVisible = true;
+              if (popup) popup.style.display = 'flex';
+            }
+          }
+        } else {
+          // Standing still resets the sprint reminder timer
+          this.lastSprintTime = currentTime;
+        }
+      }
+    }
+
     // 7. Relay state over network (60Hz throttled)
     if (this.mode === 'online' && (this.gameState === 'playing' || this.gameState === 'countdown')) {
       this.network.sendState(currentTime);
@@ -941,7 +1030,8 @@ export class Engine {
           prevY: b.prevY,
           angle: b.angle,
           playerId: b.playerId,
-          active: b.active
+          active: b.active,
+          weaponKey: b.weaponKey
         })),
         grenades: this.grenades.map(g => ({
           x: g.x,
@@ -1086,6 +1176,7 @@ export class Engine {
       if (p.weaponKey === 'smg')    { barrelLength = 16; barrelWidth = 4; }
       if (p.weaponKey === 'lmg')    { barrelLength = 26; barrelWidth = 7; }
       if (p.weaponKey === 'dmr')    { barrelLength = 28; barrelWidth = 5; }
+      if (p.weaponKey === 'knife')  { barrelLength = 10; barrelWidth = 2; }
 
       this.ctx.fillStyle = '#444'; this.ctx.strokeStyle = '#000'; this.ctx.lineWidth = 1;
       this.ctx.fillRect(10, -barrelWidth / 2, barrelLength, barrelWidth);
@@ -1116,7 +1207,7 @@ export class Engine {
     this.ctx.translate(p.x, p.y);
     this.ctx.rotate(p.angle);
 
-    this.ctx.fillStyle = '#333';
+    this.ctx.fillStyle = p.weaponKey === 'knife' ? '#b0b8c0' : '#333';
     this.ctx.strokeStyle = 'rgba(0,0,0,0.7)';
     this.ctx.lineWidth = 1;
     let barrelLength = 18, barrelWidth = 3;
@@ -1126,6 +1217,7 @@ export class Engine {
     if (p.weaponKey === 'smg')    { barrelLength = 16; barrelWidth = 3; }
     if (p.weaponKey === 'lmg')    { barrelLength = 28; barrelWidth = 5; }
     if (p.weaponKey === 'dmr')    { barrelLength = 30; barrelWidth = 4; }
+    if (p.weaponKey === 'knife')  { barrelLength = 10; barrelWidth = 2; }
 
     this.ctx.fillRect(12, -barrelWidth / 2, barrelLength, barrelWidth);
     this.ctx.strokeRect(12, -barrelWidth / 2, barrelLength, barrelWidth);
@@ -1299,26 +1391,37 @@ export class Engine {
       frame.bullets.forEach(b => {
         if (!b.active) return;
         this.ctx.save();
-        this.ctx.lineWidth = 2.5;
-        this.ctx.lineCap = 'round';
-        const isLocalBullet = b.playerId === fLocalPlayer?.id;
-        const gradient = this.ctx.createLinearGradient(b.prevX, b.prevY, b.x, b.y);
-        if (isLocalBullet) {
-          gradient.addColorStop(0, 'rgba(102, 252, 241, 0.0)');
-          gradient.addColorStop(1, 'rgba(102, 252, 241, 1.0)');
-          this.ctx.strokeStyle = gradient;
+        if (b.weaponKey === 'knife') {
+          this.ctx.lineWidth = 3.5;
+          this.ctx.lineCap = 'round';
+          this.ctx.strokeStyle = 'rgba(230, 235, 255, 0.85)';
           this.ctx.shadowColor = '#66fcf1';
+          this.ctx.shadowBlur = 6;
+          this.ctx.beginPath();
+          this.ctx.arc(b.x, b.y, 18, b.angle - 0.6, b.angle + 0.6);
+          this.ctx.stroke();
         } else {
-          gradient.addColorStop(0, 'rgba(255, 60, 60, 0.0)');
-          gradient.addColorStop(1, 'rgba(255, 60, 60, 1.0)');
-          this.ctx.strokeStyle = gradient;
-          this.ctx.shadowColor = '#ff3c3c';
+          this.ctx.lineWidth = 2.5;
+          this.ctx.lineCap = 'round';
+          const isLocalBullet = b.playerId === fLocalPlayer?.id;
+          const gradient = this.ctx.createLinearGradient(b.prevX, b.prevY, b.x, b.y);
+          if (isLocalBullet) {
+            gradient.addColorStop(0, 'rgba(102, 252, 241, 0.0)');
+            gradient.addColorStop(1, 'rgba(102, 252, 241, 1.0)');
+            this.ctx.strokeStyle = gradient;
+            this.ctx.shadowColor = '#66fcf1';
+          } else {
+            gradient.addColorStop(0, 'rgba(255, 60, 60, 0.0)');
+            gradient.addColorStop(1, 'rgba(255, 60, 60, 1.0)');
+            this.ctx.strokeStyle = gradient;
+            this.ctx.shadowColor = '#ff3c3c';
+          }
+          this.ctx.shadowBlur = 4;
+          this.ctx.beginPath();
+          this.ctx.moveTo(b.prevX, b.prevY);
+          this.ctx.lineTo(b.x, b.y);
+          this.ctx.stroke();
         }
-        this.ctx.shadowBlur = 4;
-        this.ctx.beginPath();
-        this.ctx.moveTo(b.prevX, b.prevY);
-        this.ctx.lineTo(b.x, b.y);
-        this.ctx.stroke();
         this.ctx.restore();
       });
       frame.particles.forEach(p => {
@@ -1467,6 +1570,90 @@ export class Engine {
       }
     }
 
+    // Render Tactical Minimap after 20 seconds of gameplay
+    if (!frame && this.gameState === 'playing' && (performance.now() - this.roundStartTime) > 20000) {
+      this.ctx.save();
+      const mapSize = 150;
+      const margin = 20;
+      const x = this.canvas.width - mapSize - margin;
+      const y = 100;
+
+      // Container background
+      this.ctx.fillStyle = 'rgba(6, 7, 10, 0.85)';
+      this.ctx.fillRect(x, y, mapSize, mapSize);
+
+      // Gold border
+      this.ctx.strokeStyle = 'hsla(43, 74%, 49%, 0.6)';
+      this.ctx.lineWidth = 2;
+      this.ctx.strokeRect(x, y, mapSize, mapSize);
+
+      // Header label
+      this.ctx.fillStyle = 'hsla(43, 74%, 49%, 0.9)';
+      this.ctx.font = 'bold 9px Orbitron';
+      this.ctx.textAlign = 'center';
+      this.ctx.fillText('TACTICAL MINIMAP', x + mapSize / 2, y - 6);
+
+      const scale = mapSize / this.map.width;
+
+      // Draw walls
+      this.ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
+      this.map.walls.forEach(w => {
+        this.ctx.fillRect(x + w.x * scale, y + w.y * scale, w.w * scale, w.h * scale);
+      });
+
+      // Draw local player (cyan with viewing angle line)
+      if (this.localPlayer && this.localPlayer.health > 0) {
+        const px = x + this.localPlayer.x * scale;
+        const py = y + this.localPlayer.y * scale;
+
+        this.ctx.fillStyle = '#00ffff';
+        this.ctx.beginPath();
+        this.ctx.arc(px, py, 3.5, 0, Math.PI * 2);
+        this.ctx.fill();
+
+        this.ctx.strokeStyle = 'rgba(0, 255, 255, 0.8)';
+        this.ctx.lineWidth = 1;
+        this.ctx.beginPath();
+        this.ctx.moveTo(px, py);
+        this.ctx.lineTo(
+          px + Math.cos(this.localPlayer.angle) * 7,
+          py + Math.sin(this.localPlayer.angle) * 7
+        );
+        this.ctx.stroke();
+      }
+
+      // Draw other players
+      const pulse = Math.abs(Math.sin(performance.now() / 200));
+      this.players.forEach(p => {
+        if (p.health > 0 && !p.isLocal) {
+          const px = x + p.x * scale;
+          const py = y + p.y * scale;
+
+          if (!p.isTeammate) {
+            // Pulsating enemy blip
+            this.ctx.fillStyle = `rgba(255, 60, 60, ${0.4 + 0.6 * pulse})`;
+            this.ctx.beginPath();
+            this.ctx.arc(px, py, 4 + pulse * 2.5, 0, Math.PI * 2);
+            this.ctx.fill();
+
+            // Center core
+            this.ctx.fillStyle = '#ff3c3c';
+            this.ctx.beginPath();
+            this.ctx.arc(px, py, 2, 0, Math.PI * 2);
+            this.ctx.fill();
+          } else {
+            // Teammate
+            this.ctx.fillStyle = '#39ff14';
+            this.ctx.beginPath();
+            this.ctx.arc(px, py, 3, 0, Math.PI * 2);
+            this.ctx.fill();
+          }
+        }
+      });
+
+      this.ctx.restore();
+    }
+
     // 4. Render Replay Overlay HUD (vibrant AAA style)
     if (frame) {
       this.ctx.save();
@@ -1545,12 +1732,15 @@ export class Engine {
     this.updateScoreboardHUD();
 
     this.roundNumber = data.roundNumber;
-    this.startReplay(() => this.startRoundCycle());
+    setTimeout(() => {
+      if (!this.active) return;
+      this.startReplay(() => this.startRoundCycle());
+    }, 3000);
   }
 
   handleServerMatchOver(data) {
-    this.gameState = 'match-over';
-    this.active = false;
+    if (this.gameState !== 'playing' && this.gameState !== 'round-over') return;
+    this.gameState = 'round-over';
     if (this.matchTimerInterval) clearInterval(this.matchTimerInterval);
 
     const myTeam = this.localPlayer.team;
@@ -1599,6 +1789,9 @@ export class Engine {
       }
     };
 
-    this.startReplay(finishMatch);
+    setTimeout(() => {
+      if (!this.active) return;
+      this.startReplay(finishMatch);
+    }, 3000);
   }
 }
