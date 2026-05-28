@@ -75,8 +75,8 @@ export class Player {
     this.lastFiredTime = 0;
     
     // Movement configuration
-    this.accel = 0.20;
-    this.maxSpeed = 2.2;
+    this.accel = 0.30;      // was 0.20 — snappier acceleration
+    this.maxSpeed = 3.4;    // was 2.2 — noticeably faster default
     this.friction = 0.84;
     
     // Visual indicators
@@ -183,7 +183,7 @@ export class Player {
 
     // Apply speed multiplier based on carrying weapon weight and sprint speed mult
     const isSprinting = this.isLocal && keys && keys['shift'];
-    const speedMod = this.weapon.speedMultiplier * (isSprinting ? 1.35 : 1.0);
+    const speedMod = this.weapon.speedMultiplier * (isSprinting ? 1.75 : 1.0);  // was 1.35
     let currentMaxSpeed = this.maxSpeed * speedMod;
 
     // Check if player is currently in a dash (lasts for 200ms)
@@ -274,8 +274,8 @@ export class Player {
   handleLocalInput(keys, mouse, soundEngine, currentTime) {
     // Sprint check
     const isSprinting = keys && keys['shift'];
-    const sprintSpeedMult = isSprinting ? 1.35 : 1.0;
-    const sprintAccelMult = isSprinting ? 1.35 : 1.0;
+    const sprintSpeedMult = isSprinting ? 1.75 : 1.0;   // was 1.35
+    const sprintAccelMult = isSprinting ? 1.75 : 1.0;   // was 1.35
 
     // WASD movement inputs
     let ax = 0;

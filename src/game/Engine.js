@@ -414,7 +414,9 @@ export class Engine {
       prevButtons: [],
       deadzone: 0.18,
       aimAngle: 0,
-      aimActive: false
+      aimActive: false,
+      frameCount: 0,    // used to throttle getGamepads() call
+      cachedGP: null    // cached gamepad object to avoid per-frame scanning
     };
   }
 
@@ -422,19 +424,21 @@ export class Engine {
   // maps them to the same keys/mouse state that keyboard/mouse use.
   pollGamepad() {
     if (!navigator.getGamepads) return;
-    const gamepads = navigator.getGamepads();
-    let gp = null;
-    for (let i = 0; i < gamepads.length; i++) {
-      if (gamepads[i]) { gp = gamepads[i]; break; }
+    const GP = this._gpState;
+
+    // Only re-scan the gamepad list every 2 frames to cut getGamepads() overhead.
+    GP.frameCount++;
+    if (GP.frameCount % 2 === 0) {
+      const gamepads = navigator.getGamepads();
+      GP.cachedGP = null;
+      for (let i = 0; i < gamepads.length; i++) {
+        if (gamepads[i]) { GP.cachedGP = gamepads[i]; break; }
+      }
     }
-    if (!gp) {
-      // No controller connected — clear any stale axis-injected keys so the
-      // keyboard remains the authoritative source of input
-      return;
-    }
+    const gp = GP.cachedGP;
+    if (!gp) return;  // no controller connected
     if (!this.localPlayer || this.localPlayer.health <= 0) return;
 
-    const GP  = this._gpState;
     const dz  = GP.deadzone;
     const btn = (i) => gp.buttons[i];
     const pressed = (i) => !!(btn(i) && btn(i).pressed);
