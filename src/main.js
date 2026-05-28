@@ -858,6 +858,7 @@ function connectSocket() {
   }
 
   socket = io(serverUrl);
+  window.AppSocket = socket;
 
   socket.on('connect_error', () => {
     // Fail silently or fallback for auto-login without annoying alerts
@@ -965,7 +966,11 @@ function connectSocket() {
   socket.on('player-left', ({ players, message }) => {
     updateLobbyUI(players);
     addSystemChatMessage(message);
-    if (gameEngine) {
+    
+    const activeScreen = document.querySelector('.screen.active');
+    const isInGame = activeScreen && activeScreen.id === 'game-screen';
+    
+    if (gameEngine && isInGame) {
       if (gameEngine.active && gameEngine.mode === 'online' && (gameEngine.gameState === 'playing' || gameEngine.gameState === 'countdown' || gameEngine.gameState === 'replay')) {
         recordMatchResult(true);
         if (gameEngine.isRanked) {
@@ -1041,6 +1046,7 @@ function disconnectSocket() {
     socket.disconnect();
     socket = null;
     currentRoom = null;
+    window.AppSocket = null;
   }
 }
 
@@ -1368,15 +1374,8 @@ function setupUIListeners() {
       if (socket && currentRoom) {
         const nextReadyState = !isReady;
         socket.emit('player-ready', { ready: nextReadyState });
-        if (nextReadyState) {
-          window.stopAllMusic();
-        } else {
-          if (currentRoom) {
-            playLobbyMusic();
-          } else {
-            playWaitMusic();
-          }
-        }
+        // Keep playing lobby music since we are in the lobby waiting
+        playLobbyMusic();
       }
     });
   }
