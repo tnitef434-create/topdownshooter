@@ -98,19 +98,34 @@ export class Bullet {
         // Spawn flesh blood splatter
         particlesEngine.spawnBloodSplatter(this.x, this.y, this.angle);
 
+        // Check if headshot (hit close to player center)
+        const dx = this.x - player.x;
+        const dy = this.y - player.y;
+        const distSqr = dx * dx + dy * dy;
+        const isHeadshot = distSqr <= 36; // 6px radius from player center (radius is 18)
+        const headshotMult = isHeadshot ? 1.5 : 1.0;
+
         // Apply damage
         if (window.IsOfflineMode) {
           // Offline mode: any valid enemy bullet hit deals damage!
           const zone = map.checkZone ? map.checkZone(this.x, this.y) : null;
           const dmgMult = (zone && zone.type === 'damage') ? zone.multiplier : 1.0;
-          const finalDamage = Math.round(this.damage * dmgMult);
+          const finalDamage = Math.round(this.damage * dmgMult * headshotMult);
 
           player.takeDamage(finalDamage, soundEngine);
           
           if (this.playerId === window.LocalPlayerId) {
-            if (soundEngine) soundEngine.playHitMarker();
-            if (dmgMult > 1.0 && player.showTextNotification) {
+            if (soundEngine) {
+              if (isHeadshot) soundEngine.playCriticalHitMarker();
+              else soundEngine.playHitMarker();
+            }
+            if (isHeadshot && player.showTextNotification) {
+              player.showTextNotification('CRITICAL HEADSHOT!');
+            } else if (dmgMult > 1.0 && player.showTextNotification) {
               player.showTextNotification(`×${dmgMult} ZONE!`);
+            }
+            if (window.gameEngine) {
+              window.gameEngine.triggerHitmarker(this.x, this.y, finalDamage, isHeadshot);
             }
             if (window.MatchStats) {
               window.MatchStats.damageDealt += finalDamage;
@@ -121,13 +136,22 @@ export class Bullet {
           if (this.playerId === window.LocalPlayerId) {
             const zone = map.checkZone ? map.checkZone(this.x, this.y) : null;
             const dmgMult = (zone && zone.type === 'damage') ? zone.multiplier : 1.0;
-            const finalDamage = Math.round(this.damage * dmgMult);
+            const finalDamage = Math.round(this.damage * dmgMult * headshotMult);
 
             player.takeDamage(finalDamage, soundEngine);
-            if (soundEngine) soundEngine.playHitMarker();
+            if (soundEngine) {
+              if (isHeadshot) soundEngine.playCriticalHitMarker();
+              else soundEngine.playHitMarker();
+            }
 
-            if (dmgMult > 1.0 && player.showTextNotification) {
+            if (isHeadshot && player.showTextNotification) {
+              player.showTextNotification('CRITICAL HEADSHOT!');
+            } else if (dmgMult > 1.0 && player.showTextNotification) {
               player.showTextNotification(`×${dmgMult} ZONE!`);
+            }
+
+            if (window.gameEngine) {
+              window.gameEngine.triggerHitmarker(this.x, this.y, finalDamage, isHeadshot);
             }
 
             if (window.MatchStats) {
@@ -140,7 +164,8 @@ export class Bullet {
                 shooterId: this.playerId,
                 targetId: player.id,
                 x: this.x,
-                y: this.y
+                y: this.y,
+                isHeadshot: isHeadshot
               });
             }
           }

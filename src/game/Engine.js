@@ -178,6 +178,8 @@ export class Engine {
 
       this.bullets = [];
       this.grenades = [];
+      this.activeHitmarkers = [];
+      this.floatingNumbers = [];
       this.replayFrames = [];
       
       // Network component
@@ -932,6 +934,25 @@ export class Engine {
     requestAnimationFrame(() => this.loop());
   }
 
+  triggerHitmarker(x, y, damage, isHeadshot) {
+    this.activeHitmarkers.push({
+      x: x,
+      y: y,
+      age: 0,
+      duration: 200,
+      isHeadshot: !!isHeadshot
+    });
+
+    this.floatingNumbers.push({
+      x: x,
+      y: y - 10,
+      damage: damage,
+      age: 0,
+      duration: 800,
+      isHeadshot: !!isHeadshot
+    });
+  }
+
   // Core Game State Update
   update(currentTime) {
     if (!this.lastUpdateTime) {
@@ -1146,6 +1167,25 @@ export class Engine {
 
     // 4. Update Particle animations
     this.particles.update(this.map);
+
+    // Update Hitmarkers
+    for (let i = this.activeHitmarkers.length - 1; i >= 0; i--) {
+      const hm = this.activeHitmarkers[i];
+      hm.age += clampedDt;
+      if (hm.age >= hm.duration) {
+        this.activeHitmarkers.splice(i, 1);
+      }
+    }
+
+    // Update Floating Numbers
+    for (let i = this.floatingNumbers.length - 1; i >= 0; i--) {
+      const fn = this.floatingNumbers[i];
+      fn.age += clampedDt;
+      fn.y -= 1.0 * this.dtFactor;
+      if (fn.age >= fn.duration) {
+        this.floatingNumbers.splice(i, 1);
+      }
+    }
 
     // Log new deaths to kill feed
     this.players.forEach(p => {
@@ -1808,6 +1848,60 @@ export class Engine {
       this.ctx.restore();
     }
 
+    // Render Hitmarkers (World coordinates)
+    this.activeHitmarkers.forEach(hm => {
+      const agePct = hm.age / hm.duration;
+      this.ctx.save();
+      this.ctx.translate(hm.x, hm.y);
+      
+      const alpha = 1 - agePct;
+      this.ctx.strokeStyle = hm.isHeadshot ? `rgba(255, 215, 0, ${alpha})` : `rgba(255, 255, 255, ${alpha})`;
+      this.ctx.lineWidth = hm.isHeadshot ? 2.5 : 1.5;
+      
+      const size = 5 + agePct * 5;
+      const inner = 2;
+      
+      this.ctx.beginPath();
+      this.ctx.moveTo(-inner, -inner);
+      this.ctx.lineTo(-size, -size);
+      this.ctx.moveTo(inner, -inner);
+      this.ctx.lineTo(size, -size);
+      this.ctx.moveTo(-inner, inner);
+      this.ctx.lineTo(-size, size);
+      this.ctx.moveTo(inner, inner);
+      this.ctx.lineTo(size, size);
+      this.ctx.stroke();
+      this.ctx.restore();
+    });
+
+    // Render Floating Damage Numbers (World coordinates)
+    this.floatingNumbers.forEach(fn => {
+      const agePct = fn.age / fn.duration;
+      this.ctx.save();
+      this.ctx.translate(fn.x, fn.y);
+      
+      const alpha = 1 - agePct;
+      let scale = 1.0;
+      if (agePct < 0.25) {
+        scale = 1.0 + (agePct / 0.25) * 0.4;
+      } else {
+        scale = 1.4 - ((agePct - 0.25) / 0.75) * 0.4;
+      }
+      
+      this.ctx.scale(scale, scale);
+      
+      this.ctx.font = fn.isHeadshot ? "bold 14px 'Orbitron', sans-serif" : "bold 11px 'Orbitron', sans-serif";
+      this.ctx.textAlign = 'center';
+      
+      this.ctx.strokeStyle = `rgba(0, 0, 0, ${alpha})`;
+      this.ctx.lineWidth = 3;
+      this.ctx.strokeText(fn.damage, 0, 0);
+      
+      this.ctx.fillStyle = fn.isHeadshot ? `rgba(255, 215, 0, ${alpha})` : `rgba(255, 255, 255, ${alpha})`;
+      this.ctx.fillText(fn.damage, 0, 0);
+      this.ctx.restore();
+    });
+
     // Restore viewport translations
     this.ctx.restore();
 
@@ -1818,7 +1912,24 @@ export class Engine {
       this.canvas.width / 2, this.canvas.height / 2, this.canvas.width / 1.1
     );
     vignette.addColorStop(0, 'rgba(0, 0, 0, 0)');
-    vignette.addColorStop(1, 'rgba(0, 0, 0, 0.82)');
+    
+    // Check local player active buffs for vignette color styling
+    let edgeColor = 'rgba(0, 0, 0, 0.82)';
+    if (this.localPlayer) {
+      const now = Date.now();
+      const hasAdrenaline = this.localPlayer.adrenalineEndTime && (now < this.localPlayer.adrenalineEndTime) || this.localPlayer.adrenalineActive;
+      const hasOverdrive = this.localPlayer.overdriveEndTime && (now < this.localPlayer.overdriveEndTime) || this.localPlayer.overdriveActive;
+      
+      if (hasOverdrive) {
+        const pulse = Math.sin(now / 150) * 0.12 + 0.48; // 0.36 to 0.60 alpha
+        edgeColor = `rgba(255, 180, 0, ${pulse})`;
+      } else if (hasAdrenaline) {
+        const pulse = Math.sin(now / 150) * 0.12 + 0.48; // 0.36 to 0.60 alpha
+        edgeColor = `rgba(57, 219, 20, ${pulse})`;
+      }
+    }
+    
+    vignette.addColorStop(1, edgeColor);
     this.ctx.fillStyle = vignette;
     this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
 

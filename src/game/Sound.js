@@ -367,6 +367,29 @@ export class Sound {
     osc.stop(t + 0.1);
   }
 
+  playCriticalHitMarker() {
+    this.init();
+    if (!this.ctx) return;
+    if (this.ctx.state === 'suspended') this.ctx.resume();
+
+    const t = this.ctx.currentTime;
+    
+    // Metallic high-pitched "ping"
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(2300, t);
+    
+    gain.gain.setValueAtTime(0.25, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.14);
+    
+    osc.connect(gain);
+    gain.connect(this.masterVolume);
+    osc.start(t);
+    osc.stop(t + 0.16);
+  }
+
   playFleshHit() {
     this.init();
     if (!this.ctx) return;

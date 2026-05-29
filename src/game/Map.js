@@ -126,9 +126,9 @@ export class Map {
     [
       { x: rooms[0].x + rooms[0].w/2, y: rooms[0].y + rooms[0].h/2, type:'health' },
       { x: rooms[2].x + rooms[2].w/2, y: rooms[2].y + rooms[2].h/2, type:'ammo'   },
-      { x: rooms[4].x + rooms[4].w/2, y: rooms[4].y + rooms[4].h/2, type:'health' },
+      { x: rooms[4].x + rooms[4].w/2, y: rooms[4].y + rooms[4].h/2, type:'adrenaline' },
       { x: rooms[6].x + rooms[6].w/2, y: rooms[6].y + rooms[6].h/2, type:'ammo'   },
-      { x: rooms[8].x + rooms[8].w/2, y: rooms[8].y + rooms[8].h/2, type:'health' },
+      { x: rooms[8].x + rooms[8].w/2, y: rooms[8].y + rooms[8].h/2, type:'overdrive' },
     ].forEach((s, i) => {
       this.items.push({ id:`pickup_${i}`, x:s.x, y:s.y, type:s.type, active:true });
     });
@@ -222,10 +222,10 @@ export class Map {
       { x: rooms[0].x + rooms[0].w/2, y: rooms[0].y + rooms[0].h/2, type:'health' },
       { x: rooms[1].x + rooms[1].w/4, y: rooms[1].y + rooms[1].h/2, type:'ammo' },
       { x: rooms[2].x + rooms[2].w/2, y: rooms[2].y + rooms[2].h/2, type:'health' },
-      { x: rooms[3].x + rooms[3].w/2, y: rooms[3].y + rooms[3].h/2, type:'ammo'   },
+      { x: rooms[3].x + rooms[3].w/2, y: rooms[3].y + rooms[3].h/2, type:'adrenaline' },
       { x: rooms[5].x + rooms[5].w/2, y: rooms[5].y + rooms[5].h/2, type:'health' },
       { x: rooms[6].x + rooms[6].w/2, y: rooms[6].y + rooms[6].h/2, type:'ammo'   },
-      { x: rooms[8].x + rooms[8].w/2, y: rooms[8].y + rooms[8].h/2, type:'health' },
+      { x: rooms[8].x + rooms[8].w/2, y: rooms[8].y + rooms[8].h/2, type:'overdrive' },
     ].forEach((s, i) => {
       this.items.push({ id:`pickup_cyber_${i}`, x:s.x, y:s.y, type:s.type, active:true });
     });
@@ -528,7 +528,12 @@ export class Map {
       this.rebuildSegments();
       let spawnedItem = null;
       if (this.rng.next() < 0.5) {
-        const t = this.rng.next() < 0.55 ? 'health' : 'ammo';
+        const roll = this.rng.next();
+        let t = 'health';
+        if (roll < 0.40) t = 'health';
+        else if (roll < 0.70) t = 'ammo';
+        else if (roll < 0.85) t = 'adrenaline';
+        else t = 'overdrive';
         spawnedItem = { id:`item_${crateId}_${Date.now()}`, x:c.x+c.w/2, y:c.y+c.h/2, type:t, active:true };
         this.items.push(spawnedItem);
       }
@@ -1330,7 +1335,7 @@ export class Map {
       ctx.shadowBlur = 0; ctx.fillStyle = '#ffffff';
       ctx.fillRect(item.x-2.5, item.y-6.5*sc, 5, 13*sc);
       ctx.fillRect(item.x-6.5*sc, item.y-2.5, 13*sc, 5);
-    } else {
+    } else if (item.type === 'ammo') {
       ctx.shadowColor = '#ffcc00'; ctx.shadowBlur = 10;
       ctx.fillStyle = '#cc9900';
       ctx.fillRect(item.x-7, item.y-7, 14, 14);
@@ -1340,6 +1345,49 @@ export class Map {
       ctx.beginPath();
       ctx.arc(item.x, item.y-5, 2, Math.PI, 0);
       ctx.fill();
+    } else if (item.type === 'adrenaline') {
+      ctx.shadowColor = '#39db14'; ctx.shadowBlur = 15;
+      ctx.fillStyle = '#1b7d05';
+      ctx.beginPath(); ctx.arc(item.x, item.y, 11*sc, 0, Math.PI*2); ctx.fill();
+      // Lightning bolt icon
+      ctx.fillStyle = '#39db14';
+      ctx.beginPath();
+      ctx.moveTo(item.x - 1, item.y - 6*sc);
+      ctx.lineTo(item.x - 4, item.y + 1);
+      ctx.lineTo(item.x - 1, item.y + 1);
+      ctx.lineTo(item.x - 2.5, item.y + 7*sc);
+      ctx.lineTo(item.x + 3.5, item.y - 1);
+      ctx.lineTo(item.x + 0.5, item.y - 1);
+      ctx.closePath();
+      ctx.fill();
+    } else if (item.type === 'overdrive') {
+      ctx.shadowColor = '#ffd700'; ctx.shadowBlur = 15;
+      ctx.fillStyle = '#aa7c11';
+      ctx.beginPath();
+      // Diamond shape
+      ctx.moveTo(item.x, item.y - 12*sc);
+      ctx.lineTo(item.x + 10*sc, item.y);
+      ctx.lineTo(item.x, item.y + 12*sc);
+      ctx.lineTo(item.x - 10*sc, item.y);
+      ctx.closePath();
+      ctx.fill();
+      // Double chevron ">>" symbol
+      ctx.strokeStyle = '#ffd700';
+      ctx.lineWidth = 2.5;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      // Left chevron
+      ctx.beginPath();
+      ctx.moveTo(item.x - 4, item.y - 4);
+      ctx.lineTo(item.x - 1, item.y);
+      ctx.lineTo(item.x - 4, item.y + 4);
+      ctx.stroke();
+      // Right chevron
+      ctx.beginPath();
+      ctx.moveTo(item.x + 1, item.y - 4);
+      ctx.lineTo(item.x + 4, item.y);
+      ctx.lineTo(item.x + 1, item.y + 4);
+      ctx.stroke();
     }
     ctx.restore();
   }

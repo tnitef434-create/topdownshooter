@@ -184,6 +184,11 @@ export class Player {
     const dt = currentTime - this.lastUpdateTime;
     this.lastUpdateTime = currentTime;
 
+    const now = Date.now();
+    this.adrenalineActive = !!(this.adrenalineEndTime && (now < this.adrenalineEndTime));
+    this.overdriveActive = !!(this.overdriveEndTime && (now < this.overdriveEndTime));
+    this.updateBuffsHUD(now);
+
     // Normalize to 60 FPS (16.67 ms)
     // Avoid division by zero, cap dt between 1ms and 150ms to prevent huge jumps/warps
     const clampedDt = Math.max(1, Math.min(150, dt));
@@ -203,7 +208,8 @@ export class Player {
 
     // Apply speed multiplier based on carrying weapon weight and sprint speed mult
     const isSprinting = this.isLocal && keys && keys['shift'];
-    const speedMod = this.weapon.speedMultiplier * (isSprinting ? 1.75 : 1.0) * modeSpeedMult;
+    const adrenalineSpeedMult = this.adrenalineActive ? 1.35 : 1.0;
+    const speedMod = this.weapon.speedMultiplier * (isSprinting ? 1.75 : 1.0) * modeSpeedMult * adrenalineSpeedMult;
     let currentMaxSpeed = this.maxSpeed * speedMod;
 
     // Check if player is currently in a dash (lasts for 200ms)
@@ -298,7 +304,10 @@ export class Player {
     const sprintAccelMult = isSprinting ? 1.75 : 1.0;   // was 1.35
 
     const isRanked = window.gameEngine && window.gameEngine.isRanked;
-    const modeAccelMult = isRanked ? 1.25 : 1.0;
+    let modeAccelMult = isRanked ? 1.25 : 1.0;
+    if (this.adrenalineActive) {
+      modeAccelMult *= 1.35;
+    }
     const currentAccel = this.accel * modeAccelMult;
 
     // WASD movement inputs
@@ -371,7 +380,9 @@ export class Player {
     if (this.health <= 0 || this.isReloading) return null;
 
     // Fire cooldown check
-    if (currentTime - this.lastFiredTime < this.weapon.fireRate) {
+    const hasOverdrive = this.overdriveEndTime && (currentTime < this.overdriveEndTime) || this.overdriveActive;
+    const fireRateMod = hasOverdrive ? 0.5 : 1.0;
+    if (currentTime - this.lastFiredTime < this.weapon.fireRate * fireRateMod) {
       return null;
     }
 
@@ -551,12 +562,24 @@ export class Player {
               });
             }
           }
-        } else {
+        } else if (item.type === 'ammo') {
           const maxAmmo = this.weapon.magSize * 2;
           this.reserveAmmo = Math.min(this.maxReserveAmmo, this.reserveAmmo + maxAmmo);
           if (this.isLocal && !this.isBot) {
             this.updateHUD();
             this.showTextNotification('+AMMO');
+          }
+        } else if (item.type === 'adrenaline') {
+          this.adrenalineEndTime = Date.now() + 8000;
+          this.adrenalineActive = true;
+          if (this.isLocal && !this.isBot) {
+            this.showTextNotification('⚡ SPEED BOOST ACTIVE');
+          }
+        } else if (item.type === 'overdrive') {
+          this.overdriveEndTime = Date.now() + 6000;
+          this.overdriveActive = true;
+          if (this.isLocal && !this.isBot) {
+            this.showTextNotification('🔥 OVERDRIVE CHARGED');
           }
         }
 
@@ -704,7 +727,10 @@ export class Player {
 
     // Steering movement towards target
     const isRanked = window.gameEngine && window.gameEngine.isRanked;
-    const modeAccelMult = isRanked ? 1.25 : 1.0;
+    let modeAccelMult = isRanked ? 1.25 : 1.0;
+    if (this.adrenalineActive) {
+      modeAccelMult *= 1.35;
+    }
     const currentAccel = this.accel * modeAccelMult;
 
     const distToTarget = Math.hypot(this.x - this.botTargetX, this.y - this.botTargetY);
@@ -953,6 +979,23 @@ export class Player {
       });
     }
 
+    // ── Draw aura if power-up active ──
+    const nowTime = Date.now();
+    const hasAdrenaline = this.adrenalineEndTime && (nowTime < this.adrenalineEndTime) || this.adrenalineActive;
+    const hasOverdrive = this.overdriveEndTime && (nowTime < this.overdriveEndTime) || this.overdriveActive;
+    if (hasAdrenaline || hasOverdrive) {
+      ctx.save();
+      ctx.shadowBlur = 15;
+      ctx.lineWidth = 3;
+      ctx.shadowColor = hasOverdrive ? '#ffd700' : '#39db14';
+      ctx.strokeStyle = hasOverdrive ? 'rgba(255, 215, 0, 0.4)' : 'rgba(57, 219, 20, 0.4)';
+      const r = this.radius + 2 + Math.sin(nowTime / 150) * 2;
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, r, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+
     // ── Try drawing elf girl 3D sprite ──────────────────────────────────
     const isShooting = this.muzzleFlash > 0.1;
     const drewSprite = CharacterRenderer.draw(
@@ -1110,5 +1153,22 @@ export class Player {
       this.floatingText.timer--;
     }
     ctx.restore();
+  }
+
+  updateBuffsHUD(now) {
+    if (!this.isLocal || this.isBot) return;
+    const buffsContainer = document.getElementById('hud-active-buffs');
+    if (!buffsContainer) return;
+
+    let html = '';
+    if (this.adrenalineActive) {
+      const remaining = Math.max(0, (this.adrenalineEndTime - now) / 1000).toFixed(1);
+      html += `<div style="font-family: 'Orbitron', sans-serif; font-size: 10px; font-weight: bold; background: rgba(57, 219, 20, 0.15); border: 1px solid rgba(57, 219, 20, 0.4); color: #39db14; padding: 4px 8px; border-radius: 3px; display: flex; align-items: center; gap: 4px; box-shadow: 0 0 8px rgba(57, 219, 20, 0.2);">⚡ SPEED: ${remaining}s</div>`;
+    }
+    if (this.overdriveActive) {
+      const geographical = Math.max(0, (this.overdriveEndTime - now) / 1000).toFixed(1);
+      html += `<div style="font-family: 'Orbitron', sans-serif; font-size: 10px; font-weight: bold; background: rgba(255, 215, 0, 0.15); border: 1px solid rgba(255, 215, 0, 0.4); color: #ffd700; padding: 4px 8px; border-radius: 3px; display: flex; align-items: center; gap: 4px; box-shadow: 0 0 8px rgba(255, 215, 0, 0.2);">🔥 OVERDRIVE: ${geographical}s</div>`;
+    }
+    buffsContainer.innerHTML = html;
   }
 }
