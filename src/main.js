@@ -720,6 +720,9 @@ function saveSettings() {
 
 // 2. Navigation Utilities
 function showScreen(screenKey) {
+  const deployModal = document.getElementById('deploy-modal');
+  if (deployModal) deployModal.style.display = 'none';
+
   Object.keys(screens).forEach(key => {
     if (key === screenKey) {
       screens[key].classList.add('active');
@@ -1351,6 +1354,24 @@ function getRandomWeapon() {
 
 // UI Event Handlers
 function setupUIListeners() {
+  const btnDeployMain = document.getElementById('btn-deploy-main');
+  const btnCloseDeploy = document.getElementById('btn-close-deploy');
+  const deployModal = document.getElementById('deploy-modal');
+  
+  if (btnDeployMain && deployModal) {
+    btnDeployMain.addEventListener('click', () => {
+      deployModal.style.display = 'flex';
+      playMenuClick();
+    });
+  }
+  
+  if (btnCloseDeploy && deployModal) {
+    btnCloseDeploy.addEventListener('click', () => {
+      deployModal.style.display = 'none';
+      playMenuClick();
+    });
+  }
+
   // Toggle music mute button in footer
   if (btns.toggleMute) {
     btns.toggleMute.addEventListener('click', () => {

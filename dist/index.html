@@ -11,7 +11,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=Orbitron:wght@500;700;900&display=swap" rel="stylesheet">
   <!-- Style sheet -->
   <!-- Socket.io client (loaded dynamically via bundler or server, or we can just import from socket.io-client) -->
-  <script type="module" crossorigin src="/assets/index-Cfd1vA4H.js"></script>
+  <script type="module" crossorigin src="/assets/index-CqkpbkBN.js"></script>
   <link rel="stylesheet" crossorigin href="/assets/index-M5dwYRAq.css">
 </head>
 <body>
@@ -100,71 +100,9 @@
             <label class="radio-container" style="display: flex; align-items: center; gap: 8px; font-family: var(--font-title); font-size: 13px; cursor: pointer; letter-spacing: 1px;">
               <input type="radio" name="match-mode" value="1v1" checked style="accent-color: #d4af37;">
               1V1 DUEL
-            </label>
-            <label class="radio-container" style="display: flex; align-items: center; gap: 8px; font-family: var(--font-title); font-size: 13px; cursor: pointer; letter-spacing: 1px;">
-              <input type="radio" name="match-mode" value="2v2" style="accent-color: #d4af37;">
-              2V2 SQUAD
-            </label>
-          </div>
-        </div>
-
-        <!-- Play Mode Cards -->
-        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
-
-          <!-- Quick Play -->
-          <div class="card" style="padding:18px 16px; display:flex; flex-direction:column; gap:10px; border:1px solid rgba(102,252,241,0.1); transition:border-color 0.2s, box-shadow 0.2s;">
-            <div style="font-size:24px; text-align:center;">⚔️</div>
-            <div>
-              <div style="font-family:var(--font-title); font-size:13px; font-weight:700; color:#66fcf1; letter-spacing:1.5px; margin-bottom:4px; text-align:center;">QUICK PLAY</div>
-              <div style="font-size:10px; color:var(--text-muted); line-height:1.4; text-align:center; min-height:28px;">Casual training vs bot or custom lobby.</div>
-              <div style="font-family: var(--font-title); font-size: 9px; color: var(--neon-teal); text-align: center; margin-top: 2px; font-weight: bold; letter-spacing: 0.5px;"><span id="qp-player-count">0</span> ACTIVE IN CASUAL</div>
-            </div>
-
-            <!-- Quick Play Style Toggle -->
-            <div class="render-style-toggle" style="display: flex; background: rgba(0,0,0,0.45); border: 1px solid rgba(255,255,255,0.06); border-radius: 4px; padding: 2px;">
-              <button id="btn-qp-style-realistic" class="btn-toggle active" style="flex: 1; font-size: 8px; padding: 6px; border: none; background: #66fcf1; color: #000; cursor: pointer; border-radius: 3px; font-family: var(--font-title); font-weight: bold; letter-spacing: 0.5px; transition: all 0.2s;">REALISTIC</button>
-              <button id="btn-qp-style-competitive" class="btn-toggle" style="flex: 1; font-size: 8px; padding: 6px; border: none; background: transparent; color: var(--text-muted); cursor: pointer; border-radius: 3px; font-family: var(--font-title); font-weight: bold; letter-spacing: 0.5px; transition: all 0.2s;">COMPETITIVE</button>
-            </div>
-
-            <!-- Quick Play Map Selector -->
-            <div class="qp-map-select-container" style="display: flex; flex-direction: column; gap: 4px; margin-top: 2px;">
-              <label style="font-family: var(--font-title); font-size: 8px; letter-spacing: 1px; color: var(--text-muted); text-align: left; font-weight: bold;">MISSION AREA</label>
-              <select id="qp-map-select" class="cyber-select" style="width: 100%; font-size: 10px; padding: 8px; font-family: var(--font-title); background: rgba(0,0,0,0.6); color: white; border: 1px solid rgba(255,255,255,0.08); border-radius: 4px; cursor: pointer; outline: none; transition: border-color 0.2s;">
-                <option value="manor" selected>RESIDENTIAL MANOR (CLASSIC)</option>
-                <option value="cyberlab">NEON CYBER-LAB (FLAGSHIP 🌟)</option>
-              </select>
-            </div>
-
-            <button id="btn-practice-bot" class="btn secondary btn-3d" style="font-size:11px; padding:10px 12px; width:100%;">DEPLOY VS BOT</button>
-            <div class="multiplayer-row" style="margin:0; gap:6px;">
-              <button id="btn-create-room" class="btn secondary btn-3d" style="font-size:10px; padding:8px 8px; flex:1;">CREATE</button>
-              <input type="text" id="room-code-input" placeholder="CODE" maxlength="5" style="width:65px; flex:none; text-align:center; background:rgba(0,0,0,0.55); border:1px solid rgba(255,255,255,0.08); color:white; border-radius:4px;">
-              <button id="btn-join-room" class="btn secondary btn-3d" style="font-size:10px; padding:8px 8px; flex:none;">JOIN</button>
-            </div>
-          </div>
-
-          <!-- Ranked -->
-          <div class="card" style="padding:18px 16px; display:flex; flex-direction:column; gap:10px; border:1px solid rgba(212,175,55,0.15); transition:border-color 0.2s, box-shadow 0.2s;">
-            <div style="font-size:24px; text-align:center;">🏆</div>
-            <div>
-              <div style="font-family:var(--font-title); font-size:13px; font-weight:700; color:#d4af37; letter-spacing:1.5px; margin-bottom:4px; text-align:center;">RANKED DUEL</div>
-              <div style="font-size:10px; color:var(--text-muted); line-height:1.4; text-align:center; min-height:28px;">Compete for RP. Choose Realistic or Competitive (High FPS).</div>
-              <div style="display: flex; justify-content: space-around; gap: 8px; margin-top: 2px;">
-                <span style="font-family: var(--font-title); font-size: 8px; color: #ffe6a3; font-weight: bold; letter-spacing: 0.5px;"><span id="ranked-real-player-count">0</span> REALISTIC</span>
-                <span style="font-family: var(--font-title); font-size: 8px; color: #d1fcff; font-weight: bold; letter-spacing: 0.5px;"><span id="ranked-comp-player-count">0</span> COMPETITIVE</span>
-              </div>
-            </div>
-            
-            <div style="display:flex; flex-direction:column; gap:6px; margin-top:auto;">
-              <button id="btn-ranked-realistic" class="btn primary btn-3d" style="background:linear-gradient(135deg,#aa7c11,#5c4008); border:1px solid #73510c; font-size:10px; padding:9px; width:100%; color:#ffe6a3;">
-                RANKED REALISTIC
-              </button>
-              <button id="btn-ranked-competitive" class="btn primary btn-3d" style="background:linear-gradient(135deg,#236e7a,#0a3f47); border:1px solid #0d525d; font-size:10px; padding:9px; width:100%; color:#d1fcff;">
-                RANKED COMPETITIVE
-              </button>
-            </div>
-          </div>
-
+        <!-- Play Mode Cards (Minimized Deploy Button) -->
+        <div class="card play-btn-card" style="padding: 14px; border: 1px solid rgba(102, 252, 241, 0.15); margin-top: 10px; display: flex; justify-content: center; background: rgba(0,0,0,0.25);">
+          <button id="btn-deploy-main" class="btn primary btn-3d" style="width: 100%; padding: 14px; font-family: 'Orbitron', sans-serif; font-size: 16px; font-weight: 900; letter-spacing: 4px; background: linear-gradient(135deg, #00f2fe, #4facfe); border: 1px solid #00f2fe; text-shadow: 0 0 10px rgba(0,242,254,0.6); box-shadow: 0 0 20px rgba(0,242,254,0.25);">DEPLOY TO BATTLEFIELD</button>
         </div>
 
         <footer>
@@ -652,6 +590,68 @@
         <div class="modal-actions" style="display: flex; justify-content: space-between; align-items: center;">
           <span style="font-size: 10px; color: var(--text-muted); font-family: var(--font-title); letter-spacing: 0.5px;">EARN 50 CREDITS PER RANKED MATCH WIN!</span>
           <button id="btn-close-shop" class="btn secondary" style="font-size: 11px; padding: 10px 20px;">EXIT SHOP</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Deploy Modal Overlay -->
+    <div id="deploy-modal" class="modal-overlay" style="display: none; background: rgba(2, 3, 5, 0.95); backdrop-filter: blur(10px); z-index: 10500; align-items: center; justify-content: center;">
+      <div class="modal-card deploy-card" style="max-width: 580px; width: 90%; border: 1px solid rgba(212, 175, 55, 0.25); box-shadow: 0 0 40px rgba(212, 175, 55, 0.1); padding: 30px; border-radius: 8px;">
+        
+        <div style="text-align: center; margin-bottom: 20px; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 12px;">
+          <h2 style="font-family: var(--font-title); font-size: 22px; color: #fff; margin: 0; letter-spacing: 3px; font-weight: 900;">SELECT OPERATION MODE</h2>
+          <p style="font-size: 10px; color: var(--text-muted); margin-top: 4px; letter-spacing: 1px;">PREPARE FOR DEPLOYMENT</p>
+        </div>
+
+        <!-- 1. Massive Ranked Section -->
+        <div style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px;">
+          <h3 style="font-family: var(--font-title); font-size: 12px; color: #d4af37; letter-spacing: 1.5px; border-left: 3px solid #d4af37; padding-left: 8px; margin-bottom: 4px; font-weight: 700;">COMPETITIVE RANKED</h3>
+          
+          <button id="btn-ranked-realistic" class="btn primary btn-3d" style="background: linear-gradient(135deg, #aa7c11, #5c4008); border: 1px solid #73510c; font-family: var(--font-title); font-size: 16px; font-weight: 900; padding: 18px; width: 100%; color: #ffe6a3; letter-spacing: 2px; text-shadow: 0 0 8px rgba(212,175,55,0.4);">
+            🏆 PLAY RANKED REALISTIC <span style="font-size: 9px; display: block; color: rgba(255,230,163,0.7); font-weight: normal; margin-top: 4px; font-family: var(--font-title); letter-spacing: 0.5px;"><span id="ranked-real-player-count">0</span> ACTIVE OPERATIVES</span>
+          </button>
+          
+          <button id="btn-ranked-competitive" class="btn primary btn-3d" style="background: linear-gradient(135deg, #236e7a, #0a3f47); border: 1px solid #0d525d; font-family: var(--font-title); font-size: 16px; font-weight: 900; padding: 18px; width: 100%; color: #d1fcff; letter-spacing: 2px; text-shadow: 0 0 8px rgba(102,252,241,0.4);">
+            ⚡ PLAY RANKED COMPETITIVE (HIGH FPS) <span style="font-size: 9px; display: block; color: rgba(209,252,255,0.7); font-weight: normal; margin-top: 4px; font-family: var(--font-title); letter-spacing: 0.5px;"><span id="ranked-comp-player-count">0</span> ACTIVE OPERATIVES</span>
+          </button>
+        </div>
+
+        <!-- 2. Smaller Quick Play / Casual Section -->
+        <div style="border-top: 1px solid rgba(255,255,255,0.06); padding-top: 16px;">
+          <h3 style="font-family: var(--font-title); font-size: 11px; color: #66fcf1; letter-spacing: 1.5px; border-left: 3px solid #66fcf1; padding-left: 8px; margin-bottom: 8px; font-weight: 700;">CASUAL OPERATIONS <span style="font-size: 9px; color: var(--text-muted); font-weight: normal; margin-left: 6px; font-family: var(--font-title); letter-spacing: 0.5px;">(<span id="qp-player-count">0</span> playing)</span></h3>
+          
+          <div style="background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.04); padding: 12px; border-radius: 6px; display: flex; flex-direction: column; gap: 8px;">
+            <div style="display: flex; gap: 10px; justify-content: space-between; align-items: center;">
+              <!-- Map Selection -->
+              <div style="flex: 1; display: flex; flex-direction: column; gap: 4px;">
+                <label style="font-family: var(--font-title); font-size: 8px; letter-spacing: 1px; color: var(--text-muted); font-weight: bold;">MISSION AREA</label>
+                <select id="qp-map-select" class="cyber-select" style="font-size: 10px; padding: 6px; background: rgba(0,0,0,0.6); color: white; border: 1px solid rgba(255,255,255,0.08); border-radius: 4px; cursor: pointer; outline: none; width: 100%;">
+                  <option value="manor" selected>RESIDENTIAL MANOR (CLASSIC)</option>
+                  <option value="cyberlab">NEON CYBER-LAB (FLAGSHIP 🌟)</option>
+                </select>
+              </div>
+              <!-- Style Toggle -->
+              <div style="flex: 1; display: flex; flex-direction: column; gap: 4px;">
+                <label style="font-family: var(--font-title); font-size: 8px; letter-spacing: 1px; color: var(--text-muted); font-weight: bold;">RENDER STYLE</label>
+                <div class="render-style-toggle" style="display: flex; background: rgba(0,0,0,0.45); border: 1px solid rgba(255,255,255,0.06); border-radius: 4px; padding: 2px;">
+                  <button id="btn-qp-style-realistic" class="btn-toggle active" style="flex: 1; font-size: 8px; padding: 4px; border: none; background: #66fcf1; color: #000; cursor: pointer; border-radius: 3px; font-family: var(--font-title); font-weight: bold;">REALISTIC</button>
+                  <button id="btn-qp-style-competitive" class="btn-toggle" style="flex: 1; font-size: 8px; padding: 4px; border: none; background: transparent; color: var(--text-muted); cursor: pointer; border-radius: 3px; font-family: var(--font-title); font-weight: bold;">COMPETITIVE</button>
+                </div>
+              </div>
+            </div>
+            
+            <button id="btn-practice-bot" class="btn secondary btn-3d" style="font-size: 10px; padding: 8px 12px; width: 100%;">DEPLOY VS TRAINING BOT</button>
+            
+            <div style="display: flex; gap: 6px; align-items: center;">
+              <button id="btn-create-room" class="btn secondary btn-3d" style="font-size: 9px; padding: 7px; flex: 1;">CREATE LOBBY</button>
+              <input type="text" id="room-code-input" placeholder="CODE" maxlength="5" style="width: 60px; text-align: center; background: rgba(0,0,0,0.55); border: 1px solid rgba(255,255,255,0.08); color: white; border-radius: 4px; font-size: 10px; padding: 5px;">
+              <button id="btn-join-room" class="btn secondary btn-3d" style="font-size: 9px; padding: 7px; flex: none;">JOIN LOBBY</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-actions" style="margin-top: 15px; display: flex; justify-content: flex-end;">
+          <button id="btn-close-deploy" class="btn secondary" style="font-size: 10px; padding: 8px 16px;">CANCEL</button>
         </div>
       </div>
     </div>
