@@ -653,20 +653,27 @@ export class Player {
       this.angle = Math.atan2(player.y - this.y, player.x - this.x); // turn towards shot
     }
 
-    // Investigate alarm behavior in sabotage mode
-    if (window.gameEngine && window.gameEngine.matchMode === 'sabotage' && this.botState !== 'chase') {
+    // Investigate alarm behavior in sabotage mode — highest priority (overrides chase unless player is very close)
+    if (window.gameEngine && window.gameEngine.matchMode === 'sabotage') {
       const activeAlarms = window.gameEngine.tasks ? window.gameEngine.tasks.filter(t => t.alarmActive) : [];
       if (activeAlarms.length > 0) {
         // Find closest active alarm
         activeAlarms.sort((a, b) => Math.hypot(this.x - a.x, this.y - a.y) - Math.hypot(this.x - b.x, this.y - b.y));
         const closestAlarm = activeAlarms[0];
-        
-        // Target closest active alarm
-        if (this.botState !== 'search' || Math.hypot(this.botTargetX - closestAlarm.x, this.botTargetY - closestAlarm.y) > 30) {
+        const distToAlarm = Math.hypot(this.x - closestAlarm.x, this.y - closestAlarm.y);
+
+        // Only break alarm pursuit if player is practically right next to us (< 120px) AND visible
+        const playerTooClose = hasLOS && distToPlayer < 120;
+
+        if (!playerTooClose) {
+          // Redirect bot to alarm — override any current patrol/search/chase state
           this.botState = 'search';
           this.botTargetX = closestAlarm.x;
           this.botTargetY = closestAlarm.y;
           this.angle = Math.atan2(closestAlarm.y - this.y, closestAlarm.x - this.x);
+          // Show urgency — speed up artificially by pretending we just made a decision
+          this.botLastDecisionTime = currentTime;
+          return; // skip rest of AI decision-making this tick, we've committed
         }
       }
     }

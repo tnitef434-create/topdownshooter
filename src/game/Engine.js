@@ -881,34 +881,33 @@ export class Engine {
       }
     }, 1000);
 
-    // ── Shrinking Zone: activate after 40 seconds ──────────────────────────
-    if (this.zoneTimer) clearTimeout(this.zoneTimer);
-    this.zoneTimer = setTimeout(() => {
-      if (this.gameState !== 'playing') return;
-      // Final circle radius = 15% of map half so players must converge
-      const halfMap = Math.max(this.mapWidth, this.mapHeight) / 2;
-      this.zone.active       = true;
-      this.zone.currentRadius = halfMap * 1.05;
-      this.zone.targetRadius  = halfMap * 0.12;  // final tight radius
-      // Shrink over 60 seconds to final size
-      this.zone.shrinkSpeed  = (this.zone.currentRadius - this.zone.targetRadius) / (60 * 60); // per frame @60fps
-      this.zone.lastDamageTick = performance.now();
-      this.zone.centerX = this.mapWidth  / 2;
-      this.zone.centerY = this.mapHeight / 2;
+    // ── Shrinking Zone: disabled in Sabotage mode ─────────────────────────
+    if (this.matchMode !== 'sabotage') {
+      if (this.zoneTimer) clearTimeout(this.zoneTimer);
+      this.zoneTimer = setTimeout(() => {
+        if (this.gameState !== 'playing') return;
+        const halfMap = Math.max(this.mapWidth, this.mapHeight) / 2;
+        this.zone.active       = true;
+        this.zone.currentRadius = halfMap * 1.05;
+        this.zone.targetRadius  = halfMap * 0.12;
+        this.zone.shrinkSpeed  = (this.zone.currentRadius - this.zone.targetRadius) / (60 * 60);
+        this.zone.lastDamageTick = performance.now();
+        this.zone.centerX = this.mapWidth  / 2;
+        this.zone.centerY = this.mapHeight / 2;
 
-      // Flash warning to HUD
-      const ws = document.getElementById('hud-status');
-      if (ws) {
-        ws.innerText = '⚠ ZONE CLOSING IN!';
-        ws.style.color = '#ff3c3c';
-        setTimeout(() => {
-          if (this.gameState === 'playing' && ws) {
-            ws.innerText = 'ENGAGE TARGET';
-            ws.style.color = '';
-          }
-        }, 2500);
-      }
-    }, 40000);
+        const ws = document.getElementById('hud-status');
+        if (ws) {
+          ws.innerText = '⚠ ZONE CLOSING IN!';
+          ws.style.color = '#ff3c3c';
+          setTimeout(() => {
+            if (this.gameState === 'playing' && ws) {
+              ws.innerText = 'ENGAGE TARGET';
+              ws.style.color = '';
+            }
+          }, 2500);
+        }
+      }, 40000);
+    }
   }
 
   // Triggered when a team dies or time runs out
@@ -2074,43 +2073,216 @@ export class Engine {
 
       this.tasks.forEach(t => {
         if (t.status === 'completed') return;
+        const now = Date.now();
         this.ctx.save();
         this.ctx.translate(t.x, t.y);
-        
-        this.ctx.fillStyle = '#2c3540';
-        this.ctx.fillRect(-15, -15, 30, 30);
-        this.ctx.strokeStyle = '#4e5b6c';
-        this.ctx.lineWidth = 2;
-        this.ctx.strokeRect(-15, -15, 30, 30);
-        
-        this.ctx.fillStyle = t.status === 'doing' ? '#ffd700' : '#39db14';
-        this.ctx.fillRect(-10, -10, 20, 12);
-        
-        let alarmGlow = 0;
+
+        // ── Realistic alarm beacon light (rotates, casts dynamic cone) ──────
+        const alarmPhase = (now % 1200) / 1200; // 0..1 full rotation per 1.2s
+        const alarmAngle = alarmPhase * Math.PI * 2;
         if (t.alarmActive) {
-          alarmGlow = Math.abs(Math.sin(Date.now() / 200));
+          // Dynamic flickering intensity
+          const flicker = 0.7 + 0.3 * Math.abs(Math.sin(now / 60 + t.x));
+          // Cast rotating light cone on ground
+          const coneLen = 90 + 20 * Math.abs(Math.sin(now / 200));
+          const coneAngle = Math.PI / 6; // 30° cone
+          this.ctx.save();
+          const gradient = this.ctx.createConicalGradient
+            ? null // standard canvas doesn't have conical; we'll use arc segments instead
+            : null;
+          // Draw two-phase sweep: main beam + secondary mirror
+          for (let pass = 0; pass < 2; pass++) {
+            const baseAngle = alarmAngle + pass * Math.PI;
+            this.ctx.beginPath();
+            this.ctx.moveTo(0, -26);
+            this.ctx.arc(0, -26, coneLen, baseAngle - coneAngle, baseAngle + coneAngle);
+            this.ctx.closePath();
+            const grad = this.ctx.createRadialGradient(0, -26, 0, 0, -26, coneLen);
+            grad.addColorStop(0, `rgba(255, 60, 40, ${0.55 * flicker})`);
+            grad.addColorStop(0.45, `rgba(255, 80, 40, ${0.18 * flicker})`);
+            grad.addColorStop(1, 'rgba(255, 40, 0, 0)');
+            this.ctx.fillStyle = grad;
+            this.ctx.fill();
+          }
+          // Ground splatter glow
+          const splat = this.ctx.createRadialGradient(0, 0, 0, 0, 0, 75);
+          splat.addColorStop(0, `rgba(255, 30, 10, ${0.22 * flicker})`);
+          splat.addColorStop(1, 'rgba(255,0,0,0)');
+          this.ctx.fillStyle = splat;
+          this.ctx.beginPath();
+          this.ctx.ellipse(0, 5, 75, 35, 0, 0, Math.PI * 2);
+          this.ctx.fill();
+          this.ctx.restore();
         } else if (t.status === 'doing') {
-          alarmGlow = 0.25 * Math.abs(Math.sin(Date.now() / 400));
-        }
-        
-        if (alarmGlow > 0) {
-          this.ctx.fillStyle = `rgba(255, 60, 60, ${alarmGlow})`;
+          // Soft yellow pulse while doing minigame
+          const pulse = 0.12 + 0.1 * Math.abs(Math.sin(now / 350));
+          const softGrad = this.ctx.createRadialGradient(0, 0, 0, 0, 0, 40);
+          softGrad.addColorStop(0, `rgba(255,220,50,${pulse})`);
+          softGrad.addColorStop(1, 'rgba(255,200,0,0)');
+          this.ctx.fillStyle = softGrad;
           this.ctx.beginPath();
-          this.ctx.arc(0, -22, 10 + alarmGlow * 10, 0, Math.PI * 2);
+          this.ctx.ellipse(0, 5, 40, 22, 0, 0, Math.PI * 2);
           this.ctx.fill();
-          
+        }
+
+        // ── Detailed task console body ────────────────────────────────────
+        // Console base plate (metal casing)
+        const screenColor = t.status === 'doing' ? '#ffd700' : '#1aff8a';
+        const screenGlow  = t.alarmActive ? '#ff3c3c' : (t.status === 'doing' ? '#ffd700' : '#1aff8a');
+
+        // Shadow under console
+        this.ctx.fillStyle = 'rgba(0,0,0,0.45)';
+        this.ctx.beginPath();
+        this.ctx.ellipse(0, 17, 22, 7, 0, 0, Math.PI * 2);
+        this.ctx.fill();
+
+        // Back panel
+        this.ctx.fillStyle = '#1a1f26';
+        this.ctx.beginPath();
+        this.ctx.roundRect(-18, -18, 36, 32, 3);
+        this.ctx.fill();
+        this.ctx.strokeStyle = '#3a4555';
+        this.ctx.lineWidth = 1.5;
+        this.ctx.stroke();
+
+        // Screen bezel
+        this.ctx.fillStyle = '#0d1117';
+        this.ctx.fillRect(-13, -14, 26, 16);
+        this.ctx.strokeStyle = '#2a3340';
+        this.ctx.lineWidth = 1;
+        this.ctx.strokeRect(-13, -14, 26, 16);
+
+        // Screen display (glowing)
+        const screenBg = t.alarmActive ? '#1a0000' : '#001a0a';
+        this.ctx.fillStyle = screenBg;
+        this.ctx.fillRect(-11, -12, 22, 12);
+        // Screen scanlines
+        this.ctx.strokeStyle = t.alarmActive ? 'rgba(255,20,20,0.06)' : 'rgba(0,255,100,0.07)';
+        this.ctx.lineWidth = 0.8;
+        for (let sy = -11; sy < 0; sy += 2) {
+          this.ctx.beginPath();
+          this.ctx.moveTo(-11, sy);
+          this.ctx.lineTo(11, sy);
+          this.ctx.stroke();
+        }
+        // Screen text glow
+        if (t.alarmActive) {
+          this.ctx.shadowColor = '#ff3c3c';
+          this.ctx.shadowBlur = 6;
           this.ctx.fillStyle = '#ff3c3c';
+        } else if (t.status === 'doing') {
+          this.ctx.shadowColor = '#ffd700';
+          this.ctx.shadowBlur = 5;
+          this.ctx.fillStyle = '#ffd700';
+        } else {
+          this.ctx.shadowColor = '#1aff8a';
+          this.ctx.shadowBlur = 4;
+          this.ctx.fillStyle = '#1aff8a';
+        }
+        this.ctx.font = 'bold 5px monospace';
+        this.ctx.textAlign = 'center';
+        const screenText = t.alarmActive ? 'ALARM' : (t.status === 'doing' ? 'ACTIVE' : 'READY');
+        this.ctx.fillText(screenText, 0, -5);
+        this.ctx.shadowBlur = 0;
+
+        // Bottom control strip (buttons + LED)
+        this.ctx.fillStyle = '#141a22';
+        this.ctx.fillRect(-13, 4, 26, 8);
+        // LED indicator
+        const ledColor = t.alarmActive
+          ? `rgba(255,40,40,${0.6 + 0.4 * Math.abs(Math.sin(now / 90))})`
+          : (t.status === 'doing' ? '#ffd700' : '#1aff8a');
+        this.ctx.fillStyle = ledColor;
+        if (t.alarmActive) {
+          this.ctx.shadowColor = '#ff3c3c';
+          this.ctx.shadowBlur = 8;
+        }
+        this.ctx.beginPath();
+        this.ctx.arc(-8, 8, 2.5, 0, Math.PI * 2);
+        this.ctx.fill();
+        this.ctx.shadowBlur = 0;
+        // Small buttons
+        for (let bx = -1; bx <= 5; bx += 3) {
+          this.ctx.fillStyle = '#2a3545';
+          this.ctx.fillRect(bx, 6, 2.5, 4);
+        }
+
+        // Alarm beacon dome on top
+        if (t.alarmActive) {
+          // Beacon housing dome
+          const beaconFlicker = 0.6 + 0.4 * Math.abs(Math.sin(now / 45));
+          this.ctx.fillStyle = '#1a0a0a';
           this.ctx.beginPath();
-          this.ctx.arc(0, -22, 4, 0, Math.PI * 2);
+          this.ctx.arc(0, -26, 6, Math.PI, 0);
+          this.ctx.fill();
+          // Spinning beacon light
+          this.ctx.save();
+          this.ctx.translate(0, -26);
+          this.ctx.rotate(alarmAngle);
+          // Lens
+          this.ctx.fillStyle = `rgba(255, 60, 10, ${beaconFlicker})`;
+          this.ctx.shadowColor = '#ff3c3c';
+          this.ctx.shadowBlur = 14;
+          this.ctx.beginPath();
+          this.ctx.arc(0, 0, 4.5, 0, Math.PI * 2);
+          this.ctx.fill();
+          this.ctx.shadowBlur = 0;
+          // Inner hot spot
+          this.ctx.fillStyle = `rgba(255, 220, 180, ${0.8 * beaconFlicker})`;
+          this.ctx.beginPath();
+          this.ctx.arc(0, 0, 2, 0, Math.PI * 2);
+          this.ctx.fill();
+          this.ctx.restore();
+          // Beacon pole
+          this.ctx.strokeStyle = '#2a1a1a';
+          this.ctx.lineWidth = 1.5;
+          this.ctx.beginPath();
+          this.ctx.moveTo(0, -20);
+          this.ctx.lineTo(0, -22);
+          this.ctx.stroke();
+        } else {
+          // Inactive beacon (grey dome)
+          this.ctx.fillStyle = '#1a2030';
+          this.ctx.beginPath();
+          this.ctx.arc(0, -22, 4, Math.PI, 0);
+          this.ctx.fill();
+          this.ctx.fillStyle = '#2a3040';
+          this.ctx.beginPath();
+          this.ctx.arc(0, -22, 2, 0, Math.PI * 2);
           this.ctx.fill();
         }
-        
+
+        // Side cable / wire details
+        this.ctx.strokeStyle = '#0a0f14';
+        this.ctx.lineWidth = 1.2;
+        this.ctx.beginPath();
+        this.ctx.moveTo(-18, 5);
+        this.ctx.quadraticCurveTo(-26, 10, -24, 16);
+        this.ctx.stroke();
+        this.ctx.beginPath();
+        this.ctx.moveTo(18, 3);
+        this.ctx.quadraticCurveTo(25, 8, 22, 16);
+        this.ctx.stroke();
+
+        // Outer edge bolts
+        const boltPositions = [[-16,-16],[16,-16],[-16,12],[16,12]];
+        boltPositions.forEach(([bx,by]) => {
+          this.ctx.fillStyle = '#2c3545';
+          this.ctx.beginPath();
+          this.ctx.arc(bx, by, 1.5, 0, Math.PI * 2);
+          this.ctx.fill();
+        });
+
+        // Interact prompt
         const dist = Math.hypot(this.localPlayer.x - t.x, this.localPlayer.y - t.y);
-        if (dist < 40 && this.localPlayer.health > 0) {
+        if (dist < 40 && this.localPlayer.health > 0 && t.status !== 'doing') {
+          this.ctx.shadowColor = '#ffd700';
+          this.ctx.shadowBlur = 8;
           this.ctx.fillStyle = '#ffd700';
           this.ctx.font = 'bold 9px Orbitron';
           this.ctx.textAlign = 'center';
-          this.ctx.fillText('[F] INTERACT', 0, -32);
+          this.ctx.fillText('[F] INTERACT', 0, -36);
+          this.ctx.shadowBlur = 0;
         }
         this.ctx.restore();
       });
