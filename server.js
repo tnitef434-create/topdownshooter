@@ -547,7 +547,7 @@ io.on('connection', (socket) => {
   });
 
   // 13.1 Device Sync & Backup
-  socket.on('sync-device', ({ uuid, rp, wins, losses, name }) => {
+  socket.on('sync-device', ({ uuid, rp, wins, losses, name, credits, purchasedWeapons }) => {
     if (!uuid) return;
     const id = uuid.toLowerCase();
     
@@ -555,6 +555,8 @@ io.on('connection', (socket) => {
       users[id] = {
         username: name || 'Operative',
         rp: rp || 0,
+        credits: credits || 0,
+        purchasedWeapons: purchasedWeapons || [],
         stats: { wins: wins || 0, losses: losses || 0, rounds: 0, hits: 0, shots: 0 }
       };
       saveUsers();
@@ -563,6 +565,8 @@ io.on('connection', (socket) => {
       sProfile.rp = Math.max(sProfile.rp || 0, rp || 0);
       sProfile.stats.wins = Math.max(sProfile.stats.wins || 0, wins || 0);
       sProfile.stats.losses = Math.max(sProfile.stats.losses || 0, losses || 0);
+      sProfile.credits = Math.max(sProfile.credits || 0, credits || 0);
+      sProfile.purchasedWeapons = Array.from(new Set([...(sProfile.purchasedWeapons || []), ...(purchasedWeapons || [])]));
       if (name && name !== 'Operative' && (!sProfile.username || sProfile.username === 'Operative')) {
         sProfile.username = name;
       }
@@ -574,7 +578,9 @@ io.on('connection', (socket) => {
       rp: sProfile.rp,
       wins: sProfile.stats.wins,
       losses: sProfile.stats.losses,
-      name: sProfile.username
+      name: sProfile.username,
+      credits: sProfile.credits || 0,
+      purchasedWeapons: sProfile.purchasedWeapons || []
     });
   });
 

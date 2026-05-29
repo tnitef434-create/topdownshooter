@@ -88,13 +88,13 @@ const WEAPON_STATS = {
 
 // Weapon locks requirements
 const WEAPON_LOCKS = {
-  dmr:     { rp: 1000, rank: 'VETERAN' },
-  sniper:  { rp: 1000, rank: 'VETERAN' },
-  lmg:     { rp: 4000, rank: 'ELITE' },
-  vector:  { rp: 1000, rank: 'VETERAN' },
-  famas:   { rp: 1000, rank: 'VETERAN' },
-  plasma:  { rp: 4000, rank: 'ELITE' },
-  railgun: { rp: 4000, rank: 'ELITE' }
+  dmr:     { rp: 1000, rank: 'VETERAN', price: 2200 },
+  sniper:  { rp: 1000, rank: 'VETERAN', price: 2500 },
+  lmg:     { rp: 4000, rank: 'ELITE',   price: 4500 },
+  vector:  { rp: 1000, rank: 'VETERAN', price: 2100 },
+  famas:   { rp: 1000, rank: 'VETERAN', price: 2300 },
+  plasma:  { rp: 4000, rank: 'ELITE',   price: 4000 },
+  railgun: { rp: 4000, rank: 'ELITE',   price: 5000 }
 };
 
 const WEAPON_NAMES = {
@@ -167,12 +167,20 @@ function updateWeaponLocksUI() {
   wBtns.forEach(btn => {
     const weaponKey = btn.dataset.weapon;
     const req = WEAPON_LOCKS[weaponKey];
-    if (req && rp < req.rp) {
+    const unlocked = isWeaponUnlocked(weaponKey);
+    if (req && !unlocked) {
       btn.classList.add('locked');
       btn.innerHTML = `🔒 ${WEAPON_NAMES[weaponKey]} <span style="font-size:7px; display:block; color:#ff3c3c; margin-top:2.5px; font-family:var(--font-title); font-weight:bold;">${req.rank}</span>`;
     } else {
       btn.classList.remove('locked');
-      btn.innerHTML = WEAPON_NAMES[weaponKey] || weaponKey;
+      let label = WEAPON_NAMES[weaponKey] || weaponKey;
+      try {
+        const purchased = JSON.parse(safeStorage.getItem('tacticstrike_purchased_weapons') || '[]');
+        if (purchased.includes(weaponKey) && rp < req.rp) {
+          label = `🛍️ ${label}`;
+        }
+      } catch(e) {}
+      btn.innerHTML = label;
     }
   });
 
@@ -181,9 +189,10 @@ function updateWeaponLocksUI() {
   options.forEach(opt => {
     const weaponKey = opt.dataset.weapon;
     const req = WEAPON_LOCKS[weaponKey];
+    const unlocked = isWeaponUnlocked(weaponKey);
     let lockBadge = opt.querySelector('.lock-badge');
     
-    if (req && rp < req.rp) {
+    if (req && !unlocked) {
       opt.classList.add('locked');
       if (!lockBadge) {
         lockBadge = document.createElement('span');
@@ -202,7 +211,7 @@ function updateWeaponLocksUI() {
 
   // 3. Fallback check: if selected weapon is locked, force select pistol
   const activeReq = WEAPON_LOCKS[myWeapon];
-  if (activeReq && rp < activeReq.rp) {
+  if (activeReq && !isWeaponUnlocked(myWeapon)) {
     myWeapon = 'pistol';
     safeStorage.setItem('tacticstrike_player_weapon', 'pistol');
     
@@ -940,12 +949,17 @@ function connectSocket() {
     const uuid = getOrCreateUUID();
     const rp = parseInt(safeStorage.getItem('tacticstrike_rp') || '0');
     const career = loadCareerStats();
+    const credits = parseInt(safeStorage.getItem('tacticstrike_credits') || '0');
+    let purchased = [];
+    try { purchased = JSON.parse(safeStorage.getItem('tacticstrike_purchased_weapons') || '[]'); } catch(e) {}
     socket.emit('sync-device', {
       uuid: uuid,
       rp: rp,
       wins: career.wins,
       losses: career.losses,
-      name: myName
+      name: myName,
+      credits: credits,
+      purchasedWeapons: purchased
     });
   });
 
@@ -960,6 +974,15 @@ function connectSocket() {
     const mergedWins = Math.max(localCareer.wins, data.wins || 0);
     const mergedLosses = Math.max(localCareer.losses, data.losses || 0);
     saveCareerStats({ wins: mergedWins, losses: mergedLosses });
+
+    const localCredits = parseInt(safeStorage.getItem('tacticstrike_credits') || '0');
+    const mergedCredits = Math.max(localCredits, data.credits || 0);
+    safeStorage.setItem('tacticstrike_credits', String(mergedCredits));
+
+    let localPurchased = [];
+    try { localPurchased = JSON.parse(safeStorage.getItem('tacticstrike_purchased_weapons') || '[]'); } catch(e) {}
+    const mergedPurchased = Array.from(new Set([...localPurchased, ...(data.purchasedWeapons || [])]));
+    safeStorage.setItem('tacticstrike_purchased_weapons', JSON.stringify(mergedPurchased));
     
     if (data.name && data.name !== 'Operative') {
       myName = data.name;
@@ -1199,9 +1222,35 @@ function getRandomWeapon() {
     if (gameOverModal) gameOverModal.classList.add('active');
     const isWin = !!results.isWin;
 
+    let creditsBonusText = '';
     // Record W/L in localStorage only for human online matches!
     if (gameEngine && gameEngine.mode === 'online') {
       recordMatchResult(isWin);
+      
+      if (gameEngine.isRanked && isWin) {
+        const currentCredits = parseInt(safeStorage.getItem('tacticstrike_credits') || '0');
+        const nextCredits = currentCredits + 50;
+        safeStorage.setItem('tacticstrike_credits', String(nextCredits));
+        creditsBonusText = ` <span style="color:#ffd700; font-size:10px;">(+50 Credits Ranked Win Bonus!)</span>`;
+        
+        // Trigger background sync to server
+        if (socket) {
+          const uuid = getOrCreateUUID();
+          const rp = parseInt(safeStorage.getItem('tacticstrike_rp') || '0');
+          const career = loadCareerStats();
+          let purchased = [];
+          try { purchased = JSON.parse(safeStorage.getItem('tacticstrike_purchased_weapons') || '[]'); } catch(e) {}
+          socket.emit('sync-device', {
+            uuid,
+            rp,
+            wins: career.wins,
+            losses: career.losses,
+            name: myName,
+            credits: nextCredits,
+            purchasedWeapons: purchased
+          });
+        }
+      }
     }
 
     const resultTitle = document.getElementById('match-result-title');
@@ -1289,6 +1338,12 @@ function getRandomWeapon() {
       } else {
         rankPanel.innerHTML = `<div style="font-family:var(--font-title); font-size:10px; color:var(--text-muted); text-align:center; letter-spacing:1.5px;">CASUAL MATCH - NO RANK EFFECT</div>`;
         rankPanel.style.display = 'block';
+      }
+      if (creditsBonusText) {
+        const bonusDiv = document.createElement('div');
+        bonusDiv.style.cssText = 'font-family:var(--font-title); font-size:10px; text-align:center; margin-top:8px;';
+        bonusDiv.innerHTML = creditsBonusText;
+        rankPanel.appendChild(bonusDiv);
       }
     }
     // ─────────────────────────────────────────────────────────────────────────
@@ -1937,6 +1992,8 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   initSettings();
+  initNewsModal();
+  initItemShop();
   setupWeaponSelector();
   setupMainMenuWeaponSelector();
   setupColorSelector();
@@ -1994,6 +2051,207 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 });
+
+function isWeaponUnlocked(weaponKey) {
+  const req = WEAPON_LOCKS[weaponKey];
+  if (!req) return true;
+  
+  try {
+    const purchased = JSON.parse(safeStorage.getItem('tacticstrike_purchased_weapons') || '[]');
+    if (purchased.includes(weaponKey)) return true;
+  } catch(e) {}
+  
+  const rp = parseInt(safeStorage.getItem('tacticstrike_rp') || '0');
+  return rp >= req.rp;
+}
+
+function initNewsModal() {
+  const newsModal = document.getElementById('news-modal');
+  const closeNewsBtn = document.getElementById('btn-close-news');
+  
+  if (!newsModal || !closeNewsBtn) return;
+  
+  const hasSeenNews = sessionStorage.getItem('tacticstrike_news_seen');
+  if (!hasSeenNews) {
+    newsModal.style.display = 'flex';
+  }
+  
+  closeNewsBtn.addEventListener('click', () => {
+    newsModal.style.display = 'none';
+    sessionStorage.setItem('tacticstrike_news_seen', 'true');
+    playMenuClick();
+  });
+}
+
+function initItemShop() {
+  const shopModal = document.getElementById('shop-modal');
+  const openShopBtn = document.getElementById('btn-open-shop');
+  const closeShopBtn = document.getElementById('btn-close-shop');
+  
+  if (!shopModal || !openShopBtn || !closeShopBtn) return;
+  
+  if (safeStorage.getItem('tacticstrike_credits') === null) {
+    safeStorage.setItem('tacticstrike_credits', '2500'); // start with 2500 for testing early purchases
+  }
+
+  openShopBtn.addEventListener('click', () => {
+    renderShopItems();
+    shopModal.style.display = 'flex';
+    playMenuClick();
+  });
+  
+  closeShopBtn.addEventListener('click', () => {
+    shopModal.style.display = 'none';
+    playMenuClick();
+  });
+}
+
+function renderShopItems() {
+  const container = document.getElementById('shop-items-container');
+  const creditsDisplay = document.getElementById('shop-credits-display');
+  
+  if (!container || !creditsDisplay) return;
+  
+  const currentCredits = parseInt(safeStorage.getItem('tacticstrike_credits') || '0');
+  creditsDisplay.innerText = currentCredits;
+  
+  let purchased = [];
+  try {
+    purchased = JSON.parse(safeStorage.getItem('tacticstrike_purchased_weapons') || '[]');
+  } catch(e) {}
+  
+  const rp = parseInt(safeStorage.getItem('tacticstrike_rp') || '0');
+  
+  container.innerHTML = '';
+  
+  Object.keys(WEAPON_LOCKS).forEach(key => {
+    const req = WEAPON_LOCKS[key];
+    const isPurchased = purchased.includes(key);
+    const isRankUnlocked = rp >= req.rp;
+    const canAfford = currentCredits >= req.price;
+    
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.style.cssText = `
+      padding: 14px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      border: 1px solid rgba(255,255,255,0.06);
+      background: rgba(0, 0, 0, 0.4);
+      border-radius: 6px;
+      position: relative;
+    `;
+    
+    let statusText = '';
+    let btnHtml = '';
+    
+    if (isPurchased) {
+      statusText = `<span style="color:#39db14; font-size:10px; font-weight:bold; letter-spacing:0.5px;">🛍️ UNLOCKED VIA SHOP</span>`;
+      btnHtml = `<button class="btn secondary" disabled style="font-size: 10px; padding: 8px; width: 100%;">OWNED</button>`;
+    } else if (isRankUnlocked) {
+      statusText = `<span style="color:#66fcf1; font-size:10px; font-weight:bold; letter-spacing:0.5px;">✓ UNLOCKED BY RANK</span>`;
+      btnHtml = `<button class="btn secondary" disabled style="font-size: 10px; padding: 8px; width: 100%;">OWNED</button>`;
+    } else {
+      statusText = `<span style="color:#ff3c3c; font-size:10px; font-weight:bold; letter-spacing:0.5px;">🔒 LOCKED (${req.rank})</span>`;
+      if (canAfford) {
+        btnHtml = `<button class="btn primary buy-btn btn-3d" data-weapon="${key}" style="background: linear-gradient(135deg, #aa7c11, #5c4008); border: 1px solid #73510c; color: #ffe6a3; font-size: 10px; padding: 8px; width: 100%;">BUY EARLY</button>`;
+      } else {
+        btnHtml = `<button class="btn secondary" disabled style="font-size: 10px; padding: 8px; width: 100%; color: #ff3c3c;">INSUFFICIENT CREDITS</button>`;
+      }
+    }
+    
+    const weaponStats = WEAPON_STATS[key] || { name: key };
+    
+    card.innerHTML = `
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <span style="font-family: var(--font-title); font-size: 13px; color: #fff; font-weight: bold; letter-spacing: 1px;">${weaponStats.name}</span>
+        <span style="font-family: var(--font-title); font-size: 12px; color: #ffd700; font-weight: bold;">🪙 ${req.price}</span>
+      </div>
+      <div style="font-size: 10px; color: var(--text-muted); line-height: 1.4;">
+        Early early access for this high-tier gun. Skip the Rank requirement and deploy instantly.
+      </div>
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:4px;">
+        ${statusText}
+      </div>
+      <div style="margin-top:auto;">
+        ${btnHtml}
+      </div>
+    `;
+    
+    container.appendChild(card);
+  });
+  
+  container.querySelectorAll('.buy-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const weaponKey = btn.dataset.weapon;
+      buyWeapon(weaponKey);
+    });
+  });
+}
+
+function buyWeapon(weaponKey) {
+  const req = WEAPON_LOCKS[weaponKey];
+  if (!req) return;
+  
+  const currentCredits = parseInt(safeStorage.getItem('tacticstrike_credits') || '0');
+  if (currentCredits < req.price) {
+    playErrorBeep();
+    alert('Insufficient credits.');
+    return;
+  }
+  
+  const nextCredits = currentCredits - req.price;
+  safeStorage.setItem('tacticstrike_credits', String(nextCredits));
+  
+  let purchased = [];
+  try {
+    purchased = JSON.parse(safeStorage.getItem('tacticstrike_purchased_weapons') || '[]');
+  } catch(e) {}
+  
+  if (!purchased.includes(weaponKey)) {
+    purchased.push(weaponKey);
+    safeStorage.setItem('tacticstrike_purchased_weapons', JSON.stringify(purchased));
+  }
+  
+  try {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (AudioContextClass) {
+      const ctx = new AudioContextClass();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(587.33, ctx.currentTime);
+      osc.frequency.setValueAtTime(880.00, ctx.currentTime + 0.1);
+      gain.gain.setValueAtTime(0.15, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.38);
+    }
+  } catch(e) {}
+  
+  showNotification(`Successfully unlocked ${WEAPON_NAMES[weaponKey]} early!`, 6000);
+  
+  if (socket) {
+    const uuid = getOrCreateUUID();
+    const rp = parseInt(safeStorage.getItem('tacticstrike_rp') || '0');
+    const career = loadCareerStats();
+    socket.emit('sync-device', {
+      uuid,
+      rp,
+      wins: career.wins,
+      losses: career.losses,
+      name: myName,
+      credits: nextCredits,
+      purchasedWeapons: purchased
+    });
+  }
+  
+  renderShopItems();
+  updateWeaponLocksUI();
+}
 
 function updatePlayerCountsUI(data) {
   const totalVal = document.getElementById('total-player-count-value');

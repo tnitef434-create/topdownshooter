@@ -167,6 +167,8 @@
         </div>
 
         <footer>
+          <button id="btn-open-shop" class="btn-text" style="color: var(--neon-yellow); font-weight: bold;">ITEM SHOP</button>
+          <span class="divider">|</span>
           <button id="btn-open-settings" class="btn-text">SETTINGS</button>
           <span class="divider">|</span>
           <button id="btn-toggle-mute" class="btn-text">MUTE MUSIC</button>
@@ -611,6 +613,44 @@
 
         <div class="modal-actions">
           <button id="btn-close-settings" class="btn primary">SAVE & CLOSE</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- News Screen Modal -->
+    <div id="news-modal" class="modal-overlay" style="display: none; background: rgba(0, 0, 0, 0.85); backdrop-filter: blur(8px); z-index: 12000; align-items: center; justify-content: center;">
+      <div class="modal-card" style="max-width: 480px; border: 1px solid var(--neon-teal); box-shadow: 0 0 30px rgba(102, 252, 241, 0.15); padding: 35px 28px;">
+        <div style="font-family: var(--font-title); font-size: 10px; color: var(--neon-yellow); letter-spacing: 2px; font-weight: 700; margin-bottom: 6px;">TACTICSTRIKE INTELLIGENCE FEED</div>
+        <h2 style="font-family: var(--font-title); font-size: 26px; color: #fff; margin-bottom: 15px; letter-spacing: 1.5px; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 12px; font-weight: 900;">DAILY NEWS UPDATE</h2>
+        <div style="font-family: 'Inter', sans-serif; font-size: 13px; line-height: 1.6; color: #a2aab8; margin-bottom: 25px;">
+          <p style="margin-bottom: 14px;">⚡ <strong style="color: #fff;">BATTLEPASS UPDATE:</strong> Battlepasses will be added later today! Prepare for the long, hard grind to unlock exclusive titles, weapons, and seasonal rewards.</p>
+          <p style="margin-bottom: 14px;">🤝 <strong style="color: #66fcf1;">SPECIAL PARTNERSHIP:</strong> In collaboration with <strong style="color: #66fcf1; font-family: var(--font-title);">BANKZITTERSRATINGS</strong>! Expect custom ratings, rankings, and exclusive partnership integration coming very soon.</p>
+        </div>
+        <div class="modal-actions" style="margin-top: 15px;">
+          <button id="btn-close-news" class="btn primary btn-3d" style="width: 100%; font-size: 12px; padding: 12px;">AUTHORIZE & PROCEED</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Item Shop Screen Modal -->
+    <div id="shop-modal" class="modal-overlay" style="display: none; background: rgba(2, 3, 5, 0.95); backdrop-filter: blur(10px); z-index: 11000; align-items: center; justify-content: center;">
+      <div class="modal-card shop-card" style="max-width: 650px; width: 90%; border: 1px solid rgba(212, 175, 55, 0.25); box-shadow: 0 0 40px rgba(212, 175, 55, 0.1); padding: 30px; border-radius: 8px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 12px;">
+          <h2 style="font-family: var(--font-title); font-size: 24px; color: #d4af37; margin: 0; letter-spacing: 2px; font-weight: 900;">TACTICAL ITEM SHOP</h2>
+          <!-- Credits Display -->
+          <div style="font-family: var(--font-title); font-size: 14px; color: #ffd700; background: rgba(255, 215, 0, 0.1); border: 1px solid rgba(255, 215, 0, 0.3); padding: 6px 14px; border-radius: 4px; display: flex; align-items: center; gap: 8px; font-weight: bold; letter-spacing: 1px;">
+            🪙 <span id="shop-credits-display">0</span> CREDITS
+          </div>
+        </div>
+        
+        <!-- Weapon grids -->
+        <div id="shop-items-container" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; max-height: 380px; overflow-y: auto; padding-right: 6px; margin-bottom: 20px;">
+          <!-- Item Cards will be generated via JavaScript -->
+        </div>
+
+        <div class="modal-actions" style="display: flex; justify-content: space-between; align-items: center;">
+          <span style="font-size: 10px; color: var(--text-muted); font-family: var(--font-title); letter-spacing: 0.5px;">EARN 50 CREDITS PER RANKED MATCH WIN!</span>
+          <button id="btn-close-shop" class="btn secondary" style="font-size: 11px; padding: 10px 20px;">EXIT SHOP</button>
         </div>
       </div>
     </div>
