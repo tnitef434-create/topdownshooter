@@ -721,7 +721,7 @@ function saveSettings() {
 // 2. Navigation Utilities
 function showScreen(screenKey) {
   const deployModal = document.getElementById('deploy-modal');
-  if (deployModal) deployModal.style.display = 'none';
+  if (deployModal) deployModal.classList.remove('active');
 
   Object.keys(screens).forEach(key => {
     if (key === screenKey) {
@@ -1360,14 +1360,14 @@ function setupUIListeners() {
   
   if (btnDeployMain && deployModal) {
     btnDeployMain.addEventListener('click', () => {
-      deployModal.style.display = 'flex';
+      deployModal.classList.add('active');
       playMenuClick();
     });
   }
   
   if (btnCloseDeploy && deployModal) {
     btnCloseDeploy.addEventListener('click', () => {
-      deployModal.style.display = 'none';
+      deployModal.classList.remove('active');
       playMenuClick();
     });
   }
@@ -1844,15 +1844,11 @@ function setupQpStyleSelector() {
 
   function updateQpStyleUI() {
     if (qpRenderStyle === 'competitive') {
-      btnQpCompetitive.style.background = '#66fcf1';
-      btnQpCompetitive.style.color = '#000';
-      btnQpRealistic.style.background = 'transparent';
-      btnQpRealistic.style.color = 'var(--text-muted)';
+      btnQpCompetitive.classList.add('active');
+      btnQpRealistic.classList.remove('active');
     } else {
-      btnQpRealistic.style.background = '#66fcf1';
-      btnQpRealistic.style.color = '#000';
-      btnQpCompetitive.style.background = 'transparent';
-      btnQpCompetitive.style.color = 'var(--text-muted)';
+      btnQpRealistic.classList.add('active');
+      btnQpCompetitive.classList.remove('active');
     }
   }
 
@@ -2094,11 +2090,11 @@ function initNewsModal() {
   
   const hasSeenNews = sessionStorage.getItem('tacticstrike_news_seen');
   if (!hasSeenNews) {
-    newsModal.style.display = 'flex';
+    newsModal.classList.add('active');
   }
   
   closeNewsBtn.addEventListener('click', () => {
-    newsModal.style.display = 'none';
+    newsModal.classList.remove('active');
     sessionStorage.setItem('tacticstrike_news_seen', 'true');
     playMenuClick();
   });
@@ -2117,12 +2113,12 @@ function initItemShop() {
 
   openShopBtn.addEventListener('click', () => {
     renderShopItems();
-    shopModal.style.display = 'flex';
+    shopModal.classList.add('active');
     playMenuClick();
   });
   
   closeShopBtn.addEventListener('click', () => {
-    shopModal.style.display = 'none';
+    shopModal.classList.remove('active');
     playMenuClick();
   });
 }

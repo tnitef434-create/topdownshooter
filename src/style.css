@@ -1454,3 +1454,98 @@ footer {
   font-family: var(--font-title);
   padding: 8px;
 }
+
+/* --- Premium Modal & Main Menu Styling --- */
+
+/* Main Menu Play Card */
+.play-btn-card {
+  padding: 14px;
+  border: 1px solid rgba(212, 175, 55, 0.2) !important;
+  margin-top: 10px;
+  display: flex;
+  justify-content: center;
+  background: rgba(197, 160, 89, 0.02) !important;
+  box-shadow: 0 0 15px rgba(197, 160, 89, 0.05);
+  transition: all 0.3s ease;
+}
+
+.play-btn-card:hover {
+  border-color: rgba(212, 175, 55, 0.4) !important;
+  box-shadow: 0 0 25px rgba(212, 175, 55, 0.1);
+}
+
+/* Deploy Main Button */
+.btn-deploy-main {
+  width: 100%;
+  padding: 16px !important;
+  font-family: 'Orbitron', sans-serif !important;
+  font-size: 15px !important;
+  font-weight: 900 !important;
+  letter-spacing: 3px !important;
+  background: linear-gradient(to bottom, #d4af37, #aa7c11) !important;
+  border: 1px solid #c5a059 !important;
+  color: #08090c !important;
+  text-shadow: 0 1px 0 rgba(255,255,255,0.4) !important;
+  box-shadow: 0 4px 0 #73510c, 0 8px 20px rgba(212, 175, 55, 0.15) !important;
+  transition: all 0.2s cubic-bezier(0.18, 0.89, 0.32, 1.28) !important;
+  cursor: pointer;
+  border-radius: 4px;
+  text-transform: uppercase;
+}
+
+.btn-deploy-main:hover {
+  background: linear-gradient(to bottom, #ffe6a3, #d4af37) !important;
+  box-shadow: 0 2px 0 #73510c, 0 12px 28px rgba(212, 175, 55, 0.35) !important;
+  transform: translateY(-2px);
+  letter-spacing: 4px !important;
+}
+
+.btn-deploy-main:active {
+  transform: translateY(2px) !important;
+  box-shadow: 0 1px 0 #73510c, 0 4px 10px rgba(212, 175, 55, 0.1) !important;
+  letter-spacing: 3px !important;
+}
+
+/* Modal Cards */
+.modal-card.deploy-card {
+  max-width: 580px;
+  width: 90%;
+  border: 1px solid rgba(212, 175, 55, 0.25) !important;
+  box-shadow: 0 0 40px rgba(212, 175, 55, 0.15) !important;
+  padding: 30px;
+  border-radius: 8px;
+  background: rgba(12, 14, 18, 0.98) !important;
+  backdrop-filter: blur(12px);
+}
+
+.modal-card.shop-card {
+  max-width: 650px;
+  width: 90%;
+  border: 1px solid rgba(212, 175, 55, 0.25) !important;
+  box-shadow: 0 0 40px rgba(212, 175, 55, 0.15) !important;
+  padding: 30px;
+  border-radius: 8px;
+  background: rgba(12, 14, 18, 0.98) !important;
+  backdrop-filter: blur(12px);
+}
+
+/* Custom styles for Toggle Buttons inside Quick Play map select styling */
+.btn-toggle {
+  flex: 1;
+  font-size: 8px;
+  padding: 6px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 3px;
+  font-family: var(--font-title);
+  font-weight: bold;
+  transition: all 0.2s ease;
+}
+
+.btn-toggle.active {
+  background: #d4af37 !important;
+  color: #08090c !important;
+}
+
