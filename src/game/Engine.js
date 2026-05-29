@@ -632,9 +632,32 @@ export class Engine {
     const popup = document.getElementById('sprint-tip-popup');
     if (popup) popup.style.display = 'none';
 
+    // Seeded/deterministic random choice based on map/lobby seed + round number
+    const seedStr = (this.map.seed || "default_seed") + "_" + this.roundNumber;
+    let hash = 0;
+    for (let i = 0; i < seedStr.length; i++) {
+      hash = (hash << 5) - hash + seedStr.charCodeAt(i);
+      hash |= 0;
+    }
+    const seededRandom = () => {
+      hash = (hash * 1664525 + 1013904223) | 0;
+      return (hash >>> 0) / 4294967296;
+    };
+
+    const team1Spawns = [this.spawns[0], this.spawns[2]];
+    const team2Spawns = [this.spawns[1], this.spawns[3]];
+    
+    const t1IdxStart = seededRandom() < 0.5 ? 0 : 1;
+    const t2IdxStart = seededRandom() < 0.5 ? 0 : 1;
+
     // Reset all operatives
     this.players.forEach((p, idx) => {
-      const spawn = this.spawns[idx % this.spawns.length];
+      let spawn;
+      if (p.team === 1) {
+        spawn = team1Spawns[(t1IdxStart + idx) % team1Spawns.length];
+      } else {
+        spawn = team2Spawns[(t2IdxStart + idx) % team2Spawns.length];
+      }
       p.x = spawn.x;
       p.y = spawn.y;
       p.vx = 0;
