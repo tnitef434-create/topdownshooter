@@ -1171,6 +1171,9 @@ function disconnectSocket() {
 
 // 6. Gameplay triggers
 function startOfflineMode() {
+  const deployModal = document.getElementById('deploy-modal');
+  if (deployModal) deployModal.classList.remove('active');
+
   currentMatchSource = 'practice';
   const initGame = () => {
     showScreen('game');
@@ -1418,6 +1421,9 @@ function setupUIListeners() {
   // Create Room
   if (btns.createRoom) {
     btns.createRoom.addEventListener('click', () => {
+      const deployModal = document.getElementById('deploy-modal');
+      if (deployModal) deployModal.classList.remove('active');
+
       if (inputs.name) myName = inputs.name.value.trim() || 'Operative';
       safeStorage.setItem('tacticstrike_player_name', myName);
       connectSocket();
@@ -1430,6 +1436,9 @@ function setupUIListeners() {
   // Join Room
   if (btns.joinRoom) {
     btns.joinRoom.addEventListener('click', () => {
+      const deployModal = document.getElementById('deploy-modal');
+      if (deployModal) deployModal.classList.remove('active');
+
       const code = inputs.roomCode ? inputs.roomCode.value.toUpperCase().trim() : '';
       if (!code || code.length !== 5) {
         alert('Please enter a valid 5-character room code.');
@@ -1446,6 +1455,9 @@ function setupUIListeners() {
 
   // Ranked matchmaking with 15-second rank expansion
   function startRankedMatchmaking(searchStyle) {
+    const deployModal = document.getElementById('deploy-modal');
+    if (deployModal) deployModal.classList.remove('active');
+
     if (inputs.name) myName = inputs.name.value.trim() || 'Operative';
     safeStorage.setItem('tacticstrike_player_name', myName);
     connectSocket();
