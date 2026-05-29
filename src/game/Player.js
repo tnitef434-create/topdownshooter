@@ -175,8 +175,28 @@ export class Player {
     }
   }
 
-  update(keys, mouse, map, soundEngine, currentTime, target, localPlayer) {
+  update(keys, mouse, map, soundEngine, currentTime, botTargetPlayer = null, localPlayerRef = null) {
     if (this.health <= 0) return;
+
+    const isSabotage = window.gameEngine && window.gameEngine.matchMode === 'sabotage';
+    const sabotageClampedDt = Math.max(1, Math.min(150, currentTime - (this.lastUpdateTime || currentTime)));
+    
+    if (isSabotage) {
+      if (this.isLocal) {
+        this.flashlightActive = false;
+        this.weaponKey = 'none';
+        if (this.inVent) {
+          this.vx = 0;
+          this.vy = 0;
+          this.lastUpdateTime = currentTime;
+          this.health = Math.min(this.health, 100);
+          this.flashAlpha = Math.max(0, this.flashAlpha - sabotageClampedDt * 0.0005);
+          return;
+        }
+      } else {
+        this.flashlightActive = true;
+      }
+    }
 
     if (!this.lastUpdateTime) {
       this.lastUpdateTime = currentTime;
@@ -378,6 +398,9 @@ export class Player {
   // Shoot weapon. Returns shootData if successful, or null
   shoot(currentTime, soundEngine, distance = 0) {
     if (this.health <= 0 || this.isReloading) return null;
+    if (window.gameEngine && window.gameEngine.matchMode === 'sabotage' && this.isLocal) {
+      return null;
+    }
 
     // Fire cooldown check
     const hasOverdrive = this.overdriveEndTime && (currentTime < this.overdriveEndTime) || this.overdriveActive;
@@ -604,7 +627,8 @@ export class Player {
   handleBotAI(map, soundEngine, currentTime, player, localPlayer, dtFactor) {
     // Check line of sight to player
     const distToPlayer = Math.hypot(this.x - player.x, this.y - player.y);
-    const hasRawLOS = distToPlayer < 700 && this.checkLineOfSight(map, this.x, this.y, player.x, player.y);
+    const inVent = player.inVent;
+    const hasRawLOS = !inVent && distToPlayer < 700 && this.checkLineOfSight(map, this.x, this.y, player.x, player.y);
 
     // Bot can see player in the dark if close, if player has flashlight on, or if player is in bot's flashlight beam
     let angleToPlayer = Math.atan2(player.y - this.y, player.x - this.x);
@@ -627,6 +651,24 @@ export class Player {
       this.botTargetX = player.x;
       this.botTargetY = player.y;
       this.angle = Math.atan2(player.y - this.y, player.x - this.x); // turn towards shot
+    }
+
+    // Investigate alarm behavior in sabotage mode
+    if (window.gameEngine && window.gameEngine.matchMode === 'sabotage' && this.botState !== 'chase') {
+      const activeAlarms = window.gameEngine.tasks ? window.gameEngine.tasks.filter(t => t.alarmActive) : [];
+      if (activeAlarms.length > 0) {
+        // Find closest active alarm
+        activeAlarms.sort((a, b) => Math.hypot(this.x - a.x, this.y - a.y) - Math.hypot(this.x - b.x, this.y - b.y));
+        const closestAlarm = activeAlarms[0];
+        
+        // Target closest active alarm
+        if (this.botState !== 'search' || Math.hypot(this.botTargetX - closestAlarm.x, this.botTargetY - closestAlarm.y) > 30) {
+          this.botState = 'search';
+          this.botTargetX = closestAlarm.x;
+          this.botTargetY = closestAlarm.y;
+          this.angle = Math.atan2(closestAlarm.y - this.y, closestAlarm.x - this.x);
+        }
+      }
     }
 
     const timeDiff = currentTime - this.botLastDecisionTime;
@@ -865,6 +907,7 @@ export class Player {
 
   // Draw player operative on canvas
   draw(ctx, configSettings = { laser: true }, map = null) {
+    if (this.inVent) return;
     if (this.health <= 0) {
       // Draw death pool / fallen character
       ctx.save();
@@ -1057,9 +1100,10 @@ export class Player {
     }
 
     // ── Weapon barrel & muzzle flash (drawn on top of sprite) ──────────
-    ctx.save();
-    ctx.translate(this.x, this.y);
-    ctx.rotate(this.angle);
+    if (this.weaponKey !== 'none') {
+      ctx.save();
+      ctx.translate(this.x, this.y);
+      ctx.rotate(this.angle);
 
     ctx.fillStyle = this.weaponKey === 'knife' ? '#b0b8c0' : '#333';
     ctx.strokeStyle = 'rgba(0,0,0,0.7)';
@@ -1096,7 +1140,8 @@ export class Player {
       ctx.restore();
     }
 
-    ctx.restore();
+      ctx.restore();
+    }
 
     // 4. Floating HUD text above player (Operative name / pickups)
     ctx.save();

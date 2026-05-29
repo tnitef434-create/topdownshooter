@@ -40,7 +40,8 @@ const btns = {
   readyToggle: document.getElementById('btn-ready-toggle'),
   copyCode: document.getElementById('btn-copy-code'),
   returnLobby: document.getElementById('btn-return-lobby'),
-  toggleMute: document.getElementById('btn-toggle-mute')
+  toggleMute: document.getElementById('btn-toggle-mute'),
+  btnAmongUs: document.getElementById('btn-among-us-mode')
 };
 
 const inputs = {
@@ -1415,6 +1416,53 @@ function setupUIListeners() {
       if (inputs.name) myName = inputs.name.value.trim() || 'Operative';
       safeStorage.setItem('tacticstrike_player_name', myName);
       startOfflineMode();
+    });
+  }
+
+  // Sabotage Among Us Mode
+  if (btns.btnAmongUs) {
+    btns.btnAmongUs.addEventListener('click', () => {
+      if (inputs.name) myName = inputs.name.value.trim() || 'Operative';
+      safeStorage.setItem('tacticstrike_player_name', myName);
+      
+      const deployModal = document.getElementById('deploy-modal');
+      if (deployModal) deployModal.classList.remove('active');
+
+      currentMatchSource = 'practice';
+      const initGame = () => {
+        showScreen('game');
+        displays.chatMessages.innerHTML = '';
+
+        if (gameEngine) {
+          gameEngine.destroy();
+        }
+
+        const playersList = [
+          { id: 'player', name: myName, weapon: 'none', color: myColor },
+          { id: 'bot_enemy_1', name: 'Impostor Killer', weapon: 'pistol', color: 'red' }
+        ];
+
+        gameEngine = new Engine('game-canvas', {
+          mode: 'offline',
+          socket: null,
+          localPlayerId: 'player',
+          localPlayerName: myName,
+          localWeapon: 'none',
+          localColor: myColor,
+          localPlayerIndex: 0,
+          players: playersList,
+          seed: Math.random(),
+          mapId: selectedMapId,
+          settings: { ...gameSettings, volume: gameSettings.sfxMuted ? 0 : gameSettings.volume },
+          matchMode: 'sabotage',
+          isRanked: false,
+          qpRenderStyle: qpRenderStyle,
+          onMatchEnd: handleMatchEnd,
+          onKillFeed: addKillFeedMessage
+        });
+      };
+
+      playRankedStartVideo(initGame);
     });
   }
 

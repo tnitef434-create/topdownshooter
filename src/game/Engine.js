@@ -181,6 +181,14 @@ export class Engine {
       this.activeHitmarkers = [];
       this.floatingNumbers = [];
       this.replayFrames = [];
+
+      this.vents = [];
+      this.tasks = [];
+      this.activeTask = null;
+      this.ventCooldown = 0;
+      this.currentVent = null;
+      this.sweepAngle = 0;
+      this.sweepProgress = 0;
       
       // Network component
       this.network = null;
@@ -329,6 +337,89 @@ export class Engine {
       if (chatInput && document.activeElement === chatInput) {
         return;
       }
+
+      if (this.matchMode === 'sabotage' && this.localPlayer && this.localPlayer.health > 0) {
+        // If inside a vent, handle vent navigation and exit
+        if (this.localPlayer.inVent && this.currentVent) {
+          if (e.key >= '1' && e.key <= '5') {
+            e.preventDefault();
+            const idx = parseInt(e.key) - 1;
+            const targetVent = this.vents[idx];
+            if (targetVent && targetVent.id !== this.currentVent.id) {
+              this.localPlayer.x = targetVent.x;
+              this.localPlayer.y = targetVent.y;
+              this.currentVent = targetVent;
+              try { this.sound.playFrictionalScrape(0, 0.3, 0.4); } catch(ex) {}
+            }
+          } else if (e.key === ' ' || e.key === 'Spacebar') {
+            e.preventDefault();
+            this.localPlayer.inVent = false;
+            this.currentVent = null;
+            try { this.sound.playFrictionalScrape(0, 0.2, 0.3); } catch(ex) {}
+          }
+          return;
+        }
+
+        // If doing a minigame, handle minigame actions
+        if (this.activeTask) {
+          if (e.key === ' ' || e.key === 'Spacebar') {
+            e.preventDefault();
+            const val = Math.abs(Math.sin(this.sweepAngle));
+            if (val >= 0.4 && val <= 0.6) {
+              this.sweepProgress = Math.min(100, this.sweepProgress + 20);
+              try { this.sound.playMetallicClick(0, 2000, 0.08, 0.35); } catch(ex) {}
+              if (this.sweepProgress >= 100) {
+                const t = this.activeTask;
+                t.status = 'completed';
+                t.alarmActive = true;
+                t.alarmTimer = 15;
+                this.activeTask = null;
+                this.localPlayer.showTextNotification('TASK COMPLETE! 🚨 ALARM TRIGGERED');
+                const dist = Math.hypot(this.localPlayer.x - t.x, this.localPlayer.y - t.y);
+                try { this.sound.playAlarmSound(dist); } catch(ex) {}
+              }
+            } else {
+              this.sweepProgress = Math.max(0, this.sweepProgress - 10);
+              try { this.sound.playMetallicClick(0, 500, 0.15, 0.25); } catch(ex) {}
+            }
+          } else if (e.key === 'Escape' || e.key.toLowerCase() === 'f') {
+            if (this.activeTask) {
+              this.activeTask.status = 'pending';
+              this.activeTask = null;
+            }
+          }
+          return;
+        }
+
+        // Enter a vent: Press E when near
+        if (e.key.toLowerCase() === 'e') {
+          const nearVent = this.vents.find(v => Math.hypot(this.localPlayer.x - v.x, this.localPlayer.y - v.y) < 50);
+          if (nearVent) {
+            if (this.ventCooldown > 0) {
+              this.localPlayer.showTextNotification(`VENT COOLDOWN: ${this.ventCooldown.toFixed(1)}s`);
+            } else {
+              this.localPlayer.inVent = true;
+              this.currentVent = nearVent;
+              this.ventCooldown = 10;
+              try { this.sound.playFrictionalScrape(0, 0.2, 0.35); } catch(ex) {}
+            }
+            return;
+          }
+        }
+
+        // Interact with a task: Press F when near
+        if (e.key.toLowerCase() === 'f') {
+          const nearTask = this.tasks.find(t => t.status === 'pending' && Math.hypot(this.localPlayer.x - t.x, this.localPlayer.y - t.y) < 40);
+          if (nearTask) {
+            this.activeTask = nearTask;
+            nearTask.status = 'doing';
+            this.sweepProgress = 0;
+            this.sweepAngle = 0;
+            return;
+          }
+        }
+      }
+
       if (e.key === ' ') {
         e.preventDefault();
       }
@@ -625,6 +716,63 @@ export class Engine {
     this.gameState = 'countdown';
     this.countdownTimer = 3;
     this.countdownStart = performance.now();
+
+    if (this.matchMode === 'sabotage') {
+      // Vents initialization
+      this.vents = [
+        { id: 'vent_a', x: 180, y: 180, name: 'North-West Vent' },
+        { id: 'vent_b', x: this.mapWidth - 180, y: 180, name: 'North-East Vent' },
+        { id: 'vent_c', x: 180, y: this.mapHeight - 180, name: 'South-West Vent' },
+        { id: 'vent_d', x: this.mapWidth - 180, y: this.mapHeight - 180, name: 'South-East Vent' },
+        { id: 'vent_e', x: 700, y: 700, name: 'Central Vent' }
+      ];
+      this.ventCooldown = 0;
+      this.currentVent = null;
+      this.activeTask = null;
+      if (this.localPlayer) {
+        this.localPlayer.inVent = false;
+        this.localPlayer.weaponKey = 'none';
+      }
+
+      // Dynamic task locations using map rooms
+      const candidates = [];
+      for (let i = 0; i < 9; i++) {
+        const r = this.map.rooms[i];
+        if (r) {
+          candidates.push({
+            name: r.name || `Section ${i+1}`,
+            x: Math.round(r.x + r.w / 2),
+            y: Math.round(r.y + r.h / 2)
+          });
+        }
+      }
+      candidates.push({ name: "Central Corridors", x: 700, y: 700 });
+
+      // Shuffle and take 5
+      const shuffled = [...candidates].sort(() => Math.random() - 0.5);
+      const selected = shuffled.slice(0, 5);
+
+      const taskNames = [
+        "Fix Wiring", "Calibrate Core", "Download Files", 
+        "Clear Vent Filters", "Stabilize Energy Grid", "Align Antenna", 
+        "Unlock Console", "Refuel Engine", "Inspect Sample", "Reset Breakways"
+      ];
+
+      this.tasks = selected.map((c, i) => {
+        return {
+          id: `task_${i}`,
+          x: c.x,
+          y: c.y,
+          name: taskNames[i % taskNames.length] + ` in ${c.name}`,
+          rawName: taskNames[i % taskNames.length],
+          progress: 0,
+          targetProgress: 100,
+          status: 'pending',
+          alarmActive: false,
+          alarmTimer: 0
+        };
+      });
+    }
     
     // Reset sprint warning popup
     this.lastSprintTime = performance.now();
@@ -985,6 +1133,28 @@ export class Engine {
     this.lastUpdateTime = currentTime;
     const clampedDt = Math.max(1, Math.min(150, dt));
     this.dtFactor = clampedDt / 16.67;
+
+    if (this.matchMode === 'sabotage') {
+      if (this.ventCooldown > 0) {
+        this.ventCooldown = Math.max(0, this.ventCooldown - clampedDt / 1000);
+      }
+      if (this.activeTask) {
+        this.sweepAngle += 0.06 * this.dtFactor;
+      }
+      this.tasks.forEach(t => {
+        if (t.alarmActive) {
+          t.alarmTimer -= clampedDt / 1000;
+          if (!t.lastBeepTime || (Date.now() - t.lastBeepTime > 1500)) {
+            t.lastBeepTime = Date.now();
+            const dist = Math.hypot(this.localPlayer.x - t.x, this.localPlayer.y - t.y);
+            try { this.sound.playAlarmSound(dist); } catch(ex) {}
+          }
+          if (t.alarmTimer <= 0) {
+            t.alarmActive = false;
+          }
+        }
+      });
+    }
 
     if (this.gameState === 'replay') {
       this.replayIndex++;
@@ -1871,6 +2041,81 @@ export class Engine {
       this.ctx.restore();
     }
 
+    // Draw Vents and Tasks in world coordinates
+    if (this.matchMode === 'sabotage') {
+      this.vents.forEach(v => {
+        this.ctx.save();
+        this.ctx.translate(v.x, v.y);
+        
+        this.ctx.fillStyle = '#1e2124';
+        this.ctx.fillRect(-20, -15, 40, 30);
+        this.ctx.strokeStyle = '#535960';
+        this.ctx.lineWidth = 2.5;
+        this.ctx.strokeRect(-20, -15, 40, 30);
+        
+        this.ctx.strokeStyle = '#0f1112';
+        this.ctx.lineWidth = 2;
+        for (let i = -12; i <= 12; i += 6) {
+          this.ctx.beginPath();
+          this.ctx.moveTo(i, -10);
+          this.ctx.lineTo(i, 10);
+          this.ctx.stroke();
+        }
+        
+        const dist = Math.hypot(this.localPlayer.x - v.x, this.localPlayer.y - v.y);
+        if (dist < 50 && this.localPlayer.health > 0 && !this.localPlayer.inVent) {
+          this.ctx.fillStyle = '#66fcf1';
+          this.ctx.font = 'bold 9px Orbitron';
+          this.ctx.textAlign = 'center';
+          this.ctx.fillText('[E] VENT', 0, -22);
+        }
+        this.ctx.restore();
+      });
+
+      this.tasks.forEach(t => {
+        if (t.status === 'completed') return;
+        this.ctx.save();
+        this.ctx.translate(t.x, t.y);
+        
+        this.ctx.fillStyle = '#2c3540';
+        this.ctx.fillRect(-15, -15, 30, 30);
+        this.ctx.strokeStyle = '#4e5b6c';
+        this.ctx.lineWidth = 2;
+        this.ctx.strokeRect(-15, -15, 30, 30);
+        
+        this.ctx.fillStyle = t.status === 'doing' ? '#ffd700' : '#39db14';
+        this.ctx.fillRect(-10, -10, 20, 12);
+        
+        let alarmGlow = 0;
+        if (t.alarmActive) {
+          alarmGlow = Math.abs(Math.sin(Date.now() / 200));
+        } else if (t.status === 'doing') {
+          alarmGlow = 0.25 * Math.abs(Math.sin(Date.now() / 400));
+        }
+        
+        if (alarmGlow > 0) {
+          this.ctx.fillStyle = `rgba(255, 60, 60, ${alarmGlow})`;
+          this.ctx.beginPath();
+          this.ctx.arc(0, -22, 10 + alarmGlow * 10, 0, Math.PI * 2);
+          this.ctx.fill();
+          
+          this.ctx.fillStyle = '#ff3c3c';
+          this.ctx.beginPath();
+          this.ctx.arc(0, -22, 4, 0, Math.PI * 2);
+          this.ctx.fill();
+        }
+        
+        const dist = Math.hypot(this.localPlayer.x - t.x, this.localPlayer.y - t.y);
+        if (dist < 40 && this.localPlayer.health > 0) {
+          this.ctx.fillStyle = '#ffd700';
+          this.ctx.font = 'bold 9px Orbitron';
+          this.ctx.textAlign = 'center';
+          this.ctx.fillText('[F] INTERACT', 0, -32);
+        }
+        this.ctx.restore();
+      });
+    }
+
     // Render Hitmarkers (World coordinates)
     this.activeHitmarkers.forEach(hm => {
       const agePct = hm.age / hm.duration;
@@ -1943,7 +2188,11 @@ export class Engine {
       const hasAdrenaline = this.localPlayer.adrenalineEndTime && (now < this.localPlayer.adrenalineEndTime) || this.localPlayer.adrenalineActive;
       const hasOverdrive = this.localPlayer.overdriveEndTime && (now < this.localPlayer.overdriveEndTime) || this.localPlayer.overdriveActive;
       
-      if (hasOverdrive) {
+      const hasAlarm = this.matchMode === 'sabotage' && this.tasks && this.tasks.some(t => t.alarmActive);
+      if (hasAlarm) {
+        const pulse = Math.sin(now / 100) * 0.15 + 0.55;
+        edgeColor = `rgba(255, 30, 30, ${pulse})`;
+      } else if (hasOverdrive) {
         const pulse = Math.sin(now / 150) * 0.12 + 0.48; // 0.36 to 0.60 alpha
         edgeColor = `rgba(255, 180, 0, ${pulse})`;
       } else if (hasAdrenaline) {
@@ -2027,8 +2276,155 @@ export class Engine {
       }
     }
 
+    // Render task checklist (screen-space)
+    if (this.matchMode === 'sabotage' && this.gameState === 'playing') {
+      this.ctx.save();
+      this.ctx.font = "bold 11px 'Orbitron', sans-serif";
+      this.ctx.textAlign = 'left';
+      
+      const startX = 20;
+      const startY = 120;
+      
+      this.ctx.fillStyle = '#ff3c3c';
+      this.ctx.fillText("MISSION TASKS:", startX, startY);
+      
+      this.tasks.forEach((t, index) => {
+        const y = startY + 20 + index * 18;
+        const isDone = t.status === 'completed';
+        
+        this.ctx.fillStyle = isDone ? '#39db14' : '#fff';
+        this.ctx.font = isDone ? "10px 'Orbitron', sans-serif" : "bold 10px 'Orbitron', sans-serif";
+        
+        this.ctx.strokeStyle = isDone ? '#39db14' : '#888';
+        this.ctx.lineWidth = 1;
+        this.ctx.strokeRect(startX, y - 8, 8, 8);
+        if (isDone) {
+          this.ctx.fillStyle = '#39db14';
+          this.ctx.fillRect(startX + 2, y - 6, 4, 4);
+        }
+        
+        this.ctx.fillText(t.name, startX + 15, y);
+      });
+      this.ctx.restore();
+    }
+
+    // Render vent/task overlays in screen space
+    if (this.matchMode === 'sabotage') {
+      if (this.localPlayer && this.localPlayer.health > 0) {
+        // Vent UI Overlay
+        if (this.localPlayer.inVent && this.currentVent) {
+          this.ctx.save();
+          this.ctx.fillStyle = 'rgba(2, 4, 8, 0.85)';
+          this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+          
+          this.ctx.fillStyle = 'rgba(102, 252, 241, 0.08)';
+          this.ctx.strokeStyle = '#66fcf1';
+          this.ctx.lineWidth = 2;
+          this.ctx.fillRect(this.canvas.width / 2 - 200, this.canvas.height / 2 - 150, 400, 300);
+          this.ctx.strokeRect(this.canvas.width / 2 - 200, this.canvas.height / 2 - 150, 400, 300);
+          
+          this.ctx.font = "bold 16px 'Orbitron', sans-serif";
+          this.ctx.fillStyle = '#66fcf1';
+          this.ctx.textAlign = 'center';
+          this.ctx.fillText("VENT NETWORK SYSTEM", this.canvas.width / 2, this.canvas.height / 2 - 110);
+          
+          this.ctx.font = "11px 'Orbitron', sans-serif";
+          this.ctx.fillStyle = '#8892b0';
+          this.ctx.fillText("Select destination vent code to travel:", this.canvas.width / 2, this.canvas.height / 2 - 80);
+          
+          this.vents.forEach((v, idx) => {
+            const num = idx + 1;
+            const isCurrent = v.id === this.currentVent.id;
+            this.ctx.fillStyle = isCurrent ? '#ffd700' : '#fff';
+            this.ctx.fillText(`[${num}] ${v.name} ${isCurrent ? '(CURRENT LOCATION)' : ''}`, this.canvas.width / 2, this.canvas.height / 2 - 40 + idx * 30);
+          });
+          
+          this.ctx.font = "bold 11px 'Orbitron', sans-serif";
+          this.ctx.fillStyle = '#ff3c3c';
+          this.ctx.fillText("PRESS [SPACEBAR] TO EXIT VENT", this.canvas.width / 2, this.canvas.height / 2 + 120);
+          this.ctx.restore();
+        }
+
+        // Minigame UI Overlay (Calibration sweep)
+        if (this.activeTask) {
+          this.ctx.save();
+          this.ctx.fillStyle = 'rgba(2, 4, 8, 0.85)';
+          this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+          
+          const rx = this.canvas.width / 2 - 200;
+          const ry = this.canvas.height / 2 - 140;
+          const rw = 400;
+          const rh = 280;
+          
+          this.ctx.fillStyle = '#11151c';
+          this.ctx.strokeStyle = '#ffd700';
+          this.ctx.lineWidth = 3;
+          this.ctx.fillRect(rx, ry, rw, rh);
+          this.ctx.strokeRect(rx, ry, rw, rh);
+          
+          this.ctx.font = "bold 15px 'Orbitron', sans-serif";
+          this.ctx.fillStyle = '#ffd700';
+          this.ctx.textAlign = 'center';
+          this.ctx.fillText(this.activeTask.name.toUpperCase(), this.canvas.width / 2, ry + 35);
+          
+          this.ctx.font = "11px 'Orbitron', sans-serif";
+          this.ctx.fillStyle = '#888';
+          this.ctx.fillText("TASK TYPE: GRID CALIBRATION", this.canvas.width / 2, ry + 60);
+          
+          const targetBoxX = this.canvas.width / 2 - 120;
+          const targetBoxY = ry + 100;
+          const targetBoxW = 240;
+          const targetBoxH = 40;
+          
+          this.ctx.fillStyle = '#1a1d24';
+          this.ctx.fillRect(targetBoxX, targetBoxY, targetBoxW, targetBoxH);
+          this.ctx.strokeStyle = '#333';
+          this.ctx.strokeRect(targetBoxX, targetBoxY, targetBoxW, targetBoxH);
+          
+          this.ctx.fillStyle = 'rgba(57, 219, 20, 0.35)';
+          this.ctx.fillRect(this.canvas.width / 2 - 24, targetBoxY, 48, targetBoxH);
+          this.ctx.strokeStyle = '#39db14';
+          this.ctx.strokeRect(this.canvas.width / 2 - 24, targetBoxY, 48, targetBoxH);
+          
+          const sweepVal = Math.abs(Math.sin(this.sweepAngle));
+          const lineX = targetBoxX + sweepVal * targetBoxW;
+          this.ctx.strokeStyle = '#fff';
+          this.ctx.lineWidth = 3;
+          this.ctx.beginPath();
+          this.ctx.moveTo(lineX, targetBoxY - 5);
+          this.ctx.lineTo(lineX, targetBoxY + targetBoxH + 5);
+          this.ctx.stroke();
+          
+          const pbX = this.canvas.width / 2 - 120;
+          const pbY = ry + 175;
+          const pbW = 240;
+          const pbH = 20;
+          
+          this.ctx.fillStyle = '#1a1d24';
+          this.ctx.fillRect(pbX, pbY, pbW, pbH);
+          this.ctx.fillStyle = '#ffd700';
+          this.ctx.fillRect(pbX, pbY, (this.sweepProgress / 100) * pbW, pbH);
+          this.ctx.strokeStyle = '#ffd700';
+          this.ctx.strokeRect(pbX, pbY, pbW, pbH);
+          
+          this.ctx.font = "bold 10px 'Orbitron', sans-serif";
+          this.ctx.fillStyle = '#fff';
+          this.ctx.fillText(`CALIBRATION PROGRESS: ${this.sweepProgress}%`, this.canvas.width / 2, pbY + 14);
+          
+          this.ctx.font = "11px 'Orbitron', sans-serif";
+          this.ctx.fillStyle = '#ffaa00';
+          this.ctx.fillText("PRESS [SPACEBAR] WHEN LINE IS IN GREEN ZONE", this.canvas.width / 2, ry + 230);
+          
+          this.ctx.fillStyle = '#888';
+          this.ctx.fillText("PRESS [ESC] OR [F] TO ABANDON TASK", this.canvas.width / 2, ry + 255);
+          
+          this.ctx.restore();
+        }
+      }
+    }
+
     // Render Tactical Minimap after 20 seconds of gameplay
-    if (!frame && this.gameState === 'playing' && (performance.now() - this.roundStartTime) > 20000) {
+    if (!frame && this.gameState === 'playing' && (this.matchMode === 'sabotage' || (performance.now() - this.roundStartTime) > 20000)) {
       this.ctx.save();
       const mapSize = 150;
       const margin = 20;
@@ -2079,6 +2475,21 @@ export class Engine {
         this.ctx.stroke();
       }
 
+      // Draw tasks on minimap in Sabotage mode
+      if (this.matchMode === 'sabotage') {
+        this.tasks.forEach(t => {
+          if (t.status === 'completed') return;
+          const tx = x + t.x * scale;
+          const ty = y + t.y * scale;
+          
+          const pulse = Math.abs(Math.sin(performance.now() / 250));
+          this.ctx.fillStyle = `rgba(255, 215, 0, ${0.4 + 0.6 * pulse})`;
+          this.ctx.beginPath();
+          this.ctx.arc(tx, ty, 3.5 + pulse * 2, 0, Math.PI * 2);
+          this.ctx.fill();
+        });
+      }
+
       // Draw other players
       const pulse = Math.abs(Math.sin(performance.now() / 200));
       this.players.forEach(p => {
@@ -2087,6 +2498,7 @@ export class Engine {
           const py = y + p.y * scale;
 
           if (!p.isTeammate) {
+            if (this.matchMode === 'sabotage') return; // do not show killer on minimap
             // Pulsating enemy blip
             this.ctx.fillStyle = `rgba(255, 60, 60, ${0.4 + 0.6 * pulse})`;
             this.ctx.beginPath();

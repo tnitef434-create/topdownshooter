@@ -37,6 +37,15 @@ export class Sound {
         this.shotgunBuffer = audioBuffer;
       })
       .catch(err => console.error("Error loading shotgun sound:", err));
+
+    // Fetch and decode alarm sound
+    fetch('/panic-alarm.mp3')
+      .then(response => response.arrayBuffer())
+      .then(arrayBuffer => this.ctx.decodeAudioData(arrayBuffer))
+      .then(audioBuffer => {
+        this.alarmBuffer = audioBuffer;
+      })
+      .catch(err => console.error("Error loading alarm sound:", err));
   }
 
   setVolume(volume) {
@@ -712,5 +721,39 @@ export class Sound {
       osc.start(t);
       osc.stop(t + 0.25);
     } catch(e) {}
+  }
+
+  playAlarmSound(distance = 0) {
+    this.init();
+    if (!this.ctx || !this.alarmBuffer) return null;
+    if (this.ctx.state === 'suspended') {
+      this.ctx.resume();
+    }
+
+    const t = this.ctx.currentTime;
+    const source = this.ctx.createBufferSource();
+    source.buffer = this.alarmBuffer;
+
+    let finalDest = this.masterVolume;
+    
+    // Muffle and volume attenuation based on distance
+    const muffleFilter = this.ctx.createBiquadFilter();
+    muffleFilter.type = 'lowpass';
+    const cutoff = Math.max(180, 4000 * Math.pow(1 - Math.min(1, distance / 1400), 2.0));
+    muffleFilter.frequency.setValueAtTime(cutoff, t);
+
+    const volScale = Math.max(0.01, Math.pow(1 - Math.min(1, distance / 1500), 1.5));
+    const distanceGain = this.ctx.createGain();
+    distanceGain.gain.setValueAtTime(volScale * 0.8, t); // default high volume
+
+    muffleFilter.connect(distanceGain);
+    distanceGain.connect(this.masterVolume);
+    finalDest = muffleFilter;
+
+    source.connect(finalDest);
+    source.start(t);
+    source.stop(t + 15); // cut short to 15 seconds
+
+    return source;
   }
 }

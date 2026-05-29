@@ -719,6 +719,20 @@ export class Map {
           this.maskCtx.fillStyle = 'white';
           this.maskCtx.fill();
         }
+
+        // C2. Sabotage Mode: give local player a small vision cutout in the dark
+        if (window.gameEngine && window.gameEngine.matchMode === 'sabotage') {
+          if (p.isLocal) {
+            const visionGrad = this.maskCtx.createRadialGradient(p.x, p.y, 10, p.x, p.y, 150);
+            visionGrad.addColorStop(0, 'rgba(255, 255, 255, 1.0)');
+            visionGrad.addColorStop(0.7, 'rgba(255, 255, 255, 0.45)');
+            visionGrad.addColorStop(1, 'rgba(255, 255, 255, 0.0)');
+            this.maskCtx.fillStyle = visionGrad;
+            this.maskCtx.beginPath();
+            this.maskCtx.arc(p.x, p.y, 150, 0, Math.PI * 2);
+            this.maskCtx.fill();
+          }
+        }
       });
 
       // D. Bullet tracer cutout (reveal brief light trails in dark rooms)
