@@ -74,6 +74,36 @@ app.get('*', (req, res) => {
 // Matchmaking and Room State
 const rooms = new Map(); // roomId -> { id, players: [{id, name, ready, weapon}], status: 'lobby'|'playing' }
 
+function broadcastPlayerCounts() {
+  let quickplay = 0;
+  let ranked_realistic = 0;
+  let ranked_competitive = 0;
+
+  for (const room of rooms.values()) {
+    const count = room.players.length;
+    if (room.isRanked) {
+      if (room.mode && room.mode.includes('realistic')) {
+        ranked_realistic += count;
+      } else if (room.mode && room.mode.includes('competitive')) {
+        ranked_competitive += count;
+      } else {
+        ranked_realistic += count;
+      }
+    } else {
+      quickplay += count;
+    }
+  }
+
+  const totalOnline = io.engine.clientsCount;
+
+  io.emit('player-counts', {
+    total: totalOnline,
+    quickplay,
+    ranked_realistic,
+    ranked_competitive
+  });
+}
+
 // Helper to generate a room ID
 function generateRoomId() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // Readable chars (no O/0/I/1)
@@ -87,6 +117,7 @@ function generateRoomId() {
 io.on('connection', (socket) => {
   console.log(`User connected: ${socket.id}`);
   let currentRoomId = null;
+  broadcastPlayerCounts();
 
   // 0. Authentication Events
   socket.on('register', ({ username, password }) => {
@@ -184,6 +215,7 @@ io.on('connection', (socket) => {
 
     socket.emit('room-created', { roomId, players: room.players, mode: roomMode, mapId: room.mapId });
     console.log(`Room created: ${roomId} (${roomMode}, Map: ${room.mapId}) by player: ${playerName} (${socket.id})`);
+    broadcastPlayerCounts();
   });
 
   // 1.1 Select map (Quick Play Custom Lobby)
@@ -232,6 +264,7 @@ io.on('connection', (socket) => {
     socket.emit('room-joined', { roomId: cleanRoomId, players: room.players, mode: room.mode, mapId: room.mapId || 'manor' });
     socket.to(cleanRoomId).emit('player-joined', { players: room.players });
     console.log(`Player ${playerName} (${socket.id}) joined room: ${cleanRoomId}`);
+    broadcastPlayerCounts();
   });
 
   // 3. Auto-matchmaking (Ranked)
@@ -278,6 +311,7 @@ io.on('connection', (socket) => {
       socket.emit('room-joined', { roomId: targetRoom.id, players: targetRoom.players, mode: targetRoom.mode });
       socket.to(targetRoom.id).emit('player-joined', { players: targetRoom.players });
       console.log(`Auto-matched Player ${playerName} (RP: ${playerRP}) into room: ${targetRoom.id}`);
+      broadcastPlayerCounts();
     } else {
       // Create a room
       let roomId = generateRoomId();
@@ -309,6 +343,7 @@ io.on('connection', (socket) => {
 
       socket.emit('room-created', { roomId, players: room.players, autoMatch: true, mode: searchMode });
       console.log(`Auto-match created room: ${roomId} (${searchMode}) for player: ${playerName} (RP: ${playerRP})`);
+      broadcastPlayerCounts();
     }
   });
 
@@ -555,6 +590,7 @@ io.on('connection', (socket) => {
     if (currentRoomId) {
       handleRoomLeave(socket, currentRoomId);
       currentRoomId = null;
+      broadcastPlayerCounts();
     }
   });
 
@@ -565,6 +601,7 @@ io.on('connection', (socket) => {
     if (currentRoomId) {
       handleRoomLeave(socket, currentRoomId);
     }
+    broadcastPlayerCounts();
   });
 });
 
@@ -589,6 +626,7 @@ function handleRoomLeave(socket, roomId) {
     });
     console.log(`Player left room: ${roomId}. 1 player remaining.`);
   }
+  broadcastPlayerCounts();
 }
 
 httpServer.listen(PORT, () => {

@@ -922,6 +922,15 @@ function connectSocket() {
   socket.on('connect_error', () => {
     // Fail silently or fallback for auto-login without annoying alerts
     console.warn('Failed to connect to multiplayer server.');
+    updatePlayerCountsUI({ total: 1, quickplay: 0, ranked_realistic: 0, ranked_competitive: 0 });
+  });
+
+  socket.on('disconnect', () => {
+    updatePlayerCountsUI({ total: 1, quickplay: 0, ranked_realistic: 0, ranked_competitive: 0 });
+  });
+
+  socket.on('player-counts', (data) => {
+    updatePlayerCountsUI(data);
   });
 
   socket.on('connect', () => {
@@ -1985,6 +1994,18 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 });
+
+function updatePlayerCountsUI(data) {
+  const totalVal = document.getElementById('total-player-count-value');
+  const qpVal = document.getElementById('qp-player-count');
+  const realVal = document.getElementById('ranked-real-player-count');
+  const compVal = document.getElementById('ranked-comp-player-count');
+
+  if (totalVal && data && data.total !== undefined) totalVal.innerText = data.total;
+  if (qpVal && data && data.quickplay !== undefined) qpVal.innerText = data.quickplay;
+  if (realVal && data && data.ranked_realistic !== undefined) realVal.innerText = data.ranked_realistic;
+  if (compVal && data && data.ranked_competitive !== undefined) compVal.innerText = data.ranked_competitive;
+}
 
 // Expose remote chat event
 window.addEventListener('opponent-chat-msg', (e) => {

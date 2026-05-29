@@ -6,6 +6,7 @@ export class Sound {
     
     // Create pre-baked noise buffer for efficiency
     this.noiseBuffer = null;
+    this.shotgunBuffer = null;
   }
 
   init() {
@@ -27,6 +28,15 @@ export class Sound {
       data[i] = Math.random() * 2 - 1;
     }
     this.noiseBuffer = buffer;
+
+    // Fetch and decode shotgun sound
+    fetch('/dennish18-shotgun.mp3')
+      .then(response => response.arrayBuffer())
+      .then(arrayBuffer => this.ctx.decodeAudioData(arrayBuffer))
+      .then(audioBuffer => {
+        this.shotgunBuffer = audioBuffer;
+      })
+      .catch(err => console.error("Error loading shotgun sound:", err));
   }
 
   setVolume(volume) {
@@ -112,6 +122,22 @@ export class Sound {
         punchVol = 0.5;
         break;
       case 'shotgun':
+        if (this.shotgunBuffer) {
+          try {
+            const source = this.ctx.createBufferSource();
+            source.buffer = this.shotgunBuffer;
+            
+            const gainNode = this.ctx.createGain();
+            gainNode.gain.setValueAtTime(0.9, t);
+            
+            source.connect(gainNode);
+            gainNode.connect(finalDest);
+            source.start(t);
+            return;
+          } catch (e) {
+            console.error("Error playing custom shotgun audio:", e);
+          }
+        }
         noiseFilterFreq = 500;
         noiseDecay = 0.35;
         noiseVol = 0.9;

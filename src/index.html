@@ -29,6 +29,9 @@
         <header>
           <h1 class="glitch-title">TACTIC<span>STRIKE</span></h1>
           <p class="subtitle">Online Top-Down Tactical Shooter</p>
+          <div id="total-player-count" style="font-family: var(--font-title); font-size: 11px; color: #66fcf1; border: 1px solid rgba(102, 252, 241, 0.3); background: rgba(102, 252, 241, 0.05); padding: 4px 10px; border-radius: 4px; display: inline-block; margin-top: 10px; letter-spacing: 1.5px;">
+            ● <span id="total-player-count-value">0</span> OPERATIVES ONLINE
+          </div>
         </header>
 
         <!-- Operative Profile Card with Rank -->
@@ -113,6 +116,7 @@
             <div>
               <div style="font-family:var(--font-title); font-size:13px; font-weight:700; color:#66fcf1; letter-spacing:1.5px; margin-bottom:4px; text-align:center;">QUICK PLAY</div>
               <div style="font-size:10px; color:var(--text-muted); line-height:1.4; text-align:center; min-height:28px;">Casual training vs bot or custom lobby.</div>
+              <div style="font-family: var(--font-title); font-size: 9px; color: var(--neon-teal); text-align: center; margin-top: 2px; font-weight: bold; letter-spacing: 0.5px;"><span id="qp-player-count">0</span> ACTIVE IN CASUAL</div>
             </div>
 
             <!-- Quick Play Style Toggle -->
@@ -144,6 +148,10 @@
             <div>
               <div style="font-family:var(--font-title); font-size:13px; font-weight:700; color:#d4af37; letter-spacing:1.5px; margin-bottom:4px; text-align:center;">RANKED DUEL</div>
               <div style="font-size:10px; color:var(--text-muted); line-height:1.4; text-align:center; min-height:28px;">Compete for RP. Choose Realistic or Competitive (High FPS).</div>
+              <div style="display: flex; justify-content: space-around; gap: 8px; margin-top: 2px;">
+                <span style="font-family: var(--font-title); font-size: 8px; color: #ffe6a3; font-weight: bold; letter-spacing: 0.5px;"><span id="ranked-real-player-count">0</span> REALISTIC</span>
+                <span style="font-family: var(--font-title); font-size: 8px; color: #d1fcff; font-weight: bold; letter-spacing: 0.5px;"><span id="ranked-comp-player-count">0</span> COMPETITIVE</span>
+              </div>
             </div>
             
             <div style="display:flex; flex-direction:column; gap:6px; margin-top:auto;">
