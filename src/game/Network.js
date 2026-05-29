@@ -63,7 +63,8 @@ export class Network {
         weaponKey: state.weaponKey,
         isReloading: state.isReloading,
         muzzleFlash: state.muzzleFlash,
-        flashlightActive: state.flashlightActive
+        flashlightActive: state.flashlightActive,
+        inVent: state.inVent || false
       });
 
       // Keep buffer small (last 30 frames)
@@ -148,6 +149,22 @@ export class Network {
       }
     });
 
+    // 6.5. Sabotage Alarm sync from opponent
+    this.socket.on('opponent-sabotage-alarm', (alarmData) => {
+      if (this.engine && this.engine.tasks) {
+        const task = this.engine.tasks[alarmData.idx];
+        if (task) {
+          task.status = 'completed';
+          task.alarmActive = true;
+          task.alarmTimer = 15;
+          if (this.sound) {
+            const dist = Math.hypot(this.localPlayer.x - task.x, this.localPlayer.y - task.y);
+            try { this.sound.playAlarmSound(dist); } catch(e) {}
+          }
+        }
+      }
+    });
+
     // 7. Chat forwarding
     this.socket.on('opponent-chat', (chatData) => {
       let name = chatData.name;
@@ -189,6 +206,7 @@ export class Network {
         isReloading: this.localPlayer.isReloading,
         muzzleFlash: this.localPlayer.muzzleFlash,
         flashlightActive: this.localPlayer.flashlightActive,
+        inVent: this.localPlayer.inVent || false,
         justDashed: this.localPlayer.networkJustDashed || false
       };
 
@@ -257,6 +275,7 @@ export class Network {
         opponent.isReloading = beforeState.isReloading;
         opponent.muzzleFlash = beforeState.muzzleFlash;
         opponent.flashlightActive = beforeState.flashlightActive;
+        opponent.inVent = beforeState.inVent || false;
       } else {
         // Fallback: If lagging and don't have surround states, slide towards latest packet
         const latest = buffer[buffer.length - 1];
@@ -273,6 +292,7 @@ export class Network {
         opponent.isReloading = latest.isReloading;
         opponent.muzzleFlash = latest.muzzleFlash;
         opponent.flashlightActive = latest.flashlightActive;
+        opponent.inVent = latest.inVent || false;
       }
     });
   }
@@ -294,6 +314,7 @@ export class Network {
       this.socket.off('opponent-health-sync');
       this.socket.off('opponent-break-crate');
       this.socket.off('opponent-pickup-item');
+      this.socket.off('opponent-sabotage-alarm');
       this.socket.off('opponent-chat');
       this.socket.off('round-over');
       this.socket.off('match-over');

@@ -49,7 +49,8 @@ const inputs = {
   roomCode: document.getElementById('room-code-input'),
   chat: document.getElementById('chat-input'),
   qpMapSelect: document.getElementById('qp-map-select'),
-  lobbyMapSelect: document.getElementById('lobby-map-select')
+  lobbyMapSelect: document.getElementById('lobby-map-select'),
+  lobbyModeSelect: document.getElementById('lobby-mode-select')
 };
 
 const displays = {
@@ -913,6 +914,19 @@ function updateLobbyUI(players) {
       lobbyMapSelect.disabled = !isHost;
     }
   }
+
+  // Update mode select dropdown visibility and accessibility
+  const lobbyModeContainer = document.getElementById('lobby-mode-selector-container');
+  const lobbyModeSelect = document.getElementById('lobby-mode-select');
+  if (lobbyModeContainer && lobbyModeSelect) {
+    if (currentMatchSource === 'ranked') {
+      lobbyModeContainer.style.display = 'none';
+    } else {
+      lobbyModeContainer.style.display = 'block';
+      const isHost = players[0] && players[0].id === socket.id;
+      lobbyModeSelect.disabled = !isHost;
+    }
+  }
 }
 
 // 5. Connect to Socket.io Server
@@ -1021,6 +1035,12 @@ function connectSocket() {
       lobbyMapSelect.value = mapId;
     }
 
+    // Sync mode choice
+    const lobbyModeSelect = document.getElementById('lobby-mode-select');
+    if (lobbyModeSelect && mode) {
+      lobbyModeSelect.value = mode;
+    }
+
     if (autoMatch) {
       updateLobbyUI(players);
       addSystemChatMessage('Created matchmaking room. Waiting for opponent...');
@@ -1042,6 +1062,12 @@ function connectSocket() {
     const lobbyMapSelect = document.getElementById('lobby-map-select');
     if (lobbyMapSelect && mapId) {
       lobbyMapSelect.value = mapId;
+    }
+
+    // Sync mode choice
+    const lobbyModeSelect = document.getElementById('lobby-mode-select');
+    if (lobbyModeSelect && mode) {
+      lobbyModeSelect.value = mode;
     }
 
     addSystemChatMessage(`Joined lobby: ${roomId}`);
@@ -1079,6 +1105,16 @@ function connectSocket() {
     }
     const mapName = mapId === 'cyberlab' ? 'Neon Cyber-Lab' : 'Residential Manor';
     addSystemChatMessage(`Host updated mission area to: ${mapName}`);
+  });
+
+  socket.on('lobby-mode-update', ({ mode }) => {
+    const lobbyModeSelect = document.getElementById('lobby-mode-select');
+    if (lobbyModeSelect) {
+      lobbyModeSelect.value = mode;
+    }
+    myMode = mode;
+    const modeName = mode === 'sabotage' ? 'Sabotage (Task Survival)' : 'Duel 1v1';
+    addSystemChatMessage(`Host updated game mode to: ${modeName}`);
   });
 
   socket.on('player-left', ({ players, message }) => {
@@ -1759,6 +1795,16 @@ function setupUIListeners() {
       const newMapId = e.target.value;
       if (socket && currentRoom) {
         socket.emit('select-map', { mapId: newMapId });
+      }
+      playMenuClick();
+    });
+  }
+
+  if (inputs.lobbyModeSelect) {
+    inputs.lobbyModeSelect.addEventListener('change', (e) => {
+      const newMode = e.target.value;
+      if (socket && currentRoom) {
+        socket.emit('select-game-mode', { mode: newMode });
       }
       playMenuClick();
     });

@@ -182,10 +182,10 @@ export class Player {
     const sabotageClampedDt = Math.max(1, Math.min(150, currentTime - (this.lastUpdateTime || currentTime)));
     
     if (isSabotage) {
-      if (this.isLocal) {
+      if (this.team === 1) {
         this.flashlightActive = false;
         this.weaponKey = 'none';
-        if (this.inVent) {
+        if (this.isLocal && this.inVent) {
           this.vx = 0;
           this.vy = 0;
           this.lastUpdateTime = currentTime;
@@ -222,8 +222,8 @@ export class Player {
     if (this.isLocal && !this.isBot) {
       this.handleLocalInput(keys, mouse, soundEngine, currentTime, dtFactor);
       this.updateDashHUD(currentTime);
-    } else if (this.isBot && target) {
-      this.handleBotAI(map, soundEngine, currentTime, target, localPlayer, dtFactor);
+    } else if (this.isBot && botTargetPlayer) {
+      this.handleBotAI(map, soundEngine, currentTime, botTargetPlayer, localPlayerRef, dtFactor);
     }
 
     // Apply speed multiplier based on carrying weapon weight and sprint speed mult
@@ -277,8 +277,8 @@ export class Player {
         this.footstepTimer = 0;
         if (soundEngine) {
           // Play footstep sound (only if within close range of local player, or if it is local player)
-          const distToLocal = localPlayer 
-            ? Math.hypot(this.x - localPlayer.x, this.y - localPlayer.y) 
+          const distToLocal = localPlayerRef 
+            ? Math.hypot(this.x - localPlayerRef.x, this.y - localPlayerRef.y) 
             : 0;
           if (this.isLocal || distToLocal < 450) {
             soundEngine.playFootstep();
@@ -398,7 +398,7 @@ export class Player {
   // Shoot weapon. Returns shootData if successful, or null
   shoot(currentTime, soundEngine, distance = 0) {
     if (this.health <= 0 || this.isReloading) return null;
-    if (window.gameEngine && window.gameEngine.matchMode === 'sabotage' && this.isLocal) {
+    if (window.gameEngine && window.gameEngine.matchMode === 'sabotage' && this.team === 1) {
       return null;
     }
 

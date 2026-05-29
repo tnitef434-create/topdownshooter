@@ -9,6 +9,7 @@ export class Map {
   constructor(width, height, seed, mapId = 'manor') {
     this.width  = width;
     this.height = height;
+    this.seed   = seed;
     this.rng    = new SeededRandom(seed);
     this.mapId  = mapId;
 

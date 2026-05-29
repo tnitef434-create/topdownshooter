@@ -231,6 +231,18 @@ io.on('connection', (socket) => {
     }
   });
 
+  // 1.2 Select game mode (custom lobby)
+  socket.on('select-game-mode', ({ mode }) => {
+    if (!currentRoomId) return;
+    const room = rooms.get(currentRoomId);
+    if (!room) return;
+    if (room.players[0] && room.players[0].id === socket.id) {
+      room.mode = mode;
+      io.to(currentRoomId).emit('lobby-mode-update', { mode });
+      console.log(`[Server] Game mode updated to ${mode} in room: ${currentRoomId}`);
+    }
+  });
+
   // 2. Join a room via code
   socket.on('join-room', ({ roomId, playerName, color }) => {
     const cleanRoomId = roomId.trim().toUpperCase();
@@ -537,6 +549,12 @@ io.on('connection', (socket) => {
   socket.on('pickup-item', (pickupData) => {
     if (!currentRoomId) return;
     socket.to(currentRoomId).emit('opponent-pickup-item', pickupData);
+  });
+
+  // 14. In-game: Sabotage Alarm
+  socket.on('sabotage-alarm', (alarmData) => {
+    if (!currentRoomId) return;
+    socket.to(currentRoomId).emit('opponent-sabotage-alarm', alarmData);
   });
 
   // 13. Text Chat
