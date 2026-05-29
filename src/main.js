@@ -2108,7 +2108,7 @@ function initItemShop() {
   if (!shopModal || !openShopBtn || !closeShopBtn) return;
   
   if (safeStorage.getItem('tacticstrike_credits') === null) {
-    safeStorage.setItem('tacticstrike_credits', '2500'); // start with 2500 for testing early purchases
+    safeStorage.setItem('tacticstrike_credits', '0'); // start with 0 credits
   }
 
   openShopBtn.addEventListener('click', () => {
