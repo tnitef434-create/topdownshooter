@@ -381,6 +381,29 @@ export class Engine {
                 this.localPlayer.showTextNotification('TASK COMPLETE! 🚨 ALARM TRIGGERED');
                 const dist = Math.hypot(this.localPlayer.x - t.x, this.localPlayer.y - t.y);
                 try { this.sound.playAlarmForTask(t.id, dist); } catch(ex) {}
+
+                // Check if all tasks are completed in sabotage mode
+                if (this.matchMode === 'sabotage') {
+                  const allDone = this.tasks.every(task => task.status === 'completed');
+                  if (allDone) {
+                    if (this.mode === 'offline') {
+                      this.endRound(1, 'tasks completed');
+                    } else {
+                      // Online mode: Host (Team 1) notifies server about the victory
+                      if (this.localPlayer.team === 1 && this.socket) {
+                        const killerPlayer = this.players.find(p => p.team === 2);
+                        if (killerPlayer) {
+                          this.socket.emit('player-died', {
+                            winnerId: this.localPlayer.id,
+                            winnerName: this.localPlayer.name,
+                            loserId: killerPlayer.id,
+                            roundNumber: this.roundNumber
+                          });
+                        }
+                      }
+                    }
+                  }
+                }
               }
             } else {
               this.sweepProgress = Math.max(0, this.sweepProgress - 10);
@@ -945,12 +968,18 @@ export class Engine {
 
     if (winningTeam === myTeam) {
       this.scoreSelf++;
+      if (this.matchMode === 'sabotage') {
+        this.scoreSelf = 3; // instantly finishes match
+      }
       if (feedAlert) {
         feedAlert.innerText = 'ROUND WON';
         feedAlert.style.color = '#39ff14';
       }
     } else if (winningTeam !== null) {
       this.scoreOpponent++;
+      if (this.matchMode === 'sabotage') {
+        this.scoreOpponent = 3; // instantly finishes match
+      }
       if (feedAlert) {
         feedAlert.innerText = 'ROUND LOST';
         feedAlert.style.color = '#ff3c3c';
@@ -988,12 +1017,16 @@ export class Engine {
     const accuracyVal = (window.MatchStats.hitsRegistered / totalShots) * 100;
     window.MatchStats.accuracy = accuracyVal;
     window.MatchStats.roundsWon = this.scoreSelf;
-    const winningTeam = this.scoreSelf >= 3 ? this.localPlayer.team : (this.localPlayer.team === 1 ? 2 : 1);
+    const winningTeam = (this.matchMode === 'sabotage')
+      ? (this.scoreSelf > this.scoreOpponent ? this.localPlayer.team : (this.localPlayer.team === 1 ? 2 : 1))
+      : (this.scoreSelf >= 3 ? this.localPlayer.team : (this.localPlayer.team === 1 ? 2 : 1));
     const winningPlayer = this.players.find(p => p.team === winningTeam);
     window.MatchStats.winnerId = winningPlayer ? winningPlayer.id : 'unknown';
 
     // Apply rank RP delta only if ranked
-    const isWin = this.scoreSelf >= 3;
+    const isWin = (this.matchMode === 'sabotage')
+      ? (this.scoreSelf > this.scoreOpponent)
+      : (this.scoreSelf >= 3);
     const oldRank = this.localPlayer.rank ? this.localPlayer.rank.label : '';
     let rankChanged = false;
     let rpDelta = 0;
@@ -2774,6 +2807,10 @@ export class Engine {
     this.gameState = 'round-over';
     if (this.matchTimerInterval) clearInterval(this.matchTimerInterval);
 
+    if (this.matchMode === 'sabotage') {
+      try { this.sound.stopBearMusic(); } catch(e) {}
+    }
+
     let feedAlert = document.getElementById('hud-status');
     const myTeam = this.localPlayer.team;
 
@@ -2832,7 +2869,9 @@ export class Engine {
     window.MatchStats.winnerId = data.winnerId;
 
     // Apply rank RP delta only if ranked
-    const isWin = this.scoreSelf >= 3;
+    const isWin = (this.matchMode === 'sabotage')
+      ? (this.scoreSelf > this.scoreOpponent)
+      : (this.scoreSelf >= 3);
     const oldRank = this.localPlayer.rank ? this.localPlayer.rank.label : '';
     let rankChanged = false;
     let rpDelta = 0;
@@ -2847,7 +2886,9 @@ export class Engine {
     window.MatchStats.rankChanged = rankChanged;
     window.MatchStats.oldRankLabel = oldRank;
 
-    const winningTeam = data.score1 >= 3 ? 1 : 2;
+    const winningTeam = (this.matchMode === 'sabotage')
+      ? (data.score1 > data.score2 ? 1 : 2)
+      : (data.score1 >= 3 ? 1 : 2);
     const losingTeam = winningTeam === 1 ? 2 : 1;
     this.players.forEach(p => {
       if (p.team === losingTeam) {

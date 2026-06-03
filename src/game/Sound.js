@@ -67,7 +67,7 @@ export class Sound {
       this.masterVolume.gain.value = volume;
     }
     if (this.bearMusic) {
-      this.bearMusic.volume = volume;
+      this.bearMusic.volume = volume * 0.3; // 30% of master volume
     }
   }
 
@@ -860,7 +860,7 @@ export class Sound {
       this.bearMusic = new Audio('/bear.mp3');
       this.bearMusic.loop = true;
     }
-    this.bearMusic.volume = this.volume;
+    this.bearMusic.volume = this.volume * 0.3; // 30% of master volume
     if (this.bearMusic.paused) {
       this.bearMusic.currentTime = 0;
       this.bearMusic.play().catch(err => console.warn('Error playing bear music:', err));

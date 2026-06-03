@@ -411,14 +411,15 @@ function playGameplayBackgroundMusic() {
   try {
     if (isMusicMuted) return;
 
-    if (gameEngine && gameEngine.matchMode === 'sabotage') {
+    const isSabotageMode = (gameEngine && gameEngine.matchMode === 'sabotage') || (currentMatchSource === 'practice' && myMode === 'sabotage');
+    if (isSabotageMode) {
       menuMusic.pause();
       menuMusic.currentTime = 0;
       waitMusic.pause();
       waitMusic.currentTime = 0;
       weaponSelectMusic.pause();
       weaponSelectMusic.currentTime = 0;
-      if (gameEngine.gameState === 'playing' && gameEngine.sound) {
+      if (gameEngine && gameEngine.gameState === 'playing' && gameEngine.sound) {
         gameEngine.sound.playBearMusic();
       }
       return;
@@ -1161,7 +1162,6 @@ function connectSocket() {
   socket.on('match-start', ({ players, seed, isRanked, mode, mapId }) => {
     currentMatchSource = isRanked ? 'ranked' : 'casual';
     const initGame = () => {
-      showScreen('game');
       const myIndex = players.findIndex(p => p.id === socket.id);
       
       // Clear chat display for fresh round
@@ -1193,6 +1193,8 @@ function connectSocket() {
         onMatchEnd: handleMatchEnd,
         onKillFeed: addKillFeedMessage
       });
+
+      showScreen('game');
     };
 
     playRankedStartVideo(initGame);
@@ -1229,7 +1231,6 @@ function startOfflineMode() {
 
   currentMatchSource = 'practice';
   const initGame = () => {
-    showScreen('game');
     displays.chatMessages.innerHTML = '';
 
     if (gameEngine) {
@@ -1266,6 +1267,8 @@ function startOfflineMode() {
       onMatchEnd: handleMatchEnd,
       onKillFeed: addKillFeedMessage
     });
+
+    showScreen('game');
   };
 
   playRankedStartVideo(initGame);
@@ -1482,7 +1485,6 @@ function setupUIListeners() {
 
       currentMatchSource = 'practice';
       const initGame = () => {
-        showScreen('game');
         displays.chatMessages.innerHTML = '';
 
         if (gameEngine) {
@@ -1512,6 +1514,8 @@ function setupUIListeners() {
           onMatchEnd: handleMatchEnd,
           onKillFeed: addKillFeedMessage
         });
+
+        showScreen('game');
       };
 
       playRankedStartVideo(initGame);

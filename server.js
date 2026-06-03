@@ -506,7 +506,7 @@ io.on('connection', (socket) => {
           room.score2++;
         }
 
-        const matchFinished = (room.score1 >= 3 || room.score2 >= 3);
+        const matchFinished = (room.mode === 'sabotage') || (room.score1 >= 3 || room.score2 >= 3);
         if (matchFinished) {
           room.status = 'lobby';
           // Reset ready states for next match
