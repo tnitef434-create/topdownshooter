@@ -568,6 +568,17 @@ function startMusic() {
   const isGameplay = (activeScreen && activeScreen.id === 'game') || (screens.game && screens.game.classList.contains('active'));
   if (isGameplay) return;
 
+  const deployModal = document.getElementById('deploy-modal');
+  const isDeployActive = deployModal && deployModal.classList.contains('active');
+  if (isDeployActive) {
+    deployMusic.volume = 0.15;
+    deployMusic.play().then(() => {
+      musicStarted = true;
+      cleanupMusicListeners();
+    }).catch(() => {});
+    return;
+  }
+
   if (activeScreen && (activeScreen.id === 'lobby-screen' || activeScreen.id === 'matchmaking-screen')) {
     waitMusic.play().then(() => {
       musicStarted = true;
