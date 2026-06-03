@@ -291,6 +291,27 @@ export class Engine {
       this.localPlayer.updateHUD();
       this.updateScoreboardHUD();
 
+      // Apply UI visibility tweaks for Sabotage mode
+      if (this.matchMode === 'sabotage') {
+        const scoreDisplay = document.querySelector('.score-display');
+        if (scoreDisplay) scoreDisplay.style.display = 'none';
+
+        const timerDisplay = document.querySelector('.timer-display');
+        if (timerDisplay) timerDisplay.style.display = 'none';
+
+        const oppHPBar = document.querySelector('.bars-container.right-aligned');
+        if (oppHPBar) oppHPBar.style.display = 'none';
+
+        const oppWeaponDisplay = document.querySelector('.opponent-weapon-display');
+        if (oppWeaponDisplay) oppWeaponDisplay.style.display = 'none';
+
+        const ammoDisplay = document.querySelector('.ammo-display');
+        if (ammoDisplay) ammoDisplay.style.display = 'none';
+
+        const inventoryDisplay = document.querySelector('.inventory-display');
+        if (inventoryDisplay) inventoryDisplay.style.display = 'none';
+      }
+
       // Expose bot shot coordinate handler in offline mode
       if (this.mode === 'offline') {
         window.OnBotShootCallback = (shootData) => {
@@ -693,6 +714,25 @@ export class Engine {
       this.network.destroy();
     }
 
+    // Restore UI visibility tweaks for Sabotage mode
+    const scoreDisplay = document.querySelector('.score-display');
+    if (scoreDisplay) scoreDisplay.style.display = '';
+
+    const timerDisplay = document.querySelector('.timer-display');
+    if (timerDisplay) timerDisplay.style.display = '';
+
+    const oppHPBar = document.querySelector('.bars-container.right-aligned');
+    if (oppHPBar) oppHPBar.style.display = '';
+
+    const oppWeaponDisplay = document.querySelector('.opponent-weapon-display');
+    if (oppWeaponDisplay) oppWeaponDisplay.style.display = '';
+
+    const ammoDisplay = document.querySelector('.ammo-display');
+    if (ammoDisplay) ammoDisplay.style.display = '';
+
+    const inventoryDisplay = document.querySelector('.inventory-display');
+    if (inventoryDisplay) inventoryDisplay.style.display = '';
+
     if (this.socket) {
       this.socket.off('opponent-throw-grenade');
     }
@@ -907,21 +947,23 @@ export class Engine {
     if (hudStatus) hudStatus.innerText = 'ENGAGE TARGET';
     
     // Start countdown timer ticking down
-    this.matchTimerInterval = setInterval(() => {
-      if (this.gameState === 'playing') {
-        this.matchTime--;
-        if (this.matchTime <= 0) {
-          this.matchTime = 0;
-          this.endRound(null, 'TIME EXPIRED'); // draw
+    if (this.matchMode !== 'sabotage') {
+      this.matchTimerInterval = setInterval(() => {
+        if (this.gameState === 'playing') {
+          this.matchTime--;
+          if (this.matchTime <= 0) {
+            this.matchTime = 0;
+            this.endRound(null, 'TIME EXPIRED'); // draw
+          }
+          
+          // Update clock HUD
+          const mins = Math.floor(this.matchTime / 60).toString().padStart(2, '0');
+          const secs = (this.matchTime % 60).toString().padStart(2, '0');
+          const timerDisplay = document.getElementById('game-timer');
+          if (timerDisplay) timerDisplay.innerText = `${mins}:${secs}`;
         }
-        
-        // Update clock HUD
-        const mins = Math.floor(this.matchTime / 60).toString().padStart(2, '0');
-        const secs = (this.matchTime % 60).toString().padStart(2, '0');
-        const timerDisplay = document.getElementById('game-timer');
-        if (timerDisplay) timerDisplay.innerText = `${mins}:${secs}`;
-      }
-    }, 1000);
+      }, 1000);
+    }
 
     // ── Shrinking Zone: disabled in Sabotage mode ─────────────────────────
     if (this.matchMode !== 'sabotage') {
@@ -1680,7 +1722,7 @@ export class Engine {
     }
 
     // Laser Sight (only for local player, or if settings enabled)
-    if (this.settings.laser && p.isLocal) {
+    if (this.settings.laser && p.isLocal && this.matchMode !== 'sabotage') {
       const maxLaserDist = 1200;
       let endX = p.x + Math.cos(p.angle) * maxLaserDist;
       let endY = p.y + Math.sin(p.angle) * maxLaserDist;
@@ -2132,7 +2174,6 @@ export class Engine {
       });
 
       this.tasks.forEach(t => {
-        if (t.status === 'completed') return;
         const now = Date.now();
         this.ctx.save();
         this.ctx.translate(t.x, t.y);
@@ -2230,6 +2271,10 @@ export class Engine {
           this.ctx.shadowColor = '#ff3c3c';
           this.ctx.shadowBlur = 6;
           this.ctx.fillStyle = '#ff3c3c';
+        } else if (t.status === 'completed') {
+          this.ctx.shadowColor = '#66fcf1';
+          this.ctx.shadowBlur = 6;
+          this.ctx.fillStyle = '#66fcf1';
         } else if (t.status === 'doing') {
           this.ctx.shadowColor = '#ffd700';
           this.ctx.shadowBlur = 5;
@@ -2241,7 +2286,7 @@ export class Engine {
         }
         this.ctx.font = 'bold 5px monospace';
         this.ctx.textAlign = 'center';
-        const screenText = t.alarmActive ? 'ALARM' : (t.status === 'doing' ? 'ACTIVE' : 'READY');
+        const screenText = t.alarmActive ? 'ALARM' : (t.status === 'completed' ? 'DONE' : (t.status === 'doing' ? 'ACTIVE' : 'READY'));
         this.ctx.fillText(screenText, 0, -5);
         this.ctx.shadowBlur = 0;
 
@@ -2251,7 +2296,7 @@ export class Engine {
         // LED indicator
         const ledColor = t.alarmActive
           ? `rgba(255,40,40,${0.6 + 0.4 * Math.abs(Math.sin(now / 90))})`
-          : (t.status === 'doing' ? '#ffd700' : '#1aff8a');
+          : (t.status === 'completed' ? '#66fcf1' : (t.status === 'doing' ? '#ffd700' : '#1aff8a'));
         this.ctx.fillStyle = ledColor;
         if (t.alarmActive) {
           this.ctx.shadowColor = '#ff3c3c';
@@ -2335,7 +2380,7 @@ export class Engine {
 
         // Interact prompt
         const dist = Math.hypot(this.localPlayer.x - t.x, this.localPlayer.y - t.y);
-        if (dist < 40 && this.localPlayer.health > 0 && t.status !== 'doing') {
+        if (dist < 40 && this.localPlayer.health > 0 && t.status === 'pending') {
           this.ctx.shadowColor = '#ffd700';
           this.ctx.shadowBlur = 8;
           this.ctx.fillStyle = '#ffd700';

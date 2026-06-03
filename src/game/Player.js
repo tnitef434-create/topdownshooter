@@ -638,7 +638,7 @@ export class Player {
     const inCone = Math.abs(diff) <= (32.5 * Math.PI / 180); // 65-degree flashlight cone
 
     const hasLOS = hasRawLOS && (
-      distToPlayer < 40 || 
+      distToPlayer < 140 || // Peripheral hearing/sensing radius (stealth detection)
       player.flashlightActive || 
       (this.flashlightActive && inCone)
     );
@@ -653,6 +653,7 @@ export class Player {
       this.angle = Math.atan2(player.y - this.y, player.x - this.x); // turn towards shot
     }
 
+    let alarmOverride = false;
     // Investigate alarm behavior in sabotage mode — highest priority (overrides chase unless player is very close)
     if (window.gameEngine && window.gameEngine.matchMode === 'sabotage') {
       const activeAlarms = window.gameEngine.tasks ? window.gameEngine.tasks.filter(t => t.alarmActive) : [];
@@ -660,7 +661,6 @@ export class Player {
         // Find closest active alarm
         activeAlarms.sort((a, b) => Math.hypot(this.x - a.x, this.y - a.y) - Math.hypot(this.x - b.x, this.y - b.y));
         const closestAlarm = activeAlarms[0];
-        const distToAlarm = Math.hypot(this.x - closestAlarm.x, this.y - closestAlarm.y);
 
         // Only break alarm pursuit if player is practically right next to us (< 120px) AND visible
         const playerTooClose = hasLOS && distToPlayer < 120;
@@ -673,15 +673,15 @@ export class Player {
           this.angle = Math.atan2(closestAlarm.y - this.y, closestAlarm.x - this.x);
           // Show urgency — speed up artificially by pretending we just made a decision
           this.botLastDecisionTime = currentTime;
-          return; // skip rest of AI decision-making this tick, we've committed
+          alarmOverride = true;
         }
       }
     }
 
     const timeDiff = currentTime - this.botLastDecisionTime;
-
+ 
     // AI State Machine decisions every 250ms
-    if (timeDiff > 250) {
+    if (!alarmOverride && timeDiff > 250) {
       this.botLastDecisionTime = currentTime;
 
       // Strafe toggles every 800-1500ms
@@ -757,21 +757,33 @@ export class Player {
       }
     }
 
-    // Stuck detection: check if bot is trying to roam but position hasn't updated much
-    if (this.botState === 'patrol' || this.botState === 'search') {
-      const distToTarget = Math.hypot(this.x - this.botTargetX, this.y - this.botTargetY);
-      if (distToTarget > 20) {
-        if (!this.lastPositionRecord) {
-          this.lastPositionRecord = { x: this.x, y: this.y, time: currentTime };
-        } else if (currentTime - this.lastPositionRecord.time > 800) {
-          const distMoved = Math.hypot(this.x - this.lastPositionRecord.x, this.y - this.lastPositionRecord.y);
-          if (distMoved < 15) {
-            // Stuck on obstacle! Choose a new target direction
-            this.choosePatrolPoint(map);
-          }
-          this.lastPositionRecord = { x: this.x, y: this.y, time: currentTime };
+    // Stuck detection & sliding navigation: check if bot is trying to roam but position hasn't updated much
+    const targetDist = Math.hypot(this.x - this.botTargetX, this.y - this.botTargetY);
+    if (targetDist > 30) {
+      if (!this.lastStuckCheckTime) {
+        this.lastStuckCheckTime = currentTime;
+        this.lastStuckPosX = this.x;
+        this.lastStuckPosY = this.y;
+        this.stuckDuration = 0;
+      } else if (currentTime - this.lastStuckCheckTime > 300) {
+        const distMoved = Math.hypot(this.x - this.lastStuckPosX, this.y - this.lastStuckPosY);
+        if (distMoved < 12) {
+          this.stuckDuration += (currentTime - this.lastStuckCheckTime);
+        } else {
+          this.stuckDuration = 0;
         }
+        this.lastStuckCheckTime = currentTime;
+        this.lastStuckPosX = this.x;
+        this.lastStuckPosY = this.y;
       }
+    } else {
+      this.stuckDuration = 0;
+    }
+
+    if (this.stuckDuration > 800 && (this.botState === 'patrol' || this.botState === 'search')) {
+      // Pick a brand new target point if we've been stuck for a very long time during patrolling/searching
+      this.choosePatrolPoint(map);
+      this.stuckDuration = 0;
     }
 
     // Steering movement towards target
@@ -786,12 +798,22 @@ export class Player {
     if (distToTarget > 10) {
       const moveAngle = Math.atan2(this.botTargetY - this.y, this.botTargetX - this.x);
       
+      let steerAngle = moveAngle;
+      if (this.stuckDuration > 350) {
+        if (!this.stuckSteerDir) {
+          this.stuckSteerDir = Math.random() < 0.5 ? 1 : -1;
+        }
+        steerAngle += (Math.PI / 2) * this.stuckSteerDir;
+      } else {
+        this.stuckSteerDir = 0;
+      }
+
       if (this.botState !== 'chase') {
         this.angle = moveAngle;
       }
       
-      this.vx += Math.cos(moveAngle) * currentAccel * dtFactor;
-      this.vy += Math.sin(moveAngle) * currentAccel * dtFactor;
+      this.vx += Math.cos(steerAngle) * currentAccel * dtFactor;
+      this.vy += Math.sin(steerAngle) * currentAccel * dtFactor;
     }
 
     // Proximity wall avoidance force to prevent sliding sticking
@@ -947,7 +969,8 @@ export class Player {
     }
 
     // Laser Sight (only for local player, or if settings enabled)
-    if (configSettings.laser && this.isLocal && !this.isReloading) {
+    const isSabotage = window.gameEngine && window.gameEngine.matchMode === 'sabotage';
+    if (configSettings.laser && this.isLocal && !this.isReloading && !isSabotage) {
       const maxLaserDist = 1200;
       let endX = this.x + Math.cos(this.angle) * maxLaserDist;
       let endY = this.y + Math.sin(this.angle) * maxLaserDist;
@@ -1179,7 +1202,8 @@ export class Player {
     ctx.fillText(this.name.toUpperCase(), this.x, this.y - this.radius - 12);
     
     // Draw tiny mini healthbar above opponent/bot
-    if (!this.isLocal && this.health > 0) {
+    const isSabotageMode = window.gameEngine && window.gameEngine.matchMode === 'sabotage';
+    if (!this.isLocal && this.health > 0 && !isSabotageMode) {
       ctx.fillStyle = 'rgba(0,0,0,0.5)';
       ctx.fillRect(this.x - 20, this.y - this.radius - 8, 40, 4);
       

@@ -278,6 +278,8 @@ const menuMusic = new Audio('/Midnight_Deployment.mp3');
 menuMusic.loop = true;
 const waitMusic = new Audio('/Before_The_Starting_Bell.mp3');
 waitMusic.loop = true;
+const deployMusic = new Audio('/Into_Darkness.mp3');
+deployMusic.loop = true;
 
 let musicStarted = false;
 let isMusicMuted = false;
@@ -294,6 +296,8 @@ function playLobbyMusic() {
     menuMusic.currentTime = 0;
     waitMusic.pause();
     waitMusic.currentTime = 0;
+    deployMusic.pause();
+    deployMusic.currentTime = 0;
     
     weaponSelectMusic.volume = 0.15;
     weaponSelectMusic.loop = true;
@@ -377,6 +381,8 @@ window.stopAllMusic = function() {
     waitMusic.currentTime = 0;
     weaponSelectMusic.pause();
     weaponSelectMusic.currentTime = 0;
+    deployMusic.pause();
+    deployMusic.currentTime = 0;
     if (gameEngine && gameEngine.sound) {
       gameEngine.sound.stopBearMusic();
     }
@@ -390,6 +396,8 @@ function playWaitMusic() {
     menuMusic.currentTime = 0;
     weaponSelectMusic.pause();
     weaponSelectMusic.currentTime = 0;
+    deployMusic.pause();
+    deployMusic.currentTime = 0;
     waitMusic.currentTime = 0;
     waitMusic.play().catch(() => {});
   } catch(e) {}
@@ -402,6 +410,8 @@ function playMenuMusic() {
     waitMusic.currentTime = 0;
     weaponSelectMusic.pause();
     weaponSelectMusic.currentTime = 0;
+    deployMusic.pause();
+    deployMusic.currentTime = 0;
     menuMusic.currentTime = 0;
     menuMusic.play().catch(() => {});
   } catch(e) {}
@@ -410,6 +420,9 @@ function playMenuMusic() {
 function playGameplayBackgroundMusic() {
   try {
     if (isMusicMuted) return;
+
+    deployMusic.pause();
+    deployMusic.currentTime = 0;
 
     const isSabotageMode = (gameEngine && gameEngine.matchMode === 'sabotage') || (currentMatchSource === 'practice' && myMode === 'sabotage');
     if (isSabotageMode) {
@@ -583,10 +596,12 @@ function updateMusicVolume() {
   if (isMusicMuted) {
     menuMusic.volume = 0;
     waitMusic.volume = 0;
+    deployMusic.volume = 0;
   } else {
     const isGameplay = screens.game && screens.game.classList.contains('active');
     menuMusic.volume = isGameplay ? 0.04 : 0.15;
     waitMusic.volume = 0.15;
+    deployMusic.volume = 0.15;
   }
 }
 
@@ -697,8 +712,16 @@ function initSettings() {
       isMusicMuted = gameSettings.musicMuted;
       if (isMusicMuted) {
         menuMusic.pause();
+        deployMusic.pause();
+        deployMusic.currentTime = 0;
       } else {
-        menuMusic.play().catch(() => {});
+        const deployModal = document.getElementById('deploy-modal');
+        if (deployModal && deployModal.classList.contains('active')) {
+          deployMusic.currentTime = 0;
+          deployMusic.play().catch(() => {});
+        } else {
+          menuMusic.play().catch(() => {});
+        }
       }
       updateMusicVolume();
       
@@ -1421,6 +1444,13 @@ function setupUIListeners() {
     btnDeployMain.addEventListener('click', () => {
       deployModal.classList.add('active');
       playMenuClick();
+      menuMusic.pause();
+      menuMusic.currentTime = 0;
+      if (!isMusicMuted) {
+        deployMusic.volume = 0.15;
+        deployMusic.currentTime = 0;
+        deployMusic.play().catch(() => {});
+      }
     });
   }
   
@@ -1428,6 +1458,11 @@ function setupUIListeners() {
     btnCloseDeploy.addEventListener('click', () => {
       deployModal.classList.remove('active');
       playMenuClick();
+      deployMusic.pause();
+      deployMusic.currentTime = 0;
+      if (!isMusicMuted) {
+        playMenuMusic();
+      }
     });
   }
 
@@ -1440,7 +1475,11 @@ function setupUIListeners() {
         window.stopAllMusic();
       } else {
         const activeScreen = document.querySelector('.screen.active');
-        if (activeScreen && (activeScreen.id === 'lobby-screen' || activeScreen.id === 'matchmaking-screen')) {
+        const deployModal = document.getElementById('deploy-modal');
+        if (deployModal && deployModal.classList.contains('active')) {
+          deployMusic.currentTime = 0;
+          deployMusic.play().catch(() => {});
+        } else if (activeScreen && (activeScreen.id === 'lobby-screen' || activeScreen.id === 'matchmaking-screen')) {
           playWaitMusic();
         } else if (activeScreen && activeScreen.id === 'game-screen') {
           playGameplayBackgroundMusic();

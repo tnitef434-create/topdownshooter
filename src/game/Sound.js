@@ -750,19 +750,24 @@ export class Sound {
     this.init();
     if (!this.ctx) return;
     if (this.ctx.state === 'suspended') this.ctx.resume();
-
-    // Already playing for this task? Ignore.
-    if (this.taskAlarms.has(taskId)) return;
-
-    const alarm = { intervalId: null, nodes: [], active: true };
+ 
+    // Already playing for this task? Just update its current distance.
+    if (this.taskAlarms.has(taskId)) {
+      this.taskAlarms.get(taskId).distance = distance;
+      return;
+    }
+ 
+    const alarm = { intervalId: null, nodes: [], active: true, distance: distance };
     this.taskAlarms.set(taskId, alarm);
-
+ 
     const playKlaxonCycle = () => {
       if (!alarm.active || !this.ctx) return;
-
-      // Distance-based volume and muffling
-      const volScale   = Math.max(0.01, Math.pow(1 - Math.min(1, distance / 1500), 1.6));
-      const muffleCutoff = Math.max(200, 3800 * Math.pow(1 - Math.min(1, distance / 1400), 1.8));
+ 
+      // Distance-based volume and muffling (live updated)
+      const currentDist = alarm.distance;
+      const maxDist = 700; // Drop off completely by 700px (approx 1.5 rooms)
+      const volScale   = Math.max(0.00, Math.pow(1 - Math.min(1, currentDist / maxDist), 2.8));
+      const muffleCutoff = Math.max(150, 4000 * Math.pow(1 - Math.min(1, currentDist / maxDist), 2.5));
 
       const t = this.ctx.currentTime;
 
