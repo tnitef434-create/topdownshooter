@@ -812,22 +812,16 @@ export class Player {
     this.vx += avoidForceX * dtFactor;
     this.vy += avoidForceY * dtFactor;
 
-    // Shooting behavior when chasing (burst firing)
-    if (this.botState === 'chase' && hasLOS && !this.isReloading && this.ammoInMag > 0) {
-      // Simulate tactical trigger pulls (burst fire logic)
-      const isAuto = this.weapon.type === 'Automatic';
+    // Shooting behavior — fires instantly on sight, respects weapon fire-rate only
+    if (hasLOS && !this.isReloading && this.ammoInMag > 0) {
       const timeSinceLast = currentTime - this.lastFiredTime;
-      const burstDelay = isAuto ? 100 : 350; // auto burst rate vs semi trigger rate
+      const weaponFireRate = this.weapon.fireRate || 300;
 
-      if (timeSinceLast > burstDelay && Math.random() < 0.45) {
-        // Stop shooting randomly to simulate burst breaks
-        const isBurstBreak = isAuto && (Math.floor(currentTime / 500) % 2 === 0);
-        if (!isBurstBreak) {
-          const dist = localPlayer ? Math.hypot(this.x - localPlayer.x, this.y - localPlayer.y) : 0;
-          const shootResult = this.shoot(currentTime, soundEngine, dist);
-          if (shootResult && window.OnBotShootCallback) {
-            window.OnBotShootCallback(shootResult);
-          }
+      if (timeSinceLast >= weaponFireRate) {
+        const dist = localPlayer ? Math.hypot(this.x - localPlayer.x, this.y - localPlayer.y) : 0;
+        const shootResult = this.shoot(currentTime, soundEngine, dist);
+        if (shootResult && window.OnBotShootCallback) {
+          window.OnBotShootCallback(shootResult);
         }
       }
     }

@@ -159,7 +159,7 @@ export class Network {
           task.alarmTimer = 15;
           if (this.sound) {
             const dist = Math.hypot(this.localPlayer.x - task.x, this.localPlayer.y - task.y);
-            try { this.sound.playAlarmSound(dist); } catch(e) {}
+            try { this.sound.playAlarmForTask(task.id, dist); } catch(e) {}
           }
         }
       }

@@ -114,7 +114,11 @@ export class Engine {
       }
       
       this.settings = { ...config.settings };
-      if (forcePerformanceMode) {
+      // Sabotage mode always forces realistic graphics — ignore competitive/performance preference
+      if (this.matchMode === 'sabotage') {
+        this.settings.performanceMode = false;
+        this.settings.shadows = true;
+      } else if (forcePerformanceMode) {
         this.settings.performanceMode = true;
         this.settings.shadows = false;
       } else {
@@ -376,7 +380,7 @@ export class Engine {
                 this.activeTask = null;
                 this.localPlayer.showTextNotification('TASK COMPLETE! 🚨 ALARM TRIGGERED');
                 const dist = Math.hypot(this.localPlayer.x - t.x, this.localPlayer.y - t.y);
-                try { this.sound.playAlarmSound(dist); } catch(ex) {}
+                try { this.sound.playAlarmForTask(t.id, dist); } catch(ex) {}
               }
             } else {
               this.sweepProgress = Math.max(0, this.sweepProgress - 10);
@@ -652,6 +656,12 @@ export class Engine {
       clearTimeout(this.zoneTimer);
       this.zoneTimer = null;
     }
+
+    // Stop any lingering alarm sounds immediately
+    if (this.sound) {
+      try { this.sound.stopAllAlarms(); } catch(e) {}
+    }
+
     // Note: gamepad polling is part of the main update() loop;
     // no separate RAF to cancel.
     
@@ -685,7 +695,11 @@ export class Engine {
     }
     
     this.settings = { ...settings };
-    if (forcePerformanceMode) {
+    // Sabotage mode always forces realistic graphics
+    if (this.matchMode === 'sabotage') {
+      this.settings.performanceMode = false;
+      this.settings.shadows = true;
+    } else if (forcePerformanceMode) {
       this.settings.performanceMode = true;
       this.settings.shadows = false;
     } else {
@@ -760,7 +774,7 @@ export class Engine {
 
       this.tasks = selected.map((c, i) => {
         return {
-          id: `task_${i}`,
+          id: `task_r${this.roundNumber}_${i}`,
           x: c.x,
           y: c.y,
           name: taskNames[i % taskNames.length] + ` in ${c.name}`,
@@ -1143,14 +1157,18 @@ export class Engine {
       this.tasks.forEach(t => {
         if (t.alarmActive) {
           t.alarmTimer -= clampedDt / 1000;
-          if (!t.lastBeepTime || (Date.now() - t.lastBeepTime > 1500)) {
-            t.lastBeepTime = Date.now();
-            const dist = Math.hypot(this.localPlayer.x - t.x, this.localPlayer.y - t.y);
-            try { this.sound.playAlarmSound(dist); } catch(ex) {}
-          }
+          // Start the per-task alarm sound when it first becomes active
+          const dist = Math.hypot(this.localPlayer.x - t.x, this.localPlayer.y - t.y);
+          try { this.sound.playAlarmForTask(t.id, dist); } catch(ex) {}
           if (t.alarmTimer <= 0) {
             t.alarmActive = false;
+            t.lastBeepTime = 0;
+            // Stop this specific task's alarm
+            try { this.sound.stopAlarmForTask(t.id); } catch(ex) {}
           }
+        } else {
+          // Alarm deactivated externally — ensure sound is stopped
+          try { this.sound.stopAlarmForTask(t.id); } catch(ex) {}
         }
       });
     }
