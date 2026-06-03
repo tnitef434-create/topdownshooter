@@ -377,6 +377,9 @@ window.stopAllMusic = function() {
     waitMusic.currentTime = 0;
     weaponSelectMusic.pause();
     weaponSelectMusic.currentTime = 0;
+    if (gameEngine && gameEngine.sound) {
+      gameEngine.sound.stopBearMusic();
+    }
   } catch(e) {}
 };
 
@@ -407,6 +410,19 @@ function playMenuMusic() {
 function playGameplayBackgroundMusic() {
   try {
     if (isMusicMuted) return;
+
+    if (gameEngine && gameEngine.matchMode === 'sabotage') {
+      menuMusic.pause();
+      menuMusic.currentTime = 0;
+      waitMusic.pause();
+      waitMusic.currentTime = 0;
+      weaponSelectMusic.pause();
+      weaponSelectMusic.currentTime = 0;
+      if (gameEngine.gameState === 'playing' && gameEngine.sound) {
+        gameEngine.sound.playBearMusic();
+      }
+      return;
+    }
 
     if (currentMatchSource === 'casual') {
       menuMusic.pause();
@@ -937,10 +953,10 @@ function connectSocket() {
   let serverUrl = gameSettings.serverUrl;
   
   if (!serverUrl) {
-    // Fallback: In production, point to Render backend. In development (Vite), point to local server.
+    // Fallback: In production, point to the same origin. In development (Vite), point to local server.
     serverUrl = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
       ? 'http://localhost:3000' 
-      : 'https://topdownshooter.onrender.com';
+      : window.location.origin;
   }
 
   socket = io(serverUrl);

@@ -660,6 +660,7 @@ export class Engine {
     // Stop any lingering alarm sounds immediately
     if (this.sound) {
       try { this.sound.stopAllAlarms(); } catch(e) {}
+      try { this.sound.stopBearMusic(); } catch(e) {}
     }
 
     // Note: gamepad polling is part of the main update() loop;
@@ -875,6 +876,10 @@ export class Engine {
     this.gameState = 'playing';
     this.roundStartTime = performance.now();
     
+    if (this.matchMode === 'sabotage') {
+      try { this.sound.playBearMusic(); } catch(e) {}
+    }
+
     const hudStatus = document.getElementById('hud-status');
     if (hudStatus) hudStatus.innerText = 'ENGAGE TARGET';
     
@@ -930,6 +935,10 @@ export class Engine {
     
     this.gameState = 'round-over';
     if (this.matchTimerInterval) clearInterval(this.matchTimerInterval);
+
+    if (this.matchMode === 'sabotage') {
+      try { this.sound.stopBearMusic(); } catch(e) {}
+    }
 
     let feedAlert = document.getElementById('hud-status');
     const myTeam = this.localPlayer.team;

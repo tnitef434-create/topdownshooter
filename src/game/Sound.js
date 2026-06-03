@@ -9,6 +9,7 @@ export class Sound {
 
     // Per-task alarm oscillator nodes: taskId => { osc1, osc2, gainNode, intervalId, active }
     this.taskAlarms = new Map();
+    this.bearMusic = null;
   }
 
   init() {
@@ -64,6 +65,9 @@ export class Sound {
     this.volume = volume;
     if (this.masterVolume) {
       this.masterVolume.gain.value = volume;
+    }
+    if (this.bearMusic) {
+      this.bearMusic.volume = volume;
     }
   }
 
@@ -848,5 +852,26 @@ export class Sound {
   stopAllAlarms() {
     this.taskAlarms.forEach((_, id) => this.stopAlarmForTask(id));
     this.taskAlarms.clear();
+  }
+
+  /** Play bear.mp3 looping background music for Sabotage/Imposter mode */
+  playBearMusic() {
+    if (!this.bearMusic) {
+      this.bearMusic = new Audio('/bear.mp3');
+      this.bearMusic.loop = true;
+    }
+    this.bearMusic.volume = this.volume;
+    if (this.bearMusic.paused) {
+      this.bearMusic.currentTime = 0;
+      this.bearMusic.play().catch(err => console.warn('Error playing bear music:', err));
+    }
+  }
+
+  /** Stop bear.mp3 background music */
+  stopBearMusic() {
+    if (this.bearMusic) {
+      this.bearMusic.pause();
+      this.bearMusic.currentTime = 0;
+    }
   }
 }
