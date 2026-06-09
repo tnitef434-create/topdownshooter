@@ -1359,34 +1359,40 @@ export class Engine {
         });
       }
 
-      // Handle local player throwing a flash grenade
-      if (this.gameState === 'playing' && this.localPlayer.throwFlashbangRequest && this.localPlayer.flashGrenades > 0) {
-        this.localPlayer.throwFlashbangRequest = false;
-        this.localPlayer.flashGrenades--;
-        this.localPlayer.updateHUD();
+      // Handle all players (including bots) throwing flash grenades
+      this.players.forEach(p => {
+        if (this.gameState === 'playing' && p.throwFlashbangRequest && p.flashGrenades > 0) {
+          p.throwFlashbangRequest = false;
+          p.flashGrenades--;
+          if (p.isLocal && !p.isBot) {
+            p.updateHUD();
+          }
 
-        const speed = 11;
-        const vx = Math.cos(this.localPlayer.angle) * speed;
-        const vy = Math.sin(this.localPlayer.angle) * speed;
-        
-        const grenade = new FlashGrenade(this.localPlayer.x, this.localPlayer.y, vx, vy, this.localPlayer.id);
-        this.grenades.push(grenade);
+          const speed = 11;
+          const vx = Math.cos(p.angle) * speed;
+          const vy = Math.sin(p.angle) * speed;
+          
+          const grenade = new FlashGrenade(p.x, p.y, vx, vy, p.id);
+          this.grenades.push(grenade);
 
-        // Play local click/throw sound
-        this.sound.playMetallicClick(0, 1500, 0.08, 0.2);
+          // Play click/throw sound
+          try {
+            this.sound.playMetallicClick(0, 1500, 0.08, 0.2);
+          } catch (ex) {}
 
-        // Send to server
-        if (this.mode === 'online') {
-          this.socket.emit('throw-grenade', {
-            x: this.localPlayer.x,
-            y: this.localPlayer.y,
-            vx: vx,
-            vy: vy
-          });
+          // Send to server if online and thrown by local player
+          if (this.mode === 'online' && p.isLocal) {
+            this.socket.emit('throw-grenade', {
+              x: p.x,
+              y: p.y,
+              vx: vx,
+              vy: vy
+            });
+          }
+        } else {
+          p.throwFlashbangRequest = false;
         }
-      } else {
-        this.localPlayer.throwFlashbangRequest = false;
-      }
+      });
     }
 
     // Local Player shooting controller

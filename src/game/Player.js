@@ -577,6 +577,22 @@ export class Player {
         setTimeout(() => canvas.style.filter = 'none', 150);
       }
     }
+
+    if (this.isBot && this.health > 0) {
+      // 200 IQ reaction: if shot, instantly dash perpendicular to evade further hits
+      const now = Date.now();
+      const canDash = !this.lastDashTime || (now - this.lastDashTime > 3000);
+      if (canDash && Math.random() < 0.6) {
+        this.lastDashTime = now;
+        this.networkJustDashed = true;
+        const steerAngle = this.angle + (Math.PI / 2) * (Math.random() > 0.5 ? 1 : -1);
+        this.vx = Math.cos(steerAngle) * 20;
+        this.vy = Math.sin(steerAngle) * 20;
+        if (soundEngine && soundEngine.playFrictionalScrape) {
+          try { soundEngine.playFrictionalScrape(0, 0.4, 0.5); } catch(ex) {}
+        }
+      }
+    }
   }
 
   // Check item pick up
@@ -729,6 +745,25 @@ export class Player {
         // Face player
         this.angle = Math.atan2(player.y - this.y, player.x - this.x);
 
+        // 200 IQ Flashbang throwing
+        if (this.flashGrenades > 0 && distToPlayer > 220 && distToPlayer < 500 && Math.random() < 0.05) {
+          this.throwFlashbangRequest = true;
+        }
+
+        // 200 IQ Tactical Dashing
+        const canDash = !this.lastDashTime || (currentTime - this.lastDashTime > 3000);
+        if (canDash && Math.random() < 0.04) {
+          this.lastDashTime = currentTime;
+          this.networkJustDashed = true;
+          // Dash in facing direction or strafe direction
+          const dashAngle = this.angle + (Math.random() < 0.3 ? 0 : (Math.PI / 2) * (Math.random() > 0.5 ? 1 : -1));
+          this.vx = Math.cos(dashAngle) * 20;
+          this.vy = Math.sin(dashAngle) * 20;
+          if (soundEngine) {
+            try { this.sound.playFrictionalScrape(0, 0.4, 0.5); } catch(ex) {}
+          }
+        }
+
         if (this.isReloading) {
           // Tactical retreat while reloading
           this.botTargetX = this.x - Math.cos(this.angle) * 220;
@@ -778,8 +813,27 @@ export class Player {
       }
     }
 
+    let wpX = this.botTargetX;
+    let wpY = this.botTargetY;
+
+    // BFS Pathfinding between rooms if no direct line of sight
+    const hasDirectLOS = this.checkLineOfSight(map, this.x, this.y, this.botTargetX, this.botTargetY);
+    if (!hasDirectLOS) {
+      const currentRoom = this.getClosestRoomIndex(map, this.x, this.y);
+      const targetRoom = this.getClosestRoomIndex(map, this.botTargetX, this.botTargetY);
+      if (currentRoom !== -1 && targetRoom !== -1 && currentRoom !== targetRoom) {
+        const path = this.findRoomPath(currentRoom, targetRoom);
+        if (path.length > 1) {
+          const nextRoom = path[1];
+          const doorway = this.getDoorway(map, currentRoom, nextRoom);
+          wpX = doorway.x;
+          wpY = doorway.y;
+        }
+      }
+    }
+
     // Stuck detection & sliding navigation: check if bot is trying to roam but position hasn't updated much
-    const targetDist = Math.hypot(this.x - this.botTargetX, this.y - this.botTargetY);
+    const targetDist = Math.hypot(this.x - wpX, this.y - wpY);
     if (targetDist > 30) {
       if (!this.lastStuckCheckTime) {
         this.lastStuckCheckTime = currentTime;
@@ -807,6 +861,29 @@ export class Player {
       this.stuckDuration = 0;
     }
 
+    // Crate clearing behavior
+    if (this.stuckDuration > 300) {
+      const lookAheadX = this.x + Math.cos(this.angle) * 45;
+      const lookAheadY = this.y + Math.sin(this.angle) * 45;
+      const blockingCrate = map.walls.find(w => 
+        w.type === 'crate' &&
+        lookAheadX >= w.x && lookAheadX <= w.x + w.w &&
+        lookAheadY >= w.y && lookAheadY <= w.y + w.h
+      );
+      if (blockingCrate) {
+        this.angle = Math.atan2(blockingCrate.y + blockingCrate.h/2 - this.y, blockingCrate.x + blockingCrate.w/2 - this.x);
+        if (!this.isReloading && this.ammoInMag > 0) {
+          const timeSinceLast = currentTime - this.lastFiredTime;
+          if (timeSinceLast >= (this.weapon.fireRate || 300)) {
+            const shootResult = this.shoot(currentTime, soundEngine, 50);
+            if (shootResult && window.OnBotShootCallback) {
+              window.OnBotShootCallback(shootResult);
+            }
+          }
+        }
+      }
+    }
+
     // Steering movement towards target
     const isRanked = window.gameEngine && window.gameEngine.isRanked;
     let modeAccelMult = isRanked ? 1.25 : 1.0;
@@ -815,9 +892,9 @@ export class Player {
     }
     const currentAccel = this.accel * modeAccelMult;
 
-    const distToTarget = Math.hypot(this.x - this.botTargetX, this.y - this.botTargetY);
+    const distToTarget = Math.hypot(this.x - wpX, this.y - wpY);
     if (distToTarget > 10) {
-      const moveAngle = Math.atan2(this.botTargetY - this.y, this.botTargetX - this.x);
+      const moveAngle = Math.atan2(wpY - this.y, wpX - this.x);
       
       let steerAngle = moveAngle;
       if (this.stuckDuration > 350) {
@@ -1261,5 +1338,116 @@ export class Player {
       html += `<div style="font-family: 'Orbitron', sans-serif; font-size: 10px; font-weight: bold; background: rgba(255, 215, 0, 0.15); border: 1px solid rgba(255, 215, 0, 0.4); color: #ffd700; padding: 4px 8px; border-radius: 3px; display: flex; align-items: center; gap: 4px; box-shadow: 0 0 8px rgba(255, 215, 0, 0.2);">🔥 OVERDRIVE: ${geographical}s</div>`;
     }
     buffsContainer.innerHTML = html;
+  }
+
+  // --- 200 IQ Pathfinding Helpers ---
+  getRoomIndexAt(map, x, y) {
+    if (!map || !map.rooms) return -1;
+    return map.rooms.findIndex(r => 
+      x >= r.x && x <= r.x + r.w &&
+      y >= r.y && y <= r.y + r.h
+    );
+  }
+
+  getClosestRoomIndex(map, x, y) {
+    const idx = this.getRoomIndexAt(map, x, y);
+    if (idx !== -1) return idx;
+    if (!map || !map.rooms || map.rooms.length === 0) return -1;
+    
+    let minD = Infinity;
+    let closest = 0;
+    map.rooms.forEach((r, i) => {
+      const cx = r.x + r.w / 2;
+      const cy = r.y + r.h / 2;
+      const d = Math.hypot(x - cx, y - cy);
+      if (d < minD) {
+        minD = d;
+        closest = i;
+      }
+    });
+    return closest;
+  }
+
+  findRoomPath(startRoom, endRoom) {
+    if (startRoom === endRoom) return [startRoom];
+    
+    const queue = [[startRoom]];
+    const visited = new Set([startRoom]);
+    
+    while (queue.length > 0) {
+      const path = queue.shift();
+      const current = path[path.length - 1];
+      
+      if (current === endRoom) {
+        return path;
+      }
+      
+      const row = Math.floor(current / 3);
+      const col = current % 3;
+      const neighbors = [];
+      
+      if (row > 0) neighbors.push(current - 3);
+      if (row < 2) neighbors.push(current + 3);
+      if (col > 0) neighbors.push(current - 1);
+      if (col < 2) neighbors.push(current + 1);
+      
+      for (const neighbor of neighbors) {
+        if (!visited.has(neighbor)) {
+          visited.add(neighbor);
+          queue.push([...path, neighbor]);
+        }
+      }
+    }
+    return [startRoom];
+  }
+
+  getDoorway(map, r1, r2) {
+    const room1 = map.rooms[r1];
+    const room2 = map.rooms[r2];
+    
+    const row1 = Math.floor(r1 / 3);
+    const col1 = r1 % 3;
+    const row2 = Math.floor(r2 / 3);
+    const col2 = r2 % 3;
+    
+    const W = room1.x < room2.x ? (room2.x - (room1.x + room1.w)) : (room1.x - (room2.x + room2.w));
+    
+    if (row1 === row2) {
+      // Vertical divider (horizontal door)
+      const leftRoomIdx = col1 < col2 ? r1 : r2;
+      const leftRoom = map.rooms[leftRoomIdx];
+      const vx = leftRoom.x + leftRoom.w;
+      
+      const roomWalls = map.walls.filter(w => 
+        Math.abs(w.x - vx) < 2 && 
+        w.y >= leftRoom.y - 5 && 
+        w.y + w.h <= leftRoom.y + leftRoom.h + 5
+      );
+      
+      if (roomWalls.length >= 2) {
+        roomWalls.sort((a, b) => a.y - b.y);
+        const doorY = (roomWalls[0].y + roomWalls[0].h + roomWalls[1].y) / 2;
+        return { x: vx + W/2, y: doorY };
+      }
+      return { x: vx + W/2, y: leftRoom.y + leftRoom.h / 2 };
+    } else {
+      // Horizontal divider (vertical door)
+      const topRoomIdx = row1 < row2 ? r1 : r2;
+      const topRoom = map.rooms[topRoomIdx];
+      const hy = topRoom.y + topRoom.h;
+      
+      const roomWalls = map.walls.filter(w => 
+        Math.abs(w.y - hy) < 2 && 
+        w.x >= topRoom.x - 5 && 
+        w.x + w.w <= topRoom.x + topRoom.w + 5
+      );
+      
+      if (roomWalls.length >= 2) {
+        roomWalls.sort((a, b) => a.x - b.x);
+        const doorX = (roomWalls[0].x + roomWalls[0].w + roomWalls[1].x) / 2;
+        return { x: doorX, y: hy + W/2 };
+      }
+      return { x: topRoom.x + topRoom.w / 2, y: hy + W/2 };
+    }
   }
 }
