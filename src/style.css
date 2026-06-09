@@ -812,6 +812,11 @@ footer {
   box-shadow: 0 0 8px rgba(57, 255, 20, 0.4);
 }
 
+.hud-bar .bar-fill.xp {
+  background: linear-gradient(90deg, #8a2be2, #ffd700);
+  box-shadow: 0 0 8px rgba(255, 215, 0, 0.4);
+}
+
 .hud-bar.opponent .bar-fill.hp {
   background: linear-gradient(90deg, #b01b1b, var(--neon-red));
   box-shadow: 0 0 8px rgba(255, 60, 60, 0.4);

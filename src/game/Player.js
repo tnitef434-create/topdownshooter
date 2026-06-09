@@ -537,6 +537,28 @@ export class Player {
       }
     }
 
+    // Update weapon XP bar
+    const xpWrapper = document.getElementById('hud-weapon-xp-wrapper');
+    if (xpWrapper) {
+      if (this.weaponKey !== 'knife' && this.weaponKey !== 'none') {
+        xpWrapper.style.display = 'flex';
+        const nextLevelXP = this.weaponLevel * 100;
+        const xpPercent = (this.weaponXP / nextLevelXP) * 100;
+        
+        const xpBarFill = document.getElementById('hud-weapon-xp');
+        if (xpBarFill) {
+          xpBarFill.style.width = `${xpPercent}%`;
+        }
+        
+        const xpText = document.getElementById('hud-weapon-xp-text');
+        if (xpText) {
+          xpText.innerText = `${this.weaponXP}/${nextLevelXP}`;
+        }
+      } else {
+        xpWrapper.style.display = 'none';
+      }
+    }
+
     // Update inventory slots UI
     for (let slotNum = 1; slotNum <= 3; slotNum++) {
       const slotEl = document.getElementById(`inv-slot-${slotNum}`);

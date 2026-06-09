@@ -11,8 +11,8 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=Orbitron:wght@500;700;900&display=swap" rel="stylesheet">
   <!-- Style sheet -->
   <!-- Socket.io client (loaded dynamically via bundler or server, or we can just import from socket.io-client) -->
-  <script type="module" crossorigin src="/assets/index-CnStWKt-.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-DEhysJrw.css">
+  <script type="module" crossorigin src="/assets/index-C8ePxJDT.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-BZIX03aw.css">
 </head>
 <body>
   
@@ -372,6 +372,11 @@
                 <div class="hud-bar hp-bar"><div id="hud-self-hp" class="bar-fill hp" style="width: 100%"></div></div>
                 <span id="hud-self-hp-text" class="bar-text">100</span>
               </div>
+              <div id="hud-weapon-xp-wrapper" class="hud-bar-wrapper" style="display: none; margin-top: 4px;">
+                <span class="bar-label" style="color: #ff6ef7;">XP</span>
+                <div class="hud-bar"><div id="hud-weapon-xp" class="bar-fill xp" style="width: 0%"></div></div>
+                <span id="hud-weapon-xp-text" class="bar-text" style="color: #ff6ef7; font-size: 8px;">0/100</span>
+              </div>
             </div>
             <div class="ammo-display">
               <span id="hud-weapon-name" class="weapon-active">TACTICAL 9MM</span>
@@ -606,9 +611,10 @@
          <div style="font-family: var(--font-title); font-size: 10px; color: var(--neon-yellow); letter-spacing: 2px; font-weight: 700; margin-bottom: 6px;">TACTICSTRIKE CHANGELOG</div>
          <h2 style="font-family: var(--font-title); font-size: 26px; color: #fff; margin-bottom: 15px; letter-spacing: 1.5px; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 12px; font-weight: 900;">WHAT'S NEW</h2>
          <div style="font-family: 'Inter', sans-serif; font-size: 13px; line-height: 1.6; color: #a2aab8; margin-bottom: 25px; max-height: 280px; overflow-y: auto; padding-right: 8px;">
-           <p style="margin-bottom: 14px;">🤖 <strong style="color: #fff;">200 IQ BOT INTELLIGENCE:</strong> Training bots have received a massive brain upgrade. They now calculate room-to-room navigation pathways, dynamically throw flashbangs, dash tactically during combat, and clear blocking crate obstacles.</p>
-           <p style="margin-bottom: 14px;">🎛️ <strong style="color: #fff;">LOBBY INTERFACE LAYOUT:</strong> We reorganized the lobby buttons to prevent layout overlap on smaller screens and laptop viewports, keeping the bottoms cleaner and more readable.</p>
-           <p style="margin-bottom: 14px;">🔌 <strong style="color: #fff;">ROOM LEAVING SYNCHRONIZATION:</strong> Players leaving custom lobbies after a match is over are now handled smoothly without triggering forceful disconnect warnings, and lobby rosters update cleanly.</p>
+            <p style="margin-bottom: 14px;">⚔️ <strong style="color: #ff6ef7;">WEAPON XP & LEVELING:</strong> <span style="background: rgba(255,110,247,0.15); color: #ff6ef7; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; margin-left: 4px; border: 1px solid rgba(255,110,247,0.3);">NEW</span><br>Unlock the full potential of your arsenal! Earn Weapon XP dynamically during matches to level up your gear, complete with a brand-new HUD progress bar tracker.</p>
+            <p style="margin-bottom: 14px;">📢 <strong style="color: #ffd700;">COMBAT ANNOUNCEMENTS:</strong> <span style="background: rgba(255,215,0,0.15); color: #ffd700; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; margin-left: 4px; border: 1px solid rgba(255,215,0,0.3);">NEW</span><br>Experience the thrill of battle with real-time, high-fidelity combat announcements and kill streak indicators flashing across the screen.</p>
+            <p style="margin-bottom: 14px;">🩸 <strong style="color: #ff3c3c;">LOW-HEALTH SCREEN JUICE:</strong> <span style="background: rgba(255,60,60,0.15); color: #ff3c3c; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; margin-left: 4px; border: 1px solid rgba(255,60,60,0.3);">NEW</span><br>Feel the intensity of near-death encounters with cinematic red vignette indicators, screen shake, and heartbeat visual juice when your health drops low.</p>
+            <p style="margin-bottom: 14px;">🤖 <strong style="color: #66fcf1;">200 IQ BOT INTELLIGENCE:</strong> <span style="background: rgba(102,252,241,0.15); color: #66fcf1; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; margin-left: 4px; border: 1px solid rgba(102,252,241,0.3);">UPGRADED</span><br>Training bots have received a massive brain upgrade. They now calculate room-to-room navigation pathways, dynamically throw flashbangs, dash tactically during combat, and clear blocking crate obstacles.</p>
          </div>
          <div class="modal-actions" style="margin-top: 15px;">
            <button id="btn-close-whats-new" class="btn primary btn-3d" style="width: 100%; font-size: 12px; padding: 12px;">CLOSE</button>
