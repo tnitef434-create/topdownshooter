@@ -826,8 +826,23 @@ export class Player {
         if (path.length > 1) {
           const nextRoom = path[1];
           const doorway = this.getDoorway(map, currentRoom, nextRoom);
-          wpX = doorway.x;
-          wpY = doorway.y;
+          const distToDoor = Math.hypot(this.x - doorway.x, this.y - doorway.y);
+          
+          if (distToDoor < 35) {
+            // Close to the door: steer to the next door or final target in next room
+            if (path.length > 2) {
+              const nextNextRoom = path[2];
+              const nextDoorway = this.getDoorway(map, nextRoom, nextNextRoom);
+              wpX = nextDoorway.x;
+              wpY = nextDoorway.y;
+            } else {
+              wpX = this.botTargetX;
+              wpY = this.botTargetY;
+            }
+          } else {
+            wpX = doorway.x;
+            wpY = doorway.y;
+          }
         }
       }
     }
