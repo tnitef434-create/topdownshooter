@@ -970,6 +970,64 @@ export class Player {
         steerAngle += (Math.PI / 2) * this.stuckSteerDir;
       } else {
         this.stuckSteerDir = 0;
+        
+        // Predictive Ray-cast Obstacle Avoidance
+        const avoidLengthCenter = 85;
+        const avoidLengthSide = 60;
+        const sideAngleDiff = 0.45; // ~25 degrees
+        
+        const centerRayEnd = {
+          x: this.x + Math.cos(moveAngle) * avoidLengthCenter,
+          y: this.y + Math.sin(moveAngle) * avoidLengthCenter
+        };
+        const leftRayEnd = {
+          x: this.x + Math.cos(moveAngle - sideAngleDiff) * avoidLengthSide,
+          y: this.y + Math.sin(moveAngle - sideAngleDiff) * avoidLengthSide
+        };
+        const rightRayEnd = {
+          x: this.x + Math.cos(moveAngle + sideAngleDiff) * avoidLengthSide,
+          y: this.y + Math.sin(moveAngle + sideAngleDiff) * avoidLengthSide
+        };
+        
+        const centerHit = map.getLineIntersection({ x: this.x, y: this.y }, centerRayEnd);
+        const leftHit = map.getLineIntersection({ x: this.x, y: this.y }, leftRayEnd);
+        const rightHit = map.getLineIntersection({ x: this.x, y: this.y }, rightRayEnd);
+        
+        let localAvoidY = 0;
+        let hasHit = false;
+        
+        const distC = centerHit ? centerHit.dist : avoidLengthCenter;
+        const distL = leftHit ? leftHit.dist : avoidLengthSide;
+        const distR = rightHit ? rightHit.dist : avoidLengthSide;
+        
+        if (centerHit) {
+          hasHit = true;
+          const centerForce = (1 - distC / avoidLengthCenter);
+          if (distL > distR) {
+            localAvoidY -= centerForce * 1.0; // Steer left
+          } else if (distR > distL) {
+            localAvoidY += centerForce * 1.0; // Steer right
+          } else {
+            localAvoidY -= centerForce * 1.0; // Default steer left
+          }
+        }
+        
+        if (leftHit) {
+          hasHit = true;
+          localAvoidY += (1 - distL / avoidLengthSide) * 0.8; // Steer right
+        }
+        
+        if (rightHit) {
+          hasHit = true;
+          localAvoidY -= (1 - distR / avoidLengthSide) * 0.8; // Steer left
+        }
+        
+        if (hasHit) {
+          // Clamp localAvoidY to [-1, 1] range to avoid over-steering
+          localAvoidY = Math.max(-1, Math.min(1, localAvoidY));
+          // Max avoidance offset of 80 degrees (~1.4 radians)
+          steerAngle = moveAngle + localAvoidY * 1.4;
+        }
       }
 
       if (this.botState !== 'chase') {
