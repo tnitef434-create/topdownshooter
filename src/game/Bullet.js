@@ -113,9 +113,25 @@ export class Bullet {
           const dmgMult = (zone && zone.type === 'damage') ? zone.multiplier : 1.0;
           const finalDamage = Math.round(this.damage * dmgMult * headshotMult);
 
+          const wasAlive = player.health > 0;
           player.takeDamage(finalDamage, soundEngine);
+          const isKill = wasAlive && player.health <= 0;
           
           if (this.playerId === window.LocalPlayerId) {
+            const shooter = players.find(p => p.id === this.playerId);
+            if (shooter && shooter.addWeaponXP) {
+              if (isKill) {
+                shooter.addWeaponXP(50);
+                shooter.showTextNotification('+50 XP', '#ffd700');
+                if (window.gameEngine && window.gameEngine.registerLocalPlayerKill) {
+                  window.gameEngine.registerLocalPlayerKill(performance.now());
+                }
+              } else {
+                shooter.addWeaponXP(10);
+                shooter.showTextNotification('+10 XP', '#ff6ef7');
+              }
+            }
+
             if (soundEngine) {
               if (isHeadshot) soundEngine.playCriticalHitMarker();
               else soundEngine.playHitMarker();
@@ -138,6 +154,21 @@ export class Bullet {
             const zone = map.checkZone ? map.checkZone(this.x, this.y) : null;
             const dmgMult = (zone && zone.type === 'damage') ? zone.multiplier : 1.0;
             const finalDamage = Math.round(this.damage * dmgMult * headshotMult);
+
+            const isKill = player.health - finalDamage <= 0;
+            const shooter = players.find(p => p.id === this.playerId);
+            if (shooter && shooter.addWeaponXP) {
+              if (isKill) {
+                shooter.addWeaponXP(50);
+                shooter.showTextNotification('+50 XP', '#ffd700');
+                if (window.gameEngine && window.gameEngine.registerLocalPlayerKill) {
+                  window.gameEngine.registerLocalPlayerKill(performance.now());
+                }
+              } else {
+                shooter.addWeaponXP(10);
+                shooter.showTextNotification('+10 XP', '#ff6ef7');
+              }
+            }
 
             if (soundEngine) {
               if (isHeadshot) soundEngine.playCriticalHitMarker();

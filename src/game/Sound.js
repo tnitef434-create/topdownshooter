@@ -879,4 +879,29 @@ export class Sound {
       this.bearMusic.currentTime = 0;
     }
   }
+
+  /** Play high-pitched beep sound cue for multi-kill banners */
+  playHighBeep() {
+    this.init();
+    if (!this.ctx) return;
+    if (this.ctx.state === 'suspended') this.ctx.resume();
+
+    const t = this.ctx.currentTime;
+    
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(2000, t);
+    osc.frequency.exponentialRampToValueAtTime(3000, t + 0.15);
+    
+    gain.gain.setValueAtTime(0.2, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
+    
+    osc.connect(gain);
+    gain.connect(this.masterVolume);
+    
+    osc.start(t);
+    osc.stop(t + 0.22);
+  }
 }

@@ -109,6 +109,11 @@ export class Player {
     // Dash trail effects & sync
     this.dashTrails = [];
     this.networkJustDashed = false;
+
+    // Weapon XP & Leveling System
+    this.weaponXP = 0;
+    this.weaponLevel = 1;
+    this.weaponLevelUpAlert = 0;
   }
 
   // ─── Rank helpers ────────────────────────────────────────────────────────────
@@ -129,6 +134,23 @@ export class Player {
       try { localStorage.setItem('tacticstrike_rp', String(this.rp)); } catch(e) {}
     }
     return rankChanged;
+  }
+
+  addWeaponXP(amount) {
+    if (this.health <= 0) return;
+    this.weaponXP += amount;
+    let leveledUp = false;
+    while (this.weaponXP >= this.weaponLevel * 100) {
+      this.weaponXP -= this.weaponLevel * 100;
+      this.weaponLevel++;
+      leveledUp = true;
+    }
+    if (leveledUp) {
+      this.weaponLevelUpAlert = 4; // 4 seconds alert
+      if (this.isLocal && !this.isBot) {
+        this.updateHUD();
+      }
+    }
   }
   // ─────────────────────────────────────────────────────────────────────────────
 
@@ -333,6 +355,11 @@ export class Player {
     if (this.flashAlpha > 0) {
       this.flashAlpha = Math.max(0, this.flashAlpha - 0.008 * dtFactor);
     }
+
+    // Weapon Level Up Announcement decay
+    if (this.weaponLevelUpAlert > 0) {
+      this.weaponLevelUpAlert = Math.max(0, this.weaponLevelUpAlert - clampedDt / 1000);
+    }
   }
 
   handleLocalInput(keys, mouse, soundEngine, currentTime, dtFactor) {
@@ -489,7 +516,8 @@ export class Player {
     
     const weaponName = document.getElementById('hud-weapon-name');
     if (weaponName && this.weapon && this.weapon.name) {
-      weaponName.innerText = this.weapon.name.toUpperCase();
+      const lvlSuffix = this.weaponKey !== 'knife' && this.weaponKey !== 'none' ? ` [LVL ${this.weaponLevel}]` : '';
+      weaponName.innerText = (this.weapon.name + lvlSuffix).toUpperCase();
     }
     
     const ammoVal = document.getElementById('hud-ammo-val');
@@ -651,12 +679,13 @@ export class Player {
     });
   }
 
-  showTextNotification(text) {
+  showTextNotification(text, color = '#ffd700') {
     // Show a floating visual indicator above player
     this.floatingText = {
       text,
       timer: 45,
-      yOffset: -30
+      yOffset: -30,
+      color
     };
   }
 
@@ -1328,7 +1357,7 @@ export class Player {
     // Render local floating text (+HP / +AMMO)
     if (this.floatingText && this.floatingText.timer > 0) {
       ctx.font = 'bold 9px Orbitron';
-      ctx.fillStyle = '#ffd700';
+      ctx.fillStyle = this.floatingText.color || '#ffd700';
       ctx.shadowColor = '#000000';
       ctx.shadowBlur = 4;
       ctx.fillText(this.floatingText.text, this.x, this.y + this.floatingText.yOffset);

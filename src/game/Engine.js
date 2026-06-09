@@ -228,6 +228,11 @@ export class Engine {
       // Callback handlers
       this.onMatchEnd = config.onMatchEnd;
       this.onKillFeed = config.onKillFeed;
+
+      // Combat banners and multi-kills
+      this.lastKillTime = 0;
+      this.multiKillCount = 0;
+      this.combatBanner = null;
       
       // Camera settings
       this.camera = { x: this.localPlayer.x, y: this.localPlayer.y, shakeX: 0, shakeY: 0 };
@@ -1264,6 +1269,35 @@ export class Engine {
     });
   }
 
+  registerLocalPlayerKill(currentTime) {
+    if (currentTime - this.lastKillTime < 4000) {
+      this.multiKillCount++;
+    } else {
+      this.multiKillCount = 1;
+    }
+    this.lastKillTime = currentTime;
+
+    if (this.multiKillCount >= 2) {
+      let bannerText = 'DOUBLE KILL!';
+      if (this.multiKillCount === 3) bannerText = 'TRIPLE KILL!';
+      else if (this.multiKillCount > 3) bannerText = 'RAMPAGE!';
+      
+      this.combatBanner = {
+        text: bannerText,
+        timer: 3.0,
+        scale: 2.0
+      };
+      
+      if (this.sound) {
+        try {
+          this.sound.playHighBeep();
+        } catch (e) {
+          console.warn(e);
+        }
+      }
+    }
+  }
+
   // Core Game State Update
   update(currentTime) {
     if (!this.lastUpdateTime) {
@@ -1273,6 +1307,13 @@ export class Engine {
     this.lastUpdateTime = currentTime;
     const clampedDt = Math.max(1, Math.min(150, dt));
     this.dtFactor = clampedDt / 16.67;
+
+    if (this.combatBanner) {
+      this.combatBanner.timer -= clampedDt / 1000;
+      if (this.combatBanner.timer <= 0) {
+        this.combatBanner = null;
+      }
+    }
 
     if (this.matchMode === 'sabotage') {
       if (this.ventCooldown > 0) {
@@ -2568,6 +2609,21 @@ export class Engine {
     }
     this.ctx.restore();
 
+    // Low Health Pulsing Vignette
+    if (this.localPlayer && this.localPlayer.health > 0 && this.localPlayer.health < 35 && !frame) {
+      this.ctx.save();
+      const pulseOpacity = Math.sin(Date.now() / 150) * 0.2 + 0.3;
+      const lowHealthVignette = this.ctx.createRadialGradient(
+        this.canvas.width / 2, this.canvas.height / 2, this.canvas.width / 3,
+        this.canvas.width / 2, this.canvas.height / 2, this.canvas.width / 1.1
+      );
+      lowHealthVignette.addColorStop(0, 'rgba(255, 0, 0, 0)');
+      lowHealthVignette.addColorStop(1, `rgba(255, 0, 0, ${pulseOpacity})`);
+      this.ctx.fillStyle = lowHealthVignette;
+      this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+      this.ctx.restore();
+    }
+
     // Render flashbang screen whiteout overlay (2 seconds decay)
     let currentFlashAlpha = 0;
     if (frame) {
@@ -2906,6 +2962,78 @@ export class Engine {
       this.ctx.fillRect(40, this.canvas.height - 40, barW, 6);
       this.ctx.fillStyle = '#ff3c3c';
       this.ctx.fillRect(40, this.canvas.height - 40, barW * progress, 6);
+      
+      this.ctx.restore();
+    }
+
+    // Render Combat Banner
+    if (!frame && this.combatBanner) {
+      this.ctx.save();
+      this.ctx.textAlign = 'center';
+      this.ctx.textBaseline = 'middle';
+      
+      const timer = this.combatBanner.timer;
+      const text = this.combatBanner.text;
+      
+      let alpha = 1.0;
+      if (timer < 0.5) {
+        alpha = timer / 0.5;
+      }
+      
+      const animScale = 1.5 + Math.max(0, timer - 2.5) * 2.0 + 0.05 * Math.sin(Date.now() / 100);
+      
+      this.ctx.translate(this.canvas.width / 2, this.canvas.height / 2 - 180);
+      this.ctx.scale(animScale, animScale);
+      
+      this.ctx.shadowColor = '#ff3c3c';
+      this.ctx.shadowBlur = 20;
+      this.ctx.font = "italic 900 24px 'Orbitron', sans-serif";
+      
+      const grad = this.ctx.createLinearGradient(-150, 0, 150, 0);
+      grad.addColorStop(0, `rgba(255, 60, 60, ${alpha})`);
+      grad.addColorStop(0.5, `rgba(255, 220, 0, ${alpha})`);
+      grad.addColorStop(1, `rgba(255, 60, 60, ${alpha})`);
+      
+      this.ctx.fillStyle = grad;
+      this.ctx.fillText(text, 0, 0);
+      
+      this.ctx.shadowBlur = 0;
+      this.ctx.strokeStyle = `rgba(255, 215, 0, ${alpha * 0.4})`;
+      this.ctx.lineWidth = 1.5;
+      this.ctx.beginPath();
+      this.ctx.moveTo(-100, 18);
+      this.ctx.lineTo(100, 18);
+      this.ctx.moveTo(-100, -18);
+      this.ctx.lineTo(100, -18);
+      this.ctx.stroke();
+      
+      this.ctx.restore();
+    }
+
+    // Render Weapon Upgraded Announcement
+    if (this.localPlayer && this.localPlayer.weaponLevelUpAlert > 0 && !frame) {
+      this.ctx.save();
+      this.ctx.textAlign = 'center';
+      this.ctx.textBaseline = 'middle';
+      
+      const timeRemaining = this.localPlayer.weaponLevelUpAlert;
+      const alpha = Math.min(1, timeRemaining);
+      const scale = 1.0 + 0.15 * Math.sin(Date.now() / 150);
+      
+      this.ctx.translate(this.canvas.width / 2, this.canvas.height / 2 - 80);
+      this.ctx.scale(scale, scale);
+      
+      this.ctx.shadowColor = '#ffd700';
+      this.ctx.shadowBlur = 15;
+      
+      this.ctx.font = "bold 28px 'Orbitron', sans-serif";
+      this.ctx.fillStyle = `rgba(255, 215, 0, ${alpha})`;
+      this.ctx.fillText("WEAPON UPGRADED", 0, 0);
+      
+      this.ctx.shadowBlur = 0;
+      this.ctx.font = "bold 16px 'Orbitron', sans-serif";
+      this.ctx.fillStyle = `rgba(255, 255, 255, ${alpha})`;
+      this.ctx.fillText(`LVL ${this.localPlayer.weaponLevel}`, 0, 35);
       
       this.ctx.restore();
     }
