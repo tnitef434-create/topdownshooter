@@ -114,6 +114,10 @@ export class Player {
     this.weaponXP = 0;
     this.weaponLevel = 1;
     this.weaponLevelUpAlert = 0;
+
+    // Tactical Inventory Items
+    this.healthPacks = 0;
+    this.ammoPacks = 0;
   }
 
   // ─── Rank helpers ────────────────────────────────────────────────────────────
@@ -363,6 +367,11 @@ export class Player {
   }
 
   handleLocalInput(keys, mouse, soundEngine, currentTime, dtFactor) {
+    if (window.gameEngine && window.gameEngine.activeMinigame) {
+      this.vx = 0;
+      this.vy = 0;
+      return;
+    }
     // Sprint check
     const isSprinting = keys && keys['shift'];
     const sprintSpeedMult = isSprinting ? 1.75 : 1.0;   // was 1.35
@@ -537,6 +546,11 @@ export class Player {
       }
     }
 
+    const stashedPacks = document.getElementById('hud-stashed-packs');
+    if (stashedPacks) {
+      stashedPacks.innerHTML = `MEDKITS [${this.healthPacks || 0}] &nbsp; AMMO PACKS [${this.ammoPacks || 0}]`;
+    }
+
     // Update weapon XP bar
     const xpWrapper = document.getElementById('hud-weapon-xp-wrapper');
     if (xpWrapper) {
@@ -656,30 +670,60 @@ export class Player {
       if (dist < this.radius + 12) {
         // Collect
         item.active = false;
-        if (soundEngine) soundEngine.playPickup();
 
         if (item.type === 'health') {
-          this.health = Math.min(this.maxHealth, this.health + 35);
-          if (this.isLocal && !this.isBot) {
-            this.updateHUD();
-            this.showTextNotification('+35 HEALTH');
-            if (window.AppSocket) {
-              const cheatActive = window.gameEngine && window.gameEngine.devCheatActive;
-              const syncedHealth = cheatActive ? Math.round(this.health / 2) : this.health;
-              window.AppSocket.emit('sync-health', {
-                playerId: this.id,
-                health: syncedHealth
-              });
+          if (this.health >= this.maxHealth) {
+            if (this.healthPacks < 2) {
+              this.healthPacks++;
+              if (soundEngine) soundEngine.playPickup();
+              if (this.isLocal && !this.isBot) {
+                this.updateHUD();
+                this.showTextNotification('+1 STASHED MEDKIT', '#ff6ef7');
+              }
+            } else {
+              item.active = true;
+              return; // Inventory full, leave it on ground
+            }
+          } else {
+            if (soundEngine) soundEngine.playPickup();
+            this.health = Math.min(this.maxHealth, this.health + 35);
+            if (this.isLocal && !this.isBot) {
+              this.updateHUD();
+              this.showTextNotification('+35 HEALTH');
+              if (window.AppSocket) {
+                const cheatActive = window.gameEngine && window.gameEngine.devCheatActive;
+                const syncedHealth = cheatActive ? Math.round(this.health / 2) : this.health;
+                window.AppSocket.emit('sync-health', {
+                  playerId: this.id,
+                  health: syncedHealth
+                });
+              }
             }
           }
         } else if (item.type === 'ammo') {
-          const maxAmmo = this.weapon.magSize * 2;
-          this.reserveAmmo = Math.min(this.maxReserveAmmo, this.reserveAmmo + maxAmmo);
-          if (this.isLocal && !this.isBot) {
-            this.updateHUD();
-            this.showTextNotification('+AMMO');
+          if (this.reserveAmmo >= this.maxReserveAmmo) {
+            if (this.ammoPacks < 2) {
+              this.ammoPacks++;
+              if (soundEngine) soundEngine.playPickup();
+              if (this.isLocal && !this.isBot) {
+                this.updateHUD();
+                this.showTextNotification('+1 STASHED AMMO PACK', '#ff6ef7');
+              }
+            } else {
+              item.active = true;
+              return; // Inventory full, leave it on ground
+            }
+          } else {
+            if (soundEngine) soundEngine.playPickup();
+            const maxAmmo = this.weapon.magSize * 2;
+            this.reserveAmmo = Math.min(this.maxReserveAmmo, this.reserveAmmo + maxAmmo);
+            if (this.isLocal && !this.isBot) {
+              this.updateHUD();
+              this.showTextNotification('+AMMO');
+            }
           }
         } else if (item.type === 'adrenaline') {
+          if (soundEngine) soundEngine.playPickup();
           this.adrenalineEndTime = Date.now() + 8000;
           this.adrenalineActive = true;
           if (this.isLocal && !this.isBot) {

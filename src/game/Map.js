@@ -40,6 +40,7 @@ export class Map {
       this.generateManorMap();
     }
 
+    this.initTerminals();
     this.rebuildSegments();
   }
 
@@ -643,16 +644,24 @@ export class Map {
     // 3. Items
     this.items.forEach(item => { if (item.active) this._drawItem(ctx, item); });
 
-    // 4. Walls / furniture / crates with soft drop shadows (ambient occlusion)
     ctx.save();
-    if (configSettings.shadows) {
-      ctx.shadowColor = 'rgba(2, 3, 5, 0.55)';
-      ctx.shadowBlur = 8;
-      ctx.shadowOffsetX = 5;
-      ctx.shadowOffsetY = 5;
+    let camX = this.width / 2;
+    let camY = this.height / 2;
+    if (localPlayer) {
+      camX = localPlayer.x;
+      camY = localPlayer.y;
     }
-    this.walls.forEach(w => this._drawWall(ctx, w));
+    this.walls.forEach(w => this._drawWall(ctx, w, camX, camY));
     ctx.restore();
+
+    // Draw Hacking Terminals
+    if (this.terminals) {
+      this.terminals.forEach(term => {
+        if (term.active) {
+          this._drawTerminal(ctx, term);
+        }
+      });
+    }
 
     // 5. Fog of war & Light rendering
     if (configSettings.shadows && players && players.length > 0) {
@@ -1408,15 +1417,225 @@ export class Map {
   }
 
   // ── Wall / furniture / crate rendering ──
-  _drawWall(ctx, w) {
+  initTerminals() {
+    this.terminals = [
+      { id: 'term_1', x: this.mapId === 'cyberlab' ? 700 : 720, y: 620, radius: 24, hacked: false, progress: 0, active: true, label: 'REACTOR DATA CORE' },
+      { id: 'term_2', x: 1220, y: 1120, radius: 24, hacked: false, progress: 0, active: true, label: 'SECURE CACHE SUPPLY' }
+    ];
+  }
+
+  _drawTerminal(ctx, term) {
     ctx.save();
+    const pulse = 1.0 + Math.sin(Date.now() / 200) * 0.08;
+    
+    // Ambient floor glow
+    const glowGrad = ctx.createRadialGradient(term.x, term.y, 5, term.x, term.y, term.radius * 1.5 * pulse);
+    glowGrad.addColorStop(0, term.hacked ? 'rgba(57, 255, 20, 0.25)' : 'rgba(102, 252, 241, 0.25)');
+    glowGrad.addColorStop(1, 'rgba(0, 0, 0, 0.0)');
+    ctx.fillStyle = glowGrad;
+    ctx.beginPath();
+    ctx.arc(term.x, term.y, term.radius * 1.8 * pulse, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Draw terminal stand
+    ctx.fillStyle = '#1c1e24';
+    ctx.strokeStyle = '#2b2e38';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(term.x, term.y, 14, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // Draw keyboard/monitor console
+    ctx.fillStyle = '#0b0c10';
+    ctx.strokeStyle = term.hacked ? 'rgba(57, 255, 20, 0.8)' : 'rgba(102, 252, 241, 0.8)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    if (ctx.roundRect) {
+      ctx.roundRect(term.x - 12, term.y - 12, 24, 16, 3);
+    } else {
+      ctx.rect(term.x - 12, term.y - 12, 24, 16);
+    }
+    ctx.fill();
+    ctx.stroke();
+
+    // Screen text/bars
+    ctx.fillStyle = term.hacked ? '#39ff14' : '#66fcf1';
+    ctx.font = 'bold 5px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(term.hacked ? 'SECURE' : 'ACCESS', term.x, term.y - 4);
+
+    // Glowing core indicator
+    ctx.fillStyle = term.hacked ? '#39ff14' : '#ffd700';
+    ctx.beginPath();
+    ctx.arc(term.x - 6, term.y + 7, 2, 0, Math.PI * 2);
+    ctx.arc(term.x + 6, term.y + 7, 2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // ── Wall / furniture / crate rendering ──
+  _drawExtrudedObject(ctx, w, camX, camY, scale, drawTopFaceCallback) {
+    // Base corners
+    const b0 = { x: w.x, y: w.y };
+    const b1 = { x: w.x + w.w, y: w.y };
+    const b2 = { x: w.x + w.w, y: w.y + w.h };
+    const b3 = { x: w.x, y: w.y + w.h };
+    
+    // Top corners (extruded outward from the camera/player center)
+    const t0 = {
+      x: b0.x + (b0.x - camX) * scale,
+      y: b0.y + (b0.y - camY) * scale
+    };
+    const t1 = {
+      x: b1.x + (b1.x - camX) * scale,
+      y: b1.y + (b1.y - camY) * scale
+    };
+    const t2 = {
+      x: b2.x + (b2.x - camX) * scale,
+      y: b2.y + (b2.y - camY) * scale
+    };
+    const t3 = {
+      x: b3.x + (b3.x - camX) * scale,
+      y: b3.y + (b3.y - camY) * scale
+    };
+
+    // Draw base shadow
+    ctx.save();
+    ctx.fillStyle = 'rgba(2, 3, 5, 0.45)';
+    ctx.beginPath();
+    ctx.moveTo(b0.x, b0.y);
+    ctx.lineTo(b1.x, b1.y);
+    ctx.lineTo(b2.x, b2.y);
+    ctx.lineTo(b3.x, b3.y);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+
+    // Draw side panels connecting base to top
+    const drawSide = (p0, p1, tp0, tp1, shadowColor) => {
+      ctx.save();
+      ctx.fillStyle = shadowColor;
+      ctx.beginPath();
+      ctx.moveTo(p0.x, p0.y);
+      ctx.lineTo(p1.x, p1.y);
+      ctx.lineTo(tp1.x, tp1.y);
+      ctx.lineTo(tp0.x, tp0.y);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,0.25)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.restore();
+    };
+
+    // North side (b0 -> b1)
+    drawSide(b0, b1, t0, t1, camY > w.y ? '#090a0d' : '#17181c');
+    // East side (b1 -> b2)
+    drawSide(b1, b2, t1, t2, camX < w.x + w.w ? '#0d0e12' : '#1b1c21');
+    // South side (b2 -> b3)
+    drawSide(b2, b3, t2, t3, camY < w.y + w.h ? '#090a0d' : '#17181c');
+    // West side (b3 -> b0)
+    drawSide(b3, b0, t3, t0, camX > w.x ? '#0d0e12' : '#1b1c21');
+
+    // Draw top face
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(t0.x, t0.y);
+    ctx.lineTo(t1.x, t1.y);
+    ctx.lineTo(t2.x, t2.y);
+    ctx.lineTo(t3.x, t3.y);
+    ctx.closePath();
+    ctx.clip(); // Clip top face drawings to the 3D polygon face
+
+    // Shift context origin temporarily to draw the face styled as a normal flat rectangle
+    const offsetX = t0.x - w.x;
+    const offsetY = t0.y - w.y;
+    ctx.translate(offsetX, offsetY);
+    drawTopFaceCallback(ctx, w);
+    ctx.restore();
+    
+    // Draw top face border stroke to cover raw clipped edges
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(t0.x, t0.y);
+    ctx.lineTo(t1.x, t1.y);
+    ctx.lineTo(t2.x, t2.y);
+    ctx.lineTo(t3.x, t3.y);
+    ctx.closePath();
+    ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  _drawExtrudedBarrel(ctx, w, camX, camY) {
+    const scale = 0.04;
+    const cx = w.x + w.w/2;
+    const cy = w.y + w.h/2;
+    const r = w.w/2;
+    
+    // Top circle center
+    const tx = cx + (cx - camX) * scale;
+    const ty = cy + (cy - camY) * scale;
+
+    // Draw base shadow
+    ctx.save();
+    ctx.fillStyle = 'rgba(2, 3, 5, 0.45)';
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // Draw connecting side body
+    const angle = Math.atan2(ty - cy, tx - cx) + Math.PI/2;
+    const dx = Math.cos(angle) * r;
+    const dy = Math.sin(angle) * r;
+    
+    ctx.save();
+    ctx.fillStyle = '#1c1000'; // Darker side shade
+    ctx.beginPath();
+    ctx.moveTo(cx - dx, cy - dy);
+    ctx.lineTo(cx + dx, cy - dy);
+    ctx.lineTo(tx + dx, ty - dy);
+    ctx.lineTo(tx - dx, ty - dy);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = '#3a2000';
+    ctx.stroke();
+    ctx.restore();
+
+    // Draw top face
+    ctx.save();
+    ctx.translate(tx - cx, ty - cy);
+    this._drawBarrel(ctx, w);
+    ctx.restore();
+  }
+
+  _drawWall(ctx, w, camX, camY) {
+    ctx.save();
+    const wallScale = 0.08;
+    const furnitureScale = 0.04;
+    
     switch (w.material) {
-      case 'exterior':  this._drawExteriorWall(ctx, w); break;
-      case 'interior':  this._drawInteriorWall(ctx, w); break;
-      case 'furniture': this._drawFurniturePiece(ctx, w); break;
-      case 'barrel':    this._drawBarrel(ctx, w); break;
-      case 'crate':     this._drawCratePiece(ctx, w); break;
-      default:          this._drawInteriorWall(ctx, w);
+      case 'exterior':
+        this._drawExtrudedObject(ctx, w, camX, camY, wallScale, (c, obj) => this._drawExteriorWall(c, obj));
+        break;
+      case 'interior':
+        this._drawExtrudedObject(ctx, w, camX, camY, wallScale, (c, obj) => this._drawInteriorWall(c, obj));
+        break;
+      case 'furniture':
+        this._drawExtrudedObject(ctx, w, camX, camY, furnitureScale, (c, obj) => this._drawFurniturePiece(c, obj));
+        break;
+      case 'barrel':
+        this._drawExtrudedBarrel(ctx, w, camX, camY);
+        break;
+      case 'crate':
+        this._drawExtrudedObject(ctx, w, camX, camY, furnitureScale, (c, obj) => this._drawCratePiece(c, obj));
+        break;
+      default:
+        this._drawExtrudedObject(ctx, w, camX, camY, wallScale, (c, obj) => this._drawInteriorWall(c, obj));
     }
     ctx.restore();
   }

@@ -35,6 +35,10 @@ export class Network {
         remotePlayer.justDashed = true;
       }
 
+      if (state.droppedItem) {
+        this.engine.spawnItemAt(state.droppedItem.x, state.droppedItem.y, state.droppedItem.type, state.droppedItem.id);
+      }
+
       if (state.health !== undefined) {
         remotePlayer.health = state.health;
       }
@@ -206,10 +210,12 @@ export class Network {
         muzzleFlash: this.localPlayer.muzzleFlash,
         flashlightActive: this.localPlayer.flashlightActive,
         inVent: this.localPlayer.inVent || false,
-        justDashed: this.localPlayer.networkJustDashed || false
+        justDashed: this.localPlayer.networkJustDashed || false,
+        droppedItem: this.localPlayer.networkDroppedItem || null
       };
 
       this.localPlayer.networkJustDashed = false;
+      this.localPlayer.networkDroppedItem = null;
 
       this.socket.emit('player-state', state);
     }

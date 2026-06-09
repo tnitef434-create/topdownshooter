@@ -11,7 +11,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=Orbitron:wght@500;700;900&display=swap" rel="stylesheet">
   <!-- Style sheet -->
   <!-- Socket.io client (loaded dynamically via bundler or server, or we can just import from socket.io-client) -->
-  <script type="module" crossorigin src="/assets/index-DPI2uhAr.js"></script>
+  <script type="module" crossorigin src="/assets/index-PaSYFK5w.js"></script>
   <link rel="stylesheet" crossorigin href="/assets/index-BZIX03aw.css">
 </head>
 <body>
@@ -346,6 +346,7 @@
               <span id="game-timer">02:00</span>
             </div>
             <div id="hud-status" class="status-alert">GET READY!</div>
+            <div id="hud-interaction-prompt" style="display: none; font-family: var(--font-title); font-size: 13px; font-weight: bold; color: var(--neon-cyan); text-shadow: 0 0 8px rgba(102, 252, 241, 0.4); margin-top: 10px; letter-spacing: 1px;">HOLD [E] TO HACK TERMINAL</div>
           </div>
 
           <!-- Gameplay Tips Panel -->
@@ -387,6 +388,7 @@
                 <span>RELOADING</span>
               </div>
             </div>
+            <div id="hud-stashed-packs" style="font-family: var(--font-title); font-size: 9px; color: var(--text-muted); margin-top: 6px; letter-spacing: 0.5px;">MEDKITS [0] &nbsp; AMMO PACKS [0]</div>
 
             <!-- Dash Cooldown Display -->
             <div id="hud-dash-container" style="display: flex; align-items: center; gap: 6px; margin-top: 6px; font-family: var(--font-title); font-size: 10px; color: var(--neon-cyan); letter-spacing: 0.5px; pointer-events: none;">
@@ -611,10 +613,10 @@
          <div style="font-family: var(--font-title); font-size: 10px; color: var(--neon-yellow); letter-spacing: 2px; font-weight: 700; margin-bottom: 6px;">TACTICSTRIKE CHANGELOG</div>
          <h2 style="font-family: var(--font-title); font-size: 26px; color: #fff; margin-bottom: 15px; letter-spacing: 1.5px; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 12px; font-weight: 900;">WHAT'S NEW</h2>
          <div style="font-family: 'Inter', sans-serif; font-size: 13px; line-height: 1.6; color: #a2aab8; margin-bottom: 25px; max-height: 280px; overflow-y: auto; padding-right: 8px;">
-            <p style="margin-bottom: 14px;">⚔️ <strong style="color: #ff6ef7;">WEAPON XP & LEVELING:</strong> <span style="background: rgba(255,110,247,0.15); color: #ff6ef7; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; margin-left: 4px; border: 1px solid rgba(255,110,247,0.3);">NEW</span><br>Unlock the full potential of your arsenal! Earn Weapon XP dynamically during matches to level up your gear, complete with a brand-new HUD progress bar tracker.</p>
-            <p style="margin-bottom: 14px;">📢 <strong style="color: #ffd700;">COMBAT ANNOUNCEMENTS:</strong> <span style="background: rgba(255,215,0,0.15); color: #ffd700; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; margin-left: 4px; border: 1px solid rgba(255,215,0,0.3);">NEW</span><br>Experience the thrill of battle with real-time, high-fidelity combat announcements and kill streak indicators flashing across the screen.</p>
-            <p style="margin-bottom: 14px;">🩸 <strong style="color: #ff3c3c;">LOW-HEALTH SCREEN JUICE:</strong> <span style="background: rgba(255,60,60,0.15); color: #ff3c3c; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; margin-left: 4px; border: 1px solid rgba(255,60,60,0.3);">NEW</span><br>Feel the intensity of near-death encounters with cinematic red vignette indicators, screen shake, and heartbeat visual juice when your health drops low.</p>
-            <p style="margin-bottom: 14px;">🤖 <strong style="color: #66fcf1;">200 IQ BOT INTELLIGENCE:</strong> <span style="background: rgba(102,252,241,0.15); color: #66fcf1; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; margin-left: 4px; border: 1px solid rgba(102,252,241,0.3);">UPGRADED</span><br>Training bots have received a massive brain upgrade. They now calculate room-to-room navigation pathways, dynamically throw flashbangs, dash tactically during combat, and clear blocking crate obstacles.</p>
+             <p style="margin-bottom: 14px;">🧱 <strong style="color: #66fcf1;">AAA 2.5D WALL EXTRUSION:</strong> <span style="background: rgba(102,252,241,0.15); color: #66fcf1; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; margin-left: 4px; border: 1px solid rgba(102,252,241,0.3);">NEW</span><br>Experience top-down battle with perspective-extruded 3D walls, furniture, and crates. Obstacles dynamically project height relative to the player's view, creating a high-fidelity 2.5D visual aesthetic.</p>
+             <p style="margin-bottom: 14px;">💻 <strong style="color: #ffd700;">HACKING TERMINALS & MINIGAMES:</strong> <span style="background: rgba(255,215,0,0.15); color: #ffd700; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; margin-left: 4px; border: 1px solid rgba(255,215,0,0.3);">NEW</span><br>Interactive supply terminals have been added. Stand near a console and hold [E] to engage. Completing the timed key-sequence defusal hacking minigame successfully drops high-tier items (Adrenaline/Medkits).</p>
+             <p style="margin-bottom: 14px;">🎒 <strong style="color: #ff6ef7;">TACTICAL DROPS & INVENTORY:</strong> <span style="background: rgba(255,110,247,0.15); color: #ff6ef7; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; margin-left: 4px; border: 1px solid rgba(255,110,247,0.3);">NEW</span><br>Stash pickups collected while at full capacity in your new tactical inventory slots. Press [H] to drop a stashed Medkit or [J] to drop an Ammo Pack on the ground to share with allies or save for later.</p>
+             <p style="margin-bottom: 14px;">⚔️ <strong style="color: #39ff14;">WEAPON XP & LEVELING:</strong> <span style="background: rgba(57,255,20,0.15); color: #39ff14; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; margin-left: 4px; border: 1px solid rgba(57,255,20,0.3);">NEW</span><br>Earn Weapon XP (+10 on hit, +50 on kill) to level up your gun. Watch your leveling progress directly in the HUD with a stashed progress tracker and golden center-screen announcements.</p>
          </div>
          <div class="modal-actions" style="margin-top: 15px;">
            <button id="btn-close-whats-new" class="btn primary btn-3d" style="width: 100%; font-size: 12px; padding: 12px;">CLOSE</button>
@@ -738,6 +740,24 @@
   <!-- Ranked Match Transition Video Overlay -->
   <div id="ranked-video-overlay" style="position: fixed; inset: 0; z-index: 9999; background: #000; opacity: 0; pointer-events: none; transition: opacity 0.5s ease; display: none; align-items: center; justify-content: center;">
     <video id="ranked-video" src="/fbee.mp4" style="width: 100%; height: 100%; object-fit: cover;" playsinline></video>
+  </div>
+
+  <!-- Hacking/Defusal Minigame Overlay -->
+  <div id="hacking-minigame-overlay" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 15000; background: rgba(2, 3, 5, 0.75); backdrop-filter: blur(8px); justify-content: center; align-items: center; pointer-events: auto;">
+    <div style="background: rgba(11, 12, 16, 0.95); border: 1px solid var(--neon-cyan); border-radius: 8px; padding: 30px; width: 360px; text-align: center; box-shadow: 0 0 25px rgba(102, 252, 241, 0.25);">
+      <h3 id="minigame-title" style="font-family: var(--font-title); font-size: 16px; color: var(--neon-cyan); letter-spacing: 2px; font-weight: 900; margin-bottom: 8px;">TERMINAL HACK IN PROGRESS</h3>
+      <p style="font-size: 10px; color: var(--text-muted); margin-bottom: 20px; font-family: var(--font-body); letter-spacing: 0.5px;">TYPE THE KEY SEQUENCE BEFORE TIMER EXPIRES</p>
+      
+      <!-- Key display -->
+      <div id="minigame-keys-container" style="display: flex; justify-content: center; gap: 12px; margin-bottom: 24px;"></div>
+
+      <!-- Timer bar -->
+      <div style="width: 100%; height: 6px; background: rgba(255,255,255,0.08); border-radius: 3px; overflow: hidden; margin-bottom: 12px;">
+        <div id="minigame-timer-bar" style="width: 100%; height: 100%; background: linear-gradient(90deg, var(--neon-red), var(--neon-yellow));"></div>
+      </div>
+
+      <div style="font-family: var(--font-title); font-size: 9px; color: var(--text-muted); letter-spacing: 0.5px;">PRESS [ESC] TO CANCEL HACK</div>
+    </div>
   </div>
 
   <!-- Client-side Socket.io is imported dynamically inside main.js via build. -->

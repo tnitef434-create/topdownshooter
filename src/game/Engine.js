@@ -370,6 +370,17 @@ export class Engine {
         return;
       }
 
+      // Hacking Minigame inputs intercept
+      if (this.activeMinigame) {
+        e.preventDefault();
+        if (e.key === 'Escape') {
+          this.cancelHackingMinigame();
+        } else {
+          this.handleMinigameKeyPress(e.key.toLowerCase());
+        }
+        return;
+      }
+
       const isIPressed = e.key.toLowerCase() === 'i';
       const is9Pressed = e.key === '9';
       if ((isIPressed && this.keys['9']) || (is9Pressed && this.keys['i'])) {
@@ -503,6 +514,42 @@ export class Engine {
           try {
             this.sound.playMetallicClick(0, 1800, 0.05, 0.15);
           } catch (ex) {}
+        }
+      }
+
+      // Drop stashed items
+      if (this.localPlayer && this.localPlayer.health > 0) {
+        if (e.key.toLowerCase() === 'h') {
+          if (this.localPlayer.healthPacks > 0) {
+            this.localPlayer.healthPacks--;
+            const itemId = this.spawnItemAt(this.localPlayer.x, this.localPlayer.y, 'health');
+            this.localPlayer.showTextNotification('DROPPED HEALTH PACK', '#ff6ef7');
+            this.localPlayer.updateHUD();
+            
+            if (!this.localPlayer.networkDroppedItems) this.localPlayer.networkDroppedItems = [];
+            this.localPlayer.networkDroppedItems.push({
+              id: itemId,
+              x: this.localPlayer.x,
+              y: this.localPlayer.y,
+              type: 'health'
+            });
+          }
+        }
+        if (e.key.toLowerCase() === 'j') {
+          if (this.localPlayer.ammoPacks > 0) {
+            this.localPlayer.ammoPacks--;
+            const itemId = this.spawnItemAt(this.localPlayer.x, this.localPlayer.y, 'ammo');
+            this.localPlayer.showTextNotification('DROPPED AMMO PACK', '#ff6ef7');
+            this.localPlayer.updateHUD();
+
+            if (!this.localPlayer.networkDroppedItems) this.localPlayer.networkDroppedItems = [];
+            this.localPlayer.networkDroppedItems.push({
+              id: itemId,
+              x: this.localPlayer.x,
+              y: this.localPlayer.y,
+              type: 'ammo'
+            });
+          }
         }
       }
 
@@ -1313,6 +1360,50 @@ export class Engine {
       if (this.combatBanner.timer <= 0) {
         this.combatBanner = null;
       }
+    }
+
+    // Update active minigame timer
+    if (this.activeMinigame) {
+      this.activeMinigame.timer -= clampedDt / 1000;
+      const timerBar = document.getElementById('minigame-timer-bar');
+      if (timerBar) {
+        timerBar.style.width = `${Math.max(0, this.activeMinigame.timer / 4.0 * 100)}%`;
+      }
+      if (this.activeMinigame.timer <= 0) {
+        this.failHackingMinigame();
+      }
+    }
+
+    // Proximity checks for Hacking Supply Terminals
+    let nearTerminal = null;
+    if (this.map && this.map.terminals && this.localPlayer && this.localPlayer.health > 0) {
+      nearTerminal = this.map.terminals.find(t => !t.hacked && Math.hypot(this.localPlayer.x - t.x, this.localPlayer.y - t.y) < 55);
+    }
+
+    const hudPrompt = document.getElementById('hud-interaction-prompt');
+    if (nearTerminal && this.gameState === 'playing') {
+      if (hudPrompt) {
+        hudPrompt.style.display = 'block';
+        hudPrompt.innerText = this.keys['e'] ? `HACKING... ${Math.round(this.hackingProgress)}%` : 'HOLD [E] TO HACK TERMINAL';
+      }
+      
+      if (this.keys['e'] && !this.activeMinigame) {
+        // Lock player velocity
+        this.localPlayer.vx = 0;
+        this.localPlayer.vy = 0;
+        
+        if (!this.hackingProgress) this.hackingProgress = 0;
+        this.hackingProgress += clampedDt * 0.08;
+        if (this.hackingProgress >= 100) {
+          this.hackingProgress = 0;
+          this.startHackingMinigame(nearTerminal);
+        }
+      } else if (!this.activeMinigame) {
+        this.hackingProgress = Math.max(0, (this.hackingProgress || 0) - clampedDt * 0.1);
+      }
+    } else {
+      if (hudPrompt && !this.activeMinigame) hudPrompt.style.display = 'none';
+      this.hackingProgress = 0;
     }
 
     if (this.matchMode === 'sabotage') {
@@ -3163,5 +3254,135 @@ export class Engine {
     };
 
     this.startReplay(finishMatch);
+  }
+
+  // ── Hacking Supply Terminals & Defusal Minigame ──
+  spawnItemAt(x, y, type, customId = null) {
+    const id = customId || `item_${type}_${Date.now()}_${Math.round(Math.random() * 1000)}`;
+    if (this.map.items.some(item => item.id === id)) return id;
+    this.map.items.push({ id, x, y, type, active: true });
+    return id;
+  }
+
+  generateRandomCode() {
+    const keys = ['w', 'a', 's', 'd', 'q', 'e', 'r', 'f'];
+    let code = '';
+    for (let i = 0; i < 4; i++) {
+      code += keys[Math.floor(Math.random() * keys.length)];
+    }
+    return code;
+  }
+
+  startHackingMinigame(terminal) {
+    const code = this.generateRandomCode();
+    this.activeMinigame = {
+      terminal,
+      code,
+      input: '',
+      timer: 4.0
+    };
+    
+    this.keys['e'] = false;
+    
+    const overlay = document.getElementById('hacking-minigame-overlay');
+    if (overlay) overlay.style.display = 'flex';
+    
+    const hudPrompt = document.getElementById('hud-interaction-prompt');
+    if (hudPrompt) hudPrompt.style.display = 'none';
+
+    this.renderMinigameKeys();
+  }
+
+  renderMinigameKeys() {
+    const container = document.getElementById('minigame-keys-container');
+    if (!container || !this.activeMinigame) return;
+
+    container.innerHTML = '';
+    const code = this.activeMinigame.code;
+    const input = this.activeMinigame.input;
+
+    for (let i = 0; i < code.length; i++) {
+      const char = code[i];
+      const isTyped = i < input.length;
+      const keyBox = document.createElement('div');
+      keyBox.style.width = '35px';
+      keyBox.style.height = '35px';
+      keyBox.style.lineHeight = '35px';
+      keyBox.style.borderRadius = '4px';
+      keyBox.style.fontFamily = "var(--font-title)";
+      keyBox.style.fontWeight = 'bold';
+      keyBox.style.fontSize = '14px';
+      keyBox.style.textTransform = 'uppercase';
+      keyBox.style.border = isTyped ? '1px solid #39ff14' : '1px solid rgba(255,255,255,0.15)';
+      keyBox.style.background = isTyped ? 'rgba(57, 255, 20, 0.12)' : 'rgba(0,0,0,0.4)';
+      keyBox.style.color = isTyped ? '#39ff14' : 'rgba(255,255,255,0.7)';
+      keyBox.style.boxShadow = isTyped ? '0 0 6px rgba(57, 255, 20, 0.25)' : 'none';
+      keyBox.innerText = char;
+      container.appendChild(keyBox);
+    }
+  }
+
+  handleMinigameKeyPress(key) {
+    if (!this.activeMinigame) return;
+
+    const code = this.activeMinigame.code;
+    const input = this.activeMinigame.input;
+    const expected = code[input.length];
+
+    if (key === expected) {
+      this.activeMinigame.input += key;
+      this.renderMinigameKeys();
+      
+      try { this.sound.playMetallicClick(0, 2500, 0.04, 0.2); } catch(ex) {}
+
+      if (this.activeMinigame.input === code) {
+        this.successHackingMinigame();
+      }
+    } else {
+      this.activeMinigame.input = '';
+      this.renderMinigameKeys();
+      try { this.sound.playMetallicClick(0, 300, 0.15, 0.3); } catch(ex) {}
+    }
+  }
+
+  cancelHackingMinigame() {
+    this.activeMinigame = null;
+    const overlay = document.getElementById('hacking-minigame-overlay');
+    if (overlay) overlay.style.display = 'none';
+  }
+
+  successHackingMinigame() {
+    if (!this.activeMinigame) return;
+    const term = this.activeMinigame.terminal;
+    term.hacked = true;
+    
+    const lootId1 = this.spawnItemAt(term.x - 22, term.y, 'health');
+    const lootId2 = this.spawnItemAt(term.x + 22, term.y, 'adrenaline');
+    
+    this.localPlayer.showTextNotification('HACK SUCCESSFUL! LOOT SPAWNED', '#39ff14');
+
+    if (!this.localPlayer.networkDroppedItems) this.localPlayer.networkDroppedItems = [];
+    this.localPlayer.networkDroppedItems.push({
+      id: lootId1,
+      x: term.x - 22,
+      y: term.y,
+      type: 'health'
+    });
+    this.localPlayer.networkDroppedItems.push({
+      id: lootId2,
+      x: term.x + 22,
+      y: term.y,
+      type: 'adrenaline'
+    });
+
+    try { this.sound.playMetallicClick(0, 3500, 0.25, 0.45); } catch(e) {}
+
+    this.cancelHackingMinigame();
+  }
+
+  failHackingMinigame() {
+    this.localPlayer.showTextNotification('HACK FAILED!', '#ff3c3c');
+    try { this.sound.playMetallicClick(0, 200, 0.3, 0.45); } catch(e) {}
+    this.cancelHackingMinigame();
   }
 }
