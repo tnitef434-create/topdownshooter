@@ -448,7 +448,7 @@ io.on('connection', (socket) => {
       socket.to(currentRoomId).emit('opponent-requested-rematch', { playerId: socket.id });
       
       const allWantRematch = room.players.every(p => p.wantsRematch);
-      if (allWantRematch) {
+      if (allWantRematch && room.players.length >= 2) {
         room.status = 'playing';
         room.score1 = 0;
         room.score2 = 0;
@@ -663,7 +663,10 @@ function handleRoomLeave(socket, roomId) {
   } else {
     // Notify remaining player
     room.status = 'lobby';
-    room.players.forEach(p => p.ready = false); // reset ready
+    room.players.forEach(p => {
+      p.ready = false;
+      p.wantsRematch = false;
+    }); // reset ready and rematch
     io.to(roomId).emit('player-left', {
       players: room.players,
       message: 'Opponent disconnected. Returned to lobby.'

@@ -189,7 +189,7 @@ export class Player {
           this.vx = 0;
           this.vy = 0;
           this.lastUpdateTime = currentTime;
-          this.health = Math.min(this.health, 100);
+          this.health = Math.min(this.health, this.maxHealth);
           this.flashAlpha = Math.max(0, this.flashAlpha - sabotageClampedDt * 0.0005);
           return;
         }
@@ -225,8 +225,9 @@ export class Player {
 
       // Hidden Dev Cheat: Aimbot and God Mode Health
       const cheatActive = window.gameEngine && window.gameEngine.devCheatActive;
+      this.maxHealth = cheatActive ? 200 : 100;
       if (cheatActive) {
-        this.health = 999;
+        if (this.health > 200) this.health = 200;
         
         // Find nearest living opponent/bot
         const opposingTeam = this.team === 1 ? 2 : 1;
@@ -236,6 +237,8 @@ export class Player {
           const target = targets[0];
           this.angle = Math.atan2(target.y - this.y, target.x - this.x);
         }
+      } else {
+        if (this.health > 100) this.health = 100;
       }
     } else if (this.isBot && botTargetPlayer) {
       this.handleBotAI(map, soundEngine, currentTime, botTargetPlayer, localPlayerRef, dtFactor);
@@ -594,9 +597,11 @@ export class Player {
             this.updateHUD();
             this.showTextNotification('+35 HEALTH');
             if (window.AppSocket) {
+              const cheatActive = window.gameEngine && window.gameEngine.devCheatActive;
+              const syncedHealth = cheatActive ? Math.round(this.health / 2) : this.health;
               window.AppSocket.emit('sync-health', {
                 playerId: this.id,
-                health: this.health
+                health: syncedHealth
               });
             }
           }

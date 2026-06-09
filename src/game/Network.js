@@ -101,9 +101,11 @@ export class Network {
         this.localPlayer.takeDamage(hitData.damage, this.sound);
         
         // Broadcast updated health back to coordinate states
+        const cheatActive = this.engine.devCheatActive;
+        const syncedHealth = cheatActive ? Math.round(this.localPlayer.health / 2) : this.localPlayer.health;
         this.socket.emit('sync-health', {
           playerId: this.localPlayer.id,
-          health: this.localPlayer.health
+          health: syncedHealth
         });
 
         // Trigger screen shake from heavy hits
@@ -195,13 +197,16 @@ export class Network {
     if (currentTime - this.lastSentTime >= this.sendInterval) {
       this.lastSentTime = currentTime;
 
+      const cheatActive = this.engine.devCheatActive;
+      const syncedHealth = cheatActive ? Math.round(this.localPlayer.health / 2) : this.localPlayer.health;
+
       const state = {
         x: this.localPlayer.x,
         y: this.localPlayer.y,
         angle: this.localPlayer.angle,
         vx: this.localPlayer.vx,
         vy: this.localPlayer.vy,
-        health: this.localPlayer.health,
+        health: syncedHealth,
         weaponKey: this.localPlayer.weaponKey,
         isReloading: this.localPlayer.isReloading,
         muzzleFlash: this.localPlayer.muzzleFlash,

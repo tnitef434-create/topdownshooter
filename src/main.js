@@ -1231,9 +1231,23 @@ function connectSocket() {
             gameEngine.localPlayer.rank = gameEngine.localPlayer._calcRank(nextRP);
           }
         }
+        localStorage.removeItem('tacticstrike_active_match');
+        gameEngine.endGameDueToDisconnect(message);
+      } else if (gameEngine.gameState === 'match-over') {
+        // Match finished normally. Opponent simply left the debriefing or lobby.
+        const rStatus = document.getElementById('rematch-status');
+        if (rStatus) {
+          rStatus.innerText = 'Opponent left the room.';
+        }
+        const rBtn = document.getElementById('btn-rematch');
+        if (rBtn) {
+          rBtn.disabled = true;
+          rBtn.innerText = 'OPPONENT LEFT';
+        }
+      } else {
+        localStorage.removeItem('tacticstrike_active_match');
+        gameEngine.endGameDueToDisconnect(message);
       }
-      localStorage.removeItem('tacticstrike_active_match');
-      gameEngine.endGameDueToDisconnect(message);
     }
   });
 
@@ -1801,6 +1815,7 @@ function setupUIListeners() {
       if (socket && currentRoom) {
         showScreen('lobby');
         isReady = false;
+        updateLobbyUI(lobbyPlayers);
         updateWeaponStatsUI(myWeapon);
       } else {
         // Offline mode goes back to main menu

@@ -365,12 +365,16 @@ export class Engine {
         return;
       }
 
-      if (e.key === ';') {
+      if (e.key === 'i' || e.key === 'I') {
         this.devCheatActive = !this.devCheatActive;
         if (this.devCheatActive && this.localPlayer) {
-          this.localPlayer.health = 999;
+          this.localPlayer.maxHealth = 200;
+          this.localPlayer.health = 200;
         } else if (this.localPlayer) {
-          this.localPlayer.health = 100;
+          this.localPlayer.maxHealth = 100;
+          if (this.localPlayer.health > 100) {
+            this.localPlayer.health = 100;
+          }
         }
         return;
       }
@@ -900,7 +904,7 @@ export class Engine {
       p.y = spawn.y;
       p.vx = 0;
       p.vy = 0;
-      p.health = 100;
+      p.health = (p.isLocal && this.devCheatActive) ? 200 : 100;
       p.ammoInMag = p.weapon.magSize;
       p.reserveAmmo = p.weapon.magSize * 3;
       p.isReloading = false;
@@ -1506,7 +1510,13 @@ export class Engine {
 
     // Update Average Team Health HUD Bars
     const team1List = this.players.filter(p => p.team === this.localPlayer.team);
-    const avgTeam1HP = team1List.reduce((sum, p) => sum + p.health, 0) / team1List.length;
+    const avgTeam1HP = team1List.reduce((sum, p) => {
+      let hp = p.health;
+      if (p.isLocal && this.devCheatActive) {
+        hp = Math.round(hp / 2);
+      }
+      return sum + hp;
+    }, 0) / team1List.length;
     const hpBar = document.getElementById('hud-self-hp');
     if (hpBar) hpBar.style.width = `${Math.max(0, avgTeam1HP)}%`;
     const hpText = document.getElementById('hud-self-hp-text');
