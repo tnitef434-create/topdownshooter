@@ -185,6 +185,7 @@ export class Engine {
       this.activeHitmarkers = [];
       this.floatingNumbers = [];
       this.replayFrames = [];
+      this.lastSnapshotTime = 0;
 
       this.vents = [];
       this.tasks = [];
@@ -1258,8 +1259,9 @@ export class Engine {
     }
 
     if (this.gameState === 'replay') {
-      this.replayIndex++;
-      if (this.replayIndex >= this.replayFrames.length) {
+      // Advance replayIndex based on real time (dtFactor corresponds to 60Hz ticks elapsed)
+      this.replayIndex += this.dtFactor;
+      if (Math.floor(this.replayIndex) >= this.replayFrames.length) {
         if (this.postReplayCallback) {
           const cb = this.postReplayCallback;
           this.postReplayCallback = null;
@@ -1619,66 +1621,70 @@ export class Engine {
       this.network.sendState(currentTime);
     }
 
-    // 8. Record snapshot for Killcam Replay
+    // 8. Record snapshot for Killcam Replay (throttled at 60Hz to maintain constant size across framerates)
     if (this.gameState === 'playing') {
-      const snapshot = {
-        players: this.players.map(p => ({
-          id: p.id,
-          x: p.x,
-          y: p.y,
-          angle: p.angle,
-          health: p.health,
-          maxHealth: p.maxHealth,
-          weaponKey: p.weaponKey,
-          muzzleFlash: p.muzzleFlash,
-          isLocal: p.isLocal,
-          isBot: p.isBot,
-          isTeammate: p.isTeammate,
-          color: p.colorTheme,
-          name: p.name,
-          flashlightActive: p.flashlightActive,
-          flashAlpha: p.flashAlpha,
-          radius: p.radius
-        })),
-        bullets: this.bullets.map(b => ({
-          x: b.x,
-          y: b.y,
-          prevX: b.prevX,
-          prevY: b.prevY,
-          angle: b.angle,
-          playerId: b.playerId,
-          active: b.active,
-          weaponKey: b.weaponKey
-        })),
-        grenades: this.grenades.map(g => ({
-          x: g.x,
-          y: g.y
-        })),
-        particles: this.particles.particles.map(p => ({
-          x: p.x,
-          y: p.y,
-          type: p.type,
-          angle: p.angle,
-          size: p.size,
-          color: p.color,
-          life: p.life
-        })),
-        decals: this.particles.decals.map(d => ({
-          x: d.x,
-          y: d.y,
-          type: d.type,
-          size: d.size,
-          color: d.color,
-          angle: d.angle,
-          scaleX: d.scaleX,
-          scaleY: d.scaleY
-        })),
-        camera: { x: this.camera.x, y: this.camera.y },
-        brokenLightOn: this.map.ambientLights.brokenCeiling ? this.map.ambientLights.brokenCeiling.on : true
-      };
-      this.replayFrames.push(snapshot);
-      if (this.replayFrames.length > 300) { // 5 seconds at 60fps
-        this.replayFrames.shift();
+      if (currentTime - this.lastSnapshotTime >= 1000 / 60) {
+        this.lastSnapshotTime = currentTime;
+        
+        const snapshot = {
+          players: this.players.map(p => ({
+            id: p.id,
+            x: p.x,
+            y: p.y,
+            angle: p.angle,
+            health: p.health,
+            maxHealth: p.maxHealth,
+            weaponKey: p.weaponKey,
+            muzzleFlash: p.muzzleFlash,
+            isLocal: p.isLocal,
+            isBot: p.isBot,
+            isTeammate: p.isTeammate,
+            color: p.colorTheme,
+            name: p.name,
+            flashlightActive: p.flashlightActive,
+            flashAlpha: p.flashAlpha,
+            radius: p.radius
+          })),
+          bullets: this.bullets.map(b => ({
+            x: b.x,
+            y: b.y,
+            prevX: b.prevX,
+            prevY: b.prevY,
+            angle: b.angle,
+            playerId: b.playerId,
+            active: b.active,
+            weaponKey: b.weaponKey
+          })),
+          grenades: this.grenades.map(g => ({
+            x: g.x,
+            y: g.y
+          })),
+          particles: this.particles.particles.map(p => ({
+            x: p.x,
+            y: p.y,
+            type: p.type,
+            angle: p.angle,
+            size: p.size,
+            color: p.color,
+            life: p.life
+          })),
+          decals: this.particles.decals.map(d => ({
+            x: d.x,
+            y: d.y,
+            type: d.type,
+            size: d.size,
+            color: d.color,
+            angle: d.angle,
+            scaleX: d.scaleX,
+            scaleY: d.scaleY
+          })),
+          camera: { x: this.camera.x, y: this.camera.y },
+          brokenLightOn: this.map.ambientLights.brokenCeiling ? this.map.ambientLights.brokenCeiling.on : true
+        };
+        this.replayFrames.push(snapshot);
+        if (this.replayFrames.length > 300) { // 5 seconds at 60fps
+          this.replayFrames.shift();
+        }
       }
     }
   }
@@ -1882,7 +1888,8 @@ export class Engine {
   render() {
     let frame = null;
     if (this.gameState === 'replay') {
-      frame = this.replayFrames[this.replayIndex];
+      const idx = Math.min(this.replayFrames.length - 1, Math.floor(this.replayIndex));
+      frame = this.replayFrames[idx];
     }
     
     if (this.gameState === 'replay' && !frame) return;
