@@ -352,7 +352,7 @@ footer {
 /* Lobby Screen Styling */
 .lobby-container {
   width: 900px;
-  height: 580px;
+  height: 680px;
   background: var(--glass-bg);
   backdrop-filter: var(--glass-blur);
   border: 1px solid var(--glass-border);
@@ -537,6 +537,7 @@ footer {
   grid-template-columns: repeat(2, 1fr);
   gap: 10px;
   overflow-y: auto;
+  min-height: 150px;
   max-height: 250px;
   padding-right: 6px;
 }
