@@ -36,13 +36,7 @@ export class Network {
       }
 
       if (state.health !== undefined) {
-        // Only accept health updates from state packets if they are lower or equal to current health,
-        // or if they indicate a round reset (health === 100).
-        // This prevents the "health goes back up" glitch after hitting someone.
-        // Healing (health going up) is handled authoritatively by 'opponent-health-sync' when items are picked up.
-        if (state.health <= remotePlayer.health || state.health === 100) {
-          remotePlayer.health = state.health;
-        }
+        remotePlayer.health = state.health;
       }
 
       let buffer = this.opponentStateBuffers.get(state.id);

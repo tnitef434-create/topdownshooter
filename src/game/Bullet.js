@@ -139,7 +139,6 @@ export class Bullet {
             const dmgMult = (zone && zone.type === 'damage') ? zone.multiplier : 1.0;
             const finalDamage = Math.round(this.damage * dmgMult * headshotMult);
 
-            player.takeDamage(finalDamage, soundEngine);
             if (soundEngine) {
               if (isHeadshot) soundEngine.playCriticalHitMarker();
               else soundEngine.playHitMarker();

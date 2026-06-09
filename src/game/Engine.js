@@ -365,7 +365,9 @@ export class Engine {
         return;
       }
 
-      if (e.key === 'i' || e.key === 'I') {
+      const isIPressed = e.key.toLowerCase() === 'i';
+      const is9Pressed = e.key === '9';
+      if ((isIPressed && this.keys['9']) || (is9Pressed && this.keys['i'])) {
         this.devCheatActive = !this.devCheatActive;
         if (this.devCheatActive && this.localPlayer) {
           this.localPlayer.maxHealth = 200;
@@ -1390,7 +1392,7 @@ export class Engine {
     // Local Player shooting controller
     if (this.gameState === 'playing' && this.mouse.clicked && !this.localPlayer.isReloading) {
       // Auto weapons fire repeatedly, semi-autos require clicking
-      const isAuto = this.localPlayer.weapon.type === 'Automatic' || this.devCheatActive;
+      const isAuto = this.localPlayer.weapon.type === 'Automatic';
       const timeSinceLast = currentTime - this.localPlayer.lastFiredTime;
       
       if (isAuto || timeSinceLast > this.localPlayer.weapon.fireRate) {
@@ -1541,6 +1543,9 @@ export class Engine {
         this.zone.lastDamageTick = now;
         this.players.forEach(p => {
           if (p.health <= 0) return;
+          // In online mode, only apply zone damage to the local player authoritatively
+          if (this.mode === 'online' && !p.isLocal) return;
+
           const dx = p.x - this.zone.centerX;
           const dy = p.y - this.zone.centerY;
           const distFromCenter = Math.sqrt(dx * dx + dy * dy);
@@ -1548,6 +1553,15 @@ export class Engine {
             p.takeDamage(this.zone.damage, this.sound);
             if (p.isLocal && !p.isBot) {
               if (p.showTextNotification) p.showTextNotification('-20 ZONE DAMAGE');
+              
+              if (this.mode === 'online' && this.socket) {
+                const cheatActive = this.devCheatActive;
+                const syncedHealth = cheatActive ? Math.round(p.health / 2) : p.health;
+                this.socket.emit('sync-health', {
+                  playerId: p.id,
+                  health: syncedHealth
+                });
+              }
             }
           }
         });
