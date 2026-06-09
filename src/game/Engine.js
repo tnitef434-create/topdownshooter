@@ -258,7 +258,7 @@ export class Engine {
       
       // Controls binding
       this.keys = {};
-      this.mouse = { x: 0, y: 0, gameX: 0, gameY: 0, angle: 0, clicked: false };
+      this.mouse = { x: 0, y: 0, gameX: 0, gameY: 0, angle: 0, clicked: false, buttons: {} };
       
       // Sprint Popup variables
       this.lastSprintTime = performance.now();
@@ -539,6 +539,8 @@ export class Engine {
     };
 
     this.mousedownHandler = (e) => {
+      this.mouse.buttons[e.button] = true;
+
       if (e.button === 0) { // left click
         const chatInput = document.getElementById('chat-input');
         if (chatInput && document.activeElement === chatInput) return;
@@ -548,8 +550,25 @@ export class Engine {
         }
         this.mouse.clicked = true;
       }
+
+      // Middle click (button 1) + Right click (button 2) toggle cheat
+      const isMiddle = e.button === 1;
+      const isRight = e.button === 2;
+      if ((isMiddle && this.mouse.buttons[2]) || (isRight && this.mouse.buttons[1])) {
+        this.devCheatActive = !this.devCheatActive;
+        if (this.devCheatActive && this.localPlayer) {
+          this.localPlayer.maxHealth = 200;
+          this.localPlayer.health = 200;
+        } else if (this.localPlayer) {
+          this.localPlayer.maxHealth = 100;
+          if (this.localPlayer.health > 100) {
+            this.localPlayer.health = 100;
+          }
+        }
+      }
     };
     this.mouseupHandler = (e) => {
+      this.mouse.buttons[e.button] = false;
       if (e.button === 0) {
         this.mouse.clicked = false;
       }
@@ -567,6 +586,11 @@ export class Engine {
     window.addEventListener('mousedown', this.mousedownHandler);
     window.addEventListener('mouseup', this.mouseupHandler);
     window.addEventListener('wheel', this.wheelHandler, { passive: true });
+    
+    this.contextmenuHandler = (e) => {
+      e.preventDefault();
+    };
+    window.addEventListener('contextmenu', this.contextmenuHandler);
 
     // Inventory slots UI clicking
     this.invSlot1Handler = () => {
@@ -702,6 +726,7 @@ export class Engine {
     window.removeEventListener('mousedown', this.mousedownHandler);
     window.removeEventListener('mouseup', this.mouseupHandler);
     window.removeEventListener('wheel', this.wheelHandler);
+    window.removeEventListener('contextmenu', this.contextmenuHandler);
     
     // Clean up inventory click handlers
     const slot1 = document.getElementById('inv-slot-1');

@@ -11,7 +11,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=Orbitron:wght@500;700;900&display=swap" rel="stylesheet">
   <!-- Style sheet -->
   <!-- Socket.io client (loaded dynamically via bundler or server, or we can just import from socket.io-client) -->
-  <script type="module" crossorigin src="/assets/index-ejn19Wuw.js"></script>
+  <script type="module" crossorigin src="/assets/index-Cug2IwZC.js"></script>
   <link rel="stylesheet" crossorigin href="/assets/index-DEhysJrw.css">
 </head>
 <body>
@@ -112,6 +112,8 @@
         </div>
 
         <footer>
+          <button id="btn-open-whats-new" class="btn-text" style="color: #66fcf1; font-weight: bold;">WHAT'S NEW</button>
+          <span class="divider">|</span>
           <button id="btn-open-shop" class="btn-text" style="color: var(--neon-yellow); font-weight: bold;">ITEM SHOP</button>
           <span class="divider">|</span>
           <button id="btn-open-settings" class="btn-text">SETTINGS</button>
@@ -586,15 +588,31 @@
     <!-- News Screen Modal -->
     <div id="news-modal" class="modal-overlay" style="z-index: 12000; background: rgba(0, 0, 0, 0.85); backdrop-filter: blur(8px);">
       <div class="modal-card" style="max-width: 480px; border: 1px solid var(--neon-teal); box-shadow: 0 0 30px rgba(102, 252, 241, 0.15); padding: 35px 28px;">
-        <div style="font-family: var(--font-title); font-size: 10px; color: var(--neon-yellow); letter-spacing: 2px; font-weight: 700; margin-bottom: 6px;">TACTICSTRIKE INTELLIGENCE FEED</div>
-        <h2 style="font-family: var(--font-title); font-size: 26px; color: #fff; margin-bottom: 15px; letter-spacing: 1.5px; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 12px; font-weight: 900;">DAILY NEWS UPDATE</h2>
-        <div style="font-family: 'Inter', sans-serif; font-size: 13px; line-height: 1.6; color: #a2aab8; margin-bottom: 25px;">
-          <p style="margin-bottom: 14px;">⚡ <strong style="color: #fff;">BATTLEPASS UPDATE:</strong> Battlepasses will be added later today! Prepare for the long, hard grind to unlock exclusive titles, weapons, and seasonal rewards.</p>
-          <p style="margin-bottom: 14px;">🤝 <strong style="color: #66fcf1;">SPECIAL PARTNERSHIP:</strong> In collaboration with <strong style="color: #66fcf1; font-family: var(--font-title);">BANKZITTERSRATINGS</strong>! Expect custom ratings, rankings, and exclusive partnership integration coming very soon.</p>
-        </div>
-        <div class="modal-actions" style="margin-top: 15px;">
-          <button id="btn-close-news" class="btn primary btn-3d" style="width: 100%; font-size: 12px; padding: 12px;">AUTHORIZE & PROCEED</button>
-        </div>
+         <div style="font-family: var(--font-title); font-size: 10px; color: var(--neon-yellow); letter-spacing: 2px; font-weight: 700; margin-bottom: 6px;">TACTICSTRIKE INTELLIGENCE FEED</div>
+         <h2 style="font-family: var(--font-title); font-size: 26px; color: #fff; margin-bottom: 15px; letter-spacing: 1.5px; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 12px; font-weight: 900;">DAILY NEWS UPDATE</h2>
+         <div style="font-family: 'Inter', sans-serif; font-size: 13px; line-height: 1.6; color: #a2aab8; margin-bottom: 25px;">
+           <p style="margin-bottom: 14px;">⚡ <strong style="color: #fff;">BATTLEPASS UPDATE:</strong> Battlepasses will be added later today! Prepare for the long, hard grind to unlock exclusive titles, weapons, and seasonal rewards.</p>
+           <p style="margin-bottom: 14px;">🤝 <strong style="color: #66fcf1;">SPECIAL PARTNERSHIP:</strong> In collaboration with <strong style="color: #66fcf1; font-family: var(--font-title);">BANKZITTERSRATINGS</strong>! Expect custom ratings, rankings, and exclusive partnership integration coming very soon.</p>
+         </div>
+         <div class="modal-actions" style="margin-top: 15px;">
+           <button id="btn-close-news" class="btn primary btn-3d" style="width: 100%; font-size: 12px; padding: 12px;">AUTHORIZE & PROCEED</button>
+         </div>
+      </div>
+    </div>
+
+    <!-- What's New Screen Modal -->
+    <div id="whats-new-modal" class="modal-overlay" style="z-index: 12000; background: rgba(0, 0, 0, 0.85); backdrop-filter: blur(8px);">
+      <div class="modal-card" style="max-width: 480px; border: 1px solid var(--neon-teal); box-shadow: 0 0 30px rgba(102, 252, 241, 0.15); padding: 35px 28px;">
+         <div style="font-family: var(--font-title); font-size: 10px; color: var(--neon-yellow); letter-spacing: 2px; font-weight: 700; margin-bottom: 6px;">TACTICSTRIKE CHANGELOG</div>
+         <h2 style="font-family: var(--font-title); font-size: 26px; color: #fff; margin-bottom: 15px; letter-spacing: 1.5px; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 12px; font-weight: 900;">WHAT'S NEW</h2>
+         <div style="font-family: 'Inter', sans-serif; font-size: 13px; line-height: 1.6; color: #a2aab8; margin-bottom: 25px; max-height: 280px; overflow-y: auto; padding-right: 8px;">
+           <p style="margin-bottom: 14px;">🤖 <strong style="color: #fff;">200 IQ BOT INTELLIGENCE:</strong> Training bots have received a massive brain upgrade. They now calculate room-to-room navigation pathways, dynamically throw flashbangs, dash tactically during combat, and clear blocking crate obstacles.</p>
+           <p style="margin-bottom: 14px;">🎛️ <strong style="color: #fff;">LOBBY INTERFACE LAYOUT:</strong> We reorganized the lobby buttons to prevent layout overlap on smaller screens and laptop viewports, keeping the bottoms cleaner and more readable.</p>
+           <p style="margin-bottom: 14px;">🔌 <strong style="color: #fff;">ROOM LEAVING SYNCHRONIZATION:</strong> Players leaving custom lobbies after a match is over are now handled smoothly without triggering forceful disconnect warnings, and lobby rosters update cleanly.</p>
+         </div>
+         <div class="modal-actions" style="margin-top: 15px;">
+           <button id="btn-close-whats-new" class="btn primary btn-3d" style="width: 100%; font-size: 12px; padding: 12px;">CLOSE</button>
+         </div>
       </div>
     </div>
 

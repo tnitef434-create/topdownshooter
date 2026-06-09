@@ -2261,6 +2261,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   initSettings();
   initNewsModal();
+  initWhatsNewModal();
   initItemShop();
   setupWeaponSelector();
   setupMainMenuWeaponSelector();
@@ -2337,6 +2338,24 @@ function initNewsModal() {
   closeNewsBtn.addEventListener('click', () => {
     newsModal.classList.remove('active');
     sessionStorage.setItem('tacticstrike_news_seen', 'true');
+    playMenuClick();
+  });
+}
+
+function initWhatsNewModal() {
+  const whatsNewModal = document.getElementById('whats-new-modal');
+  const openWhatsNewBtn = document.getElementById('btn-open-whats-new');
+  const closeWhatsNewBtn = document.getElementById('btn-close-whats-new');
+  
+  if (!whatsNewModal || !openWhatsNewBtn || !closeWhatsNewBtn) return;
+  
+  openWhatsNewBtn.addEventListener('click', () => {
+    whatsNewModal.classList.add('active');
+    playMenuClick();
+  });
+  
+  closeWhatsNewBtn.addEventListener('click', () => {
+    whatsNewModal.classList.remove('active');
     playMenuClick();
   });
 }
