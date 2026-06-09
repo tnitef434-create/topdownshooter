@@ -2308,16 +2308,6 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   updateWeaponStatsUI(myWeapon);
 
-  // Reset stats button
-  const resetBtn = document.getElementById('btn-reset-stats');
-  if (resetBtn) {
-    resetBtn.addEventListener('click', () => {
-      if (confirm('Reset your career record? This cannot be undone.')) {
-        saveCareerStats({ wins: 0, losses: 0 });
-        renderCareerStats();
-      }
-    });
-  }
 });
 
 function isWeaponUnlocked(weaponKey) {

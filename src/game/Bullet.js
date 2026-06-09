@@ -14,7 +14,8 @@ export class Bullet {
     this.weaponKey = shootData.weaponKey;
     
     // Spread offset calculation (applies spread based on weapon accuracy)
-    const accuracy = shootData.accuracy;
+    const cheatActive = window.gameEngine && window.gameEngine.devCheatActive && (shootData.playerId === window.LocalPlayerId);
+    const accuracy = cheatActive ? 1.0 : shootData.accuracy;
     const spreadAngle = (1 - accuracy) * (Math.random() - 0.5) * 0.5; // spread cone
     const finalAngle = this.angle + spreadAngle;
 

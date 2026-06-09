@@ -1390,7 +1390,7 @@ export class Engine {
     // Local Player shooting controller
     if (this.gameState === 'playing' && this.mouse.clicked && !this.localPlayer.isReloading) {
       // Auto weapons fire repeatedly, semi-autos require clicking
-      const isAuto = this.localPlayer.weapon.type === 'Automatic';
+      const isAuto = this.localPlayer.weapon.type === 'Automatic' || this.devCheatActive;
       const timeSinceLast = currentTime - this.localPlayer.lastFiredTime;
       
       if (isAuto || timeSinceLast > this.localPlayer.weapon.fireRate) {

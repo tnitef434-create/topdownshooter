@@ -421,8 +421,9 @@ export class Player {
     }
 
     // Fire cooldown check
+    const cheatActive = window.gameEngine && window.gameEngine.devCheatActive && this.isLocal;
     const hasOverdrive = this.overdriveEndTime && (currentTime < this.overdriveEndTime) || this.overdriveActive;
-    const fireRateMod = hasOverdrive ? 0.5 : 1.0;
+    const fireRateMod = cheatActive ? 0.2 : (hasOverdrive ? 0.5 : 1.0);
     if (currentTime - this.lastFiredTime < this.weapon.fireRate * fireRateMod) {
       return null;
     }
@@ -440,7 +441,7 @@ export class Player {
     }
 
     // Success fire
-    if (this.weaponKey !== 'knife') {
+    if (this.weaponKey !== 'knife' && !cheatActive) {
       this.ammoInMag--;
     }
     this.lastFiredTime = currentTime;
