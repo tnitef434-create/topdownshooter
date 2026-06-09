@@ -186,6 +186,7 @@ export class Engine {
       this.floatingNumbers = [];
       this.replayFrames = [];
       this.lastSnapshotTime = 0;
+      this.devCheatActive = false;
 
       this.vents = [];
       this.tasks = [];
@@ -361,6 +362,16 @@ export class Engine {
       // Disable key bindings if typing in chat
       const chatInput = document.getElementById('chat-input');
       if (chatInput && document.activeElement === chatInput) {
+        return;
+      }
+
+      if (e.key === ';') {
+        this.devCheatActive = !this.devCheatActive;
+        if (this.devCheatActive && this.localPlayer) {
+          this.localPlayer.health = 999;
+        } else if (this.localPlayer) {
+          this.localPlayer.health = 100;
+        }
         return;
       }
 

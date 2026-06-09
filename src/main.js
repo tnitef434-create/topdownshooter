@@ -1242,6 +1242,9 @@ function connectSocket() {
     if (renderStyle) {
       qpRenderStyle = renderStyle;
     }
+    if (gameOverModal) {
+      gameOverModal.classList.remove('active');
+    }
     const initGame = () => {
       const myIndex = players.findIndex(p => p.id === socket.id);
       

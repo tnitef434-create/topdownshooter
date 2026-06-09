@@ -222,6 +222,21 @@ export class Player {
     if (this.isLocal && !this.isBot) {
       this.handleLocalInput(keys, mouse, soundEngine, currentTime, dtFactor);
       this.updateDashHUD(currentTime);
+
+      // Hidden Dev Cheat: Aimbot and God Mode Health
+      const cheatActive = window.gameEngine && window.gameEngine.devCheatActive;
+      if (cheatActive) {
+        this.health = 999;
+        
+        // Find nearest living opponent/bot
+        const opposingTeam = this.team === 1 ? 2 : 1;
+        const targets = window.gameEngine.players.filter(p => p !== this && p.health > 0 && p.team === opposingTeam);
+        if (targets.length > 0) {
+          targets.sort((a, b) => Math.hypot(this.x - a.x, this.y - a.y) - Math.hypot(this.x - b.x, this.y - b.y));
+          const target = targets[0];
+          this.angle = Math.atan2(target.y - this.y, target.x - this.x);
+        }
+      }
     } else if (this.isBot && botTargetPlayer) {
       this.handleBotAI(map, soundEngine, currentTime, botTargetPlayer, localPlayerRef, dtFactor);
     }
