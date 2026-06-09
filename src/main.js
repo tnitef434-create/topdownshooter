@@ -1588,7 +1588,7 @@ function setupUIListeners() {
       safeStorage.setItem('tacticstrike_player_name', myName);
       connectSocket();
       if (socket) {
-        socket.emit('create-room', { playerName: myName, mode: myMode, color: myColor, mapId: selectedMapId });
+        socket.emit('create-room', { playerName: myName, mode: myMode, color: myColor, mapId: selectedMapId, weapon: myWeapon });
       }
     });
   }
@@ -1608,7 +1608,7 @@ function setupUIListeners() {
       safeStorage.setItem('tacticstrike_player_name', myName);
       connectSocket();
       if (socket) {
-        socket.emit('join-room', { roomId: code, playerName: myName, color: myColor });
+        socket.emit('join-room', { roomId: code, playerName: myName, color: myColor, weapon: myWeapon });
       }
     });
   }
@@ -1629,7 +1629,7 @@ function setupUIListeners() {
       const searchMode = myMode + '_' + searchStyle;
 
       // Emit first with strict rank bracket
-      socket.emit('auto-match', { playerName: myName, mode: searchMode, color: myColor, rp: myRP, rankStrict: true });
+      socket.emit('auto-match', { playerName: myName, mode: searchMode, color: myColor, rp: myRP, rankStrict: true, weapon: myWeapon });
       
       // Show matchmaking screen
       showScreen('matchmaking');
@@ -1678,7 +1678,7 @@ function setupUIListeners() {
               socket.emit('leave-room');
               currentRoom = null;
             }
-            socket.emit('auto-match', { playerName: myName, mode: searchMode, color: myColor, rp: myRP, rankStrict: false });
+            socket.emit('auto-match', { playerName: myName, mode: searchMode, color: myColor, rp: myRP, rankStrict: false, weapon: myWeapon });
           }
         }
       }, 2000);

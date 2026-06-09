@@ -183,7 +183,7 @@ io.on('connection', (socket) => {
   });
 
   // 1. Create a custom room
-  socket.on('create-room', ({ playerName, mode, color, mapId }) => {
+  socket.on('create-room', ({ playerName, mode, color, mapId, weapon }) => {
     let roomId = generateRoomId();
     while (rooms.has(roomId)) {
       roomId = generateRoomId();
@@ -199,7 +199,7 @@ io.on('connection', (socket) => {
         id: socket.id,
         name: playerName || 'Player 1',
         ready: false,
-        weapon: 'pistol',
+        weapon: weapon || 'pistol',
         color: color || 'cyan',
         rp: 0
       }],
@@ -243,8 +243,7 @@ io.on('connection', (socket) => {
     }
   });
 
-  // 2. Join a room via code
-  socket.on('join-room', ({ roomId, playerName, color }) => {
+  socket.on('join-room', ({ roomId, playerName, color, weapon }) => {
     const cleanRoomId = roomId.trim().toUpperCase();
     const room = rooms.get(cleanRoomId);
 
@@ -264,7 +263,7 @@ io.on('connection', (socket) => {
       id: socket.id,
       name: playerName || `Player ${room.players.length + 1}`,
       ready: false,
-      weapon: 'pistol',
+      weapon: weapon || 'pistol',
       color: color || 'cyan',
       rp: 0
     };
@@ -280,7 +279,7 @@ io.on('connection', (socket) => {
   });
 
   // 3. Auto-matchmaking (Ranked)
-  socket.on('auto-match', ({ playerName, mode, color, rp, rankStrict }) => {
+  socket.on('auto-match', ({ playerName, mode, color, rp, rankStrict, weapon }) => {
     let searchMode = mode;
     if (!['1v1_realistic', '1v1_competitive', '2v2_realistic', '2v2_competitive'].includes(searchMode)) {
       searchMode = '1v1_realistic';
@@ -312,7 +311,7 @@ io.on('connection', (socket) => {
         id: socket.id,
         name: playerName || `Player ${targetRoom.players.length + 1}`,
         ready: false,
-        weapon: 'pistol',
+        weapon: weapon || 'pistol',
         color: color || 'cyan',
         rp: playerRP
       };
@@ -339,7 +338,7 @@ io.on('connection', (socket) => {
           id: socket.id,
           name: playerName || 'Player 1',
           ready: false,
-          weapon: 'pistol',
+          weapon: weapon || 'pistol',
           color: color || 'cyan',
           rp: playerRP
         }],
