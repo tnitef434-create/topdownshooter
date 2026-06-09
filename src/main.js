@@ -50,7 +50,8 @@ const inputs = {
   chat: document.getElementById('chat-input'),
   qpMapSelect: document.getElementById('qp-map-select'),
   lobbyMapSelect: document.getElementById('lobby-map-select'),
-  lobbyModeSelect: document.getElementById('lobby-mode-select')
+  lobbyModeSelect: document.getElementById('lobby-mode-select'),
+  lobbyStyleSelect: document.getElementById('lobby-style-select')
 };
 
 const displays = {
@@ -978,6 +979,19 @@ function updateLobbyUI(players) {
       lobbyModeSelect.disabled = !isHost;
     }
   }
+
+  // Update style select dropdown visibility and accessibility
+  const lobbyStyleContainer = document.getElementById('lobby-style-selector-container');
+  const lobbyStyleSelect = document.getElementById('lobby-style-select');
+  if (lobbyStyleContainer && lobbyStyleSelect) {
+    if (currentMatchSource === 'ranked') {
+      lobbyStyleContainer.style.display = 'none';
+    } else {
+      lobbyStyleContainer.style.display = 'block';
+      const isHost = players[0] && players[0].id === socket.id;
+      lobbyStyleSelect.disabled = !isHost;
+    }
+  }
 }
 
 // 5. Connect to Socket.io Server
@@ -1081,7 +1095,7 @@ function connectSocket() {
   });
 
   // Socket Events
-  socket.on('room-created', ({ roomId, players, autoMatch, mode, mapId }) => {
+  socket.on('room-created', ({ roomId, players, autoMatch, mode, mapId, renderStyle }) => {
     currentRoom = roomId;
     if (mode) myMode = mode;
     displays.roomCode.innerText = roomId;
@@ -1098,6 +1112,13 @@ function connectSocket() {
       lobbyModeSelect.value = mode;
     }
 
+    // Sync style choice
+    const lobbyStyleSelect = document.getElementById('lobby-style-select');
+    if (lobbyStyleSelect && renderStyle) {
+      lobbyStyleSelect.value = renderStyle;
+      qpRenderStyle = renderStyle;
+    }
+
     if (autoMatch) {
       updateLobbyUI(players);
       addSystemChatMessage('Created matchmaking room. Waiting for opponent...');
@@ -1108,7 +1129,7 @@ function connectSocket() {
     }
   });
 
-  socket.on('room-joined', ({ roomId, players, mode, mapId }) => {
+  socket.on('room-joined', ({ roomId, players, mode, mapId, renderStyle }) => {
     currentRoom = roomId;
     if (mode) myMode = mode;
     displays.roomCode.innerText = roomId;
@@ -1125,6 +1146,13 @@ function connectSocket() {
     const lobbyModeSelect = document.getElementById('lobby-mode-select');
     if (lobbyModeSelect && mode) {
       lobbyModeSelect.value = mode;
+    }
+
+    // Sync style choice
+    const lobbyStyleSelect = document.getElementById('lobby-style-select');
+    if (lobbyStyleSelect && renderStyle) {
+      lobbyStyleSelect.value = renderStyle;
+      qpRenderStyle = renderStyle;
     }
 
     addSystemChatMessage(`Joined lobby: ${roomId}`);
@@ -1174,6 +1202,16 @@ function connectSocket() {
     addSystemChatMessage(`Host updated game mode to: ${modeName}`);
   });
 
+  socket.on('lobby-style-update', ({ renderStyle }) => {
+    const lobbyStyleSelect = document.getElementById('lobby-style-select');
+    if (lobbyStyleSelect) {
+      lobbyStyleSelect.value = renderStyle;
+    }
+    qpRenderStyle = renderStyle;
+    const styleName = renderStyle === 'competitive' ? 'Competitive' : 'Realistic';
+    addSystemChatMessage(`Host updated render style to: ${styleName}`);
+  });
+
   socket.on('player-left', ({ players, message }) => {
     updateLobbyUI(players);
     addSystemChatMessage(message);
@@ -1199,8 +1237,11 @@ function connectSocket() {
     }
   });
 
-  socket.on('match-start', ({ players, seed, isRanked, mode, mapId }) => {
+  socket.on('match-start', ({ players, seed, isRanked, mode, mapId, renderStyle }) => {
     currentMatchSource = isRanked ? 'ranked' : 'casual';
+    if (renderStyle) {
+      qpRenderStyle = renderStyle;
+    }
     const initGame = () => {
       const myIndex = players.findIndex(p => p.id === socket.id);
       
@@ -1588,7 +1629,7 @@ function setupUIListeners() {
       safeStorage.setItem('tacticstrike_player_name', myName);
       connectSocket();
       if (socket) {
-        socket.emit('create-room', { playerName: myName, mode: myMode, color: myColor, mapId: selectedMapId, weapon: myWeapon });
+        socket.emit('create-room', { playerName: myName, mode: myMode, color: myColor, mapId: selectedMapId, weapon: myWeapon, renderStyle: qpRenderStyle });
       }
     });
   }
@@ -1881,6 +1922,16 @@ function setupUIListeners() {
       const newMode = e.target.value;
       if (socket && currentRoom) {
         socket.emit('select-game-mode', { mode: newMode });
+      }
+      playMenuClick();
+    });
+  }
+
+  if (inputs.lobbyStyleSelect) {
+    inputs.lobbyStyleSelect.addEventListener('change', (e) => {
+      const newStyle = e.target.value;
+      if (socket && currentRoom) {
+        socket.emit('select-render-style', { renderStyle: newStyle });
       }
       playMenuClick();
     });

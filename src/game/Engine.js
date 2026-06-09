@@ -1892,9 +1892,15 @@ export class Engine {
     this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
 
     // Dynamic scale/zoom sizing helper based on resolution
-    const baseWidth = 1920;
-    const scaleFactor = Math.max(0.65, Math.min(1.2, this.canvas.width / baseWidth));
-    this.zoom = scaleFactor;
+    // Using Math.min of both horizontal and vertical ratios guarantees that a reference 1920x1080 area is fitted 
+    // to the player's screen, so players on any laptop or monitor see the exact same proportion of the arena.
+    const refWidth = 1920;
+    const refHeight = 1080;
+    const ratioX = this.canvas.width / refWidth;
+    const ratioY = this.canvas.height / refHeight;
+    const scaleFactor = Math.min(ratioX, ratioY);
+    // Allow zoom to scale within a balanced range (0.5 to 1.35)
+    this.zoom = Math.max(0.5, Math.min(1.35, scaleFactor));
 
     // 1. Save state and apply Camera Viewport translations
     this.ctx.save();

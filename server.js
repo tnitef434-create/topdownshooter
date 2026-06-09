@@ -183,7 +183,7 @@ io.on('connection', (socket) => {
   });
 
   // 1. Create a custom room
-  socket.on('create-room', ({ playerName, mode, color, mapId, weapon }) => {
+  socket.on('create-room', ({ playerName, mode, color, mapId, weapon, renderStyle }) => {
     let roomId = generateRoomId();
     while (rooms.has(roomId)) {
       roomId = generateRoomId();
@@ -195,6 +195,7 @@ io.on('connection', (socket) => {
       mode: roomMode,
       isRanked: false, // Custom rooms are never ranked
       mapId: mapId || 'manor',
+      renderStyle: renderStyle || 'realistic',
       players: [{
         id: socket.id,
         name: playerName || 'Player 1',
@@ -213,8 +214,8 @@ io.on('connection', (socket) => {
     socket.join(roomId);
     currentRoomId = roomId;
 
-    socket.emit('room-created', { roomId, players: room.players, mode: roomMode, mapId: room.mapId });
-    console.log(`Room created: ${roomId} (${roomMode}, Map: ${room.mapId}) by player: ${playerName} (${socket.id})`);
+    socket.emit('room-created', { roomId, players: room.players, mode: roomMode, mapId: room.mapId, renderStyle: room.renderStyle });
+    console.log(`Room created: ${roomId} (${roomMode}, Map: ${room.mapId}, Style: ${room.renderStyle}) by player: ${playerName} (${socket.id})`);
     broadcastPlayerCounts();
   });
 
@@ -240,6 +241,18 @@ io.on('connection', (socket) => {
       room.mode = mode;
       io.to(currentRoomId).emit('lobby-mode-update', { mode });
       console.log(`[Server] Game mode updated to ${mode} in room: ${currentRoomId}`);
+    }
+  });
+
+  // 1.3 Select render style (custom lobby)
+  socket.on('select-render-style', ({ renderStyle }) => {
+    if (!currentRoomId) return;
+    const room = rooms.get(currentRoomId);
+    if (!room) return;
+    if (room.players[0] && room.players[0].id === socket.id) {
+      room.renderStyle = renderStyle;
+      io.to(currentRoomId).emit('lobby-style-update', { renderStyle });
+      console.log(`[Server] Render style updated to ${renderStyle} in room: ${currentRoomId}`);
     }
   });
 
@@ -272,7 +285,7 @@ io.on('connection', (socket) => {
     socket.join(cleanRoomId);
     currentRoomId = cleanRoomId;
 
-    socket.emit('room-joined', { roomId: cleanRoomId, players: room.players, mode: room.mode, mapId: room.mapId || 'manor' });
+    socket.emit('room-joined', { roomId: cleanRoomId, players: room.players, mode: room.mode, mapId: room.mapId || 'manor', renderStyle: room.renderStyle || 'realistic' });
     socket.to(cleanRoomId).emit('player-joined', { players: room.players });
     console.log(`Player ${playerName} (${socket.id}) joined room: ${cleanRoomId}`);
     broadcastPlayerCounts();
@@ -407,12 +420,16 @@ io.on('connection', (socket) => {
         const startMapId = room.isRanked
           ? (Math.random() < 0.5 ? 'manor' : 'cyberlab')
           : (room.mapId || 'manor');
+        const startRenderStyle = room.isRanked 
+          ? (room.mode.includes('competitive') ? 'competitive' : 'realistic')
+          : (room.renderStyle || 'realistic');
         io.to(currentRoomId).emit('match-start', {
           players: room.players,
           seed: Math.random(), // synchronized seed for map spawns / layouts
           isRanked: room.isRanked,
           mode: room.mode,
-          mapId: startMapId
+          mapId: startMapId,
+          renderStyle: startRenderStyle
         });
         console.log(`Match started in room: ${currentRoomId} (${room.mode}, Ranked: ${room.isRanked})`);
       }
@@ -443,12 +460,16 @@ io.on('connection', (socket) => {
         const rematchMapId = room.isRanked
           ? (Math.random() < 0.5 ? 'manor' : 'cyberlab')
           : (room.mapId || 'manor');
+        const rematchRenderStyle = room.isRanked 
+          ? (room.mode.includes('competitive') ? 'competitive' : 'realistic')
+          : (room.renderStyle || 'realistic');
         io.to(currentRoomId).emit('match-start', {
           players: room.players,
           seed: Math.random(),
           isRanked: room.isRanked,
           mode: room.mode,
-          mapId: rematchMapId
+          mapId: rematchMapId,
+          renderStyle: rematchRenderStyle
         });
         console.log(`Rematch started in room: ${currentRoomId} (Ranked: ${room.isRanked})`);
       }
