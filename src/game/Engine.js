@@ -5,6 +5,7 @@ import { ParticleEngine } from './Particle.js';
 import { Sound } from './Sound.js';
 import { Network } from './Network.js';
 import { CharacterRenderer } from './CharacterRenderer.js';
+import { FirstPersonController } from './FirstPersonController.js';
 
 class FlashGrenade {
   constructor(x, y, vx, vy, throwerId) {
@@ -282,6 +283,15 @@ export class Engine {
         warnShown: false
       };
       this.zoneTimer = null;
+
+      // First Person Mode Setup
+      this.firstPersonMode = false;
+      this.firstPersonController = new FirstPersonController('game-canvas-3d');
+      this.firstPersonController.init().then(() => {
+        if (this.map) {
+          this.firstPersonController.build3DMap(this.map);
+        }
+      });
 
       // Setup
       this.resizeCanvas();
@@ -584,10 +594,16 @@ export class Engine {
       this.mouse.x = e.clientX;
       this.mouse.y = e.clientY;
       
-      // Calculate coordinates relative to screen center (camera focal point)
-      const dx = this.mouse.x - this.canvas.width / 2;
-      const dy = this.mouse.y - this.canvas.height / 2;
-      this.mouse.angle = Math.atan2(dy, dx);
+      if (this.firstPersonMode) {
+        if (this.localPlayer && this.localPlayer.health > 0) {
+          this.localPlayer.angle += e.movementX * 0.0025;
+        }
+      } else {
+        // Calculate coordinates relative to screen center (camera focal point)
+        const dx = this.mouse.x - this.canvas.width / 2;
+        const dy = this.mouse.y - this.canvas.height / 2;
+        this.mouse.angle = Math.atan2(dy, dx);
+      }
     };
 
     this.mousedownHandler = (e) => {
@@ -670,6 +686,16 @@ export class Engine {
 
     // Gamepad / PS5 DualSense support
     this.setupGamepad();
+
+    // Pointer lock listener
+    this.pointerLockChangeHandler = () => {
+      const isLocked = document.pointerLockElement === document.getElementById('game-container');
+      if (!isLocked && this.firstPersonMode) {
+        // Automatically switch back to 2D when lock is lost (e.g. Esc pressed)
+        this.toggleFirstPersonMode();
+      }
+    };
+    document.addEventListener('pointerlockchange', this.pointerLockChangeHandler);
   }
 
   // ── Gamepad / PS5 DualSense support ─────────────────────────────────────────
@@ -769,6 +795,37 @@ export class Engine {
     GP.prevButtons = Array.from(gp.buttons).map(b => !!(b && b.pressed));
   }
 
+  toggleFirstPersonMode() {
+    this.firstPersonMode = !this.firstPersonMode;
+    const btn = document.getElementById('btn-toggle-fpm');
+    const canvas3d = document.getElementById('game-canvas-3d');
+    
+    if (this.firstPersonMode) {
+      if (btn) btn.classList.add('active');
+      if (canvas3d) canvas3d.style.display = 'block';
+      this.firstPersonController.active = true;
+      this.requestPointerLock();
+    } else {
+      if (btn) btn.classList.remove('active');
+      if (canvas3d) canvas3d.style.display = 'none';
+      this.firstPersonController.active = false;
+      this.exitPointerLock();
+    }
+  }
+
+  requestPointerLock() {
+    const container = document.getElementById('game-container');
+    if (container && container.requestPointerLock) {
+      container.requestPointerLock();
+    }
+  }
+
+  exitPointerLock() {
+    if (document.exitPointerLock) {
+      document.exitPointerLock();
+    }
+  }
+
   destroy() {
     this.active = false;
     window.removeEventListener('resize', this.resizeHandler);
@@ -779,6 +836,13 @@ export class Engine {
     window.removeEventListener('mouseup', this.mouseupHandler);
     window.removeEventListener('wheel', this.wheelHandler);
     window.removeEventListener('contextmenu', this.contextmenuHandler);
+    if (this.pointerLockChangeHandler) {
+      document.removeEventListener('pointerlockchange', this.pointerLockChangeHandler);
+    }
+    if (this.firstPersonController) {
+      this.firstPersonController.destroy();
+    }
+    this.exitPointerLock();
     
     // Clean up inventory click handlers
     const slot1 = document.getElementById('inv-slot-1');
@@ -1003,6 +1067,9 @@ export class Engine {
     this.grenades = [];
     this.particles.clear();
     this.map.generateMap(); // Regen crate positions
+    if (this.firstPersonController) {
+      this.firstPersonController.build3DMap(this.map);
+    }
     
     // Sync HUD displays
     this.localPlayer.updateHUD();
@@ -2092,35 +2159,103 @@ export class Engine {
     
     if (this.gameState === 'replay' && !frame) return;
 
-    // Clear canvas
-    this.ctx.fillStyle = '#06070a';
-    this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    if (this.firstPersonMode) {
+      if (this.firstPersonController) {
+        this.firstPersonController.render(this);
+      }
+      
+      this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+      
+      const cx = this.canvas.width / 2;
+      const cy = this.canvas.height / 2;
+      
+      this.ctx.save();
+      this.ctx.strokeStyle = 'rgba(102, 252, 241, 0.6)';
+      this.ctx.lineWidth = 2;
+      this.ctx.beginPath();
+      this.ctx.moveTo(cx - 8, cy);
+      this.ctx.lineTo(cx - 3, cy);
+      this.ctx.moveTo(cx + 3, cy);
+      this.ctx.lineTo(cx + 8, cy);
+      this.ctx.moveTo(cx, cy - 8);
+      this.ctx.lineTo(cx, cy - 3);
+      this.ctx.moveTo(cx, cy + 3);
+      this.ctx.lineTo(cx, cy + 8);
+      this.ctx.stroke();
+      this.ctx.restore();
 
-    // Dynamic scale/zoom sizing helper based on resolution
-    // Using Math.min of both horizontal and vertical ratios guarantees that a reference 1920x1080 area is fitted 
-    // to the player's screen, so players on any laptop or monitor see the exact same proportion of the arena.
-    const refWidth = 1920;
-    const refHeight = 1080;
-    const ratioX = this.canvas.width / refWidth;
-    const ratioY = this.canvas.height / refHeight;
-    const scaleFactor = Math.min(ratioX, ratioY);
-    // Allow zoom to scale within a balanced range (0.5 to 1.35)
-    this.zoom = Math.max(0.5, Math.min(1.35, scaleFactor));
+      this.activeHitmarkers.forEach(hm => {
+        const agePct = hm.age / hm.duration;
+        const alpha = 1 - agePct;
+        this.ctx.save();
+        this.ctx.translate(cx, cy);
+        this.ctx.strokeStyle = hm.isHeadshot ? `rgba(255, 215, 0, ${alpha})` : `rgba(255, 255, 255, ${alpha})`;
+        this.ctx.lineWidth = hm.isHeadshot ? 2.5 : 1.5;
+        const size = 6 + agePct * 6;
+        const inner = 3;
+        this.ctx.beginPath();
+        this.ctx.moveTo(-inner, -inner); this.ctx.lineTo(-size, -size);
+        this.ctx.moveTo(inner, -inner); this.ctx.lineTo(size, -size);
+        this.ctx.moveTo(-inner, inner); this.ctx.lineTo(-size, size);
+        this.ctx.moveTo(inner, inner); this.ctx.lineTo(size, size);
+        this.ctx.stroke();
+        this.ctx.restore();
+      });
 
-    // 1. Save state and apply Camera Viewport translations
-    this.ctx.save();
-    this.ctx.translate(this.canvas.width / 2, this.canvas.height / 2);
-    this.ctx.scale(this.zoom, this.zoom);
-    
-    // Apply camera centrings and screenshakes
-    const camX = frame ? frame.camera.x : this.camera.x;
-    const camY = frame ? frame.camera.y : this.camera.y;
-    const shakeX = frame ? 0 : this.camera.shakeX;
-    const shakeY = frame ? 0 : this.camera.shakeY;
-    
-    const focusX = -camX + shakeX;
-    const focusY = -camY + shakeY;
-    this.ctx.translate(focusX, focusY);
+      this.floatingNumbers.forEach(fn => {
+        const agePct = fn.age / fn.duration;
+        const floatHeight = 40 + agePct * 15;
+        const screenPos = this.firstPersonController.projectToScreen(fn.x, fn.y, floatHeight);
+        if (screenPos) {
+          const alpha = 1 - agePct;
+          let scale = 1.0;
+          if (agePct < 0.25) {
+            scale = 1.0 + (agePct / 0.25) * 0.4;
+          } else {
+            scale = 1.4 - ((agePct - 0.25) / 0.75) * 0.4;
+          }
+          this.ctx.save();
+          this.ctx.translate(screenPos.x, screenPos.y);
+          this.ctx.scale(scale, scale);
+          
+          this.ctx.font = fn.isHeadshot ? "bold 14px 'Orbitron', sans-serif" : "bold 11px 'Orbitron', sans-serif";
+          this.ctx.textAlign = 'center';
+          
+          this.ctx.strokeStyle = `rgba(0, 0, 0, ${alpha})`;
+          this.ctx.lineWidth = 3;
+          this.ctx.strokeText(fn.damage, 0, 0);
+          
+          this.ctx.fillStyle = fn.isHeadshot ? `rgba(255, 215, 0, ${alpha})` : `rgba(255, 255, 255, ${alpha})`;
+          this.ctx.fillText(fn.damage, 0, 0);
+          this.ctx.restore();
+        }
+      });
+    } else {
+      // Clear canvas
+      this.ctx.fillStyle = '#06070a';
+      this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+      // Dynamic scale/zoom sizing helper based on resolution
+      const refWidth = 1920;
+      const refHeight = 1080;
+      const ratioX = this.canvas.width / refWidth;
+      const ratioY = this.canvas.height / refHeight;
+      const scaleFactor = Math.min(ratioX, ratioY);
+      this.zoom = Math.max(0.5, Math.min(1.35, scaleFactor));
+
+      // 1. Save state and apply Camera Viewport translations
+      this.ctx.save();
+      this.ctx.translate(this.canvas.width / 2, this.canvas.height / 2);
+      this.ctx.scale(this.zoom, this.zoom);
+      
+      const camX = frame ? frame.camera.x : this.camera.x;
+      const camY = frame ? frame.camera.y : this.camera.y;
+      const shakeX = frame ? 0 : this.camera.shakeX;
+      const shakeY = frame ? 0 : this.camera.shakeY;
+      
+      const focusX = -camX + shakeX;
+      const focusY = -camY + shakeY;
+      this.ctx.translate(focusX, focusY);
 
     // Compute flashlight polygons for all living players with active flashlight
     const renderPlayers = frame ? frame.players : this.players;
@@ -2660,6 +2795,7 @@ export class Engine {
 
     // Restore viewport translations
     this.ctx.restore();
+    }
 
     // 2. Render Tactical Screen Edge Vignette Overlay & Scanlines
     this.ctx.save();

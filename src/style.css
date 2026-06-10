@@ -667,6 +667,10 @@ footer {
   width: 100%;
   height: 100%;
   display: block;
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 3;
 }
 
 /* HUD Overlay Styles */
@@ -1606,4 +1610,12 @@ footer {
   background: #d4af37 !important;
   color: #08090c !important;
 }
+
+#btn-toggle-fpm.active {
+  background: linear-gradient(to bottom, #aa7c11, #5c4008) !important;
+  color: #ffe6a3 !important;
+  border-color: #ffd700 !important;
+  box-shadow: 0 0 10px rgba(212, 175, 55, 0.5) !important;
+}
+
 

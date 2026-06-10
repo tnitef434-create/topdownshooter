@@ -1905,6 +1905,16 @@ function setupUIListeners() {
     });
   }
 
+  // First Person Mode Toggle button in HUD
+  const fpmToggleBtn = document.getElementById('btn-toggle-fpm');
+  if (fpmToggleBtn) {
+    fpmToggleBtn.addEventListener('click', () => {
+      if (gameEngine) {
+        gameEngine.toggleFirstPersonMode();
+      }
+    });
+  }
+
   // Rematch request button
   const rematchBtn = document.getElementById('btn-rematch');
   if (rematchBtn) {
