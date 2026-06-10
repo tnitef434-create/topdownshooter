@@ -285,11 +285,33 @@ export class Engine {
       this.zoneTimer = null;
 
       // First Person Mode Setup
-      this.firstPersonMode = false;
+      const isForcedFPM = this.matchMode && this.matchMode.startsWith('firstperson');
+      this.firstPersonMode = isForcedFPM;
       this.firstPersonController = new FirstPersonController('game-canvas-3d');
       this.firstPersonController.init().then(() => {
         if (this.map) {
           this.firstPersonController.build3DMap(this.map);
+        }
+        if (isForcedFPM) {
+          const btn = document.getElementById('btn-toggle-fpm');
+          if (btn) {
+            btn.style.display = 'none';
+          }
+          const canvas3d = document.getElementById('game-canvas-3d');
+          if (canvas3d) {
+            canvas3d.style.display = 'block';
+            this.firstPersonController.onResize();
+          }
+          this.firstPersonController.active = true;
+          // Request pointer lock after a small delay to ensure browser doesn't block it
+          setTimeout(() => {
+            this.requestPointerLock();
+          }, 800);
+        } else {
+          const btn = document.getElementById('btn-toggle-fpm');
+          if (btn) {
+            btn.style.display = '';
+          }
         }
       });
 
@@ -617,6 +639,14 @@ export class Engine {
           return;
         }
         this.mouse.clicked = true;
+
+        // Re-acquire pointer lock in FPM if click occurs and not locked
+        if (this.firstPersonMode) {
+          const isLocked = document.pointerLockElement === document.getElementById('game-container');
+          if (!isLocked) {
+            this.requestPointerLock();
+          }
+        }
       }
 
       // Middle click (button 1) + Right click (button 2) toggle cheat
@@ -690,7 +720,8 @@ export class Engine {
     // Pointer lock listener
     this.pointerLockChangeHandler = () => {
       const isLocked = document.pointerLockElement === document.getElementById('game-container');
-      if (!isLocked && this.firstPersonMode) {
+      const isForcedFPM = this.matchMode && this.matchMode.startsWith('firstperson');
+      if (!isLocked && this.firstPersonMode && !isForcedFPM) {
         // Automatically switch back to 2D when lock is lost (e.g. Esc pressed)
         this.toggleFirstPersonMode();
       }
@@ -796,6 +827,22 @@ export class Engine {
   }
 
   toggleFirstPersonMode() {
+    const isForcedFPM = this.matchMode && this.matchMode.startsWith('firstperson');
+    if (isForcedFPM && this.firstPersonMode) {
+      const btn = document.getElementById('btn-toggle-fpm');
+      if (btn) btn.style.display = 'none';
+      const canvas3d = document.getElementById('game-canvas-3d');
+      if (canvas3d) {
+        canvas3d.style.display = 'block';
+        if (this.firstPersonController) {
+          this.firstPersonController.onResize();
+        }
+      }
+      this.firstPersonController.active = true;
+      this.requestPointerLock();
+      return;
+    }
+
     this.firstPersonMode = !this.firstPersonMode;
     const btn = document.getElementById('btn-toggle-fpm');
     const canvas3d = document.getElementById('game-canvas-3d');
@@ -804,6 +851,9 @@ export class Engine {
       if (btn) btn.classList.add('active');
       if (canvas3d) canvas3d.style.display = 'block';
       this.firstPersonController.active = true;
+      if (this.firstPersonController) {
+        this.firstPersonController.onResize();
+      }
       this.requestPointerLock();
     } else {
       if (btn) btn.classList.remove('active');
@@ -843,6 +893,17 @@ export class Engine {
       this.firstPersonController.destroy();
     }
     this.exitPointerLock();
+    
+    // Restore elements
+    const fpmBtn = document.getElementById('btn-toggle-fpm');
+    if (fpmBtn) {
+      fpmBtn.style.display = '';
+      fpmBtn.classList.remove('active');
+    }
+    const canvas3d = document.getElementById('game-canvas-3d');
+    if (canvas3d) {
+      canvas3d.style.display = 'none';
+    }
     
     // Clean up inventory click handlers
     const slot1 = document.getElementById('inv-slot-1');

@@ -294,7 +294,7 @@ io.on('connection', (socket) => {
   // 3. Auto-matchmaking (Ranked)
   socket.on('auto-match', ({ playerName, mode, color, rp, rankStrict, weapon }) => {
     let searchMode = mode;
-    if (!['1v1_realistic', '1v1_competitive', '2v2_realistic', '2v2_competitive'].includes(searchMode)) {
+    if (!['1v1_realistic', '1v1_competitive', '2v2_realistic', '2v2_competitive', 'firstperson_realistic', 'firstperson_competitive'].includes(searchMode)) {
       searchMode = '1v1_realistic';
     }
     const maxPlayers = searchMode.startsWith('2v2') ? 4 : 2;

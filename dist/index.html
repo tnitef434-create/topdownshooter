@@ -11,7 +11,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=Orbitron:wght@500;700;900&display=swap" rel="stylesheet">
   <!-- Style sheet -->
   <!-- Socket.io client (loaded dynamically via bundler or server, or we can just import from socket.io-client) -->
-  <script type="module" crossorigin src="/assets/index-Sn40qtdn.js"></script>
+  <script type="module" crossorigin src="/assets/index-BkDBRBoE.js"></script>
   <link rel="stylesheet" crossorigin href="/assets/index-uXdWUjV9.css">
 </head>
 <body>
@@ -89,7 +89,7 @@
 
         <div class="card mode-card" style="padding: 16px 24px; display: flex; flex-direction: column; gap: 8px; border: 1px solid rgba(255,255,255,0.05);">
           <label style="font-family: var(--font-title); font-size: 11px; letter-spacing: 1.5px; color: #d4af37; font-weight:700;">MATCH TYPE</label>
-          <div class="mode-selector" style="display: flex; gap: 20px;">
+          <div class="mode-selector" style="display: flex; gap: 20px; flex-wrap: wrap;">
             <label class="radio-container" style="display: flex; align-items: center; gap: 8px; font-family: var(--font-title); font-size: 13px; cursor: pointer; letter-spacing: 1px;">
               <input type="radio" name="match-mode" value="1v1" checked style="accent-color: #d4af37;">
               1V1 DUEL
@@ -97,6 +97,10 @@
             <label class="radio-container" style="display: flex; align-items: center; gap: 8px; font-family: var(--font-title); font-size: 13px; cursor: pointer; letter-spacing: 1px;">
               <input type="radio" name="match-mode" value="2v2" style="accent-color: #d4af37;">
               2V2 SQUAD
+            </label>
+            <label class="radio-container" style="display: flex; align-items: center; gap: 8px; font-family: var(--font-title); font-size: 13px; cursor: pointer; letter-spacing: 1px;">
+              <input type="radio" name="match-mode" value="firstperson" style="accent-color: #d4af37;">
+              1V1 FIRST PERSON
             </label>
           </div>
         </div>
@@ -261,6 +265,7 @@
               <select id="lobby-mode-select" class="cyber-select" style="width: 100%; font-size: 11px; padding: 8px; font-family: var(--font-title); background: rgba(0,0,0,0.6); color: white; border: 1px solid var(--neon-teal); border-radius: 4px; cursor: pointer; outline: none; text-transform: uppercase;">
                 <option value="1v1">DUEL 1V1 (CLASSIC)</option>
                 <option value="sabotage">SABOTAGE (TASK SURVIVAL)</option>
+                <option value="firstperson">1V1 FIRST PERSON</option>
               </select>
             </div>
 
@@ -610,6 +615,7 @@
          <div style="font-family: var(--font-title); font-size: 10px; color: var(--neon-yellow); letter-spacing: 2px; font-weight: 700; margin-bottom: 6px;">TACTICSTRIKE CHANGELOG</div>
          <h2 style="font-family: var(--font-title); font-size: 26px; color: #fff; margin-bottom: 15px; letter-spacing: 1.5px; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 12px; font-weight: 900;">WHAT'S NEW</h2>
          <div style="font-family: 'Inter', sans-serif; font-size: 13px; line-height: 1.6; color: #a2aab8; margin-bottom: 25px; max-height: 280px; overflow-y: auto; padding-right: 8px;">
+             <p style="margin-bottom: 14px;">🕶️ <strong style="color: #d4af37;">FIRST PERSON MATCH MODE:</strong> <span style="background: rgba(212,175,55,0.15); color: #d4af37; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; margin-left: 4px; border: 1px solid rgba(212,175,55,0.3);">NEW</span><br>Lock into a full 3D viewport with pointer-lock. Run across tactical maps from a premium first-person perspective using a beautiful female elf model and procedural weapon bobs.</p>
              <p style="margin-bottom: 14px;">🧱 <strong style="color: #66fcf1;">AAA 2.5D WALL EXTRUSION:</strong> <span style="background: rgba(102,252,241,0.15); color: #66fcf1; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; margin-left: 4px; border: 1px solid rgba(102,252,241,0.3);">NEW</span><br>Experience top-down battle with perspective-extruded 3D walls, furniture, and crates. Obstacles dynamically project height relative to the player's view, creating a high-fidelity 2.5D visual aesthetic.</p>
              <p style="margin-bottom: 14px;">💻 <strong style="color: #ffd700;">HACKING TERMINALS & MINIGAMES:</strong> <span style="background: rgba(255,215,0,0.15); color: #ffd700; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; margin-left: 4px; border: 1px solid rgba(255,215,0,0.3);">NEW</span><br>Interactive supply terminals have been added. Stand near a console and hold [E] to engage. Completing the timed key-sequence defusal hacking minigame successfully drops high-tier items (Adrenaline/Medkits).</p>
              <p style="margin-bottom: 14px;">🎒 <strong style="color: #ff6ef7;">TACTICAL DROPS & INVENTORY:</strong> <span style="background: rgba(255,110,247,0.15); color: #ff6ef7; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; margin-left: 4px; border: 1px solid rgba(255,110,247,0.3);">NEW</span><br>Stash pickups collected while at full capacity in your new tactical inventory slots. Press [H] to drop a stashed Medkit or [J] to drop an Ammo Pack on the ground to share with allies or save for later.</p>

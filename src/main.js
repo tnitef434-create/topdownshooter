@@ -944,7 +944,7 @@ function updateLobbyUI(players) {
     
     displays.playersList.appendChild(slotEl);
 
-    if (myMode === '1v1' && idx === 0) {
+    if ((myMode === '1v1' || myMode === 'firstperson') && idx === 0) {
       const vsEl = document.createElement('div');
       vsEl.className = 'vs-divider';
       vsEl.innerText = 'VS';
@@ -1204,7 +1204,9 @@ function connectSocket() {
       lobbyModeSelect.value = mode;
     }
     myMode = mode;
-    const modeName = mode === 'sabotage' ? 'Sabotage (Task Survival)' : 'Duel 1v1';
+    let modeName = 'Duel 1v1';
+    if (mode === 'sabotage') modeName = 'Sabotage (Task Survival)';
+    else if (mode === 'firstperson') modeName = '1v1 First Person';
     addSystemChatMessage(`Host updated game mode to: ${modeName}`);
   });
 
