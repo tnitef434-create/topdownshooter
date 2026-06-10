@@ -2229,20 +2229,59 @@ export class Engine {
       
       const cx = this.canvas.width / 2;
       const cy = this.canvas.height / 2;
-      
+      const W = this.canvas.width;
+      const H = this.canvas.height;
+
+      // ── Edge Vignette (dark corners for FPS depth) ────────────────────────
+      const vgGrad = this.ctx.createRadialGradient(cx, cy, H * 0.28, cx, cy, H * 0.72);
+      vgGrad.addColorStop(0, 'rgba(0,0,0,0)');
+      vgGrad.addColorStop(1, 'rgba(0,0,0,0.55)');
+      this.ctx.fillStyle = vgGrad;
+      this.ctx.fillRect(0, 0, W, H);
+
+      // ── Dynamic Crosshair ─────────────────────────────────────────────────
+      // Spread grows with movement speed and shrinks at rest
+      const spd = this.localPlayer ? Math.hypot(this.localPlayer.vx || 0, this.localPlayer.vy || 0) : 0;
+      const flash = this.localPlayer ? (this.localPlayer.muzzleFlash || 0) : 0;
+      const spread = 5 + spd * 2.5 + flash * 18;
+      const lineLen = 10;
+      const dotR = 1.2;
+
       this.ctx.save();
-      this.ctx.strokeStyle = 'rgba(102, 252, 241, 0.6)';
-      this.ctx.lineWidth = 2;
+
+      // Outer shadow for visibility
+      this.ctx.shadowColor = 'rgba(0,0,0,0.8)';
+      this.ctx.shadowBlur = 4;
+      this.ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+      this.ctx.lineWidth = 3.5;
       this.ctx.beginPath();
-      this.ctx.moveTo(cx - 8, cy);
-      this.ctx.lineTo(cx - 3, cy);
-      this.ctx.moveTo(cx + 3, cy);
-      this.ctx.lineTo(cx + 8, cy);
-      this.ctx.moveTo(cx, cy - 8);
-      this.ctx.lineTo(cx, cy - 3);
-      this.ctx.moveTo(cx, cy + 3);
-      this.ctx.lineTo(cx, cy + 8);
+      this.ctx.moveTo(cx - spread - lineLen, cy); this.ctx.lineTo(cx - spread, cy);
+      this.ctx.moveTo(cx + spread, cy);           this.ctx.lineTo(cx + spread + lineLen, cy);
+      this.ctx.moveTo(cx, cy - spread - lineLen); this.ctx.lineTo(cx, cy - spread);
+      this.ctx.moveTo(cx, cy + spread);           this.ctx.lineTo(cx, cy + spread + lineLen);
       this.ctx.stroke();
+
+      // Coloured lines
+      const isMoving = spd > 0.5;
+      const crossCol = isMoving ? 'rgba(255,220,50,0.85)' : 'rgba(102,252,241,0.90)';
+      this.ctx.strokeStyle = crossCol;
+      this.ctx.lineWidth = 2;
+      this.ctx.shadowBlur = 6;
+      this.ctx.shadowColor = crossCol;
+      this.ctx.beginPath();
+      this.ctx.moveTo(cx - spread - lineLen, cy); this.ctx.lineTo(cx - spread, cy);
+      this.ctx.moveTo(cx + spread, cy);           this.ctx.lineTo(cx + spread + lineLen, cy);
+      this.ctx.moveTo(cx, cy - spread - lineLen); this.ctx.lineTo(cx, cy - spread);
+      this.ctx.moveTo(cx, cy + spread);           this.ctx.lineTo(cx, cy + spread + lineLen);
+      this.ctx.stroke();
+
+      // Centre dot
+      this.ctx.shadowBlur = 4;
+      this.ctx.fillStyle = crossCol;
+      this.ctx.beginPath();
+      this.ctx.arc(cx, cy, dotR, 0, Math.PI * 2);
+      this.ctx.fill();
+
       this.ctx.restore();
 
       this.activeHitmarkers.forEach(hm => {
