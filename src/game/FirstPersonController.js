@@ -35,6 +35,9 @@ export class FirstPersonController {
     this.gunGroup = null;
     this.muzzleFlashLight = null;
     this.muzzleFlashMesh = null;
+
+    // Active thrown grenades meshes
+    this.grenadeMeshes = {};
   }
 
   getCanvasSize() {
@@ -70,21 +73,25 @@ export class FirstPersonController {
     this.scene = new THREE.Scene();
     this.scene.fog = new THREE.FogExp2(0x08090c, 0.0015); // Dark gritty atmosphere
 
-    // 3. Setup Camera (FOV: 75, Aspect: width/height, Near: 0.1, Far: 3000)
+    // 3. Setup Camera (FOV: 75, Aspect: width/height, Near: 0.05, Far: 4000)
     this.camera = new THREE.PerspectiveCamera(
       75,
       size.w / size.h,
-      1,
+      0.05,
       4000
     );
     this.scene.add(this.camera); // add camera to scene to allow attaching children
 
-    // 4. Setup Ambient and Global Light
-    const globalAmbient = new THREE.AmbientLight(0xffffff, 0.12);
+    // 4. Setup Ambient, hemisphere, and ceiling directional lights
+    const globalAmbient = new THREE.AmbientLight(0xffffff, 0.22);
     this.scene.add(globalAmbient);
 
+    // Hemisphere sky/ground light for realistic color scattering
+    const hemiLight = new THREE.HemisphereLight(0x4477aa, 0x111122, 0.7);
+    this.scene.add(hemiLight);
+
     // Directional light from ceiling for general visibility
-    const dirLight = new THREE.DirectionalLight(0xaaccff, 0.25);
+    const dirLight = new THREE.DirectionalLight(0xaaccff, 0.85);
     dirLight.position.set(500, 1000, 500);
     this.scene.add(dirLight);
 
@@ -168,9 +175,21 @@ export class FirstPersonController {
 
     // Attach gun to camera (positioned in the lower right viewport corner)
     // Positive X = right, Positive Y = up, Negative Z = forward (away from camera)
-    this.gunGroup.position.set(0.6, -0.6, -1.2);
-    this.gunGroup.scale.set(0.8, 0.8, 0.8);
+    // Positioning at (0.18, -0.15, -0.32) and scaling to 0.15 gives a sleek, premium AAA FPS view-model.
+    this.gunGroup.position.set(0.18, -0.15, -0.32);
+    this.gunGroup.scale.set(0.15, 0.15, 0.15);
     this.camera.add(this.gunGroup);
+
+    // Add high-tech glowing neon lines on the receiver
+    const lineGeo = new THREE.BoxGeometry(0.02, 0.42, 0.02);
+    const glowMat = new THREE.MeshBasicMaterial({ color: 0x66fcf1 });
+    const glowLineL = new THREE.Mesh(lineGeo, glowMat);
+    glowLineL.position.set(-0.21, 0, 0);
+    this.gunGroup.add(glowLineL);
+
+    const glowLineR = new THREE.Mesh(lineGeo, glowMat);
+    glowLineR.position.set(0.21, 0, 0);
+    this.gunGroup.add(glowLineR);
   }
 
   createPlayerPlaceholder() {
@@ -199,47 +218,145 @@ export class FirstPersonController {
     return group;
   }
 
-  async loadPlayerModel() {
-    const base = (import.meta.env.BASE_URL || '/').replace(/\/$/, '') + '/';
-    return await new Promise((resolve, reject) => {
-      const mtlLoader = new MTLLoader();
-      mtlLoader.setPath(base);
-      mtlLoader.setResourcePath(base);
-      mtlLoader.load('elf_girl.mtl', mats => {
-        mats.preload();
-        const objLoader = new OBJLoader();
-        objLoader.setMaterials(mats);
-        objLoader.setPath(base);
-        objLoader.load('elf_girl.obj', obj => {
-          // Adjust model scaling and pivots to match 45 unit height
-          const box = new THREE.Box3().setFromObject(obj);
-          const size = new THREE.Vector3();
-          box.getSize(size);
-          const maxDim = Math.max(size.x, size.y, size.z);
-          const scale = 45 / maxDim; // Make it 45 units tall
-          obj.scale.setScalar(scale);
+  createCustomRobotModel() {
+    const group = new THREE.Group();
 
-          // Center bounding box horizontally, but place feet at local y=0
-          const centeredBox = new THREE.Box3().setFromObject(obj);
-          const center = new THREE.Vector3();
-          centeredBox.getCenter(center);
-          obj.position.set(-center.x, -centeredBox.min.y, -center.z);
-
-          // Wrap inside a parent group to make rotations clean around origin
-          const wrapper = new THREE.Group();
-          wrapper.add(obj);
-
-          // Add simple gun box attached to the model
-          const gunGeo = new THREE.BoxGeometry(2.5, 2.5, 20);
-          const gunMat = new THREE.MeshBasicMaterial({ color: 0x111111 });
-          const gun = new THREE.Mesh(gunGeo, gunMat);
-          gun.position.set(7, 20, -10);
-          wrapper.add(gun);
-
-          resolve(wrapper);
-        }, undefined, reject);
-      }, undefined, reject);
+    // 1. Armored Torso (Heavy Chestplate)
+    const torsoGeo = new THREE.CylinderGeometry(8, 5, 20, 8);
+    const armorMat = new THREE.MeshStandardMaterial({
+      color: 0x1f242d,
+      metalness: 0.95,
+      roughness: 0.15,
+      name: 'robot-armor'
     });
+    const torso = new THREE.Mesh(torsoGeo, armorMat);
+    torso.position.y = 20;
+    group.add(torso);
+
+    // Glowing Power Core (in center of chest)
+    const coreGeo = new THREE.CylinderGeometry(2, 2, 2, 8);
+    const coreMat = new THREE.MeshBasicMaterial({ color: 0x66fcf1 });
+    const core = new THREE.Mesh(coreGeo, coreMat);
+    core.rotation.x = Math.PI / 2;
+    core.position.set(0, 23, 7.5);
+    group.add(core);
+
+    // 2. Robotic Head (Sleek helmet with visor)
+    const headGroup = new THREE.Group();
+    headGroup.position.set(0, 33, 0);
+
+    const helmetGeo = new THREE.SphereGeometry(4.5, 12, 12);
+    const helmet = new THREE.Mesh(helmetGeo, armorMat);
+    headGroup.add(helmet);
+
+    // Neon Visor
+    const visorGeo = new THREE.BoxGeometry(7, 1.2, 4);
+    const visorMat = new THREE.MeshBasicMaterial({ color: 0xff3c3c });
+    const visor = new THREE.Mesh(visorGeo, visorMat);
+    visor.position.set(0, 1, 3.2);
+    headGroup.add(visor);
+
+    // Antennas
+    const antGeo = new THREE.CylinderGeometry(0.2, 0.2, 6, 4);
+    const antennaL = new THREE.Mesh(antGeo, armorMat);
+    antennaL.position.set(-3.5, 4, -1);
+    antennaL.rotation.z = -0.25;
+    headGroup.add(antennaL);
+
+    const antennaR = new THREE.Mesh(antGeo, armorMat);
+    antennaR.position.set(3.5, 4, -1);
+    antennaR.rotation.z = 0.25;
+    headGroup.add(antennaR);
+
+    group.add(headGroup);
+
+    // 3. Heavy Shoulder Pauldrons
+    const pauldronGeo = new THREE.SphereGeometry(4, 8, 8);
+    const pauldronL = new THREE.Mesh(pauldronGeo, armorMat);
+    pauldronL.position.set(-10, 26, 0);
+    pauldronL.scale.set(1.2, 1, 1);
+    group.add(pauldronL);
+
+    const pauldronR = new THREE.Mesh(pauldronGeo, armorMat);
+    pauldronR.position.set(10, 26, 0);
+    pauldronR.scale.set(1.2, 1, 1);
+    group.add(pauldronR);
+
+    // 4. Mechanical Arms
+    const armMat = new THREE.MeshStandardMaterial({ color: 0x111111, metalness: 0.8, roughness: 0.4 });
+    const limbGeo = new THREE.CylinderGeometry(1.5, 1.2, 10, 6);
+    
+    // Left Arm
+    const armL = new THREE.Mesh(limbGeo, armMat);
+    armL.position.set(-11, 19, 2);
+    armL.rotation.x = 0.4;
+    group.add(armL);
+
+    // Right Arm (holding weapon)
+    const armR = new THREE.Mesh(limbGeo, armMat);
+    armR.position.set(11, 19, -2);
+    armR.rotation.x = -0.4;
+    group.add(armR);
+
+    // 5. Jetpack / Thrusters on Back
+    const packGeo = new THREE.BoxGeometry(8, 14, 5);
+    const jetpack = new THREE.Mesh(packGeo, armorMat);
+    jetpack.position.set(0, 20, -6);
+    
+    // Thruster cones
+    const coneGeo = new THREE.CylinderGeometry(1, 1.8, 4, 8);
+    const coneL = new THREE.Mesh(coneGeo, armMat);
+    coneL.position.set(-3, -8, 0);
+    jetpack.add(coneL);
+
+    const coneR = new THREE.Mesh(coneGeo, armMat);
+    coneR.position.set(3, -8, 0);
+    jetpack.add(coneR);
+
+    // Thruster exhaust flames (glowing orange cylinders)
+    const flameGeo = new THREE.CylinderGeometry(1.2, 0.1, 5, 8);
+    const flameMat = new THREE.MeshBasicMaterial({
+      color: 0xffaa00,
+      transparent: true,
+      opacity: 0.8,
+      blending: THREE.AdditiveBlending
+    });
+    const flameL = new THREE.Mesh(flameGeo, flameMat);
+    flameL.position.set(-3, -11, 0);
+    jetpack.add(flameL);
+
+    const flameR = new THREE.Mesh(flameGeo, flameMat);
+    flameR.position.set(3, -11, 0);
+    jetpack.add(flameR);
+
+    group.add(jetpack);
+
+    // 6. Cybernetic Legs
+    const legL = new THREE.Mesh(limbGeo, armMat);
+    legL.position.set(-4, 6, 0);
+    group.add(legL);
+
+    const legR = new THREE.Mesh(limbGeo, armMat);
+    legR.position.set(4, 6, 0);
+    group.add(legR);
+
+    // 7. Sci-fi Carbine rifle attached to robot arms
+    const rifleGeo = new THREE.BoxGeometry(2, 2.5, 18);
+    const gunMat = new THREE.MeshStandardMaterial({ color: 0x050c18, metalness: 0.9, roughness: 0.2 });
+    const rifle = new THREE.Mesh(rifleGeo, gunMat);
+    rifle.position.set(7, 16, -10);
+    rifle.rotation.y = 0.1;
+    group.add(rifle);
+
+    // Wrap inside a parent group to make rotations clean around origin
+    const wrapper = new THREE.Group();
+    wrapper.add(group);
+    return wrapper;
+  }
+
+  loadPlayerModel() {
+    // Generate custom premium cyborg model locally (eliminates OBJ file load failures)
+    return Promise.resolve(this.createCustomRobotModel());
   }
 
   // ─── Map Construction (One-time or on Map change) ──────────────────────────
@@ -264,8 +381,8 @@ export class FirstPersonController {
     const floorTexture = this.generateGridTexture(map.width, map.height, '#0a0d14', '#22304d', '#00f6ff');
     const floorMat = new THREE.MeshStandardMaterial({
       map: floorTexture,
-      roughness: 0.6,
-      metalness: 0.2
+      roughness: 0.18, // highly glossy
+      metalness: 0.85  // highly reflective metallic floor
     });
     this.floorMesh = new THREE.Mesh(floorGeo, floorMat);
     this.floorMesh.rotation.x = -Math.PI / 2;
@@ -279,8 +396,8 @@ export class FirstPersonController {
     const ceilingTexture = this.generateGridTexture(map.width, map.height, '#030508', '#141c2c', '#c5a059');
     const ceilingMat = new THREE.MeshStandardMaterial({
       map: ceilingTexture,
-      roughness: 0.8,
-      metalness: 0.3
+      roughness: 0.3,
+      metalness: 0.7
     });
     this.ceilingMesh = new THREE.Mesh(ceilingGeo, ceilingMat);
     this.ceilingMesh.rotation.x = Math.PI / 2; // face downwards
@@ -290,8 +407,8 @@ export class FirstPersonController {
     // 3. Create Walls and Crates from 2D structures
     const wallMetalMat = new THREE.MeshStandardMaterial({
       color: 0x1f232b,
-      metalness: 0.7,
-      roughness: 0.45
+      metalness: 0.9,
+      roughness: 0.18  // reflective walls
     });
 
     const crateWoodTexture = this.generateCrateTexture();
@@ -668,37 +785,164 @@ export class FirstPersonController {
       this.bulletMeshes.push(mesh);
     });
 
-    // 8. Render Floating Items / Pickups
+    // 7.5 Render thrown flashbangs (3D cylinder canister with flashing LED and parabolic arc)
+    const activeGrenadeKeys = new Set();
+    engine.grenades.forEach((g, idx) => {
+      const gKey = `${g.throwerId}_${g.creationTime}_${idx}`;
+      activeGrenadeKeys.add(gKey);
+      
+      let mesh = this.grenadeMeshes[gKey];
+      if (!mesh) {
+        const group = new THREE.Group();
+        
+        // Main metallic cylinder body
+        const cylGeo = new THREE.CylinderGeometry(1.2, 1.2, 5, 8);
+        const metalMat = new THREE.MeshStandardMaterial({ color: 0x2d332f, metalness: 0.95, roughness: 0.15 });
+        const cyl = new THREE.Mesh(cylGeo, metalMat);
+        group.add(cyl);
+        
+        // Glowing cyan rings
+        const ringGeo = new THREE.TorusGeometry(1.3, 0.25, 6, 12);
+        const glowMat = new THREE.MeshBasicMaterial({ color: 0x66fcf1 });
+        
+        const ringTop = new THREE.Mesh(ringGeo, glowMat);
+        ringTop.rotation.x = Math.PI / 2;
+        ringTop.position.y = 1.5;
+        group.add(ringTop);
+
+        const ringBottom = new THREE.Mesh(ringGeo, glowMat);
+        ringBottom.rotation.x = Math.PI / 2;
+        ringBottom.position.y = -1.5;
+        group.add(ringBottom);
+        
+        // Flashing LED light on top
+        const ledGeo = new THREE.SphereGeometry(0.5, 6, 6);
+        const ledMat = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+        const led = new THREE.Mesh(ledGeo, ledMat);
+        led.position.y = 2.7;
+        group.add(led);
+        
+        this.scene.add(group);
+        mesh = group;
+        this.grenadeMeshes[gKey] = mesh;
+      }
+      
+      // Calculate parabolic trajectory
+      const elapsed = time - g.creationTime;
+      const totalTime = g.timer;
+      const t = Math.min(1.0, elapsed / totalTime);
+      
+      const throwerHeight = 35; // chest level
+      const floorHeight = 2.5;
+      let y = floorHeight;
+      if (t < 1.0) {
+        const peakHeight = 25;
+        y = floorHeight + (throwerHeight - floorHeight) * (1 - t) + peakHeight * 4 * t * (1 - t);
+      }
+      
+      mesh.position.set(g.x, y, g.y);
+      
+      // Rotations during flight
+      mesh.rotation.x += 0.08;
+      mesh.rotation.y += 0.05;
+      
+      // Pulse red/off LED light
+      const led = mesh.children[3];
+      if (led) {
+        const isRed = Math.floor(time / 150) % 2 === 0;
+        led.material.color.setHex(isRed ? 0xff0000 : 0x220000);
+      }
+    });
+    
+    // Clean up inactive grenade meshes
+    for (const key in this.grenadeMeshes) {
+      if (!activeGrenadeKeys.has(key)) {
+        this.scene.remove(this.grenadeMeshes[key]);
+        delete this.grenadeMeshes[key];
+      }
+    }
+
+    // 8. Render Floating Items / Pickups (Sleek sci-fi canisters with light beacons)
     const currentItemIds = new Set();
     engine.map.items.forEach(item => {
       if (item.active) {
         currentItemIds.add(item.id);
         let mesh = this.itemMeshes[item.id];
         if (!mesh) {
-          // Spawn item pickup in 3D (Torus or Cylinder for sci-fi vibe)
-          const geo = new THREE.TorusGeometry(6, 1.8, 8, 24);
+          const itemGroup = new THREE.Group();
+          
           let col = 0xffff00;
           if (item.type === 'health') col = 0xff3c3c;
           else if (item.type === 'adrenaline') col = 0x39db14;
           else if (item.type === 'overdrive') col = 0xff6ef7;
-
-          const mat = new THREE.MeshStandardMaterial({
+          
+          // 1. Central glowing canister core
+          const coreGeo = new THREE.CylinderGeometry(2.5, 2.5, 9, 8);
+          const coreMat = new THREE.MeshStandardMaterial({
             color: col,
             emissive: col,
-            emissiveIntensity: 0.5,
-            metalness: 0.9,
-            roughness: 0.1
+            emissiveIntensity: 1.0,
+            metalness: 0.1,
+            roughness: 0.9
           });
-          mesh = new THREE.Mesh(geo, mat);
-          mesh.position.set(item.x, 18, item.y);
-          this.scene.add(mesh);
+          const core = new THREE.Mesh(coreGeo, coreMat);
+          itemGroup.add(core);
+          
+          // 2. Outer metal support rings/cage
+          const ringGeo = new THREE.TorusGeometry(3.2, 0.6, 6, 16);
+          const metalMat = new THREE.MeshStandardMaterial({
+            color: 0x1f232b,
+            metalness: 0.95,
+            roughness: 0.15
+          });
+          
+          const ringTop = new THREE.Mesh(ringGeo, metalMat);
+          ringTop.rotation.x = Math.PI / 2;
+          ringTop.position.y = 3.8;
+          itemGroup.add(ringTop);
+          
+          const ringBottom = new THREE.Mesh(ringGeo, metalMat);
+          ringBottom.rotation.x = Math.PI / 2;
+          ringBottom.position.y = -3.8;
+          itemGroup.add(ringBottom);
+          
+          // Vertical struts
+          const strutGeo = new THREE.BoxGeometry(0.6, 9, 0.6);
+          for (let i = 0; i < 4; i++) {
+            const strut = new THREE.Mesh(strutGeo, metalMat);
+            const angle = (i * Math.PI) / 2;
+            strut.position.set(Math.cos(angle) * 3.2, 0, Math.sin(angle) * 3.2);
+            itemGroup.add(strut);
+          }
+          
+          // 3. Glowing Light Pillar (Beacon) extending upwards
+          const beaconGeo = new THREE.CylinderGeometry(1.2, 2.8, 160, 8, 1, true); // open-ended cylinder
+          const beaconMat = new THREE.MeshBasicMaterial({
+            color: col,
+            transparent: true,
+            opacity: 0.15,
+            blending: THREE.AdditiveBlending,
+            side: THREE.DoubleSide
+          });
+          const beacon = new THREE.Mesh(beaconGeo, beaconMat);
+          beacon.position.y = 80; // center it relative to canister
+          itemGroup.add(beacon);
+          
+          itemGroup.position.set(item.x, 15, item.y);
+          this.scene.add(itemGroup);
+          mesh = itemGroup;
           this.itemMeshes[item.id] = mesh;
         }
 
         // Float & spin animation
-        mesh.rotation.y += 0.03;
-        mesh.rotation.x += 0.01;
-        mesh.position.y = 15 + Math.sin(time / 220) * 3;
+        mesh.rotation.y += 0.025;
+        mesh.position.y = 14 + Math.sin(time / 200) * 2.5;
+        
+        // Pulse the beacon opacity slightly
+        const beacon = mesh.children[mesh.children.length - 1];
+        if (beacon && beacon.material) {
+          beacon.material.opacity = 0.10 + Math.sin(time / 150) * 0.04;
+        }
       }
     });
 
@@ -765,6 +1009,12 @@ export class FirstPersonController {
     this.itemMeshes = {};
     this.bulletMeshes = [];
     this.pointLights = {};
+
+    for (const key in this.grenadeMeshes) {
+      this.scene.remove(this.grenadeMeshes[key]);
+    }
+    this.grenadeMeshes = {};
+
     if (this.particlePool) {
       this.particlePool.reset();
       this.particlePool = null;

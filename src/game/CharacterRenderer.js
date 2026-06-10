@@ -154,43 +154,143 @@ class CharacterRendererClass {
     console.log('[CharacterRenderer] elf girl model loaded ✓');
   }
 
-  async _loadModel() {
-    const base = (import.meta.env.BASE_URL || '/').replace(/\/$/, '') + '/';
+  createCustomRobotModel() {
+    const group = new THREE.Group();
 
-    // Try MTL + OBJ
-    try {
-      return await new Promise((resolve, reject) => {
-        const mtlLoader = new MTLLoader();
-        mtlLoader.setPath(base);
-        mtlLoader.setResourcePath(base);
-        mtlLoader.load('elf_girl.mtl', mats => {
-          mats.preload();
-          const objLoader = new OBJLoader();
-          objLoader.setMaterials(mats);
-          objLoader.setPath(base);
-          objLoader.load('elf_girl.obj', resolve, undefined, reject);
-        }, undefined, reject);
-      });
-    } catch (e) {
-      console.warn('[CharacterRenderer] MTL load failed, falling back to OBJ-only:', e);
-    }
-
-    // Fallback: OBJ only with default material
-    return new Promise((resolve, reject) => {
-      const loader = new OBJLoader();
-      loader.setPath((import.meta.env.BASE_URL || '/').replace(/\/$/, '') + '/');
-      loader.load('elf_girl.obj', obj => {
-        obj.traverse(child => {
-          if (child.isMesh) {
-            child.material = new THREE.MeshLambertMaterial({
-              color: 0xd4a27f,
-              side: THREE.DoubleSide
-            });
-          }
-        });
-        resolve(obj);
-      }, undefined, reject);
+    // 1. Armored Torso (Heavy Chestplate)
+    const torsoGeo = new THREE.CylinderGeometry(8, 5, 20, 8);
+    const armorMat = new THREE.MeshStandardMaterial({
+      color: 0x1f242d,
+      metalness: 0.95,
+      roughness: 0.15,
+      name: 'robot-armor'
     });
+    const torso = new THREE.Mesh(torsoGeo, armorMat);
+    torso.position.y = 20;
+    group.add(torso);
+
+    // Glowing Power Core (in center of chest)
+    const coreGeo = new THREE.CylinderGeometry(2, 2, 2, 8);
+    const coreMat = new THREE.MeshBasicMaterial({ color: 0x66fcf1 });
+    const core = new THREE.Mesh(coreGeo, coreMat);
+    core.rotation.x = Math.PI / 2;
+    core.position.set(0, 23, 7.5);
+    group.add(core);
+
+    // 2. Robotic Head (Sleek helmet with visor)
+    const headGroup = new THREE.Group();
+    headGroup.position.set(0, 33, 0);
+
+    const helmetGeo = new THREE.SphereGeometry(4.5, 12, 12);
+    const helmet = new THREE.Mesh(helmetGeo, armorMat);
+    headGroup.add(helmet);
+
+    // Neon Visor
+    const visorGeo = new THREE.BoxGeometry(7, 1.2, 4);
+    const visorMat = new THREE.MeshBasicMaterial({ color: 0xff3c3c });
+    const visor = new THREE.Mesh(visorGeo, visorMat);
+    visor.position.set(0, 1, 3.2);
+    headGroup.add(visor);
+
+    // Antennas
+    const antGeo = new THREE.CylinderGeometry(0.2, 0.2, 6, 4);
+    const antennaL = new THREE.Mesh(antGeo, armorMat);
+    antennaL.position.set(-3.5, 4, -1);
+    antennaL.rotation.z = -0.25;
+    headGroup.add(antennaL);
+
+    const antennaR = new THREE.Mesh(antGeo, armorMat);
+    antennaR.position.set(3.5, 4, -1);
+    antennaR.rotation.z = 0.25;
+    headGroup.add(antennaR);
+
+    group.add(headGroup);
+
+    // 3. Heavy Shoulder Pauldrons
+    const pauldronGeo = new THREE.SphereGeometry(4, 8, 8);
+    const pauldronL = new THREE.Mesh(pauldronGeo, armorMat);
+    pauldronL.position.set(-10, 26, 0);
+    pauldronL.scale.set(1.2, 1, 1);
+    group.add(pauldronL);
+
+    const pauldronR = new THREE.Mesh(pauldronGeo, armorMat);
+    pauldronR.position.set(10, 26, 0);
+    pauldronR.scale.set(1.2, 1, 1);
+    group.add(pauldronR);
+
+    // 4. Mechanical Arms
+    const armMat = new THREE.MeshStandardMaterial({ color: 0x111111, metalness: 0.8, roughness: 0.4 });
+    const limbGeo = new THREE.CylinderGeometry(1.5, 1.2, 10, 6);
+    
+    // Left Arm
+    const armL = new THREE.Mesh(limbGeo, armMat);
+    armL.position.set(-11, 19, 2);
+    armL.rotation.x = 0.4;
+    group.add(armL);
+
+    // Right Arm (holding weapon)
+    const armR = new THREE.Mesh(limbGeo, armMat);
+    armR.position.set(11, 19, -2);
+    armR.rotation.x = -0.4;
+    group.add(armR);
+
+    // 5. Jetpack / Thrusters on Back
+    const packGeo = new THREE.BoxGeometry(8, 14, 5);
+    const jetpack = new THREE.Mesh(packGeo, armorMat);
+    jetpack.position.set(0, 20, -6);
+    
+    // Thruster cones
+    const coneGeo = new THREE.CylinderGeometry(1, 1.8, 4, 8);
+    const coneL = new THREE.Mesh(coneGeo, armMat);
+    coneL.position.set(-3, -8, 0);
+    jetpack.add(coneL);
+
+    const coneR = new THREE.Mesh(coneGeo, armMat);
+    coneR.position.set(3, -8, 0);
+    jetpack.add(coneR);
+
+    // Thruster exhaust flames (glowing orange cylinders)
+    const flameGeo = new THREE.CylinderGeometry(1.2, 0.1, 5, 8);
+    const flameMat = new THREE.MeshBasicMaterial({
+      color: 0xffaa00,
+      transparent: true,
+      opacity: 0.8,
+      blending: THREE.AdditiveBlending
+    });
+    const flameL = new THREE.Mesh(flameGeo, flameMat);
+    flameL.position.set(-3, -11, 0);
+    jetpack.add(flameL);
+
+    const flameR = new THREE.Mesh(flameGeo, flameMat);
+    flameR.position.set(3, -11, 0);
+    jetpack.add(flameR);
+
+    group.add(jetpack);
+
+    // 6. Cybernetic Legs
+    const legL = new THREE.Mesh(limbGeo, armMat);
+    legL.position.set(-4, 6, 0);
+    group.add(legL);
+
+    const legR = new THREE.Mesh(limbGeo, armMat);
+    legR.position.set(4, 6, 0);
+    group.add(legR);
+
+    // 7. Sci-fi Carbine rifle attached to robot arms
+    const rifleGeo = new THREE.BoxGeometry(2, 2.5, 18);
+    const gunMat = new THREE.MeshStandardMaterial({ color: 0x050c18, metalness: 0.9, roughness: 0.2 });
+    const rifle = new THREE.Mesh(rifleGeo, gunMat);
+    rifle.position.set(7, 16, -10);
+    rifle.rotation.y = 0.1;
+    group.add(rifle);
+
+    const wrapper = new THREE.Group();
+    wrapper.add(group);
+    return wrapper;
+  }
+
+  _loadModel() {
+    return Promise.resolve(this.createCustomRobotModel());
   }
 
   _fitModel(obj) {
