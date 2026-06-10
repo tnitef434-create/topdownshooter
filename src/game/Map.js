@@ -124,16 +124,9 @@ export class Map {
     { const r = rooms[1];
       this.zones.push({ x:r.x+r.w/4,y:r.y+r.h/4, w:r.w/2, h:r.h/2, type:'damage', multiplier:1.4, label:'EXPOSED AREA' }); }
 
-    // ─────────────── FIXED ITEM PICKUPS ───────────────
-    [
-      { x: rooms[0].x + rooms[0].w/2, y: rooms[0].y + rooms[0].h/2, type:'health' },
-      { x: rooms[2].x + rooms[2].w/2, y: rooms[2].y + rooms[2].h/2, type:'ammo'   },
-      { x: rooms[4].x + rooms[4].w/2, y: rooms[4].y + rooms[4].h/2, type:'adrenaline' },
-      { x: rooms[6].x + rooms[6].w/2, y: rooms[6].y + rooms[6].h/2, type:'ammo'   },
-      { x: rooms[8].x + rooms[8].w/2, y: rooms[8].y + rooms[8].h/2, type:'overdrive' },
-    ].forEach((s, i) => {
-      this.items.push({ id:`pickup_${i}`, x:s.x, y:s.y, type:s.type, active:true });
-    });
+    // ─────────────── RANDOMIZED ITEM PICKUPS ───────────────
+    const manorConsumables = ['health', 'ammo', 'adrenaline', 'ammo', 'overdrive'];
+    this._spawnRandomConsumables(manorConsumables, 'pickup');
 
     // ─────────────── DESTRUCTIBLE CRATES ───────────────
     this._spawnCrates();
@@ -219,18 +212,9 @@ export class Map {
     { const r = rooms[7];
       this.zones.push({ x:r.x+50,y:r.y+50, w:r.w-100, h:r.h-100, type:'damage', multiplier:2.0, label:'REACTOR ENERGY CORE' }); }
 
-    // ─────────────── FIXED ITEM PICKUPS ───────────────
-    [
-      { x: rooms[0].x + rooms[0].w/2, y: rooms[0].y + rooms[0].h/2, type:'health' },
-      { x: rooms[1].x + rooms[1].w/4, y: rooms[1].y + rooms[1].h/2, type:'ammo' },
-      { x: rooms[2].x + rooms[2].w/2, y: rooms[2].y + rooms[2].h/2, type:'health' },
-      { x: rooms[3].x + rooms[3].w/2, y: rooms[3].y + rooms[3].h/2, type:'adrenaline' },
-      { x: rooms[5].x + rooms[5].w/2, y: rooms[5].y + rooms[5].h/2, type:'health' },
-      { x: rooms[6].x + rooms[6].w/2, y: rooms[6].y + rooms[6].h/2, type:'ammo'   },
-      { x: rooms[8].x + rooms[8].w/2, y: rooms[8].y + rooms[8].h/2, type:'overdrive' },
-    ].forEach((s, i) => {
-      this.items.push({ id:`pickup_cyber_${i}`, x:s.x, y:s.y, type:s.type, active:true });
-    });
+    // ─────────────── RANDOMIZED ITEM PICKUPS ───────────────
+    const cyberConsumables = ['health', 'ammo', 'health', 'adrenaline', 'health', 'ammo', 'overdrive'];
+    this._spawnRandomConsumables(cyberConsumables, 'pickup_cyber');
 
     // ─────────────── DESTRUCTIBLE CRATES ───────────────
     this._spawnCrates();
@@ -445,6 +429,67 @@ export class Map {
         spawned++;
       }
     }
+  }
+
+  _spawnRandomConsumables(itemsList, prefix) {
+    const safetyDist = 30; // safety margin from walls
+    
+    itemsList.forEach((type, index) => {
+      let spawned = false;
+      let attempts = 0;
+      
+      while (!spawned && attempts < 150) {
+        attempts++;
+        // Pick a random room
+        const roomIdx = Math.floor(this.rng.next() * this.rooms.length);
+        const room = this.rooms[roomIdx];
+        
+        // Pick a random spot in the room (with some padding)
+        const pad = 40;
+        const rx = this.rng.range(room.x + pad, room.x + room.w - pad);
+        const ry = this.rng.range(room.y + pad, room.y + room.h - pad);
+        
+        // Check overlap with walls (including crates and furniture)
+        let overlap = false;
+        for (const w of this.walls) {
+          if (rx + safetyDist > w.x && rx - safetyDist < w.x + w.w &&
+              ry + safetyDist > w.y && ry - safetyDist < w.y + w.h) {
+            overlap = true;
+            break;
+          }
+        }
+        
+        // Keep spawn corners clear (250px safety radius)
+        if (rx < 250 && ry < 250) overlap = true;
+        if (rx > this.width-250 && ry > this.height-250) overlap = true;
+        if (rx < 250 && ry > this.height-250) overlap = true;
+        if (rx > this.width-250 && ry < 250) overlap = true;
+        
+        if (!overlap) {
+          this.items.push({
+            id: `${prefix}_${index}`,
+            x: rx,
+            y: ry,
+            type: type,
+            active: true
+          });
+          spawned = true;
+        }
+      }
+      
+      // Fallback: if it couldn't find a non-overlapping spot, spawn it at the center of a random room
+      if (!spawned) {
+        const roomIdx = Math.floor(this.rng.next() * this.rooms.length);
+        const room = this.rooms[roomIdx];
+        this.items.push({
+          id: `${prefix}_${index}`,
+          x: room.x + room.w / 2,
+          y: room.y + room.h / 2,
+          type: type,
+          active: true
+        });
+      }
+    });
   }
 
   // ─────────────────────────────────────────────────────────────────
