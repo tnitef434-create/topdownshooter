@@ -572,52 +572,54 @@ export class FirstPersonController {
 
     // 6. Draw other Players (Opponents and Bots)
     const activePlayerIds = new Set();
-    engine.players.forEach(p => {
-      // Don't render self in first person (only gun model is visible)
-      if (p.id === engine.localPlayerId) return;
+    if (this.playerModelTemplate) {
+      engine.players.forEach(p => {
+        // Don't render self in first person (only gun model is visible)
+        if (p.id === engine.localPlayerId) return;
 
-      activePlayerIds.add(p.id);
+        activePlayerIds.add(p.id);
 
-      let model = this.playerMeshes[p.id];
-      if (p.health > 0) {
-        if (!model) {
-          // Instantiate player mesh clone
-          model = this.playerModelTemplate.clone();
-          this.scene.add(model);
-          this.playerMeshes[p.id] = model;
-        }
+        let model = this.playerMeshes[p.id];
+        if (p.health > 0) {
+          if (!model) {
+            // Instantiate player mesh clone
+            model = this.playerModelTemplate.clone();
+            this.scene.add(model);
+            this.playerMeshes[p.id] = model;
+          }
 
-        // Sync coordinates & rotation
-        model.position.set(p.x, 22.5, p.y); // centered at height=45, so sits on Y=0
-        model.rotation.y = -p.angle + Math.PI / 2;
+          // Sync coordinates & rotation
+          model.position.set(p.x, 22.5, p.y); // centered at height=45, so sits on Y=0
+          model.rotation.y = -p.angle + Math.PI / 2;
 
-        // Apply procedural walk swaying to other players in 3D
-        const walkSpeed = Math.hypot(p.vx || 0, p.vy || 0);
-        const objChild = model.children[0]; // the imported Elf Girl Obj
-        if (objChild) {
-          if (walkSpeed > 0.3) {
-            const phase = (time * 0.012) % (Math.PI * 2);
-            objChild.position.y = Math.abs(Math.sin(phase)) * 2; 
-            objChild.rotation.z = Math.sin(phase) * 0.08;
-            objChild.rotation.x = 0;
-          } else if (p.muzzleFlash > 0) {
-            objChild.position.y = 0;
-            objChild.rotation.z = 0;
-            objChild.rotation.x = -0.12; // tilt back slightly recoil
-          } else {
-            objChild.position.y = 0;
-            objChild.rotation.z = 0;
-            objChild.rotation.x = 0;
+          // Apply procedural walk swaying to other players in 3D
+          const walkSpeed = Math.hypot(p.vx || 0, p.vy || 0);
+          const objChild = model.children[0]; // the imported Elf Girl Obj
+          if (objChild) {
+            if (walkSpeed > 0.3) {
+              const phase = (time * 0.012) % (Math.PI * 2);
+              objChild.position.y = Math.abs(Math.sin(phase)) * 2; 
+              objChild.rotation.z = Math.sin(phase) * 0.08;
+              objChild.rotation.x = 0;
+            } else if (p.muzzleFlash > 0) {
+              objChild.position.y = 0;
+              objChild.rotation.z = 0;
+              objChild.rotation.x = -0.12; // tilt back slightly recoil
+            } else {
+              objChild.position.y = 0;
+              objChild.rotation.z = 0;
+              objChild.rotation.x = 0;
+            }
+          }
+        } else {
+          // Dead player, clean up mesh
+          if (model) {
+            this.scene.remove(model);
+            delete this.playerMeshes[p.id];
           }
         }
-      } else {
-        // Dead player, clean up mesh
-        if (model) {
-          this.scene.remove(model);
-          delete this.playerMeshes[p.id];
-        }
-      }
-    });
+      });
+    }
 
     // Remove any disconnected players
     for (const pid in this.playerMeshes) {
