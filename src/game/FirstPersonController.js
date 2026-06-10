@@ -37,6 +37,22 @@ export class FirstPersonController {
     this.muzzleFlashMesh = null;
   }
 
+  getCanvasSize() {
+    let w = this.canvas.clientWidth;
+    let h = this.canvas.clientHeight;
+    if (w === 0 || h === 0) {
+      const parent = this.canvas.parentElement;
+      if (parent && parent.clientWidth > 0 && parent.clientHeight > 0) {
+        w = parent.clientWidth;
+        h = parent.clientHeight;
+      } else {
+        w = window.innerWidth;
+        h = window.innerHeight;
+      }
+    }
+    return { w, h };
+  }
+
   async init() {
     // 1. Setup Three.js WebGLRenderer on the 3D canvas
     this.renderer = new THREE.WebGLRenderer({
@@ -44,7 +60,8 @@ export class FirstPersonController {
       antialias: true,
       alpha: false
     });
-    this.renderer.setSize(this.canvas.clientWidth, this.canvas.clientHeight);
+    const size = this.getCanvasSize();
+    this.renderer.setSize(size.w, size.h);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -56,7 +73,7 @@ export class FirstPersonController {
     // 3. Setup Camera (FOV: 75, Aspect: width/height, Near: 0.1, Far: 3000)
     this.camera = new THREE.PerspectiveCamera(
       75,
-      this.canvas.clientWidth / this.canvas.clientHeight,
+      size.w / size.h,
       1,
       4000
     );
@@ -94,10 +111,9 @@ export class FirstPersonController {
 
   onResize() {
     if (!this.renderer || !this.camera) return;
-    const w = this.canvas.clientWidth;
-    const h = this.canvas.clientHeight;
-    this.renderer.setSize(w, h, false);
-    this.camera.aspect = w / h;
+    const size = this.getCanvasSize();
+    this.renderer.setSize(size.w, size.h, false);
+    this.camera.aspect = size.w / size.h;
     this.camera.updateProjectionMatrix();
   }
 
