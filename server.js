@@ -397,6 +397,20 @@ io.on('connection', (socket) => {
     }
   });
 
+  // 4.2 Update Name selection
+  socket.on('change-name', ({ name }) => {
+    if (!currentRoomId) return;
+    const room = rooms.get(currentRoomId);
+    if (!room) return;
+
+    const player = room.players.find(p => p.id === socket.id);
+    if (player) {
+      player.name = name || 'Operative';
+      io.to(currentRoomId).emit('players-update', { players: room.players });
+    }
+  });
+
+
   // 5. Ready state toggle
   socket.on('player-ready', ({ ready }) => {
     if (!currentRoomId) return;

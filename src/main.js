@@ -819,6 +819,12 @@ function showScreen(screenKey) {
     if (panel) panel.style.display = 'none';
   }
 
+  if (screenKey === 'menu') {
+    if (displays && displays.chatMessages) {
+      displays.chatMessages.innerHTML = '';
+    }
+  }
+
   updateMusicVolume();
 }
 
@@ -1320,6 +1326,9 @@ function disconnectSocket() {
     currentRoom = null;
     window.AppSocket = null;
   }
+  if (displays && displays.roomCode) {
+    displays.roomCode.innerText = '-----';
+  }
 }
 
 // 6. Gameplay triggers
@@ -1576,6 +1585,9 @@ function setupUIListeners() {
     inputs.name.addEventListener('change', () => {
       myName = inputs.name.value.trim() || 'Operative';
       safeStorage.setItem('tacticstrike_player_name', myName);
+      if (socket && socket.connected) {
+        socket.emit('change-name', { name: myName });
+      }
     });
   }
 
@@ -1843,25 +1855,53 @@ function setupUIListeners() {
   }
   if (gameLeaveBtn && gameMenuOverlay) {
     gameLeaveBtn.addEventListener('click', () => {
-      gameMenuOverlay.classList.remove('active');
-      if (gameEngine) {
-        if (gameEngine.active && gameEngine.mode === 'online') {
-          recordMatchResult(false);
-          if (gameEngine.isRanked) {
-            const myRP = parseInt(localStorage.getItem('tacticstrike_rp') || '0');
-            const nextRP = Math.max(0, myRP - 40);
-            localStorage.setItem('tacticstrike_rp', String(nextRP));
+      console.log("LEAVE MATCH clicked. Cleaning up game session...");
+      try {
+        gameMenuOverlay.classList.remove('active');
+        if (gameEngine) {
+          try {
+            if (gameEngine.active && gameEngine.mode === 'online') {
+              recordMatchResult(false);
+              if (gameEngine.isRanked) {
+                const myRP = parseInt(localStorage.getItem('tacticstrike_rp') || '0');
+                const nextRP = Math.max(0, myRP - 40);
+                localStorage.setItem('tacticstrike_rp', String(nextRP));
+              }
+            }
+          } catch (e) {
+            console.error("Error recording match result during leave:", e);
           }
+          localStorage.removeItem('tacticstrike_active_match');
+          try {
+            gameEngine.destroy();
+          } catch (e) {
+            console.error("Error destroying gameEngine:", e);
+          }
+          gameEngine = null;
         }
-        localStorage.removeItem('tacticstrike_active_match');
-        gameEngine.destroy();
-        gameEngine = null;
+      } catch (e) {
+        console.error("Error in leave match handler pre-disconnect:", e);
       }
-      if (socket && currentRoom) {
-        socket.emit('leave-room');
+      
+      try {
+        if (socket && currentRoom) {
+          socket.emit('leave-room');
+        }
+      } catch (e) {
+        console.error("Error emitting leave-room:", e);
       }
-      disconnectSocket();
-      showScreen('menu');
+      
+      try {
+        disconnectSocket();
+      } catch (e) {
+        console.error("Error disconnecting socket:", e);
+      }
+      
+      try {
+        showScreen('menu');
+      } catch (e) {
+        console.error("Error showing menu screen:", e);
+      }
     });
   }
 

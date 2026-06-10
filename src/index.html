@@ -44,12 +44,7 @@
               <span id="menu-rank-rp" style="color:var(--text-muted); font-size:10px;">(0 RP)</span>
             </div>
           </div>
-          <input type="text" id="player-name-input" placeholder="Enter your codename..." maxlength="15"
-            style="background: rgba(0,0,0,0.55); border: 1px solid rgba(255,255,255,0.08); padding: 11px 14px;
-                   border-radius: 4px; color: #fff; font-family: var(--font-title); font-size: 14px;
-                   outline: none; letter-spacing: 1px; transition: border-color 0.2s;"
-            onfocus="this.style.borderColor='var(--neon-teal)'"
-            onblur="this.style.borderColor='rgba(255,255,255,0.08)'">
+          <input type="text" id="player-name-input" class="game-input" placeholder="Enter your codename..." maxlength="15" aria-label="Player Codename" style="width: 100%;">
         </div>
 
         <!-- Operative Career Stats Card -->
@@ -498,7 +493,7 @@
 
           <div class="setting-group">
             <label for="setting-server-url">Multiplayer Server URL (Render / Railway / Glitch)</label>
-            <input type="text" id="setting-server-url" placeholder="Leave empty for same-origin" style="background: rgba(0, 0, 0, 0.4); border: 1px solid var(--glass-border); padding: 10px; border-radius: 4px; color: white; font-size: 13px; outline: none; transition: border-color 0.2s;">
+            <input type="text" id="setting-server-url" class="game-input" placeholder="Leave empty for same-origin" aria-label="Multiplayer Server URL" style="width: 100%;">
           </div>
 
           <div class="setting-group checkbox-group">
@@ -696,7 +691,7 @@
             
             <div style="display: flex; gap: 6px; align-items: center;">
               <button id="btn-create-room" class="btn secondary btn-3d" style="font-size: 9px; padding: 7px; flex: 1;">CREATE LOBBY</button>
-              <input type="text" id="room-code-input" placeholder="CODE" maxlength="5" style="width: 60px; text-align: center; background: rgba(0,0,0,0.55); border: 1px solid rgba(255,255,255,0.08); color: white; border-radius: 4px; font-size: 10px; padding: 5px;">
+              <input type="text" id="room-code-input" class="game-input" placeholder="CODE" maxlength="5" aria-label="Join Lobby Code" style="width: 75px; text-align: center; font-size: 11px; padding: 6px 4px;">
               <button id="btn-join-room" class="btn secondary btn-3d" style="font-size: 9px; padding: 7px; flex: none;">JOIN LOBBY</button>
             </div>
           </div>
