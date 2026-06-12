@@ -1287,7 +1287,7 @@ export class Player {
     // Laser Sight (only for local player, or if settings enabled)
     const isSabotage = window.gameEngine && window.gameEngine.matchMode === 'sabotage';
     if (configSettings.laser && this.isLocal && !this.isReloading && !isSabotage) {
-      const maxLaserDist = 1200;
+      const maxLaserDist = (this.weapon && this.weapon.range) ? this.weapon.range : 1200;
       let endX = this.x + Math.cos(this.angle) * maxLaserDist;
       let endY = this.y + Math.sin(this.angle) * maxLaserDist;
       
@@ -1517,13 +1517,15 @@ export class Player {
     ctx.font = '10px Orbitron';
     ctx.fillText(this.name.toUpperCase(), this.x, this.y - this.radius - 12);
     
-    // Draw tiny mini healthbar above opponent/bot
+    // Draw tiny mini healthbar above character
     const isSabotageMode = window.gameEngine && window.gameEngine.matchMode === 'sabotage';
-    if (!this.isLocal && this.health > 0 && !isSabotageMode) {
+    if (this.health > 0 && !isSabotageMode) {
       ctx.fillStyle = 'rgba(0,0,0,0.5)';
       ctx.fillRect(this.x - 20, this.y - this.radius - 8, 40, 4);
       
-      const hpColor = this.isTeammate ? '#39db14' : '#ff3c3c';
+      const hpColor = this.isLocal 
+        ? (COLOR_THEMES[this.colorTheme]?.helmet || '#66fcf1') 
+        : (this.isTeammate ? '#39db14' : '#ff3c3c');
       ctx.fillStyle = hpColor;
       ctx.fillRect(this.x - 20, this.y - this.radius - 8, 40 * (this.health / this.maxHealth), 4);
     }
