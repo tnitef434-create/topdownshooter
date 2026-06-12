@@ -214,7 +214,7 @@ io.on('connection', (socket) => {
     socket.join(roomId);
     currentRoomId = roomId;
 
-    socket.emit('room-created', { roomId, players: room.players, mode: roomMode, mapId: room.mapId, renderStyle: room.renderStyle });
+    socket.emit('room-created', { roomId, players: room.players, mode: roomMode, mapId: room.mapId, renderStyle: room.renderStyle, isRanked: false });
     console.log(`Room created: ${roomId} (${roomMode}, Map: ${room.mapId}, Style: ${room.renderStyle}) by player: ${playerName} (${socket.id})`);
     broadcastPlayerCounts();
   });
@@ -285,7 +285,7 @@ io.on('connection', (socket) => {
     socket.join(cleanRoomId);
     currentRoomId = cleanRoomId;
 
-    socket.emit('room-joined', { roomId: cleanRoomId, players: room.players, mode: room.mode, mapId: room.mapId || 'manor', renderStyle: room.renderStyle || 'realistic' });
+    socket.emit('room-joined', { roomId: cleanRoomId, players: room.players, mode: room.mode, mapId: room.mapId || 'manor', renderStyle: room.renderStyle || 'realistic', isRanked: false });
     socket.to(cleanRoomId).emit('player-joined', { players: room.players });
     console.log(`Player ${playerName} (${socket.id}) joined room: ${cleanRoomId}`);
     broadcastPlayerCounts();
@@ -294,7 +294,7 @@ io.on('connection', (socket) => {
   // 3. Auto-matchmaking (Ranked)
   socket.on('auto-match', ({ playerName, mode, color, rp, rankStrict, weapon }) => {
     let searchMode = mode;
-    if (!['1v1_realistic', '1v1_competitive', '2v2_realistic', '2v2_competitive', 'firstperson_realistic', 'firstperson_competitive'].includes(searchMode)) {
+    if (!['1v1_realistic', '1v1_competitive', '2v2_realistic', '2v2_competitive'].includes(searchMode)) {
       searchMode = '1v1_realistic';
     }
     const maxPlayers = searchMode.startsWith('2v2') ? 4 : 2;
@@ -332,7 +332,7 @@ io.on('connection', (socket) => {
       socket.join(targetRoom.id);
       currentRoomId = targetRoom.id;
 
-      socket.emit('room-joined', { roomId: targetRoom.id, players: targetRoom.players, mode: targetRoom.mode });
+      socket.emit('room-joined', { roomId: targetRoom.id, players: targetRoom.players, mode: targetRoom.mode, isRanked: true, mapId: targetRoom.mapId || 'manor', renderStyle: targetRoom.renderStyle || 'realistic' });
       socket.to(targetRoom.id).emit('player-joined', { players: targetRoom.players });
       console.log(`Auto-matched Player ${playerName} (RP: ${playerRP}) into room: ${targetRoom.id}`);
       broadcastPlayerCounts();
@@ -365,7 +365,7 @@ io.on('connection', (socket) => {
       socket.join(roomId);
       currentRoomId = roomId;
 
-      socket.emit('room-created', { roomId, players: room.players, autoMatch: true, mode: searchMode });
+      socket.emit('room-created', { roomId, players: room.players, autoMatch: true, mode: searchMode, isRanked: true, mapId: room.mapId || 'manor', renderStyle: room.renderStyle || 'realistic' });
       console.log(`Auto-match created room: ${roomId} (${searchMode}) for player: ${playerName} (RP: ${playerRP})`);
       broadcastPlayerCounts();
     }
@@ -431,8 +431,9 @@ io.on('connection', (socket) => {
         room.score2 = 0;
         room.roundNumber = 1;
         room.players.forEach(p => p.wantsRematch = false); // clear any old rematch tags
+        const startRandVal = Math.random();
         const startMapId = room.isRanked
-          ? (Math.random() < 0.5 ? 'manor' : 'cyberlab')
+          ? (startRandVal < 0.33 ? 'manor' : (startRandVal < 0.66 ? 'cyberlab' : 'arena'))
           : (room.mapId || 'manor');
         const startRenderStyle = room.isRanked 
           ? (room.mode.includes('competitive') ? 'competitive' : 'realistic')
@@ -471,8 +472,9 @@ io.on('connection', (socket) => {
           p.ready = false;
           p.wantsRematch = false;
         });
+        const rematchRandVal = Math.random();
         const rematchMapId = room.isRanked
-          ? (Math.random() < 0.5 ? 'manor' : 'cyberlab')
+          ? (rematchRandVal < 0.33 ? 'manor' : (rematchRandVal < 0.66 ? 'cyberlab' : 'arena'))
           : (room.mapId || 'manor');
         const rematchRenderStyle = room.isRanked 
           ? (room.mode.includes('competitive') ? 'competitive' : 'realistic')
@@ -614,12 +616,12 @@ io.on('connection', (socket) => {
       saveUsers();
     } else {
       const sProfile = users[id];
-      sProfile.rp = Math.max(sProfile.rp || 0, rp || 0);
-      sProfile.stats.wins = Math.max(sProfile.stats.wins || 0, wins || 0);
-      sProfile.stats.losses = Math.max(sProfile.stats.losses || 0, losses || 0);
-      sProfile.credits = Math.max(sProfile.credits || 0, credits || 0);
+      sProfile.rp = rp;
+      sProfile.stats.wins = wins;
+      sProfile.stats.losses = losses;
+      sProfile.credits = credits;
       sProfile.purchasedWeapons = Array.from(new Set([...(sProfile.purchasedWeapons || []), ...(purchasedWeapons || [])]));
-      if (name && name !== 'Operative' && (!sProfile.username || sProfile.username === 'Operative')) {
+      if (name && name !== 'Operative') {
         sProfile.username = name;
       }
       saveUsers();

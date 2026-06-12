@@ -944,7 +944,7 @@ function updateLobbyUI(players) {
     
     displays.playersList.appendChild(slotEl);
 
-    if ((myMode === '1v1' || myMode === 'firstperson') && idx === 0) {
+    if (myMode === '1v1' && idx === 0) {
       const vsEl = document.createElement('div');
       vsEl.className = 'vs-divider';
       vsEl.innerText = 'VS';
@@ -1101,9 +1101,10 @@ function connectSocket() {
   });
 
   // Socket Events
-  socket.on('room-created', ({ roomId, players, autoMatch, mode, mapId, renderStyle }) => {
+  socket.on('room-created', ({ roomId, players, autoMatch, mode, mapId, renderStyle, isRanked }) => {
     currentRoom = roomId;
     if (mode) myMode = mode;
+    currentMatchSource = isRanked ? 'ranked' : 'casual';
     displays.roomCode.innerText = roomId;
     
     // Sync map choice
@@ -1135,9 +1136,10 @@ function connectSocket() {
     }
   });
 
-  socket.on('room-joined', ({ roomId, players, mode, mapId, renderStyle }) => {
+  socket.on('room-joined', ({ roomId, players, mode, mapId, renderStyle, isRanked }) => {
     currentRoom = roomId;
     if (mode) myMode = mode;
+    currentMatchSource = isRanked ? 'ranked' : 'casual';
     displays.roomCode.innerText = roomId;
     showScreen('lobby');
     updateLobbyUI(players);
@@ -1194,7 +1196,7 @@ function connectSocket() {
     if (lobbyMapSelect) {
       lobbyMapSelect.value = mapId;
     }
-    const mapName = mapId === 'cyberlab' ? 'Neon Cyber-Lab' : 'Residential Manor';
+    const mapName = mapId === 'cyberlab' ? 'Neon Cyber-Lab' : (mapId === 'arena' ? 'Neon Arena' : 'Residential Manor');
     addSystemChatMessage(`Host updated mission area to: ${mapName}`);
   });
 
@@ -1206,7 +1208,6 @@ function connectSocket() {
     myMode = mode;
     let modeName = 'Duel 1v1';
     if (mode === 'sabotage') modeName = 'Sabotage (Task Survival)';
-    else if (mode === 'firstperson') modeName = '1v1 First Person';
     addSystemChatMessage(`Host updated game mode to: ${modeName}`);
   });
 
@@ -1398,29 +1399,30 @@ function getRandomWeapon() {
     if (gameEngine && gameEngine.mode === 'online') {
       recordMatchResult(isWin);
       
+      const currentCredits = parseInt(safeStorage.getItem('tacticstrike_credits') || '0');
+      let nextCredits = currentCredits;
       if (gameEngine.isRanked && isWin) {
-        const currentCredits = parseInt(safeStorage.getItem('tacticstrike_credits') || '0');
-        const nextCredits = currentCredits + 50;
+        nextCredits = currentCredits + 50;
         safeStorage.setItem('tacticstrike_credits', String(nextCredits));
         creditsBonusText = ` <span style="color:#ffd700; font-size:10px;">(+50 Credits Ranked Win Bonus!)</span>`;
-        
-        // Trigger background sync to server
-        if (socket) {
-          const uuid = getOrCreateUUID();
-          const rp = parseInt(safeStorage.getItem('tacticstrike_rp') || '0');
-          const career = loadCareerStats();
-          let purchased = [];
-          try { purchased = JSON.parse(safeStorage.getItem('tacticstrike_purchased_weapons') || '[]'); } catch(e) {}
-          socket.emit('sync-device', {
-            uuid,
-            rp,
-            wins: career.wins,
-            losses: career.losses,
-            name: myName,
-            credits: nextCredits,
-            purchasedWeapons: purchased
-          });
-        }
+      }
+      
+      // Trigger background sync to server
+      if (socket) {
+        const uuid = getOrCreateUUID();
+        const rp = parseInt(safeStorage.getItem('tacticstrike_rp') || '0');
+        const career = loadCareerStats();
+        let purchased = [];
+        try { purchased = JSON.parse(safeStorage.getItem('tacticstrike_purchased_weapons') || '[]'); } catch(e) {}
+        socket.emit('sync-device', {
+          uuid,
+          rp,
+          wins: career.wins,
+          losses: career.losses,
+          name: myName,
+          credits: nextCredits,
+          purchasedWeapons: purchased
+        });
       }
     }
 
@@ -1478,6 +1480,13 @@ function getRandomWeapon() {
     if (rBtn) {
       rBtn.disabled = false;
       rBtn.innerText = 'REMATCH';
+    }
+    if (btns.returnLobby) {
+      if (gameEngine && gameEngine.isRanked) {
+        btns.returnLobby.innerText = 'RETURN TO MENU';
+      } else {
+        btns.returnLobby.innerText = 'RETURN TO LOBBY';
+      }
     }
 
     // ── Rank / RP Panel ─────────────────────────────────────────────────────
@@ -1826,13 +1835,16 @@ function setupUIListeners() {
         gameEngine = null;
       }
       updateMenuRankUI();
-      if (socket && currentRoom) {
+      if (socket && currentRoom && currentMatchSource !== 'ranked') {
         showScreen('lobby');
         isReady = false;
         updateLobbyUI(lobbyPlayers);
         updateWeaponStatsUI(myWeapon);
       } else {
-        // Offline mode goes back to main menu
+        // Offline mode or finished ranked match goes back to main menu
+        if (socket) {
+          socket.emit('leave-room');
+        }
         disconnectSocket();
         showScreen('menu');
       }
@@ -1907,15 +1919,6 @@ function setupUIListeners() {
     });
   }
 
-  // First Person Mode Toggle button in HUD
-  const fpmToggleBtn = document.getElementById('btn-toggle-fpm');
-  if (fpmToggleBtn) {
-    fpmToggleBtn.addEventListener('click', () => {
-      if (gameEngine) {
-        gameEngine.toggleFirstPersonMode();
-      }
-    });
-  }
 
   // Rematch request button
   const rematchBtn = document.getElementById('btn-rematch');

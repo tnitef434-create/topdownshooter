@@ -36,6 +36,8 @@ export class Map {
 
     if (this.mapId === 'cyberlab') {
       this.generateCyberLabMap();
+    } else if (this.mapId === 'arena') {
+      this.generateArenaMap();
     } else {
       this.generateManorMap();
     }
@@ -226,6 +228,100 @@ export class Map {
       reactor: { x: 700, y: 1150, radius: 240, on: true, innerRadius: 15, color: 'rgba(255, 127, 59, 0.28)', colorMid: 'rgba(255, 127, 59, 0.12)', pulseType: 'garage', fixtureType: 'reactor_light' },
       serverRoom: { x: 250, y: 700, radius: 220, on: true, innerRadius: 10, color: 'rgba(57, 219, 20, 0.24)', colorMid: 'rgba(57, 219, 20, 0.09)', pulseType: 'none', fixtureType: 'server_rack_light' },
       cryo: { x: 1150, y: 700, radius: 220, on: true, innerRadius: 10, color: 'rgba(102, 252, 241, 0.24)', colorMid: 'rgba(102, 252, 241, 0.09)', pulseType: 'none', fixtureType: 'cryo_light' }
+    };
+  }
+
+  generateArenaMap() {
+    const B  = 40;   // border/exterior wall thickness
+    const W  = 20;   // interior wall thickness
+    const DW = 80;   // doorway opening width
+
+    const iL = B, iT = B, iR = this.width - B, iB = this.height - B;
+
+    // Split interior (width: 820, height: 820) into 3x3 grid rooms
+    const colL = 240;
+    const colC = 300;
+    const colR = 240;
+
+    const rowT = 240;
+    const rowM = 300;
+    const rowB = 240;
+
+    // Room boundaries
+    const vx1 = iL + colL;               // 280
+    const vx2 = vx1 + W + colC;          // 600
+
+    const hy1 = iT + rowT;               // 280
+    const hy2 = hy1 + W + rowM;          // 600
+
+    const rooms = [
+      { x: iL,       y: iT,       w: colL, h: rowT, name: 'Alpha Spawn',    floor: 'concrete' },
+      { x: vx1+W,    y: iT,       w: colC, h: rowT, name: 'North Gallery',  floor: 'wood'     },
+      { x: vx2+W,    y: iT,       w: colR, h: rowT, name: 'Omega Spawn',    floor: 'concrete' },
+      { x: iL,       y: hy1+W,    w: colL, h: rowM, name: 'West Corridor',  floor: 'tiles'    },
+      { x: vx1+W,    y: hy1+W,    w: colC, h: rowM, name: 'Central Core',   floor: 'tiles'    },
+      { x: vx2+W,    y: hy1+W,    w: colR, h: rowM, name: 'East Corridor',  floor: 'tiles'    },
+      { x: iL,       y: hy2+W,    w: colL, h: rowB, name: 'Supply Vault',   floor: 'carpet'   },
+      { x: vx1+W,    y: hy2+W,    w: colC, h: rowB, name: 'South Gallery',  floor: 'wood'     },
+      { x: vx2+W,    y: hy2+W,    w: colR, h: rowB, name: 'Server Annex',   floor: 'carpet'   },
+    ];
+    this.rooms = rooms;
+
+    // Exterior walls
+    this._push({ x:0,       y:0,       w:this.width, h:B,   type:'wall', material:'exterior' });
+    this._push({ x:0,       y:iB,      w:this.width, h:B,   type:'wall', material:'exterior' });
+    this._push({ x:0,       y:B,       w:B,  h:this.height-B*2, type:'wall', material:'exterior' });
+    this._push({ x:iR,      y:B,       w:B,  h:this.height-B*2, type:'wall', material:'exterior' });
+
+    // Vertical interior walls with doors (centered doorways)
+    this._addWallWithDoorway(vx1, iT,      W, rowT, 'v', Math.round(rowT*0.5 - DW/2), DW, 'wall', 'interior');
+    this._addWallWithDoorway(vx1, hy1+W,   W, rowM, 'v', Math.round(rowM*0.5 - DW/2), DW, 'wall', 'interior');
+    this._addWallWithDoorway(vx1, hy2+W,   W, rowB, 'v', Math.round(rowB*0.5 - DW/2), DW, 'wall', 'interior');
+
+    this._addWallWithDoorway(vx2, iT,      W, rowT, 'v', Math.round(rowT*0.5 - DW/2), DW, 'wall', 'interior');
+    this._addWallWithDoorway(vx2, hy1+W,   W, rowM, 'v', Math.round(rowM*0.5 - DW/2), DW, 'wall', 'interior');
+    this._addWallWithDoorway(vx2, hy2+W,   W, rowB, 'v', Math.round(rowB*0.5 - DW/2), DW, 'wall', 'interior');
+
+    // Horizontal interior walls with doors (centered doorways)
+    this._addWallWithDoorway(iL,    hy1, colL, W, 'h', Math.round(colL*0.5 - DW/2), DW, 'wall', 'interior');
+    this._addWallWithDoorway(vx1+W, hy1, colC, W, 'h', Math.round(colC*0.5 - DW/2), DW, 'wall', 'interior');
+    this._addWallWithDoorway(vx2+W, hy1, colR, W, 'h', Math.round(colR*0.5 - DW/2), DW, 'wall', 'interior');
+
+    this._addWallWithDoorway(iL,    hy2, colL, W, 'h', Math.round(colL*0.5 - DW/2), DW, 'wall', 'interior');
+    this._addWallWithDoorway(vx1+W, hy2, colC, W, 'h', Math.round(colC*0.5 - DW/2), DW, 'wall', 'interior');
+    this._addWallWithDoorway(vx2+W, hy2, colR, W, 'h', Math.round(colR*0.5 - DW/2), DW, 'wall', 'interior');
+
+    // Add decorative/tactical cover blocks inside Central Core (four small pillars at corners of Central Core)
+    const CC = rooms[4];
+    const F = (obj) => this._push({ ...obj, type:'wall', material:'furniture' });
+    F({ x: CC.x + 40, y: CC.y + 40, w: 40, h: 40, label: 'column' });
+    F({ x: CC.x + CC.w - 80, y: CC.y + 40, w: 40, h: 40, label: 'column' });
+    F({ x: CC.x + 40, y: CC.y + CC.h - 80, w: 40, h: 40, label: 'column' });
+    F({ x: CC.x + CC.w - 80, y: CC.y + CC.h - 80, w: 40, h: 40, label: 'column' });
+
+    // Healing Zone in Central Core (glowing MEDIC STATION)
+    this.zones.push({
+      x: CC.x + 90,
+      y: CC.y + 90,
+      w: CC.w - 180,
+      h: CC.h - 180,
+      type: 'healing',
+      healRate: 0.05,
+      label: 'NANO MEDIC STATION'
+    });
+
+    // Randomized pickups
+    const arenaConsumables = ['health', 'ammo', 'adrenaline', 'overdrive'];
+    this._spawnRandomConsumables(arenaConsumables, 'pickup_arena');
+
+    // Destructible crates
+    this._spawnCrates();
+
+    // Ambient lighting (Cyberpunk neon cyan/orange theme)
+    this.ambientLights = {
+      centerSiren: { x: 450, y: 450, radius: 180, on: true, innerRadius: 15, color: 'rgba(102, 252, 241, 0.25)', colorMid: 'rgba(102, 252, 241, 0.09)', pulseType: 'quantum', fixtureType: 'reactor_light' },
+      alphaLight: { x: 150, y: 150, radius: 150, on: true, innerRadius: 10, color: 'rgba(255, 110, 247, 0.20)', colorMid: 'rgba(255, 110, 247, 0.08)', pulseType: 'none', fixtureType: 'quantum' },
+      omegaLight: { x: 750, y: 750, radius: 150, on: true, innerRadius: 10, color: 'rgba(255, 127, 59, 0.20)', colorMid: 'rgba(255, 127, 59, 0.08)', pulseType: 'none', fixtureType: 'quantum' }
     };
   }
 

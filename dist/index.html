@@ -11,7 +11,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=Orbitron:wght@500;700;900&display=swap" rel="stylesheet">
   <!-- Style sheet -->
   <!-- Socket.io client (loaded dynamically via bundler or server, or we can just import from socket.io-client) -->
-  <script type="module" crossorigin src="/assets/index-uP2Wi8ul.js"></script>
+  <script type="module" crossorigin src="/assets/index-BQQ3EHZ7.js"></script>
   <link rel="stylesheet" crossorigin href="/assets/index-uXdWUjV9.css">
 </head>
 <body>
@@ -97,10 +97,6 @@
             <label class="radio-container" style="display: flex; align-items: center; gap: 8px; font-family: var(--font-title); font-size: 13px; cursor: pointer; letter-spacing: 1px;">
               <input type="radio" name="match-mode" value="2v2" style="accent-color: #d4af37;">
               2V2 SQUAD
-            </label>
-            <label class="radio-container" style="display: flex; align-items: center; gap: 8px; font-family: var(--font-title); font-size: 13px; cursor: pointer; letter-spacing: 1px;">
-              <input type="radio" name="match-mode" value="firstperson" style="accent-color: #d4af37;">
-              1V1 FIRST PERSON
             </label>
           </div>
         </div>
@@ -265,7 +261,6 @@
               <select id="lobby-mode-select" class="cyber-select" style="width: 100%; font-size: 11px; padding: 8px; font-family: var(--font-title); background: rgba(0,0,0,0.6); color: white; border: 1px solid var(--neon-teal); border-radius: 4px; cursor: pointer; outline: none; text-transform: uppercase;">
                 <option value="1v1">DUEL 1V1 (CLASSIC)</option>
                 <option value="sabotage">SABOTAGE (TASK SURVIVAL)</option>
-                <option value="firstperson">1V1 FIRST PERSON</option>
               </select>
             </div>
 
@@ -275,6 +270,7 @@
               <select id="lobby-map-select" class="cyber-select" style="width: 100%; font-size: 11px; padding: 8px; font-family: var(--font-title); background: rgba(0,0,0,0.6); color: white; border: 1px solid var(--neon-teal); border-radius: 4px; cursor: pointer; outline: none; text-transform: uppercase;">
                 <option value="manor">RESIDENTIAL MANOR (CLASSIC)</option>
                 <option value="cyberlab">NEON CYBER-LAB (FLAGSHIP 🌟)</option>
+                <option value="arena">NEON ARENA (1V1 COMPETITIVE 🌟)</option>
               </select>
             </div>
 
@@ -321,7 +317,6 @@
     <div id="game-screen" class="screen">
       <div id="game-container">
         <canvas id="game-canvas"></canvas>
-        <canvas id="game-canvas-3d" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: none; z-index: 2;"></canvas>
 
         <!-- Dynamic Game HUD Overlay -->
         <div class="game-hud">
@@ -334,7 +329,6 @@
           <!-- Top Left Menu / Leave Button -->
           <div style="position: absolute; top: 20px; left: 20px; z-index: 10; display: flex; gap: 8px;">
             <button id="btn-game-menu" class="btn secondary btn-3d" style="padding: 6px 12px; font-size: 11px; border: 1px solid rgba(255,255,255,0.12);">MENU</button>
-            <button id="btn-toggle-fpm" class="btn secondary btn-3d" style="padding: 6px 12px; font-size: 11px; border: 1px solid rgba(255,255,255,0.12);">FIRST PERSON</button>
           </div>
 
           <!-- Top Center: Match Status / Timer -->

@@ -388,34 +388,15 @@ export class Player {
     let ax = 0;
     let ay = 0;
 
-    const isFPM = window.gameEngine && window.gameEngine.firstPersonMode;
-    if (isFPM) {
-      let fwd = 0;
-      let strafe = 0;
-      if (keys['w'] || keys['arrowup']) fwd += 1;
-      if (keys['s'] || keys['arrowdown']) fwd -= 1;
-      if (keys['a'] || keys['arrowleft']) strafe -= 1;
-      if (keys['d'] || keys['arrowright']) strafe += 1;
-      
-      const moveLen = Math.hypot(fwd, strafe);
-      if (moveLen > 0) {
-        fwd /= moveLen;
-        strafe /= moveLen;
-        
-        ax = (fwd * Math.cos(this.angle) - strafe * Math.sin(this.angle)) * currentAccel * sprintAccelMult;
-        ay = (fwd * Math.sin(this.angle) + strafe * Math.cos(this.angle)) * currentAccel * sprintAccelMult;
-      }
-    } else {
-      if (keys['w'] || keys['arrowup']) ay -= currentAccel * sprintAccelMult;
-      if (keys['s'] || keys['arrowdown']) ay += currentAccel * sprintAccelMult;
-      if (keys['a'] || keys['arrowleft']) ax -= currentAccel * sprintAccelMult;
-      if (keys['d'] || keys['arrowright']) ax += currentAccel * sprintAccelMult;
+    if (keys['w'] || keys['arrowup']) ay -= currentAccel * sprintAccelMult;
+    if (keys['s'] || keys['arrowdown']) ay += currentAccel * sprintAccelMult;
+    if (keys['a'] || keys['arrowleft']) ax -= currentAccel * sprintAccelMult;
+    if (keys['d'] || keys['arrowright']) ax += currentAccel * sprintAccelMult;
 
-      // Normalize diagonal acceleration
-      if (ax !== 0 && ay !== 0) {
-        ax *= 0.7071;
-        ay *= 0.7071;
-      }
+    // Normalize diagonal acceleration
+    if (ax !== 0 && ay !== 0) {
+      ax *= 0.7071;
+      ay *= 0.7071;
     }
 
     this.vx += ax * dtFactor;
@@ -423,9 +404,7 @@ export class Player {
 
     // Point angle towards mouse cursor
     // Mouse coords are screen-space relative to player offset
-    if (!isFPM) {
-      this.angle = mouse.angle;
-    }
+    this.angle = mouse.angle;
 
     // Spacebar dash forward (10s cooldown)
     const dashCooldown = 10000;

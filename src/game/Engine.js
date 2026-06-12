@@ -5,7 +5,6 @@ import { ParticleEngine } from './Particle.js';
 import { Sound } from './Sound.js';
 import { Network } from './Network.js';
 import { CharacterRenderer } from './CharacterRenderer.js';
-import { FirstPersonController } from './FirstPersonController.js';
 
 class FlashGrenade {
   constructor(x, y, vx, vy, throwerId) {
@@ -87,8 +86,8 @@ export class Engine {
       this.isRanked = !!config.isRanked;
       
       // Map dimensions
-      this.mapWidth = 1400;
-      this.mapHeight = 1400;
+      this.mapWidth = config.mapId === 'arena' ? 900 : 1400;
+      this.mapHeight = config.mapId === 'arena' ? 900 : 1400;
       
       // Seeded map & item configuration
       this.map = new GameMap(this.mapWidth, this.mapHeight, config.seed, config.mapId);
@@ -284,36 +283,7 @@ export class Engine {
       };
       this.zoneTimer = null;
 
-      // First Person Mode Setup
-      const isForcedFPM = this.matchMode && this.matchMode.startsWith('firstperson');
-      this.firstPersonMode = isForcedFPM;
-      this.firstPersonController = new FirstPersonController('game-canvas-3d');
-      this.firstPersonController.init().then(() => {
-        if (this.map) {
-          this.firstPersonController.build3DMap(this.map);
-        }
-        if (isForcedFPM) {
-          const btn = document.getElementById('btn-toggle-fpm');
-          if (btn) {
-            btn.style.display = 'none';
-          }
-          const canvas3d = document.getElementById('game-canvas-3d');
-          if (canvas3d) {
-            canvas3d.style.display = 'block';
-            this.firstPersonController.onResize();
-          }
-          this.firstPersonController.active = true;
-          // Request pointer lock after a small delay to ensure browser doesn't block it
-          setTimeout(() => {
-            this.requestPointerLock();
-          }, 800);
-        } else {
-          const btn = document.getElementById('btn-toggle-fpm');
-          if (btn) {
-            btn.style.display = '';
-          }
-        }
-      });
+
 
       // Setup
       this.resizeCanvas();
@@ -886,24 +856,7 @@ export class Engine {
     window.removeEventListener('mouseup', this.mouseupHandler);
     window.removeEventListener('wheel', this.wheelHandler);
     window.removeEventListener('contextmenu', this.contextmenuHandler);
-    if (this.pointerLockChangeHandler) {
-      document.removeEventListener('pointerlockchange', this.pointerLockChangeHandler);
-    }
-    if (this.firstPersonController) {
-      this.firstPersonController.destroy();
-    }
-    this.exitPointerLock();
-    
-    // Restore elements
-    const fpmBtn = document.getElementById('btn-toggle-fpm');
-    if (fpmBtn) {
-      fpmBtn.style.display = '';
-      fpmBtn.classList.remove('active');
-    }
-    const canvas3d = document.getElementById('game-canvas-3d');
-    if (canvas3d) {
-      canvas3d.style.display = 'none';
-    }
+
     
     // Clean up inventory click handlers
     const slot1 = document.getElementById('inv-slot-1');
@@ -1128,9 +1081,6 @@ export class Engine {
     this.grenades = [];
     this.particles.clear();
     this.map.generateMap(); // Regen crate positions
-    if (this.firstPersonController) {
-      this.firstPersonController.build3DMap(this.map);
-    }
     
     // Sync HUD displays
     this.localPlayer.updateHUD();
@@ -2220,133 +2170,22 @@ export class Engine {
     
     if (this.gameState === 'replay' && !frame) return;
 
-    if (this.firstPersonMode) {
-      if (this.firstPersonController) {
-        this.firstPersonController.render(this);
-      }
-      
-      this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-      
-      const cx = this.canvas.width / 2;
-      const cy = this.canvas.height / 2;
-      const W = this.canvas.width;
-      const H = this.canvas.height;
+    // Clear canvas
+    this.ctx.fillStyle = '#06070a';
+    this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
 
-      // ── Edge Vignette (dark corners for FPS depth) ────────────────────────
-      const vgGrad = this.ctx.createRadialGradient(cx, cy, H * 0.28, cx, cy, H * 0.72);
-      vgGrad.addColorStop(0, 'rgba(0,0,0,0)');
-      vgGrad.addColorStop(1, 'rgba(0,0,0,0.55)');
-      this.ctx.fillStyle = vgGrad;
-      this.ctx.fillRect(0, 0, W, H);
+    // Dynamic scale/zoom sizing helper based on resolution
+    const refWidth = 1920;
+    const refHeight = 1080;
+    const ratioX = this.canvas.width / refWidth;
+    const ratioY = this.canvas.height / refHeight;
+    const scaleFactor = Math.min(ratioX, ratioY);
+    this.zoom = Math.max(0.5, Math.min(1.35, scaleFactor));
 
-      // ── Dynamic Crosshair ─────────────────────────────────────────────────
-      // Spread grows with movement speed and shrinks at rest
-      const spd = this.localPlayer ? Math.hypot(this.localPlayer.vx || 0, this.localPlayer.vy || 0) : 0;
-      const flash = this.localPlayer ? (this.localPlayer.muzzleFlash || 0) : 0;
-      const spread = 5 + spd * 2.5 + flash * 18;
-      const lineLen = 10;
-      const dotR = 1.2;
-
-      this.ctx.save();
-
-      // Outer shadow for visibility
-      this.ctx.shadowColor = 'rgba(0,0,0,0.8)';
-      this.ctx.shadowBlur = 4;
-      this.ctx.strokeStyle = 'rgba(0,0,0,0.5)';
-      this.ctx.lineWidth = 3.5;
-      this.ctx.beginPath();
-      this.ctx.moveTo(cx - spread - lineLen, cy); this.ctx.lineTo(cx - spread, cy);
-      this.ctx.moveTo(cx + spread, cy);           this.ctx.lineTo(cx + spread + lineLen, cy);
-      this.ctx.moveTo(cx, cy - spread - lineLen); this.ctx.lineTo(cx, cy - spread);
-      this.ctx.moveTo(cx, cy + spread);           this.ctx.lineTo(cx, cy + spread + lineLen);
-      this.ctx.stroke();
-
-      // Coloured lines
-      const isMoving = spd > 0.5;
-      const crossCol = isMoving ? 'rgba(255,220,50,0.85)' : 'rgba(102,252,241,0.90)';
-      this.ctx.strokeStyle = crossCol;
-      this.ctx.lineWidth = 2;
-      this.ctx.shadowBlur = 6;
-      this.ctx.shadowColor = crossCol;
-      this.ctx.beginPath();
-      this.ctx.moveTo(cx - spread - lineLen, cy); this.ctx.lineTo(cx - spread, cy);
-      this.ctx.moveTo(cx + spread, cy);           this.ctx.lineTo(cx + spread + lineLen, cy);
-      this.ctx.moveTo(cx, cy - spread - lineLen); this.ctx.lineTo(cx, cy - spread);
-      this.ctx.moveTo(cx, cy + spread);           this.ctx.lineTo(cx, cy + spread + lineLen);
-      this.ctx.stroke();
-
-      // Centre dot
-      this.ctx.shadowBlur = 4;
-      this.ctx.fillStyle = crossCol;
-      this.ctx.beginPath();
-      this.ctx.arc(cx, cy, dotR, 0, Math.PI * 2);
-      this.ctx.fill();
-
-      this.ctx.restore();
-
-      this.activeHitmarkers.forEach(hm => {
-        const agePct = hm.age / hm.duration;
-        const alpha = 1 - agePct;
-        this.ctx.save();
-        this.ctx.translate(cx, cy);
-        this.ctx.strokeStyle = hm.isHeadshot ? `rgba(255, 215, 0, ${alpha})` : `rgba(255, 255, 255, ${alpha})`;
-        this.ctx.lineWidth = hm.isHeadshot ? 2.5 : 1.5;
-        const size = 6 + agePct * 6;
-        const inner = 3;
-        this.ctx.beginPath();
-        this.ctx.moveTo(-inner, -inner); this.ctx.lineTo(-size, -size);
-        this.ctx.moveTo(inner, -inner); this.ctx.lineTo(size, -size);
-        this.ctx.moveTo(-inner, inner); this.ctx.lineTo(-size, size);
-        this.ctx.moveTo(inner, inner); this.ctx.lineTo(size, size);
-        this.ctx.stroke();
-        this.ctx.restore();
-      });
-
-      this.floatingNumbers.forEach(fn => {
-        const agePct = fn.age / fn.duration;
-        const floatHeight = 40 + agePct * 15;
-        const screenPos = this.firstPersonController.projectToScreen(fn.x, fn.y, floatHeight);
-        if (screenPos) {
-          const alpha = 1 - agePct;
-          let scale = 1.0;
-          if (agePct < 0.25) {
-            scale = 1.0 + (agePct / 0.25) * 0.4;
-          } else {
-            scale = 1.4 - ((agePct - 0.25) / 0.75) * 0.4;
-          }
-          this.ctx.save();
-          this.ctx.translate(screenPos.x, screenPos.y);
-          this.ctx.scale(scale, scale);
-          
-          this.ctx.font = fn.isHeadshot ? "bold 14px 'Orbitron', sans-serif" : "bold 11px 'Orbitron', sans-serif";
-          this.ctx.textAlign = 'center';
-          
-          this.ctx.strokeStyle = `rgba(0, 0, 0, ${alpha})`;
-          this.ctx.lineWidth = 3;
-          this.ctx.strokeText(fn.damage, 0, 0);
-          
-          this.ctx.fillStyle = fn.isHeadshot ? `rgba(255, 215, 0, ${alpha})` : `rgba(255, 255, 255, ${alpha})`;
-          this.ctx.fillText(fn.damage, 0, 0);
-          this.ctx.restore();
-        }
-      });
-    } else {
-      // Clear canvas
-      this.ctx.fillStyle = '#06070a';
-      this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
-
-      // Dynamic scale/zoom sizing helper based on resolution
-      const refWidth = 1920;
-      const refHeight = 1080;
-      const ratioX = this.canvas.width / refWidth;
-      const ratioY = this.canvas.height / refHeight;
-      const scaleFactor = Math.min(ratioX, ratioY);
-      this.zoom = Math.max(0.5, Math.min(1.35, scaleFactor));
-
-      // 1. Save state and apply Camera Viewport translations
-      this.ctx.save();
-      this.ctx.translate(this.canvas.width / 2, this.canvas.height / 2);
-      this.ctx.scale(this.zoom, this.zoom);
+    // 1. Save state and apply Camera Viewport translations
+    this.ctx.save();
+    this.ctx.translate(this.canvas.width / 2, this.canvas.height / 2);
+    this.ctx.scale(this.zoom, this.zoom);
       
       const camX = frame ? frame.camera.x : this.camera.x;
       const camY = frame ? frame.camera.y : this.camera.y;
@@ -2895,7 +2734,6 @@ export class Engine {
 
     // Restore viewport translations
     this.ctx.restore();
-    }
 
     // 2. Render Tactical Screen Edge Vignette Overlay & Scanlines
     this.ctx.save();
