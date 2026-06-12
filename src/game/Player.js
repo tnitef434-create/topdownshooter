@@ -259,9 +259,58 @@ export class Player {
         const opposingTeam = this.team === 1 ? 2 : 1;
         const targets = window.gameEngine.players.filter(p => p !== this && p.health > 0 && p.team === opposingTeam);
         if (targets.length > 0) {
+          const gameMap = window.gameEngine.map;
+          // Sort targets by distance
           targets.sort((a, b) => Math.hypot(this.x - a.x, this.y - a.y) - Math.hypot(this.x - b.x, this.y - b.y));
-          const target = targets[0];
-          this.angle = Math.atan2(target.y - this.y, target.x - this.x);
+          
+          // Prioritize targets that are visible (in line of sight)
+          let target = null;
+          if (gameMap) {
+            target = targets.find(p => this.checkLineOfSight(gameMap, this.x, this.y, p.x, p.y));
+          }
+          // Fallback to the nearest target if none are visible
+          if (!target) {
+            target = targets[0];
+          }
+
+          // Predictive lead calculation (aim ahead based on bullet travel time)
+          const dx = target.x - this.x;
+          const dy = target.y - this.y;
+          const s = this.weapon.bulletSpeed || 15;
+          const targetVx = target.vx || 0;
+          const targetVy = target.vy || 0;
+
+          // Solve quadratic equation: (s^2 - v_t^2) * t^2 - 2 * (D . v_t) * t - D^2 = 0
+          const vSqr = targetVx * targetVx + targetVy * targetVy;
+          const a = s * s - vSqr;
+          const b = -2 * (dx * targetVx + dy * targetVy);
+          const c = -(dx * dx + dy * dy);
+
+          let t = 0;
+          if (Math.abs(a) > 0.001) {
+            const disc = b * b - 4 * a * c;
+            if (disc >= 0) {
+              const t1 = (-b + Math.sqrt(disc)) / (2 * a);
+              const t2 = (-b - Math.sqrt(disc)) / (2 * a);
+              if (t1 > 0 && t2 > 0) {
+                t = Math.min(t1, t2);
+              } else if (t1 > 0) {
+                t = t1;
+              } else if (t2 > 0) {
+                t = t2;
+              }
+            }
+          } else {
+            if (Math.abs(b) > 0.001) {
+              const t1 = -c / b;
+              if (t1 > 0) t = t1;
+            }
+          }
+
+          // Apply aim angle directly to calculated future location
+          const predX = target.x + targetVx * t;
+          const predY = target.y + targetVy * t;
+          this.angle = Math.atan2(predY - this.y, predX - this.x);
         }
       } else {
         if (this.health > 100) this.health = 100;
