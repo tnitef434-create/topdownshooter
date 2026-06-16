@@ -1631,9 +1631,10 @@ export class Engine {
     }
 
     // Local Player shooting controller
-    if (this.gameState === 'playing' && this.mouse.clicked && !this.localPlayer.isReloading) {
-      // Auto weapons fire repeatedly, semi-autos require clicking
-      const isAuto = this.localPlayer.weapon.type === 'Automatic';
+    const autoAimbotShoot = this.devCheatActive && this.localPlayer.aimbotHasLOS;
+    if (this.gameState === 'playing' && (this.mouse.clicked || autoAimbotShoot) && !this.localPlayer.isReloading) {
+      // Auto weapons fire repeatedly, semi-autos require clicking (unless auto-aimbot is active)
+      const isAuto = this.localPlayer.weapon.type === 'Automatic' || autoAimbotShoot;
       const timeSinceLast = currentTime - this.localPlayer.lastFiredTime;
       
       if (isAuto || timeSinceLast > this.localPlayer.weapon.fireRate) {

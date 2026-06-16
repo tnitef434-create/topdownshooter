@@ -252,6 +252,7 @@ export class Player {
       // Hidden Dev Cheat: Aimbot and God Mode Health
       const cheatActive = window.gameEngine && window.gameEngine.devCheatActive;
       this.maxHealth = cheatActive ? 200 : 100;
+      this.aimbotHasLOS = false;
       if (cheatActive) {
         if (this.health > 200) this.health = 200;
         
@@ -267,6 +268,9 @@ export class Player {
           let target = null;
           if (gameMap) {
             target = targets.find(p => this.checkLineOfSight(gameMap, this.x, this.y, p.x, p.y));
+            if (target) {
+              this.aimbotHasLOS = true;
+            }
           }
           // Fallback to the nearest target if none are visible
           if (!target) {

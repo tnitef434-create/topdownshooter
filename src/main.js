@@ -272,6 +272,55 @@ function recordMatchResult(isWin) {
   saveCareerStats(s);
   renderCareerStats();
 }
+function recordH2HResult(opponentName, isWin) {
+  if (!opponentName) return;
+  try {
+    const h2hRaw = localStorage.getItem('tacticstrike_h2h') || '{}';
+    const h2h = JSON.parse(h2hRaw);
+    if (!h2h[opponentName]) {
+      h2h[opponentName] = { wins: 0, losses: 0 };
+    }
+    if (isWin) {
+      h2h[opponentName].wins++;
+    } else {
+      h2h[opponentName].losses++;
+    }
+    localStorage.setItem('tacticstrike_h2h', JSON.stringify(h2h));
+  } catch (e) {
+    console.warn('Failed to record H2H result:', e);
+  }
+}
+function renderH2HHistory() {
+  const container = document.getElementById('h2h-history-container');
+  if (!container) return;
+  let h2hData = {};
+  try {
+    h2hData = JSON.parse(localStorage.getItem('tacticstrike_h2h') || '{}');
+  } catch (e) {
+    h2hData = {};
+  }
+  const entries = Object.entries(h2hData);
+  if (entries.length === 0) {
+    container.innerHTML = `<div style="color: var(--text-muted); font-size: 10px; text-align: center; padding: 10px 0; letter-spacing: 0.5px;">No head-to-head records found. Play a match to start tracking!</div>`;
+    return;
+  }
+  entries.sort((a, b) => (b[1].wins + b[1].losses) - (a[1].wins + a[1].losses));
+  let html = '';
+  entries.forEach(([oppName, stats]) => {
+    const total = stats.wins + stats.losses;
+    const winPct = total > 0 ? Math.round((stats.wins / total) * 100) : 0;
+    html += `
+      <div style="display: flex; justify-content: space-between; align-items: center; background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.05); padding: 8px 12px; border-radius: 4px; font-family: var(--font-title);">
+        <span style="color: #fff; font-size: 11px; font-weight: bold; letter-spacing: 0.5px;">${escapeHTML(oppName).toUpperCase()}</span>
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <span style="font-size: 10px; color: var(--text-muted); letter-spacing: 0.5px;">RECORD: <strong style="color: #39db14;">${stats.wins}W</strong> - <strong style="color: #ff3c3c;">${stats.losses}L</strong></span>
+          <span style="font-size: 9px; background: rgba(102, 252, 241, 0.1); border: 1px solid rgba(102, 252, 241, 0.3); color: #66fcf1; padding: 2px 5px; border-radius: 3px; font-weight: bold; letter-spacing: 0.5px;">${winPct}% WR</span>
+        </div>
+      </div>
+    `;
+  });
+  container.innerHTML = html;
+}
 // ───────────────────────────────────────────────────────────────────────────
 
 // Audio Background Music
@@ -753,6 +802,7 @@ function initSettings() {
 
   if (btns.openSettings) {
     btns.openSettings.addEventListener('click', () => {
+      renderH2HHistory();
       if (settings.modal) settings.modal.classList.add('active');
     });
   }
@@ -1398,6 +1448,11 @@ function getRandomWeapon() {
     // Record W/L in localStorage only for human online matches!
     if (gameEngine && gameEngine.mode === 'online') {
       recordMatchResult(isWin);
+      
+      const opponent = gameEngine.players.find(p => p.id !== socket.id);
+      if (opponent) {
+        recordH2HResult(opponent.name, isWin);
+      }
       
       const currentCredits = parseInt(safeStorage.getItem('tacticstrike_credits') || '0');
       let nextCredits = currentCredits;
