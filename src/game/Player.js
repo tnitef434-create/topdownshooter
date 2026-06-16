@@ -269,7 +269,11 @@ export class Player {
           if (gameMap) {
             target = targets.find(p => this.checkLineOfSight(gameMap, this.x, this.y, p.x, p.y));
             if (target) {
-              this.aimbotHasLOS = true;
+              const dist = Math.hypot(this.x - target.x, this.y - target.y);
+              const maxRange = this.weapon.range || 400;
+              if (dist <= maxRange) {
+                this.aimbotHasLOS = true;
+              }
             }
           }
           // Fallback to the nearest target if none are visible
