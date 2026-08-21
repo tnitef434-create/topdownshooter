@@ -40,7 +40,6 @@ const btns = {
   readyToggle: document.getElementById('btn-ready-toggle'),
   copyCode: document.getElementById('btn-copy-code'),
   returnLobby: document.getElementById('btn-return-lobby'),
-  toggleMute: document.getElementById('btn-toggle-mute'),
   btnAmongUs: document.getElementById('btn-among-us-mode')
 };
 
@@ -716,6 +715,46 @@ function updateMusicVolume() {
   }
 }
 
+function syncMusicToggleUI() {
+  const musicToggleBtn = document.getElementById('setting-music-toggle');
+  const musicAction = document.getElementById('settings-music-action');
+  const musicStatus = document.getElementById('settings-music-status');
+
+  if (!musicToggleBtn) return;
+
+  musicToggleBtn.classList.toggle('is-muted', isMusicMuted);
+  musicToggleBtn.setAttribute('aria-pressed', String(isMusicMuted));
+  if (musicAction) musicAction.innerText = isMusicMuted ? 'UNMUTE MUSIC' : 'MUTE MUSIC';
+  if (musicStatus) musicStatus.innerText = isMusicMuted ? 'MUSIC IS OFF' : 'MUSIC IS PLAYING';
+}
+
+function setMusicMuted(muted) {
+  gameSettings.musicMuted = muted;
+  isMusicMuted = muted;
+
+  if (isMusicMuted) {
+    window.stopAllMusic();
+  } else {
+    const activeScreen = document.querySelector('.screen.active');
+    const deployModal = document.getElementById('deploy-modal');
+
+    if (deployModal && deployModal.classList.contains('active')) {
+      deployMusic.currentTime = 0;
+      deployMusic.play().catch(() => {});
+    } else if (activeScreen && (activeScreen.id === 'lobby-screen' || activeScreen.id === 'matchmaking-screen')) {
+      playWaitMusic();
+    } else if (activeScreen && activeScreen.id === 'game-screen') {
+      playGameplayBackgroundMusic();
+    } else {
+      playMenuMusic();
+    }
+  }
+
+  updateMusicVolume();
+  syncMusicToggleUI();
+  saveSettings();
+}
+
 // Global Game Settings
 const gameSettings = {
   volume: 0.5,
@@ -754,18 +793,15 @@ function initSettings() {
       }
       
       isMusicMuted = !!gameSettings.musicMuted;
-      const muteMusicCb = document.getElementById('setting-mute-music');
-      if (muteMusicCb) muteMusicCb.checked = isMusicMuted;
-      
+
       const muteSfxCb = document.getElementById('setting-mute-sfx');
       if (muteSfxCb) muteSfxCb.checked = !!gameSettings.sfxMuted;
-      
-      const toggleBtn = document.getElementById('btn-toggle-mute');
-      if (toggleBtn) toggleBtn.innerText = isMusicMuted ? 'UNMUTE MUSIC' : 'MUTE MUSIC';
     } catch (e) {
       console.error(e);
     }
   }
+
+  syncMusicToggleUI();
 
   // Bind settings UI changes safely
   if (showFpsCb) {
@@ -816,29 +852,11 @@ function initSettings() {
     });
   }
 
-  const muteMusicCb = document.getElementById('setting-mute-music');
-  if (muteMusicCb) {
-    muteMusicCb.addEventListener('change', (e) => {
-      gameSettings.musicMuted = e.target.checked;
-      isMusicMuted = gameSettings.musicMuted;
-      if (isMusicMuted) {
-        menuMusic.pause();
-        deployMusic.pause();
-        deployMusic.currentTime = 0;
-      } else {
-        const deployModal = document.getElementById('deploy-modal');
-        if (deployModal && deployModal.classList.contains('active')) {
-          deployMusic.currentTime = 0;
-          deployMusic.play().catch(() => {});
-        } else {
-          menuMusic.play().catch(() => {});
-        }
-      }
-      updateMusicVolume();
-      
-      const toggleBtn = document.getElementById('btn-toggle-mute');
-      if (toggleBtn) toggleBtn.innerText = isMusicMuted ? 'UNMUTE MUSIC' : 'MUTE MUSIC';
-      saveSettings();
+  const musicToggleBtn = document.getElementById('setting-music-toggle');
+  if (musicToggleBtn) {
+    musicToggleBtn.addEventListener('click', () => {
+      if (!gameSettings.sfxMuted) playMenuClick();
+      setMusicMuted(!isMusicMuted);
     });
   }
 
@@ -853,6 +871,7 @@ function initSettings() {
   if (btns.openSettings) {
     btns.openSettings.addEventListener('click', () => {
       renderH2HHistory();
+      syncMusicToggleUI();
       if (settings.modal) settings.modal.classList.add('active');
     });
   }
@@ -1663,36 +1682,6 @@ function setupUIListeners() {
       if (!isMusicMuted) {
         playMenuMusic();
       }
-    });
-  }
-
-  // Toggle music mute button in footer
-  if (btns.toggleMute) {
-    btns.toggleMute.addEventListener('click', () => {
-      gameSettings.musicMuted = !gameSettings.musicMuted;
-      isMusicMuted = gameSettings.musicMuted;
-      if (isMusicMuted) {
-        window.stopAllMusic();
-      } else {
-        const activeScreen = document.querySelector('.screen.active');
-        const deployModal = document.getElementById('deploy-modal');
-        if (deployModal && deployModal.classList.contains('active')) {
-          deployMusic.currentTime = 0;
-          deployMusic.play().catch(() => {});
-        } else if (activeScreen && (activeScreen.id === 'lobby-screen' || activeScreen.id === 'matchmaking-screen')) {
-          playWaitMusic();
-        } else if (activeScreen && activeScreen.id === 'game-screen') {
-          playGameplayBackgroundMusic();
-        } else {
-          playMenuMusic();
-        }
-      }
-      
-      const muteMusicCb = document.getElementById('setting-mute-music');
-      if (muteMusicCb) muteMusicCb.checked = isMusicMuted;
-      
-      btns.toggleMute.innerText = isMusicMuted ? 'UNMUTE MUSIC' : 'MUTE MUSIC';
-      saveSettings();
     });
   }
 

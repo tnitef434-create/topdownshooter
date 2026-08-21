@@ -114,8 +114,6 @@
           <span class="divider">|</span>
           <button id="btn-open-settings" class="btn-text">SETTINGS</button>
           <span class="divider">|</span>
-          <button id="btn-toggle-mute" class="btn-text">MUTE MUSIC</button>
-          <span class="divider">|</span>
           <span class="version">v1.0.0 Stable</span>
         </footer>
       </div>
@@ -523,12 +521,19 @@
             </label>
           </div>
 
-          <div class="setting-group checkbox-group">
-            <label class="checkbox-container">
-              Mute Background Music
-              <input type="checkbox" id="setting-mute-music">
-              <span class="checkmark"></span>
-            </label>
+          <div class="setting-group music-control-setting">
+            <span class="music-setting-label">
+              BACKGROUND MUSIC
+              <small>Control the menu and match soundtrack</small>
+            </span>
+            <button id="setting-music-toggle" class="settings-music-button" type="button" aria-pressed="false">
+              <span class="settings-music-icon" aria-hidden="true">♪</span>
+              <span class="settings-music-copy">
+                <strong id="settings-music-action">MUTE MUSIC</strong>
+                <small id="settings-music-status">MUSIC IS PLAYING</small>
+              </span>
+              <span class="settings-music-indicator" aria-hidden="true"></span>
+            </button>
           </div>
 
           <div class="setting-group checkbox-group">
