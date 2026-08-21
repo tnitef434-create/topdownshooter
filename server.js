@@ -4,9 +4,133 @@ import { Server } from 'socket.io';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
+import crypto from 'crypto';
+import { promisify } from 'util';
+import { OAuth2Client } from 'google-auth-library';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const scryptAsync = promisify(crypto.scrypt);
+
+// Account database used for authentication, sessions, and purchase ownership.
+// ACCOUNT_DATABASE_FILE can point to a mounted persistent disk in production.
+const ACCOUNT_DATABASE_FILE = process.env.ACCOUNT_DATABASE_FILE || path.join(__dirname, 'accounts.json');
+const SESSION_LIFETIME_MS = 1000 * 60 * 60 * 24 * 30;
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || '';
+const googleAuthClient = new OAuth2Client(GOOGLE_CLIENT_ID || undefined);
+
+function createEmptyAccountDatabase() {
+  return { version: 1, users: {}, emailIndex: {}, googleIndex: {}, sessions: {}, purchaseIntents: {} };
+}
+
+function loadAccountDatabase() {
+  try {
+    if (!fs.existsSync(ACCOUNT_DATABASE_FILE)) return createEmptyAccountDatabase();
+    const parsed = JSON.parse(fs.readFileSync(ACCOUNT_DATABASE_FILE, 'utf8'));
+    return {
+      ...createEmptyAccountDatabase(),
+      ...parsed,
+      users: parsed.users || {},
+      emailIndex: parsed.emailIndex || {},
+      googleIndex: parsed.googleIndex || {},
+      sessions: parsed.sessions || {},
+      purchaseIntents: parsed.purchaseIntents || {}
+    };
+  } catch (error) {
+    console.error('Failed to load account database:', error);
+    return createEmptyAccountDatabase();
+  }
+}
+
+let accountDatabase = loadAccountDatabase();
+
+function saveAccountDatabase() {
+  const directory = path.dirname(ACCOUNT_DATABASE_FILE);
+  const temporaryFile = `${ACCOUNT_DATABASE_FILE}.tmp`;
+  fs.mkdirSync(directory, { recursive: true });
+  fs.writeFileSync(temporaryFile, JSON.stringify(accountDatabase, null, 2), 'utf8');
+  fs.renameSync(temporaryFile, ACCOUNT_DATABASE_FILE);
+}
+
+function normalizeEmail(value = '') {
+  return String(value).trim().toLowerCase();
+}
+
+function isValidEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && email.length <= 254;
+}
+
+async function createPasswordRecord(password) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const derivedKey = await scryptAsync(password, salt, 64);
+  return { algorithm: 'scrypt', salt, hash: Buffer.from(derivedKey).toString('hex') };
+}
+
+async function verifyPassword(password, record) {
+  if (!record?.salt || !record?.hash) return false;
+  const derivedKey = Buffer.from(await scryptAsync(password, record.salt, 64));
+  const storedKey = Buffer.from(record.hash, 'hex');
+  return derivedKey.length === storedKey.length && crypto.timingSafeEqual(derivedKey, storedKey);
+}
+
+function hashSessionToken(token) {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+function publicAccount(user) {
+  return {
+    id: user.id,
+    email: user.email,
+    displayName: user.displayName,
+    credits: user.credits || 0,
+    provider: user.googleSub ? 'google' : 'email',
+    createdAt: user.createdAt
+  };
+}
+
+function createSession(userId) {
+  const token = crypto.randomBytes(32).toString('base64url');
+  const expiresAt = Date.now() + SESSION_LIFETIME_MS;
+  accountDatabase.sessions[hashSessionToken(token)] = { userId, expiresAt };
+  saveAccountDatabase();
+  return { token, expiresAt };
+}
+
+function authenticateAccount(req, res, next) {
+  const authorization = req.get('authorization') || '';
+  const token = authorization.startsWith('Bearer ') ? authorization.slice(7) : '';
+  const sessionKey = token ? hashSessionToken(token) : '';
+  const session = sessionKey ? accountDatabase.sessions[sessionKey] : null;
+  const user = session ? accountDatabase.users[session.userId] : null;
+
+  if (!session || !user || session.expiresAt <= Date.now()) {
+    if (sessionKey && session) {
+      delete accountDatabase.sessions[sessionKey];
+      saveAccountDatabase();
+    }
+    res.status(401).json({ error: 'SIGN_IN_REQUIRED', message: 'Sign in to continue.' });
+    return;
+  }
+
+  req.account = user;
+  req.sessionKey = sessionKey;
+  next();
+}
+
+const authAttempts = new Map();
+function authRateLimit(req, res, next) {
+  const key = req.ip || req.socket.remoteAddress || 'unknown';
+  const now = Date.now();
+  const current = authAttempts.get(key);
+  const record = !current || current.resetAt <= now ? { count: 0, resetAt: now + 15 * 60 * 1000 } : current;
+  record.count += 1;
+  authAttempts.set(key, record);
+  if (record.count > 25) {
+    res.status(429).json({ error: 'TOO_MANY_ATTEMPTS', message: 'Too many sign-in attempts. Try again later.' });
+    return;
+  }
+  next();
+}
 
 // In-memory Users database and persistent file storage
 let users = {};
@@ -43,6 +167,7 @@ const socketToUser = new Map();
 
 const app = express();
 const httpServer = createServer(app);
+app.set('trust proxy', 1);
 
 // Configure Socket.io with CORS enabled for local development
 const io = new Server(httpServer, {
@@ -53,6 +178,183 @@ const io = new Server(httpServer, {
 });
 
 const PORT = process.env.PORT || 3000;
+
+const configuredOrigins = (process.env.ALLOWED_ORIGINS || 'https://tacticstrike.nl,https://www.tacticstrike.nl,http://localhost:5173,http://127.0.0.1:5173')
+  .split(',')
+  .map(origin => origin.trim())
+  .filter(Boolean);
+
+app.use((req, res, next) => {
+  const origin = req.get('origin');
+  if (origin && configuredOrigins.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+    res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  }
+  if (req.method === 'OPTIONS') {
+    res.sendStatus(origin && configuredOrigins.includes(origin) ? 204 : 403);
+    return;
+  }
+  next();
+});
+app.use(express.json({ limit: '32kb' }));
+
+app.get('/api/auth/config', (req, res) => {
+  res.json({ googleClientId: GOOGLE_CLIENT_ID || null });
+});
+
+app.post('/api/auth/register', authRateLimit, async (req, res) => {
+  try {
+    const email = normalizeEmail(req.body?.email);
+    const password = String(req.body?.password || '');
+
+    if (!isValidEmail(email)) {
+      res.status(400).json({ error: 'INVALID_EMAIL', message: 'Enter a valid email address.' });
+      return;
+    }
+    if (password.length < 8 || password.length > 128) {
+      res.status(400).json({ error: 'INVALID_PASSWORD', message: 'Passcode must be between 8 and 128 characters.' });
+      return;
+    }
+    if (accountDatabase.emailIndex[email]) {
+      res.status(409).json({ error: 'EMAIL_IN_USE', message: 'An account already exists for this email.' });
+      return;
+    }
+
+    const id = crypto.randomUUID();
+    const now = new Date().toISOString();
+    const displayName = email.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '').slice(0, 15) || 'Operative';
+    const user = {
+      id,
+      email,
+      displayName,
+      password: await createPasswordRecord(password),
+      googleSub: null,
+      credits: 0,
+      purchasedWeapons: [],
+      createdAt: now,
+      updatedAt: now
+    };
+    accountDatabase.users[id] = user;
+    accountDatabase.emailIndex[email] = id;
+    saveAccountDatabase();
+    const session = createSession(id);
+    res.status(201).json({ ...session, user: publicAccount(user) });
+  } catch (error) {
+    console.error('Account registration failed:', error);
+    res.status(500).json({ error: 'REGISTER_FAILED', message: 'Account creation is temporarily unavailable.' });
+  }
+});
+
+app.post('/api/auth/login', authRateLimit, async (req, res) => {
+  try {
+    const email = normalizeEmail(req.body?.email);
+    const password = String(req.body?.password || '');
+    const userId = accountDatabase.emailIndex[email];
+    const user = userId ? accountDatabase.users[userId] : null;
+    if (!user || !(await verifyPassword(password, user.password))) {
+      res.status(401).json({ error: 'INVALID_CREDENTIALS', message: 'Incorrect email or passcode.' });
+      return;
+    }
+    const session = createSession(user.id);
+    res.json({ ...session, user: publicAccount(user) });
+  } catch (error) {
+    console.error('Account login failed:', error);
+    res.status(500).json({ error: 'LOGIN_FAILED', message: 'Sign-in is temporarily unavailable.' });
+  }
+});
+
+app.post('/api/auth/google', authRateLimit, async (req, res) => {
+  try {
+    if (!GOOGLE_CLIENT_ID) {
+      res.status(503).json({ error: 'GOOGLE_NOT_CONFIGURED', message: 'Google sign-in is not configured yet.' });
+      return;
+    }
+    const credential = String(req.body?.credential || '');
+    const ticket = await googleAuthClient.verifyIdToken({ idToken: credential, audience: GOOGLE_CLIENT_ID });
+    const payload = ticket.getPayload();
+    if (!payload?.sub || !payload?.email || !payload.email_verified) {
+      res.status(401).json({ error: 'INVALID_GOOGLE_ACCOUNT', message: 'Google could not verify this email address.' });
+      return;
+    }
+
+    const email = normalizeEmail(payload.email);
+    let userId = accountDatabase.googleIndex[payload.sub];
+    let user = userId ? accountDatabase.users[userId] : null;
+
+    if (!user) {
+      userId = accountDatabase.emailIndex[email];
+      user = userId ? accountDatabase.users[userId] : null;
+      const googleIsAuthoritative = email.endsWith('@gmail.com') || Boolean(payload.hd);
+      if (user && !googleIsAuthoritative) {
+        res.status(409).json({ error: 'ACCOUNT_LINK_REQUIRED', message: 'Sign in with your passcode before linking Google to this account.' });
+        return;
+      }
+      if (!user) {
+        const id = crypto.randomUUID();
+        const now = new Date().toISOString();
+        user = {
+          id,
+          email,
+          displayName: String(payload.name || email.split('@')[0]).slice(0, 40),
+          password: null,
+          googleSub: payload.sub,
+          credits: 0,
+          purchasedWeapons: [],
+          createdAt: now,
+          updatedAt: now
+        };
+        accountDatabase.users[id] = user;
+        accountDatabase.emailIndex[email] = id;
+      } else {
+        user.googleSub = payload.sub;
+        user.updatedAt = new Date().toISOString();
+      }
+      accountDatabase.googleIndex[payload.sub] = user.id;
+      saveAccountDatabase();
+    }
+
+    const session = createSession(user.id);
+    res.json({ ...session, user: publicAccount(user) });
+  } catch (error) {
+    console.error('Google sign-in failed:', error);
+    res.status(401).json({ error: 'GOOGLE_SIGN_IN_FAILED', message: 'Google sign-in could not be verified.' });
+  }
+});
+
+app.get('/api/auth/me', authenticateAccount, (req, res) => {
+  res.json({ user: publicAccount(req.account) });
+});
+
+app.post('/api/auth/logout', authenticateAccount, (req, res) => {
+  delete accountDatabase.sessions[req.sessionKey];
+  saveAccountDatabase();
+  res.sendStatus(204);
+});
+
+app.post('/api/credits/checkout', authenticateAccount, (req, res) => {
+  const packageId = String(req.body?.packageId || '');
+  if (packageId !== '50') {
+    res.status(400).json({ error: 'PACKAGE_UNAVAILABLE', message: 'That credit package is not available yet.' });
+    return;
+  }
+
+  const checkoutUrl = process.env.REVOLUT_50_CREDIT_LINK || 'https://checkout.revolut.com/payment-link/7ee65845-014a-4590-b0ec-010becb401c2';
+  const intentId = crypto.randomUUID();
+  accountDatabase.purchaseIntents[intentId] = {
+    id: intentId,
+    userId: req.account.id,
+    packageId,
+    credits: 50,
+    amount: 99,
+    currency: 'EUR',
+    status: 'checkout_opened',
+    createdAt: new Date().toISOString()
+  };
+  saveAccountDatabase();
+  res.json({ checkoutUrl, intentId });
+});
 
 // Serve client build files if they exist, otherwise serve src directory for dev/fallback
 const distPath = path.join(__dirname, 'dist');

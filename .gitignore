@@ -9,3 +9,6 @@ yarn-error.log*
 .idea/
 .vscode/
 users.json
+accounts.json
+accounts.json.tmp
+!.env.example

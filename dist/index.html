@@ -9,10 +9,10 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=Orbitron:wght@500;700;900&display=swap" rel="stylesheet">
-  <!-- Style sheet -->
+  <!-- Style sheet -->
   <!-- Socket.io client (loaded dynamically via bundler or server, or we can just import from socket.io-client) -->
-  <script type="module" crossorigin src="/assets/index-DVQ95e_d.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-uXdWUjV9.css">
+  <script type="module" crossorigin src="/assets/index-DMebmve6.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-Czf4IodB.css">
 </head>
 <body>
   
@@ -111,9 +111,11 @@
           <span class="divider">|</span>
           <button id="btn-open-shop" class="btn-text" style="color: var(--neon-yellow); font-weight: bold;">ITEM SHOP</button>
           <span class="divider">|</span>
-          <button id="btn-open-settings" class="btn-text">SETTINGS</button>
+          <button id="btn-open-credit-shop" class="btn-text credit-shop-nav">CREDIT SHOP</button>
           <span class="divider">|</span>
-          <button id="btn-toggle-mute" class="btn-text">MUTE MUSIC</button>
+          <button id="btn-open-account" class="btn-text account-nav">SIGN IN</button>
+          <span class="divider">|</span>
+          <button id="btn-open-settings" class="btn-text">SETTINGS</button>
           <span class="divider">|</span>
           <span class="version">v1.0.0 Stable</span>
         </footer>
@@ -522,12 +524,19 @@
             </label>
           </div>
 
-          <div class="setting-group checkbox-group">
-            <label class="checkbox-container">
-              Mute Background Music
-              <input type="checkbox" id="setting-mute-music">
-              <span class="checkmark"></span>
-            </label>
+          <div class="setting-group music-control-setting">
+            <span class="music-setting-label">
+              BACKGROUND MUSIC
+              <small>Control the menu and match soundtrack</small>
+            </span>
+            <button id="setting-music-toggle" class="settings-music-button" type="button" aria-pressed="false">
+              <span class="settings-music-icon" aria-hidden="true">♪</span>
+              <span class="settings-music-copy">
+                <strong id="settings-music-action">MUTE MUSIC</strong>
+                <small id="settings-music-status">MUSIC IS PLAYING</small>
+              </span>
+              <span class="settings-music-indicator" aria-hidden="true"></span>
+            </button>
           </div>
 
           <div class="setting-group checkbox-group">
@@ -617,7 +626,8 @@
       <div class="modal-card" style="max-width: 480px; border: 1px solid var(--neon-teal); box-shadow: 0 0 30px rgba(102, 252, 241, 0.15); padding: 35px 28px;">
          <div style="font-family: var(--font-title); font-size: 10px; color: var(--neon-yellow); letter-spacing: 2px; font-weight: 700; margin-bottom: 6px;">TACTICSTRIKE CHANGELOG</div>
          <h2 style="font-family: var(--font-title); font-size: 26px; color: #fff; margin-bottom: 15px; letter-spacing: 1.5px; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 12px; font-weight: 900;">WHAT'S NEW</h2>
-         <div style="font-family: 'Inter', sans-serif; font-size: 13px; line-height: 1.6; color: #a2aab8; margin-bottom: 25px; max-height: 280px; overflow-y: auto; padding-right: 8px;">
+         <div class="whats-new-feed">
+             <p style="margin-bottom: 14px;">🪙 <strong style="color: #ffe6a3;">CREDIT SHOP ONLINE:</strong> <span style="background: rgba(212,175,55,0.15); color: #d4af37; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; margin-left: 4px; border: 1px solid rgba(212,175,55,0.3);">NEW</span><br>The new Credit Shop is live from the main menu. The 50-credit Field Drop is available now through secure checkout with Revolut or bank card, with larger credit caches coming soon.</p>
              <p style="margin-bottom: 14px;">🕶️ <strong style="color: #d4af37;">FIRST PERSON MATCH MODE:</strong> <span style="background: rgba(212,175,55,0.15); color: #d4af37; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; margin-left: 4px; border: 1px solid rgba(212,175,55,0.3);">NEW</span><br>Lock into a full 3D viewport with pointer-lock. Run across tactical maps from a premium first-person perspective using a beautiful female elf model and procedural weapon bobs.</p>
              <p style="margin-bottom: 14px;">🧱 <strong style="color: #66fcf1;">AAA 2.5D WALL EXTRUSION:</strong> <span style="background: rgba(102,252,241,0.15); color: #66fcf1; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; margin-left: 4px; border: 1px solid rgba(102,252,241,0.3);">NEW</span><br>Experience top-down battle with perspective-extruded 3D walls, furniture, and crates. Obstacles dynamically project height relative to the player's view, creating a high-fidelity 2.5D visual aesthetic.</p>
              <p style="margin-bottom: 14px;">💻 <strong style="color: #ffd700;">HACKING TERMINALS & MINIGAMES:</strong> <span style="background: rgba(255,215,0,0.15); color: #ffd700; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; margin-left: 4px; border: 1px solid rgba(255,215,0,0.3);">NEW</span><br>Interactive supply terminals have been added. Stand near a console and hold [E] to engage. Completing the timed key-sequence defusal hacking minigame successfully drops high-tier items (Adrenaline/Medkits).</p>
@@ -630,26 +640,181 @@
       </div>
     </div>
 
-    <!-- Item Shop Screen Modal -->
-    <div id="shop-modal" class="modal-overlay" style="z-index: 11000; background: rgba(2, 3, 5, 0.95); backdrop-filter: blur(10px); border-color: rgba(212, 175, 55, 0.25);">
-      <div class="modal-card shop-card">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 12px;">
-          <h2 style="font-family: var(--font-title); font-size: 24px; color: #d4af37; margin: 0; letter-spacing: 2px; font-weight: 900;">TACTICAL ITEM SHOP</h2>
-          <!-- Credits Display -->
-          <div style="font-family: var(--font-title); font-size: 14px; color: #ffd700; background: rgba(255, 215, 0, 0.1); border: 1px solid rgba(255, 215, 0, 0.3); padding: 6px 14px; border-radius: 4px; display: flex; align-items: center; gap: 8px; font-weight: bold; letter-spacing: 1px;">
-            🪙 <span id="shop-credits-display">0</span> CREDITS
+    <!-- Credit Shop Screen Modal -->
+    <div id="credit-shop-modal" class="modal-overlay credit-shop-overlay">
+      <div class="modal-card credit-shop-card">
+        <div class="credit-shop-hero">
+          <img src="/credit-shop-banner.png" alt="Tactical supply case filled with glowing gold credit tokens">
+          <div class="credit-shop-hero-shade"></div>
+          <div class="credit-shop-hero-copy">
+            <span class="credit-shop-eyebrow">TACTICSTRIKE ARMORY</span>
+            <h2>CREDIT SHOP</h2>
+            <p>Secure your next tactical loadout.</p>
           </div>
         </div>
-        
-        <!-- Weapon grids -->
-        <div id="shop-items-container" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; max-height: 380px; overflow-y: auto; padding-right: 6px; margin-bottom: 20px;">
-          <!-- Item Cards will be generated via JavaScript -->
+
+        <div class="credit-shop-intro">
+          <div>
+            <span class="section-kicker">SELECT CREDIT DROP</span>
+            <p>Secure checkout — an operative account is required.</p>
+          </div>
+          <button id="credit-shop-account-status" class="credit-shop-account-status" type="button" data-open-account><span class="account-status-dot"></span><span>SIGN IN TO PURCHASE</span></button>
         </div>
 
-        <div class="modal-actions" style="display: flex; justify-content: space-between; align-items: center;">
-          <span style="font-size: 10px; color: var(--text-muted); font-family: var(--font-title); letter-spacing: 0.5px;">EARN 50 CREDITS PER RANKED MATCH WIN!</span>
-          <button id="btn-close-shop" class="btn secondary" style="font-size: 11px; padding: 10px 20px;">EXIT SHOP</button>
+        <div class="credit-pack-grid">
+          <article class="credit-pack credit-pack-featured">
+            <span class="credit-pack-status">AVAILABLE NOW</span>
+            <div class="credit-token-mark" aria-hidden="true"><span>50</span></div>
+            <h3>50 CREDITS</h3>
+            <p class="credit-pack-subtitle">FIELD DROP</p>
+            <div class="credit-pack-price"><span>€</span>0.99</div>
+            <button
+              id="btn-buy-50-credits"
+              class="credit-buy-btn btn-3d"
+              type="button"
+              data-buy-credit-pack="50"
+              aria-label="Buy 50 TacticStrike credits for €0.99"
+            >CONTINUE TO CHECKOUT <span>↗</span></button>
+          </article>
+
+          <article class="credit-pack credit-pack-locked" aria-disabled="true">
+            <span class="credit-pack-status">COMING SOON</span>
+            <div class="credit-token-mark" aria-hidden="true"><span>500</span></div>
+            <h3>500 CREDITS</h3>
+            <p class="credit-pack-subtitle">STRIKE CACHE</p>
+            <div class="credit-pack-price"><span>€</span>4.99</div>
+            <button class="credit-buy-btn" type="button" disabled>OFFLINE</button>
+          </article>
+
+          <article class="credit-pack credit-pack-locked" aria-disabled="true">
+            <span class="credit-pack-status">COMING SOON</span>
+            <div class="credit-token-mark" aria-hidden="true"><span>2K</span></div>
+            <h3>2,000 CREDITS</h3>
+            <p class="credit-pack-subtitle">OPERATIVE VAULT</p>
+            <div class="credit-pack-price"><span>€</span>12.99</div>
+            <button class="credit-buy-btn" type="button" disabled>OFFLINE</button>
+          </article>
         </div>
+
+        <div class="credit-shop-footer">
+          <p><strong>PAYMENT NOTICE</strong> Credit delivery is not automatic yet. Keep your Revolut receipt for verification.</p>
+          <button id="btn-close-credit-shop" class="btn secondary" type="button">EXIT CREDIT SHOP</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Operative Account Modal -->
+    <div id="account-modal" class="modal-overlay account-overlay">
+      <div class="modal-card account-card" role="dialog" aria-modal="true" aria-labelledby="account-modal-title">
+        <button id="btn-close-account" class="account-close-btn" type="button" aria-label="Close account window">×</button>
+        <div class="account-card-brand">
+          <span class="account-brand-mark" aria-hidden="true">TS</span>
+          <div><span>TACTICSTRIKE NETWORK</span><strong>SECURE OPERATIVE ACCESS</strong></div>
+        </div>
+
+        <div id="account-auth-view">
+          <div class="account-heading">
+            <span class="item-shop-kicker">IDENTITY VERIFICATION</span>
+            <h2 id="account-modal-title">OPERATIVE ACCOUNT</h2>
+            <p>Sign in to purchase credits and connect purchases to your profile.</p>
+          </div>
+
+          <div class="account-tabs" role="tablist" aria-label="Account action">
+            <button id="account-tab-login" class="account-tab active" type="button" role="tab" aria-selected="true">SIGN IN</button>
+            <button id="account-tab-register" class="account-tab" type="button" role="tab" aria-selected="false">CREATE ACCOUNT</button>
+          </div>
+
+          <div id="account-message" class="account-message" aria-live="polite"></div>
+
+          <form id="account-login-form" class="account-form">
+            <label for="account-login-email">EMAIL ADDRESS</label>
+            <input id="account-login-email" type="email" autocomplete="email" required placeholder="operative@example.com">
+            <label for="account-login-password">PASSCODE</label>
+            <input id="account-login-password" type="password" autocomplete="current-password" minlength="8" maxlength="128" required placeholder="Enter your passcode">
+            <button class="account-submit-btn" type="submit">AUTHENTICATE <span>→</span></button>
+          </form>
+
+          <form id="account-register-form" class="account-form" hidden>
+            <label for="account-register-email">EMAIL ADDRESS</label>
+            <input id="account-register-email" type="email" autocomplete="email" required placeholder="operative@example.com">
+            <label for="account-register-password">CREATE PASSCODE</label>
+            <input id="account-register-password" type="password" autocomplete="new-password" minlength="8" maxlength="128" required placeholder="At least 8 characters">
+            <label for="account-register-confirm">CONFIRM PASSCODE</label>
+            <input id="account-register-confirm" type="password" autocomplete="new-password" minlength="8" maxlength="128" required placeholder="Repeat your passcode">
+            <button class="account-submit-btn" type="submit">CREATE OPERATIVE <span>→</span></button>
+          </form>
+
+          <div class="account-divider"><span>OR CONTINUE WITH</span></div>
+          <div id="google-signin-container" class="google-signin-container"></div>
+          <p id="google-signin-note" class="google-signin-note">Google sign-in requires configuration by the site operator.</p>
+          <p class="account-privacy-note">Your passcode is protected with server-side scrypt hashing and is never stored as readable text.</p>
+        </div>
+
+        <div id="account-profile-view" class="account-profile-view" hidden>
+          <div class="account-profile-emblem" aria-hidden="true">✓</div>
+          <span class="item-shop-kicker">IDENTITY CONFIRMED</span>
+          <h2>WELCOME, OPERATIVE</h2>
+          <p id="account-profile-email"></p>
+          <div class="account-profile-balance"><span>ACCOUNT BALANCE</span><strong><i>TS</i><b id="account-profile-credits">0</b> CREDITS</strong></div>
+          <button class="account-credit-btn" type="button" data-open-credit-shop>OPEN CREDIT SHOP</button>
+          <button id="btn-account-logout" class="account-logout-btn" type="button">SIGN OUT</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Item Shop Screen Modal -->
+    <div id="shop-modal" class="modal-overlay item-shop-overlay">
+      <div class="modal-card shop-card" role="dialog" aria-modal="true" aria-labelledby="item-shop-title">
+        <header class="item-shop-header">
+          <div class="item-shop-title-block">
+            <span class="item-shop-kicker">TACTICSTRIKE PROCUREMENT DIVISION</span>
+            <h2 id="item-shop-title">BLACKSITE ARMORY</h2>
+            <p>Acquire classified weapons early and deploy them immediately.</p>
+          </div>
+          <div class="shop-wallet" aria-label="Current credit balance">
+            <span class="shop-wallet-label">AVAILABLE BALANCE</span>
+            <div class="shop-wallet-balance"><span class="shop-wallet-coin" aria-hidden="true">TS</span><strong id="shop-credits-display">0</strong><span>CR</span></div>
+            <button class="shop-wallet-add" type="button" data-open-credit-shop>+ ADD CREDITS</button>
+          </div>
+        </header>
+
+        <section class="shop-credit-banner" aria-label="Buy TacticStrike credits">
+          <div class="shop-credit-art" aria-hidden="true">
+            <span class="shop-credit-coin coin-one">50</span>
+            <span class="shop-credit-coin coin-two">TS</span>
+            <span class="shop-credit-scan"></span>
+          </div>
+          <div class="shop-credit-banner-copy">
+            <span class="shop-credit-banner-kicker">FIELD DROP AVAILABLE</span>
+            <h3>LOW ON CREDITS?</h3>
+            <p>Refill your balance with the 50-credit drop and get back to the armory.</p>
+          </div>
+          <div class="shop-credit-banner-actions">
+            <button class="shop-credit-packs-btn" type="button" data-open-credit-shop>VIEW CREDIT PACKS</button>
+            <button class="shop-credit-direct-btn" type="button" data-buy-credit-pack="50">BUY 50 · €0.99 <span>↗</span></button>
+          </div>
+        </section>
+
+        <div class="item-shop-section-bar">
+          <div>
+            <span class="item-shop-kicker">EARLY ACCESS INVENTORY</span>
+            <h3>CLASSIFIED WEAPONS</h3>
+          </div>
+          <div class="shop-inventory-summary" aria-label="Armory inventory status">
+            <span><i class="summary-dot available"></i><strong id="shop-available-count">0</strong> AVAILABLE</span>
+            <span><i class="summary-dot owned"></i><strong id="shop-owned-count">0</strong> OWNED</span>
+          </div>
+        </div>
+
+        <div id="shop-items-container" class="shop-items-container">
+          <!-- Item cards are generated via JavaScript -->
+        </div>
+
+        <footer class="item-shop-footer">
+          <div class="shop-earn-note"><span aria-hidden="true">◆</span><p><strong>EARN IN THE FIELD</strong>Ranked match wins award 50 credits.</p></div>
+          <button class="shop-footer-credit-link" type="button" data-open-credit-shop>GET MORE CREDITS <span>→</span></button>
+          <button id="btn-close-shop" class="shop-exit-btn" type="button">EXIT ARMORY</button>
+        </footer>
       </div>
     </div>
 
@@ -766,6 +931,6 @@
     </div>
   </div>
 
-  <!-- Client-side Socket.io is imported dynamically inside main.js via build. -->
+  <!-- Client-side Socket.io is imported dynamically inside main.js via build. -->
 </body>
 </html>

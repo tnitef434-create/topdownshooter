@@ -17,8 +17,45 @@ const safeStorage = {
     } catch (e) {
       console.warn('localStorage.setItem failed:', e);
     }
+  },
+  removeItem(key) {
+    try {
+      localStorage.removeItem(key);
+    } catch (e) {
+      console.warn('localStorage.removeItem failed:', e);
+    }
   }
 };
+
+const ACCOUNT_SESSION_KEY = 'tacticstrike_account_session';
+let accountSession = {
+  token: safeStorage.getItem(ACCOUNT_SESSION_KEY),
+  user: null
+};
+
+function getBackendUrl() {
+  if (gameSettings?.serverUrl) return gameSettings.serverUrl.replace(/\/$/, '');
+  if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+    return window.location.port === '3000' ? window.location.origin : 'http://localhost:3000';
+  }
+  return window.location.hostname.endsWith('onrender.com')
+    ? window.location.origin
+    : 'https://topdownshooter.onrender.com';
+}
+
+async function accountApi(path, options = {}) {
+  const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
+  if (accountSession.token) headers.Authorization = `Bearer ${accountSession.token}`;
+  const response = await fetch(`${getBackendUrl()}${path}`, { ...options, headers });
+  const body = response.status === 204 ? null : await response.json().catch(() => null);
+  if (!response.ok) {
+    const error = new Error(body?.message || 'The account server could not complete this request.');
+    error.code = body?.error;
+    error.status = response.status;
+    throw error;
+  }
+  return body;
+}
 
 // DOM Elements
 const screens = {
@@ -97,6 +134,16 @@ const WEAPON_LOCKS = {
   famas:   { rp: 1000, rank: 'VETERAN', price: 2300 },
   plasma:  { rp: 4000, rank: 'ELITE',   price: 4000 },
   railgun: { rp: 4000, rank: 'ELITE',   price: 5000 }
+};
+
+const SHOP_WEAPON_META = {
+  dmr:     { code: 'M14', role: 'PRECISION', tier: 'ADVANCED', description: 'A controlled semi-auto platform built for disciplined mid-to-long range fire.' },
+  sniper:  { code: 'AWM', role: 'LONGSHOT',  tier: 'ADVANCED', description: 'A high-impact bolt-action system engineered to end an engagement in one shot.' },
+  lmg:     { code: 'M249', role: 'SUPPORT',   tier: 'ELITE',    description: 'Sustained suppressive fire with a deep belt and uncompromising lane control.' },
+  vector:  { code: 'VEC', role: 'BREACH',     tier: 'ADVANCED', description: 'Extreme close-range fire rate for operatives who fight inside the objective.' },
+  famas:   { code: 'FAM', role: 'BURST',      tier: 'ADVANCED', description: 'A precise burst carbine tuned for fast target acquisition and controlled recoil.' },
+  plasma:  { code: 'PL45', role: 'PROTOTYPE', tier: 'ELITE',    description: 'Experimental energy rifle with exceptional accuracy and balanced stopping power.' },
+  railgun: { code: 'RG-X', role: 'EXOTIC',    tier: 'ELITE',    description: 'Blacksite electromagnetic technology delivering devastating single-shot force.' }
 };
 
 const WEAPON_NAMES = {
@@ -1123,21 +1170,7 @@ function updateLobbyUI(players) {
 function connectSocket() {
   if (socket) return;
 
-  // Resolve server connection URL
-  let serverUrl = gameSettings.serverUrl;
-  
-  if (!serverUrl) {
-    // Fallback: In development (localhost/127.0.0.1), point to local server on port 3000.
-    // In production, check if we are running on Render; if so, we can connect to window.location.origin.
-    // Otherwise (Cloudflare Pages, workers.dev, custom static domains), default to the Render backend.
-    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-      serverUrl = 'http://localhost:3000';
-    } else {
-      serverUrl = window.location.hostname.endsWith('onrender.com') 
-        ? window.location.origin 
-        : 'https://topdownshooter.onrender.com';
-    }
-  }
+  const serverUrl = getBackendUrl();
 
   socket = io(serverUrl);
   window.AppSocket = socket;
@@ -2409,6 +2442,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   initSettings();
+  initAccountAuth();
   initNewsModal();
   initWhatsNewModal();
   initCreditShop();
@@ -2516,11 +2550,24 @@ function initCreditShop() {
   const closeCreditShopBtn = document.getElementById('btn-close-credit-shop');
   const buyCreditsBtn = document.getElementById('btn-buy-50-credits');
 
-  if (!creditShopModal || !openCreditShopBtn || !closeCreditShopBtn) return;
+  if (!creditShopModal || !closeCreditShopBtn) return;
 
-  openCreditShopBtn.addEventListener('click', () => {
-    creditShopModal.classList.add('active');
-    playCreditShopSound('open');
+  openCreditShopBtn?.addEventListener('click', () => openCreditShopModal('menu'));
+
+  document.addEventListener('click', (event) => {
+    const trigger = event.target.closest('[data-open-credit-shop]');
+    if (!trigger) return;
+    if (trigger.closest('#account-modal')) {
+      document.getElementById('account-modal')?.classList.remove('active');
+    }
+    openCreditShopModal(trigger.closest('#shop-modal') ? 'item-shop' : 'menu');
+  });
+
+  document.addEventListener('click', (event) => {
+    const checkoutTrigger = event.target.closest('[data-buy-credit-pack]');
+    if (!checkoutTrigger) return;
+    event.preventDefault();
+    startCreditCheckout(checkoutTrigger.dataset.buyCreditPack);
   });
 
   closeCreditShopBtn.addEventListener('click', () => {
@@ -2528,9 +2575,263 @@ function initCreditShop() {
     playCreditShopSound('close');
   });
 
-  buyCreditsBtn?.addEventListener('click', () => {
+  buyCreditsBtn?.addEventListener('click', () => playCreditShopSound('confirm'));
+}
+
+function openCreditShopModal(source = 'menu') {
+  const creditShopModal = document.getElementById('credit-shop-modal');
+  if (!creditShopModal) return;
+  creditShopModal.dataset.source = source;
+  creditShopModal.classList.add('active');
+  playCreditShopSound('open');
+}
+
+async function startCreditCheckout(packageId) {
+  if (!accountSession.user || !accountSession.token) {
+    openAccountModal('login', 'Sign in or create an account before purchasing credits.');
+    return;
+  }
+
+  const pendingWindow = window.open('about:blank', '_blank', 'noopener,noreferrer');
+  if (pendingWindow) {
+    pendingWindow.document.title = 'Opening secure checkout…';
+    pendingWindow.document.body.innerHTML = '<p style="font:14px sans-serif;padding:30px;background:#090b0f;color:#ddd;min-height:100vh;margin:0">Opening secure checkout…</p>';
+  }
+
+  try {
+    const result = await accountApi('/api/credits/checkout', {
+      method: 'POST',
+      body: JSON.stringify({ packageId })
+    });
     playCreditShopSound('confirm');
+    if (pendingWindow) pendingWindow.location.replace(result.checkoutUrl);
+    else window.location.href = result.checkoutUrl;
+  } catch (error) {
+    pendingWindow?.close();
+    if (error.status === 401) {
+      clearAccountSession();
+      openAccountModal('login', 'Your session expired. Sign in again to continue.');
+      return;
+    }
+    showNotification(error.message, 6000);
+    playErrorBeep();
+  }
+}
+
+function setAccountMessage(message = '', type = '') {
+  const element = document.getElementById('account-message');
+  if (!element) return;
+  element.textContent = message;
+  element.className = `account-message${type ? ` ${type}` : ''}`;
+}
+
+function setAccountTab(mode = 'login') {
+  const loginTab = document.getElementById('account-tab-login');
+  const registerTab = document.getElementById('account-tab-register');
+  const loginForm = document.getElementById('account-login-form');
+  const registerForm = document.getElementById('account-register-form');
+  const isLogin = mode === 'login';
+  loginTab?.classList.toggle('active', isLogin);
+  registerTab?.classList.toggle('active', !isLogin);
+  loginTab?.setAttribute('aria-selected', String(isLogin));
+  registerTab?.setAttribute('aria-selected', String(!isLogin));
+  if (loginForm) loginForm.hidden = !isLogin;
+  if (registerForm) registerForm.hidden = isLogin;
+}
+
+function updateAccountUI() {
+  const user = accountSession.user;
+  const accountNav = document.getElementById('btn-open-account');
+  const accountStatus = document.getElementById('credit-shop-account-status');
+  const profileEmail = document.getElementById('account-profile-email');
+  const profileCredits = document.getElementById('account-profile-credits');
+  const authView = document.getElementById('account-auth-view');
+  const profileView = document.getElementById('account-profile-view');
+  const checkoutButton = document.getElementById('btn-buy-50-credits');
+
+  if (accountNav) {
+    accountNav.textContent = user ? `ACCOUNT · ${user.displayName || user.email.split('@')[0]}` : 'SIGN IN';
+    accountNav.classList.toggle('signed-in', Boolean(user));
+  }
+  if (accountStatus) {
+    accountStatus.classList.toggle('signed-in', Boolean(user));
+    const label = accountStatus.querySelector('span:last-child');
+    if (label) label.textContent = user ? `SIGNED IN · ${user.email}` : 'SIGN IN TO PURCHASE';
+  }
+  if (profileEmail) profileEmail.textContent = user?.email || '';
+  if (profileCredits) profileCredits.textContent = String(user?.credits || 0);
+  if (authView) authView.hidden = Boolean(user);
+  if (profileView) profileView.hidden = !user;
+  if (checkoutButton?.firstChild) checkoutButton.firstChild.textContent = user ? 'CONTINUE TO CHECKOUT ' : 'SIGN IN TO BUY ';
+}
+
+function saveAccountSession(result) {
+  accountSession = { token: result.token, user: result.user };
+  safeStorage.setItem(ACCOUNT_SESSION_KEY, result.token);
+  updateAccountUI();
+}
+
+function clearAccountSession() {
+  accountSession = { token: null, user: null };
+  safeStorage.removeItem(ACCOUNT_SESSION_KEY);
+  updateAccountUI();
+}
+
+function openAccountModal(mode = 'login', message = '') {
+  setAccountTab(mode);
+  setAccountMessage(message, message ? 'info' : '');
+  updateAccountUI();
+  document.getElementById('account-modal')?.classList.add('active');
+  playCreditShopSound('open');
+}
+
+async function loadGoogleSignIn() {
+  const container = document.getElementById('google-signin-container');
+  const note = document.getElementById('google-signin-note');
+  if (!container || !note) return;
+
+  try {
+    const config = await accountApi('/api/auth/config');
+    if (!config.googleClientId) {
+      note.hidden = false;
+      return;
+    }
+
+    await new Promise((resolve, reject) => {
+      if (window.google?.accounts?.id) {
+        resolve();
+        return;
+      }
+      const script = document.createElement('script');
+      script.src = 'https://accounts.google.com/gsi/client';
+      script.async = true;
+      script.onload = resolve;
+      script.onerror = reject;
+      document.head.appendChild(script);
+    });
+
+    window.google.accounts.id.initialize({
+      client_id: config.googleClientId,
+      callback: async ({ credential }) => {
+        setAccountMessage('Verifying Google account…', 'info');
+        try {
+          const result = await accountApi('/api/auth/google', {
+            method: 'POST',
+            body: JSON.stringify({ credential })
+          });
+          saveAccountSession(result);
+          showNotification('Operative account connected.', 4000);
+        } catch (error) {
+          setAccountMessage(error.message, 'error');
+        }
+      }
+    });
+    window.google.accounts.id.renderButton(container, {
+      type: 'standard',
+      theme: 'filled_black',
+      size: 'large',
+      text: 'continue_with',
+      shape: 'rectangular',
+      width: 360
+    });
+    note.hidden = true;
+  } catch (error) {
+    note.textContent = 'Google sign-in is temporarily unavailable.';
+    note.hidden = false;
+  }
+}
+
+function initAccountAuth() {
+  const accountModal = document.getElementById('account-modal');
+  const closeButton = document.getElementById('btn-close-account');
+  const loginForm = document.getElementById('account-login-form');
+  const registerForm = document.getElementById('account-register-form');
+  if (!accountModal || !closeButton || !loginForm || !registerForm) return;
+
+  document.addEventListener('click', (event) => {
+    if (event.target.closest('[data-open-account], #btn-open-account')) openAccountModal('login');
   });
+  closeButton.addEventListener('click', () => {
+    accountModal.classList.remove('active');
+    playCreditShopSound('close');
+  });
+  document.getElementById('account-tab-login')?.addEventListener('click', () => {
+    setAccountTab('login');
+    setAccountMessage();
+  });
+  document.getElementById('account-tab-register')?.addEventListener('click', () => {
+    setAccountTab('register');
+    setAccountMessage();
+  });
+
+  loginForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const submit = loginForm.querySelector('button[type="submit"]');
+    submit.disabled = true;
+    setAccountMessage('Authenticating…', 'info');
+    try {
+      const result = await accountApi('/api/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({
+          email: document.getElementById('account-login-email').value,
+          password: document.getElementById('account-login-password').value
+        })
+      });
+      saveAccountSession(result);
+      showNotification('Welcome back, operative.', 4000);
+    } catch (error) {
+      setAccountMessage(error.message, 'error');
+    } finally {
+      submit.disabled = false;
+    }
+  });
+
+  registerForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const password = document.getElementById('account-register-password').value;
+    const confirmation = document.getElementById('account-register-confirm').value;
+    if (password !== confirmation) {
+      setAccountMessage('Passcodes do not match.', 'error');
+      return;
+    }
+    const submit = registerForm.querySelector('button[type="submit"]');
+    submit.disabled = true;
+    setAccountMessage('Creating secure operative profile…', 'info');
+    try {
+      const result = await accountApi('/api/auth/register', {
+        method: 'POST',
+        body: JSON.stringify({
+          email: document.getElementById('account-register-email').value,
+          password
+        })
+      });
+      saveAccountSession(result);
+      showNotification('Operative account created.', 4500);
+    } catch (error) {
+      setAccountMessage(error.message, 'error');
+    } finally {
+      submit.disabled = false;
+    }
+  });
+
+  document.getElementById('btn-account-logout')?.addEventListener('click', async () => {
+    try { await accountApi('/api/auth/logout', { method: 'POST' }); } catch (error) {}
+    window.google?.accounts?.id?.disableAutoSelect?.();
+    clearAccountSession();
+    setAccountTab('login');
+    setAccountMessage('Signed out successfully.', 'success');
+  });
+
+  updateAccountUI();
+  if (accountSession.token) {
+    accountApi('/api/auth/me')
+      .then(result => {
+        accountSession.user = result.user;
+        updateAccountUI();
+      })
+      .catch(() => clearAccountSession());
+  }
+  loadGoogleSignIn();
 }
 
 function initItemShop() {
@@ -2559,6 +2860,8 @@ function initItemShop() {
 function renderShopItems() {
   const container = document.getElementById('shop-items-container');
   const creditsDisplay = document.getElementById('shop-credits-display');
+  const ownedCount = document.getElementById('shop-owned-count');
+  const availableCount = document.getElementById('shop-available-count');
   
   if (!container || !creditsDisplay) return;
   
@@ -2573,64 +2876,78 @@ function renderShopItems() {
   const rp = parseInt(safeStorage.getItem('tacticstrike_rp') || '0');
   
   container.innerHTML = '';
+
+  let ownedTotal = 0;
+  let availableTotal = 0;
   
   Object.keys(WEAPON_LOCKS).forEach(key => {
     const req = WEAPON_LOCKS[key];
+    const meta = SHOP_WEAPON_META[key];
     const isPurchased = purchased.includes(key);
     const isRankUnlocked = rp >= req.rp;
     const canAfford = currentCredits >= req.price;
+    const isOwned = isPurchased || isRankUnlocked;
+
+    if (isOwned) ownedTotal += 1;
+    else if (canAfford) availableTotal += 1;
     
-    const card = document.createElement('div');
-    card.className = 'card';
-    card.style.cssText = `
-      padding: 14px 18px;
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-      border: 1px solid rgba(255,255,255,0.06);
-      background: rgba(0, 0, 0, 0.4);
-      border-radius: 6px;
-      position: relative;
-    `;
+    const card = document.createElement('article');
+    card.className = `shop-item-card tier-${meta.tier.toLowerCase()}${isOwned ? ' is-owned' : ''}${!canAfford && !isOwned ? ' needs-credits' : ''}`;
     
     let statusText = '';
     let btnHtml = '';
     
     if (isPurchased) {
-      statusText = `<span style="color:#39db14; font-size:10px; font-weight:bold; letter-spacing:0.5px;">🛍️ UNLOCKED VIA SHOP</span>`;
-      btnHtml = `<button class="btn secondary" disabled style="font-size: 10px; padding: 8px; width: 100%;">OWNED</button>`;
+      statusText = '<span class="shop-item-status owned"><i></i>ACQUIRED</span>';
+      btnHtml = '<button class="shop-buy-action owned" disabled>IN YOUR ARMORY</button>';
     } else if (isRankUnlocked) {
-      statusText = `<span style="color:#66fcf1; font-size:10px; font-weight:bold; letter-spacing:0.5px;">✓ UNLOCKED BY RANK</span>`;
-      btnHtml = `<button class="btn secondary" disabled style="font-size: 10px; padding: 8px; width: 100%;">OWNED</button>`;
+      statusText = '<span class="shop-item-status rank"><i></i>RANK UNLOCKED</span>';
+      btnHtml = '<button class="shop-buy-action owned" disabled>AVAILABLE IN LOADOUT</button>';
     } else {
-      statusText = `<span style="color:#ff3c3c; font-size:10px; font-weight:bold; letter-spacing:0.5px;">🔒 LOCKED (${req.rank})</span>`;
+      statusText = `<span class="shop-item-status locked"><i></i>${req.rank} CLEARANCE</span>`;
       if (canAfford) {
-        btnHtml = `<button class="btn primary buy-btn btn-3d" data-weapon="${key}" style="background: linear-gradient(135deg, #aa7c11, #5c4008); border: 1px solid #73510c; color: #ffe6a3; font-size: 10px; padding: 8px; width: 100%;">BUY EARLY</button>`;
+        btnHtml = `<button class="shop-buy-action buy-btn" data-weapon="${key}">UNLOCK EARLY <span>→</span></button>`;
       } else {
-        btnHtml = `<button class="btn secondary" disabled style="font-size: 10px; padding: 8px; width: 100%; color: #ff3c3c;">INSUFFICIENT CREDITS</button>`;
+        const shortfall = req.price - currentCredits;
+        btnHtml = `<button class="shop-buy-action top-up" type="button" data-open-credit-shop>GET CREDITS <span>+${shortfall.toLocaleString()}</span></button>`;
       }
     }
     
     const weaponStats = WEAPON_STATS[key] || { name: key };
     
     card.innerHTML = `
-      <div style="display:flex; justify-content:space-between; align-items:center;">
-        <span style="font-family: var(--font-title); font-size: 13px; color: #fff; font-weight: bold; letter-spacing: 1px;">${weaponStats.name}</span>
-        <span style="font-family: var(--font-title); font-size: 12px; color: #ffd700; font-weight: bold;">🪙 ${req.price}</span>
-      </div>
-      <div style="font-size: 10px; color: var(--text-muted); line-height: 1.4;">
-        Early early access for this high-tier gun. Skip the Rank requirement and deploy instantly.
-      </div>
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:4px;">
+      <div class="shop-item-topline">
+        <span>${meta.tier} ISSUE</span>
         ${statusText}
       </div>
-      <div style="margin-top:auto;">
+      <div class="shop-item-visual" aria-hidden="true">
+        <span class="shop-item-code">${meta.code}</span>
+        <span class="shop-item-crosshair"></span>
+        <small>${meta.role}</small>
+      </div>
+      <div class="shop-item-copy">
+        <h4>${weaponStats.name}</h4>
+        <p>${meta.description}</p>
+      </div>
+      <div class="shop-item-stats">
+        <span><small>DAMAGE</small><strong>${weaponStats.damagePct}</strong></span>
+        <span><small>ACCURACY</small><strong>${weaponStats.accuracy}</strong></span>
+        <span><small>CAPACITY</small><strong>${weaponStats.magSize}</strong></span>
+      </div>
+      <div class="shop-item-unlock">
+        <span>STANDARD UNLOCK</span><strong>${req.rank} · ${req.rp.toLocaleString()} RP</strong>
+      </div>
+      <div class="shop-item-purchase">
+        <div class="shop-item-price"><span class="mini-credit-mark">TS</span><strong>${req.price.toLocaleString()}</strong><small>CREDITS</small></div>
         ${btnHtml}
       </div>
     `;
     
     container.appendChild(card);
   });
+
+  if (ownedCount) ownedCount.textContent = ownedTotal;
+  if (availableCount) availableCount.textContent = availableTotal;
   
   container.querySelectorAll('.buy-btn').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -2647,7 +2964,8 @@ function buyWeapon(weaponKey) {
   const currentCredits = parseInt(safeStorage.getItem('tacticstrike_credits') || '0');
   if (currentCredits < req.price) {
     playErrorBeep();
-    alert('Insufficient credits.');
+    showNotification(`You need ${(req.price - currentCredits).toLocaleString()} more credits for ${WEAPON_NAMES[weaponKey]}.`, 4500);
+    openCreditShopModal('item-shop');
     return;
   }
   
