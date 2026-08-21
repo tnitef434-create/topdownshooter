@@ -28,13 +28,63 @@ const safeStorage = {
 };
 
 const ACCOUNT_SESSION_KEY = 'tacticstrike_account_session';
+const ACCOUNT_USER_CACHE_KEY = 'tacticstrike_account_user';
 const ADMIN_SESSION_KEY = 'tacticstrike_admin_session';
+const startupBeganAt = performance.now();
+
+function readCachedAccountUser() {
+  try {
+    const cached = JSON.parse(safeStorage.getItem(ACCOUNT_USER_CACHE_KEY) || 'null');
+    return cached && typeof cached.email === 'string' ? cached : null;
+  } catch (error) {
+    safeStorage.removeItem(ACCOUNT_USER_CACHE_KEY);
+    return null;
+  }
+}
+
 let accountSession = {
   token: safeStorage.getItem(ACCOUNT_SESSION_KEY),
-  user: null
+  user: readCachedAccountUser()
 };
+if (!accountSession.token) accountSession.user = null;
+let accountAuthPending = Boolean(accountSession.token);
 let adminSessionToken = safeStorage.getItem(ADMIN_SESSION_KEY);
 let selectedAdminCaseId = null;
+
+function wait(milliseconds) {
+  return new Promise(resolve => setTimeout(resolve, milliseconds));
+}
+
+function dismissStartupOverlay({ immediate = false } = {}) {
+  const overlay = document.getElementById('startup-overlay');
+  document.body.classList.remove('is-starting');
+  if (!overlay) return;
+  overlay.setAttribute('aria-hidden', 'true');
+  if (immediate) {
+    overlay.remove();
+    return;
+  }
+  overlay.classList.add('is-exiting');
+  setTimeout(() => overlay.remove(), 650);
+}
+
+// Never leave the interface covered if an unrelated startup task fails.
+setTimeout(() => {
+  if (document.body.classList.contains('is-starting')) dismissStartupOverlay();
+}, 6500);
+
+async function finishStartupSequence(accountRestore) {
+  const minimumDelay = Math.max(0, 1350 - (performance.now() - startupBeganAt));
+  const authWait = accountSession.token && !accountSession.user
+    ? Promise.race([Promise.resolve(accountRestore), wait(3600)])
+    : Promise.resolve();
+
+  await Promise.all([wait(minimumDelay), authWait]);
+  const status = document.getElementById('startup-status');
+  if (status) status.textContent = accountSession.user ? 'OPERATIVE SESSION READY' : 'SYSTEMS ONLINE';
+  await wait(140);
+  dismissStartupOverlay();
+}
 
 function getBackendUrl() {
   if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
@@ -2419,12 +2469,16 @@ document.addEventListener('DOMContentLoaded', () => {
   // Mobile check
   const isMobile = /Mobi|Android|iPhone|iPad|iPod|Windows Phone|webOS/i.test(navigator.userAgent) || window.innerWidth < 800;
   if (isMobile) {
+    dismissStartupOverlay({ immediate: true });
     const warning = document.getElementById('mobile-warning-screen');
     if (warning) {
       warning.style.display = 'flex';
     }
     return; // Block initialization
   }
+
+  const startupStatus = document.getElementById('startup-status');
+  if (startupStatus && accountSession.token) startupStatus.textContent = 'RESTORING OPERATIVE SESSION';
 
   // Forfeit/crash detection
   const activeMatch = localStorage.getItem('tacticstrike_active_match');
@@ -2440,7 +2494,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   initSettings();
-  initAccountAuth();
+  const accountRestore = initAccountAuth();
   initNewsModal();
   initWhatsNewModal();
   initCreditShop();
@@ -2492,6 +2546,8 @@ document.addEventListener('DOMContentLoaded', () => {
     else opt.classList.remove('active');
   });
   updateWeaponStatsUI(myWeapon);
+
+  finishStartupSequence(accountRestore);
 
 });
 
@@ -3120,7 +3176,10 @@ function setAccountTab(mode = 'login') {
 
 function updateAccountUI() {
   const user = accountSession.user;
-  if (user) syncGrantedCredits(user);
+  if (user) {
+    syncGrantedCredits(user);
+    if (accountSession.token) safeStorage.setItem(ACCOUNT_USER_CACHE_KEY, JSON.stringify(user));
+  }
   const accountNav = document.getElementById('btn-open-account');
   const accountStatus = document.getElementById('credit-shop-account-status');
   const profileEmail = document.getElementById('account-profile-email');
@@ -3130,32 +3189,46 @@ function updateAccountUI() {
   const checkoutButtons = document.querySelectorAll('#credit-shop-modal [data-buy-credit-pack]');
 
   if (accountNav) {
-    accountNav.textContent = user ? `ACCOUNT · ${user.displayName || user.email.split('@')[0]}` : 'SIGN IN';
+    accountNav.textContent = user
+      ? `ACCOUNT · ${user.displayName || user.email.split('@')[0]}`
+      : accountAuthPending ? 'ACCOUNT' : 'SIGN IN';
     accountNav.classList.toggle('signed-in', Boolean(user));
   }
   if (accountStatus) {
     accountStatus.classList.toggle('signed-in', Boolean(user));
     const label = accountStatus.querySelector('span:last-child');
-    if (label) label.textContent = user ? `SIGNED IN · ${user.email}` : 'SIGN IN TO PURCHASE';
+    if (label) {
+      label.textContent = user
+        ? `SIGNED IN · ${user.email}`
+        : accountAuthPending ? 'RESTORING ACCOUNT…' : 'SIGN IN TO PURCHASE';
+    }
   }
   if (profileEmail) profileEmail.textContent = user?.email || '';
   if (profileCredits) profileCredits.textContent = String(user?.credits || 0);
   if (authView) authView.hidden = Boolean(user);
   if (profileView) profileView.hidden = !user;
   checkoutButtons.forEach(button => {
-    if (button.firstChild) button.firstChild.textContent = user ? 'CONTINUE TO CHECKOUT ' : 'SIGN IN TO BUY ';
+    if (button.firstChild) {
+      button.firstChild.textContent = user
+        ? 'CONTINUE TO CHECKOUT '
+        : accountAuthPending ? 'RESTORING ACCOUNT… ' : 'SIGN IN TO BUY ';
+    }
   });
 }
 
 function saveAccountSession(result) {
   accountSession = { token: result.token, user: result.user };
+  accountAuthPending = false;
   safeStorage.setItem(ACCOUNT_SESSION_KEY, result.token);
+  safeStorage.setItem(ACCOUNT_USER_CACHE_KEY, JSON.stringify(result.user));
   updateAccountUI();
 }
 
 function clearAccountSession() {
   accountSession = { token: null, user: null };
+  accountAuthPending = false;
   safeStorage.removeItem(ACCOUNT_SESSION_KEY);
+  safeStorage.removeItem(ACCOUNT_USER_CACHE_KEY);
   updateAccountUI();
 }
 
@@ -3172,7 +3245,7 @@ function initAccountAuth() {
   const closeButton = document.getElementById('btn-close-account');
   const loginForm = document.getElementById('account-login-form');
   const registerForm = document.getElementById('account-register-form');
-  if (!accountModal || !closeButton || !loginForm || !registerForm) return;
+  if (!accountModal || !closeButton || !loginForm || !registerForm) return Promise.resolve();
 
   document.addEventListener('click', (event) => {
     if (event.target.closest('[data-open-account], #btn-open-account')) openAccountModal('login');
@@ -3249,13 +3322,28 @@ function initAccountAuth() {
 
   updateAccountUI();
   if (accountSession.token) {
-    accountApi('/api/auth/me')
+    const accountRestore = accountApi('/api/auth/me')
       .then(result => {
         accountSession.user = result.user;
+        safeStorage.setItem(ACCOUNT_USER_CACHE_KEY, JSON.stringify(result.user));
         updateAccountUI();
       })
-      .catch(() => clearAccountSession());
+      .catch(error => {
+        if (error.status === 401) {
+          clearAccountSession();
+          return;
+        }
+        console.warn('Account session validation was delayed:', error);
+      })
+      .finally(() => {
+        accountAuthPending = false;
+        updateAccountUI();
+      });
+    return accountRestore;
   }
+  accountAuthPending = false;
+  updateAccountUI();
+  return Promise.resolve();
 }
 
 function initItemShop() {
