@@ -138,6 +138,7 @@ const btns = {
   joinRoom: document.getElementById('btn-join-room'),
   practiceBot: document.getElementById('btn-practice-bot'),
   openSettings: document.getElementById('btn-open-settings'),
+  openMatchSettings: document.getElementById('btn-open-match-settings'),
   closeSettings: document.getElementById('btn-close-settings'),
   leaveLobby: document.getElementById('btn-leave-lobby'),
   readyToggle: document.getElementById('btn-ready-toggle'),
@@ -972,13 +973,14 @@ function initSettings() {
     });
   }
 
-  if (btns.openSettings) {
-    btns.openSettings.addEventListener('click', () => {
+  [btns.openSettings, btns.openMatchSettings].filter(Boolean).forEach(openButton => {
+    openButton.addEventListener('click', () => {
+      if (openButton === btns.openMatchSettings && !gameSettings.sfxMuted) playMenuClick();
       renderH2HHistory();
       syncMusicToggleUI();
       if (settings.modal) settings.modal.classList.add('active');
     });
-  }
+  });
 
   if (btns.closeSettings) {
     btns.closeSettings.addEventListener('click', () => {
@@ -2322,8 +2324,18 @@ function setupModeSelector() {
   radios.forEach(radio => {
     radio.addEventListener('change', () => {
       myMode = radio.value;
+      updateMatchConfigurationSummary();
     });
   });
+}
+
+function updateMatchConfigurationSummary() {
+  const modeLabel = myMode === '2v2' ? '2V2 SQUAD' : '1V1 DUEL';
+  const weaponLabel = (WEAPON_NAMES[myWeapon] || myWeapon || 'Pistol').toUpperCase();
+  const summary = document.getElementById('match-config-summary');
+  const loadout = document.getElementById('match-loadout-value');
+  if (summary) summary.textContent = `${modeLabel} / ${weaponLabel}`;
+  if (loadout) loadout.textContent = weaponLabel;
 }
 
 function setupQpStyleSelector() {
@@ -2374,6 +2386,7 @@ function setupMainMenuWeaponSelector() {
       btn.classList.add('active');
       myWeapon = btn.dataset.weapon;
       safeStorage.setItem('tacticstrike_player_weapon', myWeapon);
+      updateMatchConfigurationSummary();
       playMenuClick();
       
       // Sync with lobby weapon option selected
@@ -2546,6 +2559,7 @@ document.addEventListener('DOMContentLoaded', () => {
     else opt.classList.remove('active');
   });
   updateWeaponStatsUI(myWeapon);
+  updateMatchConfigurationSummary();
 
   finishStartupSequence(accountRestore);
 

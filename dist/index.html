@@ -11,8 +11,8 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=Orbitron:wght@500;700;900&display=swap" rel="stylesheet">
   <!-- Style sheet -->
   <!-- Socket.io client (loaded dynamically via bundler or server, or we can just import from socket.io-client) -->
-  <script type="module" crossorigin src="/assets/index-6R3IpIHM.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-DXV7tHoe.css">
+  <script type="module" crossorigin src="/assets/index-BjangkU9.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-CD9JvQuR.css">
 </head>
 <body class="is-starting">
 
@@ -81,42 +81,59 @@
           </div>
         </div>
 
-        <!-- Weapon Loadout Selection Card -->
-        <div class="card" style="padding: 16px 24px; display: flex; flex-direction: column; gap: 10px; border: 1px solid rgba(255,255,255,0.05);">
-          <label style="font-family: var(--font-title); font-size: 11px; letter-spacing: 1.5px; color: #d4af37; font-weight:700;">SELECT LOADOUT</label>
-          <div id="menu-weapon-selector" style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px;">
-            <button class="btn secondary weapon-btn active btn-3d" data-weapon="pistol" style="font-size:9px; padding:6px 2px; text-transform:uppercase;">Pistol</button>
-            <button class="btn secondary weapon-btn btn-3d" data-weapon="rifle" style="font-size:9px; padding:6px 2px; text-transform:uppercase;">Rifle</button>
-            <button class="btn secondary weapon-btn btn-3d" data-weapon="shotgun" style="font-size:9px; padding:6px 2px; text-transform:uppercase;">Shotgun</button>
-            <button class="btn secondary weapon-btn btn-3d" data-weapon="sniper" style="font-size:9px; padding:6px 2px; text-transform:uppercase;">Sniper</button>
-            <button class="btn secondary weapon-btn btn-3d" data-weapon="smg" style="font-size:9px; padding:6px 2px; text-transform:uppercase;">SMG</button>
-            <button class="btn secondary weapon-btn btn-3d" data-weapon="lmg" style="font-size:9px; padding:6px 2px; text-transform:uppercase;">LMG</button>
-            <button class="btn secondary weapon-btn btn-3d" data-weapon="dmr" style="font-size:9px; padding:6px 2px; text-transform:uppercase;">DMR</button>
-            <button class="btn secondary weapon-btn btn-3d" data-weapon="vector" style="font-size:9px; padding:6px 2px; text-transform:uppercase;">Vector</button>
-            <button class="btn secondary weapon-btn btn-3d" data-weapon="famas" style="font-size:9px; padding:6px 2px; text-transform:uppercase;">FAMAS</button>
-            <button class="btn secondary weapon-btn btn-3d" data-weapon="plasma" style="font-size:9px; padding:6px 2px; text-transform:uppercase; color:#ff6ef7;">Plasma</button>
-            <button class="btn secondary weapon-btn btn-3d" data-weapon="railgun" style="font-size:9px; padding:6px 2px; text-transform:uppercase; color:#66fcf1;">Railgun</button>
+        <!-- Unified Match Configuration -->
+        <section class="match-config-panel" aria-labelledby="match-config-title">
+          <div class="match-config-header">
+            <div class="match-config-heading">
+              <h2 id="match-config-title">MATCH CONFIGURATION</h2>
+              <span id="match-config-summary">1V1 DUEL / PISTOL</span>
+            </div>
+            <button id="btn-open-match-settings" class="match-config-settings" type="button" aria-label="Open settings" title="Settings">
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"></path>
+                <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.12 2.12-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.04 1.55V20.3h-3v-.09a1.7 1.7 0 0 0-1.04-1.55A1.7 1.7 0 0 0 8.78 19l-.06.06-2.12-2.12.06-.06A1.7 1.7 0 0 0 7 15a1.7 1.7 0 0 0-1.55-1.04H5.3v-3h.15A1.7 1.7 0 0 0 7 9.92a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.12-2.12.06.06a1.7 1.7 0 0 0 1.88.34A1.7 1.7 0 0 0 11.7 4.7V4.6h3v.1a1.7 1.7 0 0 0 1.04 1.56 1.7 1.7 0 0 0 1.88-.34l.06-.06 2.12 2.12-.06.06a1.7 1.7 0 0 0-.34 1.88 1.7 1.7 0 0 0 1.55 1.04h.15v3h-.15A1.7 1.7 0 0 0 19.4 15Z"></path>
+              </svg>
+            </button>
           </div>
-        </div>
 
-        <div class="card mode-card" style="padding: 16px 24px; display: flex; flex-direction: column; gap: 8px; border: 1px solid rgba(255,255,255,0.05);">
-          <label style="font-family: var(--font-title); font-size: 11px; letter-spacing: 1.5px; color: #d4af37; font-weight:700;">MATCH TYPE</label>
-          <div class="mode-selector" style="display: flex; gap: 20px; flex-wrap: wrap;">
-            <label class="radio-container" style="display: flex; align-items: center; gap: 8px; font-family: var(--font-title); font-size: 13px; cursor: pointer; letter-spacing: 1px;">
-              <input type="radio" name="match-mode" value="1v1" checked style="accent-color: #d4af37;">
-              1V1 DUEL
-            </label>
-            <label class="radio-container" style="display: flex; align-items: center; gap: 8px; font-family: var(--font-title); font-size: 13px; cursor: pointer; letter-spacing: 1px;">
-              <input type="radio" name="match-mode" value="2v2" style="accent-color: #d4af37;">
-              2V2 SQUAD
-            </label>
+          <div class="match-config-body">
+            <div class="match-mode-grid" aria-label="Match type">
+              <label class="match-mode-plate">
+                <input class="match-mode-input" type="radio" name="match-mode" value="1v1" checked>
+                <span>1V1 DUEL</span>
+              </label>
+              <label class="match-mode-plate">
+                <input class="match-mode-input" type="radio" name="match-mode" value="2v2">
+                <span>2V2 SQUAD</span>
+              </label>
+            </div>
+
+            <div class="match-config-divider"></div>
+
+            <div id="menu-weapon-selector" class="match-weapon-grid" aria-label="Weapon loadout">
+              <button class="match-weapon-btn weapon-btn active" type="button" data-weapon="pistol">Pistol</button>
+              <button class="match-weapon-btn weapon-btn" type="button" data-weapon="rifle">Rifle</button>
+              <button class="match-weapon-btn weapon-btn" type="button" data-weapon="shotgun">Shotgun</button>
+              <button class="match-weapon-btn weapon-btn" type="button" data-weapon="sniper">Sniper</button>
+              <button class="match-weapon-btn weapon-btn" type="button" data-weapon="smg">SMG</button>
+              <button class="match-weapon-btn weapon-btn" type="button" data-weapon="lmg">LMG</button>
+              <button class="match-weapon-btn weapon-btn" type="button" data-weapon="dmr">DMR</button>
+              <button class="match-weapon-btn weapon-btn" type="button" data-weapon="vector">Vector</button>
+              <button class="match-weapon-btn weapon-btn" type="button" data-weapon="famas">FAMAS</button>
+              <button class="match-weapon-btn weapon-btn" type="button" data-weapon="plasma">Plasma</button>
+              <button class="match-weapon-btn weapon-btn" type="button" data-weapon="railgun">Railgun</button>
+            </div>
           </div>
-        </div>
 
-        <!-- Play Mode Cards (Minimized Deploy Button) -->
-        <div class="card play-btn-card">
-          <button id="btn-deploy-main" class="btn-deploy-main btn-3d">ENTER BATTLEFIELD</button>
-        </div>
+          <div class="match-loadout-strip">
+            <span>CURRENT LOADOUT</span>
+            <strong id="match-loadout-value">PISTOL</strong>
+          </div>
+
+          <div class="match-config-action">
+            <button id="btn-deploy-main" class="match-deploy-btn" type="button">ENTER BATTLEFIELD</button>
+          </div>
+        </section>
 
         <footer>
           <button id="btn-open-whats-new" class="btn-text" style="color: #66fcf1; font-weight: bold;">WHAT'S NEW</button>
