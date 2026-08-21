@@ -2409,15 +2409,6 @@ document.addEventListener('DOMContentLoaded', () => {
     return; // Block initialization
   }
 
-  // Show standard update and performance notification
-  setTimeout(() => {
-    showNotification("The game is actively being updated and fixed, sorry for any issues you run into!", 12000);
-  }, 1000);
-
-  setTimeout(() => {
-    showNotification("Low FPS? Try enabling the new 'Performance Mode' in Settings to boost your frame rate!", 14000);
-  }, 3500);
-
   // Forfeit/crash detection
   const activeMatch = localStorage.getItem('tacticstrike_active_match');
   if (activeMatch) {
