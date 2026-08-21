@@ -794,11 +794,6 @@ footer {
   background: rgba(212, 175, 55, 0.13);
 }
 
-.admin-nav {
-  color: #6e747c;
-  font-size: 9px;
-}
-
 /* Payment support and admin command center */
 .modal-overlay.purchase-support-overlay,
 .modal-overlay.admin-overlay {

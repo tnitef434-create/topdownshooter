@@ -3036,17 +3036,30 @@ async function submitAdminDecision(purchaseCase, action, credits = 0) {
 
 function initAdminDashboard() {
   const modal = document.getElementById('admin-modal');
-  const openButton = document.getElementById('btn-open-admin');
+  const hiddenTrigger = document.getElementById('version-admin-trigger');
   const closeButton = document.getElementById('btn-close-admin');
   const loginForm = document.getElementById('admin-login-form');
-  if (!modal || !openButton || !closeButton || !loginForm) return;
+  if (!modal || !closeButton || !loginForm) return;
 
-  openButton.addEventListener('click', () => {
+  const openDashboard = () => {
     modal.classList.add('active');
     setAdminLoginMessage();
     setAdminView(Boolean(adminSessionToken));
     playCreditShopSound('open');
     if (adminSessionToken) loadAdminCases();
+  };
+
+  let triggerClicks = 0;
+  let triggerResetTimer = null;
+  hiddenTrigger?.addEventListener('click', () => {
+    triggerClicks += 1;
+    clearTimeout(triggerResetTimer);
+    if (triggerClicks >= 5) {
+      triggerClicks = 0;
+      openDashboard();
+      return;
+    }
+    triggerResetTimer = setTimeout(() => { triggerClicks = 0; }, 2200);
   });
   closeButton.addEventListener('click', () => {
     modal.classList.remove('active');
