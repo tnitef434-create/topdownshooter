@@ -2685,62 +2685,6 @@ function openAccountModal(mode = 'login', message = '') {
   playCreditShopSound('open');
 }
 
-async function loadGoogleSignIn() {
-  const container = document.getElementById('google-signin-container');
-  const note = document.getElementById('google-signin-note');
-  if (!container || !note) return;
-
-  try {
-    const config = await accountApi('/api/auth/config');
-    if (!config.googleClientId) {
-      note.hidden = false;
-      return;
-    }
-
-    await new Promise((resolve, reject) => {
-      if (window.google?.accounts?.id) {
-        resolve();
-        return;
-      }
-      const script = document.createElement('script');
-      script.src = 'https://accounts.google.com/gsi/client';
-      script.async = true;
-      script.onload = resolve;
-      script.onerror = reject;
-      document.head.appendChild(script);
-    });
-
-    window.google.accounts.id.initialize({
-      client_id: config.googleClientId,
-      callback: async ({ credential }) => {
-        setAccountMessage('Verifying Google account…', 'info');
-        try {
-          const result = await accountApi('/api/auth/google', {
-            method: 'POST',
-            body: JSON.stringify({ credential })
-          });
-          saveAccountSession(result);
-          showNotification('Operative account connected.', 4000);
-        } catch (error) {
-          setAccountMessage(error.message, 'error');
-        }
-      }
-    });
-    window.google.accounts.id.renderButton(container, {
-      type: 'standard',
-      theme: 'filled_black',
-      size: 'large',
-      text: 'continue_with',
-      shape: 'rectangular',
-      width: 360
-    });
-    note.hidden = true;
-  } catch (error) {
-    note.textContent = 'Google sign-in is temporarily unavailable.';
-    note.hidden = false;
-  }
-}
-
 function initAccountAuth() {
   const accountModal = document.getElementById('account-modal');
   const closeButton = document.getElementById('btn-close-account');
@@ -2816,7 +2760,6 @@ function initAccountAuth() {
 
   document.getElementById('btn-account-logout')?.addEventListener('click', async () => {
     try { await accountApi('/api/auth/logout', { method: 'POST' }); } catch (error) {}
-    window.google?.accounts?.id?.disableAutoSelect?.();
     clearAccountSession();
     setAccountTab('login');
     setAccountMessage('Signed out successfully.', 'success');
@@ -2831,7 +2774,6 @@ function initAccountAuth() {
       })
       .catch(() => clearAccountSession());
   }
-  loadGoogleSignIn();
 }
 
 function initItemShop() {
@@ -2938,7 +2880,7 @@ function renderShopItems() {
         <span>STANDARD UNLOCK</span><strong>${req.rank} · ${req.rp.toLocaleString()} RP</strong>
       </div>
       <div class="shop-item-purchase">
-        <div class="shop-item-price"><span class="mini-credit-mark">TS</span><strong>${req.price.toLocaleString()}</strong><small>CREDITS</small></div>
+        <div class="shop-item-price"><img class="mini-credit-mark" src="/tacticstrike-credit-stack.webp" alt="" aria-hidden="true"><strong>${req.price.toLocaleString()}</strong><small>CREDITS</small></div>
         ${btnHtml}
       </div>
     `;

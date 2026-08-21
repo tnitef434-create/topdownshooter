@@ -619,24 +619,34 @@ footer {
 }
 
 .credit-token-mark {
-  display: grid;
-  place-items: center;
-  width: 73px;
-  height: 73px;
-  margin: 0 auto 16px;
-  border: 3px double #d4af37;
-  border-radius: 50%;
-  background: radial-gradient(circle, #f9df8c 0%, #b48420 43%, #47320a 72%, #110d05 73%);
-  box-shadow: inset 0 0 0 5px rgba(0, 0, 0, 0.32), 0 0 24px rgba(212, 175, 55, 0.2);
-  transform: perspective(200px) rotateY(-9deg);
+  position: relative;
+  width: 92px;
+  height: 78px;
+  margin: -2px auto 10px;
+}
+
+.credit-token-mark img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  filter: drop-shadow(0 9px 13px rgba(0, 0, 0, 0.5)) drop-shadow(0 0 12px rgba(212, 175, 55, 0.16));
 }
 
 .credit-token-mark span {
-  color: #171005;
+  position: absolute;
+  right: -4px;
+  bottom: 4px;
+  min-width: 32px;
+  padding: 4px 6px;
+  border: 1px solid rgba(255, 224, 132, 0.55);
+  border-radius: 3px;
+  color: #fff0bc;
+  background: rgba(24, 17, 6, 0.92);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.4);
   font-family: var(--font-title);
-  font-size: 16px;
+  font-size: 9px;
   font-weight: 900;
-  text-shadow: 0 1px rgba(255, 244, 195, 0.35);
+  letter-spacing: 0.4px;
 }
 
 .credit-pack h3 {
@@ -2270,21 +2280,14 @@ footer {
 
 .shop-wallet-coin,
 .mini-credit-mark {
-  display: inline-grid;
-  place-items: center;
-  border: 1px solid #e7c668;
-  border-radius: 50%;
-  color: #191104;
-  background: radial-gradient(circle at 36% 30%, #fff1b1, #d4af37 48%, #6e4b0d 100%);
-  box-shadow: inset 0 0 0 2px rgba(77, 48, 5, 0.36), 0 0 12px rgba(212, 175, 55, 0.18);
-  font-family: var(--font-title);
-  font-weight: 900;
+  display: inline-block;
+  object-fit: contain;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.55)) drop-shadow(0 0 5px rgba(212, 175, 55, 0.16));
 }
 
 .shop-wallet-coin {
-  width: 22px;
-  height: 22px;
-  font-size: 6px;
+  width: 30px;
+  height: 28px;
 }
 
 .shop-wallet-add {
@@ -2349,37 +2352,16 @@ footer {
   background: repeating-linear-gradient(135deg, rgba(212, 175, 55, 0.035) 0 7px, transparent 7px 14px);
 }
 
-.shop-credit-coin {
+.shop-credit-art img {
   position: absolute;
-  display: grid;
-  place-items: center;
-  width: 61px;
-  height: 61px;
-  border: 2px double #efd67f;
-  border-radius: 50%;
-  color: #251805;
-  background: radial-gradient(circle at 34% 30%, #fff3bd 0%, #d7ae3c 43%, #5f3f09 75%);
-  box-shadow: inset 0 0 0 5px rgba(0, 0, 0, 0.23), 0 8px 18px rgba(0, 0, 0, 0.35), 0 0 18px rgba(212, 175, 55, 0.18);
-  font-family: var(--font-title);
-  font-size: 14px;
-  font-weight: 900;
-}
-
-.coin-one {
-  top: 21px;
-  left: 26px;
-  z-index: 2;
-  transform: rotate(-12deg);
-}
-
-.coin-two {
-  top: 42px;
-  left: 62px;
-  width: 45px;
-  height: 45px;
-  font-size: 9px;
-  filter: brightness(0.72);
-  transform: rotate(18deg);
+  top: 50%;
+  left: 50%;
+  z-index: 1;
+  width: 112px;
+  height: 104px;
+  object-fit: contain;
+  filter: drop-shadow(0 10px 12px rgba(0, 0, 0, 0.55)) drop-shadow(0 0 12px rgba(212, 175, 55, 0.13));
+  transform: translate(-50%, -50%);
 }
 
 .shop-credit-banner-copy {
@@ -2794,9 +2776,8 @@ footer {
 
 .mini-credit-mark {
   grid-row: 1 / span 2;
-  width: 20px;
-  height: 20px;
-  font-size: 5px;
+  width: 25px;
+  height: 23px;
 }
 
 .shop-item-price strong {
@@ -3241,33 +3222,6 @@ footer {
   cursor: wait;
 }
 
-.account-divider {
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  margin: 22px 0 14px;
-  color: #545b64;
-  font-family: var(--font-title);
-  font-size: 6px;
-  font-weight: 700;
-  letter-spacing: 1px;
-}
-
-.account-divider::before,
-.account-divider::after {
-  content: '';
-  flex: 1;
-  height: 1px;
-  background: rgba(255, 255, 255, 0.07);
-}
-
-.google-signin-container {
-  display: flex;
-  justify-content: center;
-  min-height: 42px;
-}
-
-.google-signin-note,
 .account-privacy-note {
   margin-top: 10px;
   color: #5e6670;
@@ -3334,17 +3288,11 @@ footer {
   font-size: 21px;
 }
 
-.account-profile-balance i {
-  display: grid;
-  place-items: center;
-  width: 25px;
-  height: 25px;
-  border: 1px solid #dec065;
-  border-radius: 50%;
-  color: #1a1205;
-  background: #d4af37;
-  font-size: 6px;
-  font-style: normal;
+.account-profile-balance strong img {
+  width: 34px;
+  height: 31px;
+  object-fit: contain;
+  filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.55)) drop-shadow(0 0 6px rgba(212, 175, 55, 0.14));
 }
 
 .account-logout-btn {
