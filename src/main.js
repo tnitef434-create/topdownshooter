@@ -137,7 +137,6 @@ const btns = {
   createRoom: document.getElementById('btn-create-room'),
   joinRoom: document.getElementById('btn-join-room'),
   practiceBot: document.getElementById('btn-practice-bot'),
-  openSettings: document.getElementById('btn-open-settings'),
   openMatchSettings: document.getElementById('btn-open-match-settings'),
   closeSettings: document.getElementById('btn-close-settings'),
   leaveLobby: document.getElementById('btn-leave-lobby'),
@@ -973,14 +972,14 @@ function initSettings() {
     });
   }
 
-  [btns.openSettings, btns.openMatchSettings].filter(Boolean).forEach(openButton => {
-    openButton.addEventListener('click', () => {
-      if (openButton === btns.openMatchSettings && !gameSettings.sfxMuted) playMenuClick();
+  if (btns.openMatchSettings) {
+    btns.openMatchSettings.addEventListener('click', () => {
+      if (!gameSettings.sfxMuted) playMenuClick();
       renderH2HHistory();
       syncMusicToggleUI();
       if (settings.modal) settings.modal.classList.add('active');
     });
-  });
+  }
 
   if (btns.closeSettings) {
     btns.closeSettings.addEventListener('click', () => {

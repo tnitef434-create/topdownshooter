@@ -3145,7 +3145,7 @@ footer {
   margin-left: 12px;
   display: grid;
   place-items: center;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(197, 160, 89, 0.22);
   border-radius: 4px;
   background: #14161c;
   color: var(--text-muted);
@@ -3154,11 +3154,11 @@ footer {
 }
 
 .match-config-settings svg {
-  width: 16px;
-  height: 16px;
+  width: 17px;
+  height: 17px;
   fill: none;
   stroke: currentColor;
-  stroke-width: 1.6;
+  stroke-width: 1.7;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
