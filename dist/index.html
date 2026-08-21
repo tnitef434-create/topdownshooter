@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>TacticStrike 1v1 | Realistic Top-Down Multiplayer Shooter</title>
+  <title>TacticStrike V2 | Realistic Top-Down Multiplayer Shooter</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><circle cx=%2250%22 cy=%2250%22 r=%2235%22 fill=%22none%22 stroke=%22%2366fcf1%22 stroke-width=%228%22/><circle cx=%2250%22 cy=%2250%22 r=%228%22 fill=%22%23ff3c3c%22/><path d=%22M 50 5 L 50 25 M 50 75 L 50 95 M 5 50 L 25 50 M 75 50 L 95 50%22 stroke=%22%2366fcf1%22 stroke-width=%228%22 stroke-linecap=%22round%22/></svg>">
   <!-- Google Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -11,7 +11,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=Orbitron:wght@500;700;900&display=swap" rel="stylesheet">
   <!-- Style sheet -->
   <!-- Socket.io client (loaded dynamically via bundler or server, or we can just import from socket.io-client) -->
-  <script type="module" crossorigin src="/assets/index-oAzyYv-W.js"></script>
+  <script type="module" crossorigin src="/assets/index-BE30DjEQ.js"></script>
   <link rel="stylesheet" crossorigin href="/assets/index-DgpD-IzV.css">
 </head>
 <body>
@@ -117,7 +117,7 @@
           <span class="divider">|</span>
           <button id="btn-open-settings" class="btn-text">SETTINGS</button>
           <span class="divider">|</span>
-          <span class="version">v1.0.0 Stable</span>
+          <span class="version">v2 Stable</span>
         </footer>
       </div>
     </div>
@@ -624,10 +624,13 @@
     <!-- What's New Screen Modal -->
     <div id="whats-new-modal" class="modal-overlay" style="z-index: 12000; background: rgba(0, 0, 0, 0.85); backdrop-filter: blur(8px);">
       <div class="modal-card" style="max-width: 480px; border: 1px solid var(--neon-teal); box-shadow: 0 0 30px rgba(102, 252, 241, 0.15); padding: 35px 28px;">
-         <div style="font-family: var(--font-title); font-size: 10px; color: var(--neon-yellow); letter-spacing: 2px; font-weight: 700; margin-bottom: 6px;">TACTICSTRIKE CHANGELOG</div>
-         <h2 style="font-family: var(--font-title); font-size: 26px; color: #fff; margin-bottom: 15px; letter-spacing: 1.5px; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 12px; font-weight: 900;">WHAT'S NEW</h2>
+         <div style="font-family: var(--font-title); font-size: 10px; color: var(--neon-yellow); letter-spacing: 2px; font-weight: 700; margin-bottom: 6px;">TACTICSTRIKE V2 CHANGELOG</div>
+         <h2 style="font-family: var(--font-title); font-size: 26px; color: #fff; margin-bottom: 15px; letter-spacing: 1.5px; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 12px; font-weight: 900;">WHAT'S NEW — V2</h2>
          <div class="whats-new-feed">
-             <p style="margin-bottom: 14px;">🪙 <strong style="color: #ffe6a3;">CREDIT SHOP ONLINE:</strong> <span style="background: rgba(212,175,55,0.15); color: #d4af37; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; margin-left: 4px; border: 1px solid rgba(212,175,55,0.3);">NEW</span><br>The new Credit Shop is live from the main menu. The 50-credit Field Drop is available now through secure checkout with Revolut or bank card, with larger credit caches coming soon.</p>
+             <p style="margin-bottom: 14px;">🚀 <strong style="color: #66fcf1;">TACTICSTRIKE V2 IS LIVE:</strong> <span style="background: rgba(102,252,241,0.15); color: #66fcf1; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; margin-left: 4px; border: 1px solid rgba(102,252,241,0.3);">V2</span><br>The second major release upgrades the full store experience with the redesigned Blacksite Armory, more routes to credit packs, and an account-connected checkout flow.</p>
+             <p style="margin-bottom: 14px;">🔐 <strong style="color: #39ff14;">OPERATIVE ACCOUNTS:</strong> <span style="background: rgba(57,255,20,0.15); color: #39ff14; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; margin-left: 4px; border: 1px solid rgba(57,255,20,0.3);">NEW</span><br>Create an operative with your email and passcode, return later to sign back in, and connect credit checkout attempts to your profile. Google sign-in has been removed for a cleaner email-only system.</p>
+             <p style="margin-bottom: 14px;">🛡️ <strong style="color: #ff9f43;">DEPLOY-SAFE ACCOUNT CORE:</strong> <span style="background: rgba(255,159,67,0.14); color: #ffb46c; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; margin-left: 4px; border: 1px solid rgba(255,159,67,0.3);">UPGRADE</span><br>The server now supports persistent PostgreSQL storage for accounts, sessions, and purchase intents so operative access can survive backend redeploys once cloud storage is connected.</p>
+             <p style="margin-bottom: 14px;">🪙 <strong style="color: #ffe6a3;">NEW CREDIT IDENTITY:</strong> <span style="background: rgba(212,175,55,0.15); color: #d4af37; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; margin-left: 4px; border: 1px solid rgba(212,175,55,0.3);">NEW</span><br>Custom tactical credit artwork now appears across the Credit Shop, account wallet, Blacksite Armory banner, and every weapon price.</p>
              <p style="margin-bottom: 14px;">🕶️ <strong style="color: #d4af37;">FIRST PERSON MATCH MODE:</strong> <span style="background: rgba(212,175,55,0.15); color: #d4af37; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; margin-left: 4px; border: 1px solid rgba(212,175,55,0.3);">NEW</span><br>Lock into a full 3D viewport with pointer-lock. Run across tactical maps from a premium first-person perspective using a beautiful female elf model and procedural weapon bobs.</p>
              <p style="margin-bottom: 14px;">🧱 <strong style="color: #66fcf1;">AAA 2.5D WALL EXTRUSION:</strong> <span style="background: rgba(102,252,241,0.15); color: #66fcf1; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; margin-left: 4px; border: 1px solid rgba(102,252,241,0.3);">NEW</span><br>Experience top-down battle with perspective-extruded 3D walls, furniture, and crates. Obstacles dynamically project height relative to the player's view, creating a high-fidelity 2.5D visual aesthetic.</p>
              <p style="margin-bottom: 14px;">💻 <strong style="color: #ffd700;">HACKING TERMINALS & MINIGAMES:</strong> <span style="background: rgba(255,215,0,0.15); color: #ffd700; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; margin-left: 4px; border: 1px solid rgba(255,215,0,0.3);">NEW</span><br>Interactive supply terminals have been added. Stand near a console and hold [E] to engage. Completing the timed key-sequence defusal hacking minigame successfully drops high-tier items (Adrenaline/Medkits).</p>

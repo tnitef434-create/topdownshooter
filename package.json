@@ -1,6 +1,6 @@
 {
   "name": "1v1-topdown-shooter",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Realistic 1v1 online top-down shooter",
   "main": "server.js",
   "type": "module",
