@@ -18,6 +18,18 @@ const MAX_PROOF_BYTES = 1_500_000;
 const ADMIN_USERNAME = String(process.env.ADMIN_USERNAME || '').trim();
 const ADMIN_PASSWORD = String(process.env.ADMIN_PASSWORD || '');
 const adminSessions = new Map();
+const CREDIT_PACKAGES = Object.freeze({
+  '50': {
+    credits: 50,
+    amount: 99,
+    checkoutUrl: process.env.REVOLUT_50_CREDIT_LINK || 'https://checkout.revolut.com/payment-link/7ee65845-014a-4590-b0ec-010becb401c2'
+  },
+  '500': {
+    credits: 500,
+    amount: 499,
+    checkoutUrl: process.env.REVOLUT_500_CREDIT_LINK || 'https://checkout.revolut.com/pay/c8f54521-09a0-423c-aca8-6fde93d57a63'
+  }
+});
 const accountStore = createAccountStore({
   databaseUrl: process.env.DATABASE_URL || '',
   localFile: process.env.LOCAL_ACCOUNT_DATABASE_FILE || path.join(__dirname, 'accounts.json')
@@ -358,24 +370,24 @@ app.post('/api/auth/logout', authenticateAccount, async (req, res) => {
 app.post('/api/credits/checkout', authenticateAccount, async (req, res) => {
   try {
     const packageId = String(req.body?.packageId || '');
-    if (packageId !== '50') {
+    const creditPackage = CREDIT_PACKAGES[packageId];
+    if (!creditPackage) {
       res.status(400).json({ error: 'PACKAGE_UNAVAILABLE', message: 'That credit package is not available yet.' });
       return;
     }
 
-    const checkoutUrl = process.env.REVOLUT_50_CREDIT_LINK || 'https://checkout.revolut.com/payment-link/7ee65845-014a-4590-b0ec-010becb401c2';
     const intentId = crypto.randomUUID();
     await accountStore.createPurchaseIntent({
       id: intentId,
       userId: req.account.id,
       packageId,
-      credits: 50,
-      amount: 99,
+      credits: creditPackage.credits,
+      amount: creditPackage.amount,
       currency: 'EUR',
       status: 'checkout_opened',
       createdAt: new Date().toISOString()
     });
-    res.json({ checkoutUrl, intentId });
+    res.json({ checkoutUrl: creditPackage.checkoutUrl, intentId });
   } catch (error) {
     console.error('Credit checkout creation failed:', error);
     res.status(503).json({ error: 'CHECKOUT_UNAVAILABLE', message: 'Checkout is temporarily unavailable.' });
@@ -404,12 +416,13 @@ app.post('/api/purchase-support/cases', authenticateAccount, async (req, res) =>
   try {
     const orderNumber = normalizeMessage(req.body?.orderNumber);
     const packageId = String(req.body?.packageId || '50');
+    const creditPackage = CREDIT_PACKAGES[packageId];
     if (orderNumber.length < 3 || orderNumber.length > 100) {
       res.status(400).json({ error: 'INVALID_ORDER_NUMBER', message: 'Enter the order number shown on your receipt.' });
       return;
     }
-    if (packageId !== '50') {
-      res.status(400).json({ error: 'PACKAGE_UNAVAILABLE', message: 'Only the 50-credit verification option is currently available.' });
+    if (!creditPackage) {
+      res.status(400).json({ error: 'PACKAGE_UNAVAILABLE', message: 'Choose an available credit package.' });
       return;
     }
     if (!req.body?.proof) {
@@ -429,7 +442,7 @@ app.post('/api/purchase-support/cases', authenticateAccount, async (req, res) =>
       userId: req.account.id,
       orderNumber,
       packageId,
-      requestedCredits: 50,
+      requestedCredits: creditPackage.credits,
       status: 'open',
       createdAt: now,
       updatedAt: now

@@ -2548,7 +2548,7 @@ function initCreditShop() {
   const creditShopModal = document.getElementById('credit-shop-modal');
   const openCreditShopBtn = document.getElementById('btn-open-credit-shop');
   const closeCreditShopBtn = document.getElementById('btn-close-credit-shop');
-  const buyCreditsBtn = document.getElementById('btn-buy-50-credits');
+  const buyCreditsButtons = document.querySelectorAll('#credit-shop-modal [data-buy-credit-pack]');
 
   if (!creditShopModal || !closeCreditShopBtn) return;
 
@@ -2575,7 +2575,7 @@ function initCreditShop() {
     playCreditShopSound('close');
   });
 
-  buyCreditsBtn?.addEventListener('click', () => playCreditShopSound('confirm'));
+  buyCreditsButtons.forEach(button => button.addEventListener('click', () => playCreditShopSound('confirm')));
 }
 
 function openCreditShopModal(source = 'menu') {
@@ -2745,7 +2745,7 @@ function renderPurchaseSupportCase(purchaseCase, container) {
   const title = document.createElement('strong');
   title.textContent = `ORDER ${purchaseCase.orderNumber}`;
   const subtitle = document.createElement('small');
-  subtitle.textContent = `50-credit verification · opened ${formatSupportDate(purchaseCase.createdAt)}`;
+  subtitle.textContent = `${purchaseCase.requestedCredits.toLocaleString()}-credit verification · opened ${formatSupportDate(purchaseCase.createdAt)}`;
   summaryText.append(title, subtitle);
   const status = document.createElement('span');
   status.className = `case-status ${getCaseStatusClass(purchaseCase)}`;
@@ -3114,7 +3114,7 @@ function updateAccountUI() {
   const profileCredits = document.getElementById('account-profile-credits');
   const authView = document.getElementById('account-auth-view');
   const profileView = document.getElementById('account-profile-view');
-  const checkoutButton = document.getElementById('btn-buy-50-credits');
+  const checkoutButtons = document.querySelectorAll('#credit-shop-modal [data-buy-credit-pack]');
 
   if (accountNav) {
     accountNav.textContent = user ? `ACCOUNT · ${user.displayName || user.email.split('@')[0]}` : 'SIGN IN';
@@ -3129,7 +3129,9 @@ function updateAccountUI() {
   if (profileCredits) profileCredits.textContent = String(user?.credits || 0);
   if (authView) authView.hidden = Boolean(user);
   if (profileView) profileView.hidden = !user;
-  if (checkoutButton?.firstChild) checkoutButton.firstChild.textContent = user ? 'CONTINUE TO CHECKOUT ' : 'SIGN IN TO BUY ';
+  checkoutButtons.forEach(button => {
+    if (button.firstChild) button.firstChild.textContent = user ? 'CONTINUE TO CHECKOUT ' : 'SIGN IN TO BUY ';
+  });
 }
 
 function saveAccountSession(result) {

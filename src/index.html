@@ -672,13 +672,19 @@
             >CONTINUE TO CHECKOUT <span>↗</span></button>
           </article>
 
-          <article class="credit-pack credit-pack-locked" aria-disabled="true">
-            <span class="credit-pack-status">COMING SOON</span>
+          <article class="credit-pack credit-pack-featured">
+            <span class="credit-pack-status">AVAILABLE NOW</span>
             <div class="credit-token-mark" aria-hidden="true"><img src="/tacticstrike-credit-stack.webp" alt=""><span>500</span></div>
             <h3>500 CREDITS</h3>
             <p class="credit-pack-subtitle">STRIKE CACHE</p>
             <div class="credit-pack-price"><span>€</span>4.99</div>
-            <button class="credit-buy-btn" type="button" disabled>OFFLINE</button>
+            <button
+              id="btn-buy-500-credits"
+              class="credit-buy-btn btn-3d"
+              type="button"
+              data-buy-credit-pack="500"
+              aria-label="Buy 500 TacticStrike credits for €4.99"
+            >CONTINUE TO CHECKOUT <span>↗</span></button>
           </article>
 
           <article class="credit-pack credit-pack-locked" aria-disabled="true">
@@ -723,6 +729,7 @@
               <label for="purchase-package">CREDIT PACKAGE</label>
               <select id="purchase-package" required>
                 <option value="50">50 credits · €0.99</option>
+                <option value="500">500 credits · €4.99</option>
               </select>
               <label for="purchase-support-text">MESSAGE</label>
               <textarea id="purchase-support-text" maxlength="1500" rows="4" placeholder="Add any details that help us verify the purchase."></textarea>
@@ -856,11 +863,12 @@
           <div class="shop-credit-banner-copy">
             <span class="shop-credit-banner-kicker">FIELD DROP AVAILABLE</span>
             <h3>LOW ON CREDITS?</h3>
-            <p>Refill your balance with the 50-credit drop and get back to the armory.</p>
+            <p>Choose a 50-credit field drop or a 500-credit strike cache and get back to the armory.</p>
           </div>
           <div class="shop-credit-banner-actions">
             <button class="shop-credit-packs-btn" type="button" data-open-credit-shop>VIEW CREDIT PACKS</button>
             <button class="shop-credit-direct-btn" type="button" data-buy-credit-pack="50">BUY 50 · €0.99 <span>↗</span></button>
+            <button class="shop-credit-direct-btn" type="button" data-buy-credit-pack="500">BUY 500 · €4.99 <span>↗</span></button>
           </div>
         </section>
 
