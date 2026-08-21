@@ -374,6 +374,56 @@ function playMenuClick() {
   } catch(e) {}
 }
 
+let creditShopAudioContext = null;
+
+function playCreditShopSound(action = 'tap') {
+  if (gameSettings.sfxMuted) return;
+
+  try {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return;
+
+    if (!creditShopAudioContext) {
+      creditShopAudioContext = new AudioContextClass();
+    }
+
+    if (creditShopAudioContext.state === 'suspended') {
+      creditShopAudioContext.resume().catch(() => {});
+    }
+
+    const tones = {
+      open: { from: 390, to: 520, duration: 0.14 },
+      close: { from: 510, to: 370, duration: 0.12 },
+      confirm: { from: 560, to: 760, duration: 0.16 },
+      tap: { from: 440, to: 500, duration: 0.1 }
+    };
+    const tone = tones[action] || tones.tap;
+    const now = creditShopAudioContext.currentTime;
+    const oscillator = creditShopAudioContext.createOscillator();
+    const filter = creditShopAudioContext.createBiquadFilter();
+    const gain = creditShopAudioContext.createGain();
+    const peakVolume = 0.035 * Math.max(0, Math.min(1, gameSettings.volume));
+
+    oscillator.type = 'sine';
+    oscillator.frequency.setValueAtTime(tone.from, now);
+    oscillator.frequency.exponentialRampToValueAtTime(tone.to, now + tone.duration);
+
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(1800, now);
+    filter.Q.setValueAtTime(0.45, now);
+
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(Math.max(0.0001, peakVolume), now + 0.012);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + tone.duration);
+
+    oscillator.connect(filter);
+    filter.connect(gain);
+    gain.connect(creditShopAudioContext.destination);
+    oscillator.start(now);
+    oscillator.stop(now + tone.duration + 0.02);
+  } catch(e) {}
+}
+
 // Gameplay Tip System
 let activeTipKey = null;
 const gameplayTips = [
@@ -2481,16 +2531,16 @@ function initCreditShop() {
 
   openCreditShopBtn.addEventListener('click', () => {
     creditShopModal.classList.add('active');
-    playMenuClick();
+    playCreditShopSound('open');
   });
 
   closeCreditShopBtn.addEventListener('click', () => {
     creditShopModal.classList.remove('active');
-    playMenuClick();
+    playCreditShopSound('close');
   });
 
   buyCreditsBtn?.addEventListener('click', () => {
-    playMenuClick();
+    playCreditShopSound('confirm');
   });
 }
 
