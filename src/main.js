@@ -28,10 +28,13 @@ const safeStorage = {
 };
 
 const ACCOUNT_SESSION_KEY = 'tacticstrike_account_session';
+const ADMIN_SESSION_KEY = 'tacticstrike_admin_session';
 let accountSession = {
   token: safeStorage.getItem(ACCOUNT_SESSION_KEY),
   user: null
 };
+let adminSessionToken = safeStorage.getItem(ADMIN_SESSION_KEY);
+let selectedAdminCaseId = null;
 
 function getBackendUrl() {
   if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
@@ -49,6 +52,20 @@ async function accountApi(path, options = {}) {
   const body = response.status === 204 ? null : await response.json().catch(() => null);
   if (!response.ok) {
     const error = new Error(body?.message || 'The account server could not complete this request.');
+    error.code = body?.error;
+    error.status = response.status;
+    throw error;
+  }
+  return body;
+}
+
+async function adminApi(path, options = {}) {
+  const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
+  if (adminSessionToken) headers.Authorization = `Bearer ${adminSessionToken}`;
+  const response = await fetch(`${getBackendUrl()}${path}`, { ...options, headers });
+  const body = response.status === 204 ? null : await response.json().catch(() => null);
+  if (!response.ok) {
+    const error = new Error(body?.message || 'The admin server could not complete this request.');
     error.code = body?.error;
     error.status = response.status;
     throw error;
@@ -2427,6 +2444,8 @@ document.addEventListener('DOMContentLoaded', () => {
   initNewsModal();
   initWhatsNewModal();
   initCreditShop();
+  initPurchaseSupport();
+  initAdminDashboard();
   initItemShop();
   setupWeaponSelector();
   setupMainMenuWeaponSelector();
@@ -2573,10 +2592,11 @@ async function startCreditCheckout(packageId) {
     return;
   }
 
-  const pendingWindow = window.open('about:blank', '_blank', 'noopener,noreferrer');
-  if (pendingWindow) {
-    pendingWindow.document.title = 'Opening secure checkout…';
-    pendingWindow.document.body.innerHTML = '<p style="font:14px sans-serif;padding:30px;background:#090b0f;color:#ddd;min-height:100vh;margin:0">Opening secure checkout…</p>';
+  const checkoutButton = document.querySelector(`[data-buy-credit-pack="${packageId}"]`);
+  const previousLabel = checkoutButton?.innerHTML;
+  if (checkoutButton) {
+    checkoutButton.disabled = true;
+    checkoutButton.textContent = 'OPENING SECURE CHECKOUT…';
   }
 
   try {
@@ -2585,10 +2605,12 @@ async function startCreditCheckout(packageId) {
       body: JSON.stringify({ packageId })
     });
     playCreditShopSound('confirm');
-    if (pendingWindow) pendingWindow.location.replace(result.checkoutUrl);
-    else window.location.href = result.checkoutUrl;
+    window.location.assign(result.checkoutUrl);
   } catch (error) {
-    pendingWindow?.close();
+    if (checkoutButton) {
+      checkoutButton.disabled = false;
+      checkoutButton.innerHTML = previousLabel;
+    }
     if (error.status === 401) {
       clearAccountSession();
       openAccountModal('login', 'Your session expired. Sign in again to continue.');
@@ -2597,6 +2619,469 @@ async function startCreditCheckout(packageId) {
     showNotification(error.message, 6000);
     playErrorBeep();
   }
+}
+
+function setSupportNotice(message = '', type = '') {
+  const element = document.getElementById('purchase-support-message');
+  if (!element) return;
+  element.textContent = message;
+  element.className = `support-notice${type ? ` ${type}` : ''}`;
+}
+
+function formatSupportDate(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+function getCaseStatusLabel(purchaseCase) {
+  if (purchaseCase.closed) return 'CLOSED';
+  if (purchaseCase.status === 'approved') return `${purchaseCase.creditsGranted.toLocaleString()} CREDITS ADDED`;
+  if (purchaseCase.status === 'denied') return 'DENIED';
+  return 'AWAITING REVIEW';
+}
+
+function getCaseStatusClass(purchaseCase) {
+  if (purchaseCase.closed) return 'closed';
+  return purchaseCase.status || 'open';
+}
+
+function readProofFile(file) {
+  return new Promise((resolve, reject) => {
+    if (!file) {
+      reject(new Error('Attach a receipt screenshot as proof of purchase.'));
+      return;
+    }
+    if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
+      reject(new Error('Upload a PNG, JPG, or WebP receipt image.'));
+      return;
+    }
+    if (file.size > 1_500_000) {
+      reject(new Error('Receipt images must be smaller than 1.5 MB.'));
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => resolve({ name: file.name, data: reader.result });
+    reader.onerror = () => reject(new Error('The receipt image could not be read.'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function createSupportMessageBubble(message) {
+  const bubble = document.createElement('div');
+  bubble.className = `support-message-bubble ${message.senderRole}`;
+
+  const meta = document.createElement('div');
+  meta.className = 'support-message-meta';
+  const sender = document.createElement('span');
+  sender.textContent = message.senderRole === 'admin' ? 'TACTICSTRIKE SUPPORT' : 'YOU';
+  const time = document.createElement('span');
+  time.textContent = formatSupportDate(message.createdAt);
+  meta.append(sender, time);
+  bubble.appendChild(meta);
+
+  if (message.body) {
+    const body = document.createElement('div');
+    body.textContent = message.body;
+    bubble.appendChild(body);
+  }
+  if (message.proofData) {
+    const proof = document.createElement('img');
+    proof.className = 'support-proof-image';
+    proof.src = message.proofData;
+    proof.alt = message.proofName ? `Purchase proof: ${message.proofName}` : 'Purchase proof';
+    bubble.appendChild(proof);
+  }
+  return bubble;
+}
+
+function syncGrantedCredits(user) {
+  if (!user?.id) return;
+  const seenKey = `tacticstrike_server_credits_seen_${user.id}`;
+  const previouslySeen = Math.max(0, parseInt(safeStorage.getItem(seenKey) || '0'));
+  const serverCredits = Math.max(0, Number(user.credits || 0));
+  if (serverCredits > previouslySeen) {
+    const currentLocalCredits = Math.max(0, parseInt(safeStorage.getItem('tacticstrike_credits') || '0'));
+    safeStorage.setItem('tacticstrike_credits', String(currentLocalCredits + (serverCredits - previouslySeen)));
+  }
+  safeStorage.setItem(seenKey, String(serverCredits));
+}
+
+async function loadPurchaseSupportCases() {
+  const container = document.getElementById('purchase-support-cases');
+  if (!container) return;
+  container.innerHTML = '<div class="support-empty-state">Loading secure conversations…</div>';
+  try {
+    const result = await accountApi('/api/purchase-support/cases');
+    if (result.user) {
+      accountSession.user = result.user;
+      updateAccountUI();
+    }
+    if (!result.cases.length) {
+      container.innerHTML = '<div class="support-empty-state">No purchase-verification chats yet.</div>';
+      return;
+    }
+    const details = await Promise.all(result.cases.map(item => accountApi(`/api/purchase-support/cases/${item.id}`)));
+    container.innerHTML = '';
+    details.forEach(resultItem => renderPurchaseSupportCase(resultItem.purchaseCase, container));
+  } catch (error) {
+    if (error.status === 401) {
+      clearAccountSession();
+      document.getElementById('purchase-support-modal')?.classList.remove('active');
+      openAccountModal('login', 'Your session expired. Sign in again to view purchase support.');
+      return;
+    }
+    container.innerHTML = '<div class="support-empty-state">Purchase chats could not be loaded. Try refreshing.</div>';
+    setSupportNotice(error.message, 'error');
+  }
+}
+
+function renderPurchaseSupportCase(purchaseCase, container) {
+  const card = document.createElement('article');
+  card.className = 'support-case-card';
+
+  const summary = document.createElement('div');
+  summary.className = 'support-case-summary';
+  const summaryText = document.createElement('div');
+  const title = document.createElement('strong');
+  title.textContent = `ORDER ${purchaseCase.orderNumber}`;
+  const subtitle = document.createElement('small');
+  subtitle.textContent = `50-credit verification · opened ${formatSupportDate(purchaseCase.createdAt)}`;
+  summaryText.append(title, subtitle);
+  const status = document.createElement('span');
+  status.className = `case-status ${getCaseStatusClass(purchaseCase)}`;
+  status.textContent = getCaseStatusLabel(purchaseCase);
+  summary.append(summaryText, status);
+  card.appendChild(summary);
+
+  const messages = document.createElement('div');
+  messages.className = 'support-message-list';
+  purchaseCase.messages.forEach(message => messages.appendChild(createSupportMessageBubble(message)));
+  card.appendChild(messages);
+
+  if (!purchaseCase.closed) {
+    const replyForm = document.createElement('form');
+    replyForm.className = 'support-reply-form';
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.maxLength = 1500;
+    input.required = true;
+    input.placeholder = 'Reply to support…';
+    const button = document.createElement('button');
+    button.type = 'submit';
+    button.textContent = 'SEND';
+    replyForm.append(input, button);
+    replyForm.addEventListener('submit', async event => {
+      event.preventDefault();
+      button.disabled = true;
+      try {
+        await accountApi(`/api/purchase-support/cases/${purchaseCase.id}/messages`, {
+          method: 'POST',
+          body: JSON.stringify({ message: input.value })
+        });
+        setSupportNotice('Reply sent securely.', 'success');
+        await loadPurchaseSupportCases();
+      } catch (error) {
+        setSupportNotice(error.message, 'error');
+      } finally {
+        button.disabled = false;
+      }
+    });
+    card.appendChild(replyForm);
+  }
+  container.appendChild(card);
+  requestAnimationFrame(() => { messages.scrollTop = messages.scrollHeight; });
+}
+
+function initPurchaseSupport() {
+  const modal = document.getElementById('purchase-support-modal');
+  const openButton = document.getElementById('btn-open-purchase-support');
+  const closeButton = document.getElementById('btn-close-purchase-support');
+  const refreshButton = document.getElementById('btn-refresh-purchase-support');
+  const form = document.getElementById('purchase-support-form');
+  if (!modal || !openButton || !closeButton || !form) return;
+
+  openButton.addEventListener('click', () => {
+    if (!accountSession.user || !accountSession.token) {
+      openAccountModal('login', 'Sign in before submitting purchase proof.');
+      return;
+    }
+    modal.classList.add('active');
+    setSupportNotice();
+    playCreditShopSound('open');
+    loadPurchaseSupportCases();
+  });
+  closeButton.addEventListener('click', () => {
+    modal.classList.remove('active');
+    playCreditShopSound('close');
+  });
+  refreshButton?.addEventListener('click', loadPurchaseSupportCases);
+
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    const submit = form.querySelector('button[type="submit"]');
+    submit.disabled = true;
+    setSupportNotice('Encrypting and submitting your purchase proof…', 'info');
+    try {
+      const file = document.getElementById('purchase-proof-file').files[0];
+      const proof = await readProofFile(file);
+      await accountApi('/api/purchase-support/cases', {
+        method: 'POST',
+        body: JSON.stringify({
+          orderNumber: document.getElementById('purchase-order-number').value,
+          packageId: document.getElementById('purchase-package').value,
+          message: document.getElementById('purchase-support-text').value,
+          proof
+        })
+      });
+      form.reset();
+      setSupportNotice('Purchase proof submitted. Support will reply within 1–12 hours.', 'success');
+      playCreditShopSound('confirm');
+      await loadPurchaseSupportCases();
+    } catch (error) {
+      setSupportNotice(error.message, 'error');
+      playErrorBeep();
+    } finally {
+      submit.disabled = false;
+    }
+  });
+}
+
+function setAdminLoginMessage(message = '', type = '') {
+  const element = document.getElementById('admin-login-message');
+  if (!element) return;
+  element.textContent = message;
+  element.className = `support-notice${type ? ` ${type}` : ''}`;
+}
+
+function setAdminView(authenticated) {
+  const loginView = document.getElementById('admin-login-view');
+  const dashboardView = document.getElementById('admin-dashboard-view');
+  if (loginView) loginView.hidden = authenticated;
+  if (dashboardView) dashboardView.hidden = !authenticated;
+}
+
+function clearAdminSession() {
+  adminSessionToken = null;
+  selectedAdminCaseId = null;
+  safeStorage.removeItem(ADMIN_SESSION_KEY);
+  setAdminView(false);
+}
+
+async function loadAdminCases(preferredCaseId = selectedAdminCaseId) {
+  const list = document.getElementById('admin-case-list');
+  const detail = document.getElementById('admin-case-detail');
+  if (!list || !detail) return;
+  list.innerHTML = '<div class="support-empty-state">Loading purchase queue…</div>';
+  try {
+    const result = await adminApi('/api/admin/purchase-cases');
+    if (!result.cases.length) {
+      list.innerHTML = '<div class="support-empty-state">No messages submitted.</div>';
+      detail.innerHTML = '<div class="support-empty-state">The verification queue is empty.</div>';
+      return;
+    }
+    list.innerHTML = '';
+    result.cases.forEach(purchaseCase => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.dataset.caseId = purchaseCase.id;
+      button.className = `admin-case-list-item${purchaseCase.id === preferredCaseId ? ' active' : ''}`;
+      const email = document.createElement('strong');
+      email.textContent = purchaseCase.userEmail || 'Unknown account';
+      const order = document.createElement('span');
+      order.textContent = `Order ${purchaseCase.orderNumber}`;
+      const state = document.createElement('small');
+      state.textContent = `${getCaseStatusLabel(purchaseCase)} · ${formatSupportDate(purchaseCase.updatedAt)}`;
+      button.append(email, order, state);
+      button.addEventListener('click', () => loadAdminCase(purchaseCase.id));
+      list.appendChild(button);
+    });
+    const targetId = result.cases.some(item => item.id === preferredCaseId) ? preferredCaseId : result.cases[0].id;
+    await loadAdminCase(targetId, false);
+  } catch (error) {
+    if (error.status === 401) {
+      clearAdminSession();
+      setAdminLoginMessage('Admin session expired. Sign in again.', 'error');
+      return;
+    }
+    list.innerHTML = '<div class="support-empty-state">The verification queue could not be loaded.</div>';
+    detail.innerHTML = '';
+  }
+}
+
+async function loadAdminCase(caseId, refreshListState = true) {
+  const detail = document.getElementById('admin-case-detail');
+  if (!detail) return;
+  selectedAdminCaseId = caseId;
+  if (refreshListState) {
+    document.querySelectorAll('.admin-case-list-item').forEach(item => item.classList.remove('active'));
+    document.querySelector(`.admin-case-list-item[data-case-id="${caseId}"]`)?.classList.add('active');
+  }
+  detail.innerHTML = '<div class="support-empty-state">Loading secure chat…</div>';
+  try {
+    const result = await adminApi(`/api/admin/purchase-cases/${caseId}`);
+    renderAdminCaseDetail(result.purchaseCase);
+  } catch (error) {
+    if (error.status === 401) {
+      clearAdminSession();
+      setAdminLoginMessage('Admin session expired. Sign in again.', 'error');
+      return;
+    }
+    detail.innerHTML = '<div class="support-empty-state">This purchase chat could not be loaded.</div>';
+  }
+}
+
+function renderAdminCaseDetail(purchaseCase) {
+  const detail = document.getElementById('admin-case-detail');
+  if (!detail) return;
+  detail.innerHTML = '';
+
+  const head = document.createElement('div');
+  head.className = 'admin-case-detail-head';
+  const copy = document.createElement('div');
+  const eyebrow = document.createElement('span');
+  eyebrow.className = 'section-kicker';
+  eyebrow.textContent = purchaseCase.userEmail || 'OPERATIVE ACCOUNT';
+  const title = document.createElement('h3');
+  title.textContent = `ORDER ${purchaseCase.orderNumber}`;
+  const description = document.createElement('p');
+  description.textContent = `Requested package: ${purchaseCase.requestedCredits.toLocaleString()} credits · opened ${formatSupportDate(purchaseCase.createdAt)}`;
+  copy.append(eyebrow, title, description);
+  const status = document.createElement('span');
+  status.className = `case-status ${getCaseStatusClass(purchaseCase)}`;
+  status.textContent = getCaseStatusLabel(purchaseCase);
+  head.append(copy, status);
+  detail.appendChild(head);
+
+  const messages = document.createElement('div');
+  messages.className = 'support-message-list admin-message-list';
+  purchaseCase.messages.forEach(message => messages.appendChild(createSupportMessageBubble(message)));
+  detail.appendChild(messages);
+
+  if (!purchaseCase.closed) {
+    const reply = document.createElement('form');
+    reply.className = 'support-reply-form admin-reply-form';
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.maxLength = 1500;
+    input.required = true;
+    input.placeholder = 'Reply to this user…';
+    const send = document.createElement('button');
+    send.type = 'submit';
+    send.textContent = 'SEND REPLY';
+    reply.append(input, send);
+    reply.addEventListener('submit', async event => {
+      event.preventDefault();
+      send.disabled = true;
+      try {
+        await adminApi(`/api/admin/purchase-cases/${purchaseCase.id}/messages`, {
+          method: 'POST',
+          body: JSON.stringify({ message: input.value })
+        });
+        await loadAdminCases(purchaseCase.id);
+      } catch (error) {
+        showNotification(error.message, 5000);
+      } finally {
+        send.disabled = false;
+      }
+    });
+    detail.appendChild(reply);
+  }
+
+  const actions = document.createElement('div');
+  actions.className = 'admin-actions';
+  [50, 500, 2000].forEach(credits => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = `ADD ${credits.toLocaleString()} CREDITS`;
+    button.disabled = purchaseCase.closed || purchaseCase.status === 'approved';
+    button.addEventListener('click', () => submitAdminDecision(purchaseCase, 'grant', credits));
+    actions.appendChild(button);
+  });
+  const deny = document.createElement('button');
+  deny.type = 'button';
+  deny.className = 'danger';
+  deny.textContent = 'DENY PROOF';
+  deny.disabled = purchaseCase.closed || purchaseCase.status === 'approved';
+  deny.addEventListener('click', () => submitAdminDecision(purchaseCase, 'deny'));
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.className = 'close-chat';
+  close.textContent = 'CLOSE CHAT';
+  close.disabled = purchaseCase.closed;
+  close.addEventListener('click', () => submitAdminDecision(purchaseCase, 'close'));
+  actions.append(deny, close);
+  detail.appendChild(actions);
+  requestAnimationFrame(() => { messages.scrollTop = messages.scrollHeight; });
+}
+
+async function submitAdminDecision(purchaseCase, action, credits = 0) {
+  const description = action === 'grant'
+    ? `Add ${credits.toLocaleString()} credits to ${purchaseCase.userEmail}? This cannot be granted twice.`
+    : action === 'deny'
+      ? `Deny the proof submitted for order ${purchaseCase.orderNumber}?`
+      : `Close this chat? The user will no longer be able to reply.`;
+  if (!window.confirm(description)) return;
+  try {
+    await adminApi(`/api/admin/purchase-cases/${purchaseCase.id}/decision`, {
+      method: 'POST',
+      body: JSON.stringify({ action, credits })
+    });
+    showNotification(action === 'grant' ? `${credits.toLocaleString()} credits added.` : action === 'deny' ? 'Proof denied.' : 'Chat closed.', 4500);
+    await loadAdminCases(purchaseCase.id);
+  } catch (error) {
+    showNotification(error.message, 5500);
+    playErrorBeep();
+  }
+}
+
+function initAdminDashboard() {
+  const modal = document.getElementById('admin-modal');
+  const openButton = document.getElementById('btn-open-admin');
+  const closeButton = document.getElementById('btn-close-admin');
+  const loginForm = document.getElementById('admin-login-form');
+  if (!modal || !openButton || !closeButton || !loginForm) return;
+
+  openButton.addEventListener('click', () => {
+    modal.classList.add('active');
+    setAdminLoginMessage();
+    setAdminView(Boolean(adminSessionToken));
+    playCreditShopSound('open');
+    if (adminSessionToken) loadAdminCases();
+  });
+  closeButton.addEventListener('click', () => {
+    modal.classList.remove('active');
+    playCreditShopSound('close');
+  });
+  loginForm.addEventListener('submit', async event => {
+    event.preventDefault();
+    const submit = loginForm.querySelector('button[type="submit"]');
+    submit.disabled = true;
+    setAdminLoginMessage('Authenticating with the secure server…', 'info');
+    try {
+      const result = await adminApi('/api/admin/login', {
+        method: 'POST',
+        body: JSON.stringify({
+          username: document.getElementById('admin-username').value,
+          password: document.getElementById('admin-password').value
+        })
+      });
+      adminSessionToken = result.token;
+      safeStorage.setItem(ADMIN_SESSION_KEY, result.token);
+      loginForm.reset();
+      setAdminView(true);
+      await loadAdminCases();
+    } catch (error) {
+      setAdminLoginMessage(error.message, 'error');
+    } finally {
+      submit.disabled = false;
+    }
+  });
+  document.getElementById('btn-refresh-admin-cases')?.addEventListener('click', () => loadAdminCases());
+  document.getElementById('btn-admin-logout')?.addEventListener('click', async () => {
+    try { await adminApi('/api/admin/logout', { method: 'POST' }); } catch (error) {}
+    clearAdminSession();
+    setAdminLoginMessage('Signed out of the admin dashboard.', 'success');
+  });
 }
 
 function setAccountMessage(message = '', type = '') {
@@ -2622,6 +3107,7 @@ function setAccountTab(mode = 'login') {
 
 function updateAccountUI() {
   const user = accountSession.user;
+  if (user) syncGrantedCredits(user);
   const accountNav = document.getElementById('btn-open-account');
   const accountStatus = document.getElementById('credit-shop-account-status');
   const profileEmail = document.getElementById('account-profile-email');

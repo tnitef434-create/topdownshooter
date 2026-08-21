@@ -13,11 +13,81 @@ const __dirname = path.dirname(__filename);
 const scryptAsync = promisify(crypto.scrypt);
 
 const SESSION_LIFETIME_MS = 1000 * 60 * 60 * 24 * 30;
+const ADMIN_SESSION_LIFETIME_MS = 1000 * 60 * 60 * 8;
+const MAX_PROOF_BYTES = 1_500_000;
+const ADMIN_USERNAME = String(process.env.ADMIN_USERNAME || '').trim();
+const ADMIN_PASSWORD = String(process.env.ADMIN_PASSWORD || '');
+const adminSessions = new Map();
 const accountStore = createAccountStore({
   databaseUrl: process.env.DATABASE_URL || '',
   localFile: process.env.LOCAL_ACCOUNT_DATABASE_FILE || path.join(__dirname, 'accounts.json')
 });
 const requirePersistentAccountStore = process.env.RENDER === 'true' || process.env.NODE_ENV === 'production';
+
+function constantTimeTextEqual(left, right) {
+  const leftBuffer = Buffer.from(String(left));
+  const rightBuffer = Buffer.from(String(right));
+  if (leftBuffer.length !== rightBuffer.length) return false;
+  return crypto.timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function isAdminConfigured() {
+  return ADMIN_USERNAME.length >= 3 && ADMIN_PASSWORD.length >= 8;
+}
+
+function isUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ''));
+}
+
+function normalizeMessage(value = '') {
+  return String(value).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '').trim();
+}
+
+function normalizeProof(value) {
+  if (!value) return { proofName: null, proofMime: null, proofData: null };
+  const proofName = String(value.name || '').replace(/[^a-zA-Z0-9._ -]/g, '').trim().slice(0, 100);
+  const proofData = String(value.data || '');
+  const match = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)$/.exec(proofData);
+  if (!match) {
+    const error = new Error('Upload a PNG, JPG, or WebP receipt image.');
+    error.code = 'INVALID_PROOF';
+    throw error;
+  }
+  const decodedSize = Buffer.from(match[2], 'base64').length;
+  if (!decodedSize || decodedSize > MAX_PROOF_BYTES) {
+    const error = new Error('Receipt images must be smaller than 1.5 MB.');
+    error.code = 'PROOF_TOO_LARGE';
+    throw error;
+  }
+  return {
+    proofName: proofName || 'purchase-proof',
+    proofMime: match[1],
+    proofData
+  };
+}
+
+function createPurchaseMessage({ caseId, senderRole, body = '', proof = null }) {
+  const normalizedBody = normalizeMessage(body);
+  if (normalizedBody.length > 1500) {
+    const error = new Error('Messages can be up to 1,500 characters.');
+    error.code = 'MESSAGE_TOO_LONG';
+    throw error;
+  }
+  const normalizedProof = normalizeProof(proof);
+  if (!normalizedBody && !normalizedProof.proofData) {
+    const error = new Error('Add a message or receipt image.');
+    error.code = 'EMPTY_MESSAGE';
+    throw error;
+  }
+  return {
+    id: crypto.randomUUID(),
+    caseId,
+    senderRole,
+    body: normalizedBody,
+    ...normalizedProof,
+    createdAt: new Date().toISOString()
+  };
+}
 
 function normalizeEmail(value = '') {
   return String(value).trim().toLowerCase();
@@ -102,6 +172,23 @@ async function authenticateAccount(req, res, next) {
   }
 }
 
+function authenticateAdmin(req, res, next) {
+  if (!isAdminConfigured()) {
+    res.status(503).json({ error: 'ADMIN_NOT_CONFIGURED', message: 'Admin access has not been configured on the server.' });
+    return;
+  }
+  const authorization = req.get('authorization') || '';
+  const token = authorization.startsWith('Bearer ') ? authorization.slice(7) : '';
+  const session = token ? adminSessions.get(hashSessionToken(token)) : null;
+  if (!session || session.expiresAt <= Date.now()) {
+    if (token) adminSessions.delete(hashSessionToken(token));
+    res.status(401).json({ error: 'ADMIN_SIGN_IN_REQUIRED', message: 'Admin authentication is required.' });
+    return;
+  }
+  req.adminSessionKey = hashSessionToken(token);
+  next();
+}
+
 const authAttempts = new Map();
 function authRateLimit(req, res, next) {
   const key = req.ip || req.socket.remoteAddress || 'unknown';
@@ -183,7 +270,7 @@ app.use((req, res, next) => {
   }
   next();
 });
-app.use(express.json({ limit: '32kb' }));
+app.use(express.json({ limit: '3mb' }));
 
 app.get('/api/auth/status', (req, res) => {
   const persistent = accountStore.isPersistent;
@@ -292,6 +379,253 @@ app.post('/api/credits/checkout', authenticateAccount, async (req, res) => {
   } catch (error) {
     console.error('Credit checkout creation failed:', error);
     res.status(503).json({ error: 'CHECKOUT_UNAVAILABLE', message: 'Checkout is temporarily unavailable.' });
+  }
+});
+
+async function loadPurchaseCaseDetail(purchaseCase) {
+  if (!purchaseCase) return null;
+  return {
+    ...purchaseCase,
+    messages: await accountStore.listPurchaseMessages(purchaseCase.id)
+  };
+}
+
+app.get('/api/purchase-support/cases', authenticateAccount, async (req, res) => {
+  try {
+    const cases = await accountStore.listPurchaseCasesForUser(req.account.id);
+    res.json({ cases, user: publicAccount(req.account) });
+  } catch (error) {
+    console.error('Purchase support list failed:', error);
+    res.status(503).json({ error: 'SUPPORT_UNAVAILABLE', message: 'Purchase support is temporarily unavailable.' });
+  }
+});
+
+app.post('/api/purchase-support/cases', authenticateAccount, async (req, res) => {
+  try {
+    const orderNumber = normalizeMessage(req.body?.orderNumber);
+    const packageId = String(req.body?.packageId || '50');
+    if (orderNumber.length < 3 || orderNumber.length > 100) {
+      res.status(400).json({ error: 'INVALID_ORDER_NUMBER', message: 'Enter the order number shown on your receipt.' });
+      return;
+    }
+    if (packageId !== '50') {
+      res.status(400).json({ error: 'PACKAGE_UNAVAILABLE', message: 'Only the 50-credit verification option is currently available.' });
+      return;
+    }
+    if (!req.body?.proof) {
+      res.status(400).json({ error: 'PROOF_REQUIRED', message: 'Attach a receipt screenshot as proof of purchase.' });
+      return;
+    }
+    const existingCases = await accountStore.listPurchaseCasesForUser(req.account.id);
+    const activeCount = existingCases.filter(item => !item.closed && item.status === 'open').length;
+    if (activeCount >= 3) {
+      res.status(429).json({ error: 'TOO_MANY_OPEN_CASES', message: 'You already have three open verification chats. Wait for a reply before opening another.' });
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const purchaseCase = {
+      id: crypto.randomUUID(),
+      userId: req.account.id,
+      orderNumber,
+      packageId,
+      requestedCredits: 50,
+      status: 'open',
+      createdAt: now,
+      updatedAt: now
+    };
+    const initialMessage = createPurchaseMessage({
+      caseId: purchaseCase.id,
+      senderRole: 'user',
+      body: req.body?.message,
+      proof: req.body?.proof
+    });
+    await accountStore.createPurchaseCase(purchaseCase, initialMessage);
+    const detail = await loadPurchaseCaseDetail(await accountStore.findPurchaseCaseForUser(purchaseCase.id, req.account.id));
+    res.status(201).json({ purchaseCase: detail });
+  } catch (error) {
+    if (['INVALID_PROOF', 'PROOF_TOO_LARGE', 'MESSAGE_TOO_LONG', 'EMPTY_MESSAGE'].includes(error?.code)) {
+      res.status(400).json({ error: error.code, message: error.message });
+      return;
+    }
+    console.error('Purchase support case creation failed:', error);
+    res.status(503).json({ error: 'SUPPORT_UNAVAILABLE', message: 'The verification chat could not be created.' });
+  }
+});
+
+app.get('/api/purchase-support/cases/:caseId', authenticateAccount, async (req, res) => {
+  try {
+    if (!isUuid(req.params.caseId)) {
+      res.status(404).json({ error: 'CASE_NOT_FOUND', message: 'Verification chat not found.' });
+      return;
+    }
+    const purchaseCase = await accountStore.findPurchaseCaseForUser(req.params.caseId, req.account.id);
+    if (!purchaseCase) {
+      res.status(404).json({ error: 'CASE_NOT_FOUND', message: 'Verification chat not found.' });
+      return;
+    }
+    res.json({ purchaseCase: await loadPurchaseCaseDetail(purchaseCase), user: publicAccount(req.account) });
+  } catch (error) {
+    console.error('Purchase support case load failed:', error);
+    res.status(503).json({ error: 'SUPPORT_UNAVAILABLE', message: 'The verification chat could not be loaded.' });
+  }
+});
+
+app.post('/api/purchase-support/cases/:caseId/messages', authenticateAccount, async (req, res) => {
+  try {
+    if (!isUuid(req.params.caseId)) {
+      res.status(404).json({ error: 'CASE_NOT_FOUND', message: 'Verification chat not found.' });
+      return;
+    }
+    const purchaseCase = await accountStore.findPurchaseCaseForUser(req.params.caseId, req.account.id);
+    if (!purchaseCase) {
+      res.status(404).json({ error: 'CASE_NOT_FOUND', message: 'Verification chat not found.' });
+      return;
+    }
+    if (purchaseCase.closed) {
+      res.status(409).json({ error: 'CASE_CLOSED', message: 'This verification chat has been closed.' });
+      return;
+    }
+    const message = createPurchaseMessage({
+      caseId: purchaseCase.id,
+      senderRole: 'user',
+      body: req.body?.message,
+      proof: req.body?.proof
+    });
+    await accountStore.addPurchaseMessage(message);
+    const updatedCase = await accountStore.findPurchaseCaseForUser(purchaseCase.id, req.account.id);
+    res.status(201).json({ purchaseCase: await loadPurchaseCaseDetail(updatedCase) });
+  } catch (error) {
+    if (['INVALID_PROOF', 'PROOF_TOO_LARGE', 'MESSAGE_TOO_LONG', 'EMPTY_MESSAGE'].includes(error?.code)) {
+      res.status(400).json({ error: error.code, message: error.message });
+      return;
+    }
+    console.error('Purchase support message failed:', error);
+    res.status(503).json({ error: 'SUPPORT_UNAVAILABLE', message: 'Your message could not be sent.' });
+  }
+});
+
+app.get('/api/admin/status', (req, res) => {
+  res.json({ configured: isAdminConfigured() });
+});
+
+app.post('/api/admin/login', authRateLimit, (req, res) => {
+  if (!isAdminConfigured()) {
+    res.status(503).json({ error: 'ADMIN_NOT_CONFIGURED', message: 'Set ADMIN_USERNAME and ADMIN_PASSWORD on the server first.' });
+    return;
+  }
+  const username = String(req.body?.username || '').trim();
+  const password = String(req.body?.password || '');
+  const usernameMatches = constantTimeTextEqual(username, ADMIN_USERNAME);
+  const passwordMatches = constantTimeTextEqual(password, ADMIN_PASSWORD);
+  if (!usernameMatches || !passwordMatches) {
+    res.status(401).json({ error: 'INVALID_ADMIN_CREDENTIALS', message: 'Incorrect admin username or password.' });
+    return;
+  }
+  const token = crypto.randomBytes(32).toString('base64url');
+  const expiresAt = Date.now() + ADMIN_SESSION_LIFETIME_MS;
+  adminSessions.set(hashSessionToken(token), { expiresAt });
+  res.json({ token, expiresAt });
+});
+
+app.post('/api/admin/logout', authenticateAdmin, (req, res) => {
+  adminSessions.delete(req.adminSessionKey);
+  res.sendStatus(204);
+});
+
+app.get('/api/admin/purchase-cases', authenticateAdmin, async (req, res) => {
+  try {
+    res.json({ cases: await accountStore.listAllPurchaseCases() });
+  } catch (error) {
+    console.error('Admin purchase case list failed:', error);
+    res.status(503).json({ error: 'SUPPORT_UNAVAILABLE', message: 'Purchase chats could not be loaded.' });
+  }
+});
+
+app.get('/api/admin/purchase-cases/:caseId', authenticateAdmin, async (req, res) => {
+  try {
+    if (!isUuid(req.params.caseId)) {
+      res.status(404).json({ error: 'CASE_NOT_FOUND', message: 'Verification chat not found.' });
+      return;
+    }
+    const purchaseCase = await accountStore.findPurchaseCaseById(req.params.caseId);
+    if (!purchaseCase) {
+      res.status(404).json({ error: 'CASE_NOT_FOUND', message: 'Verification chat not found.' });
+      return;
+    }
+    res.json({ purchaseCase: await loadPurchaseCaseDetail(purchaseCase) });
+  } catch (error) {
+    console.error('Admin purchase case load failed:', error);
+    res.status(503).json({ error: 'SUPPORT_UNAVAILABLE', message: 'The verification chat could not be loaded.' });
+  }
+});
+
+app.post('/api/admin/purchase-cases/:caseId/messages', authenticateAdmin, async (req, res) => {
+  try {
+    if (!isUuid(req.params.caseId)) {
+      res.status(404).json({ error: 'CASE_NOT_FOUND', message: 'Verification chat not found.' });
+      return;
+    }
+    const purchaseCase = await accountStore.findPurchaseCaseById(req.params.caseId);
+    if (!purchaseCase) {
+      res.status(404).json({ error: 'CASE_NOT_FOUND', message: 'Verification chat not found.' });
+      return;
+    }
+    if (purchaseCase.closed) {
+      res.status(409).json({ error: 'CASE_CLOSED', message: 'This verification chat has been closed.' });
+      return;
+    }
+    const message = createPurchaseMessage({ caseId: purchaseCase.id, senderRole: 'admin', body: req.body?.message });
+    await accountStore.addPurchaseMessage(message);
+    res.status(201).json({ purchaseCase: await loadPurchaseCaseDetail(await accountStore.findPurchaseCaseById(purchaseCase.id)) });
+  } catch (error) {
+    if (['MESSAGE_TOO_LONG', 'EMPTY_MESSAGE'].includes(error?.code)) {
+      res.status(400).json({ error: error.code, message: error.message });
+      return;
+    }
+    console.error('Admin purchase support message failed:', error);
+    res.status(503).json({ error: 'SUPPORT_UNAVAILABLE', message: 'The reply could not be sent.' });
+  }
+});
+
+app.post('/api/admin/purchase-cases/:caseId/decision', authenticateAdmin, async (req, res) => {
+  try {
+    if (!isUuid(req.params.caseId)) {
+      res.status(404).json({ error: 'CASE_NOT_FOUND', message: 'Verification chat not found.' });
+      return;
+    }
+    const action = String(req.body?.action || '');
+    const credits = Number(req.body?.credits || 0);
+    if (!['grant', 'deny', 'close'].includes(action)) {
+      res.status(400).json({ error: 'INVALID_DECISION', message: 'Choose grant, deny, or close.' });
+      return;
+    }
+    if (action === 'grant' && ![50, 500, 2000].includes(credits)) {
+      res.status(400).json({ error: 'INVALID_CREDIT_AMOUNT', message: 'Credits must be 50, 500, or 2,000.' });
+      return;
+    }
+    const result = await accountStore.decidePurchaseCase(req.params.caseId, action, credits);
+    if (!result) {
+      res.status(409).json({ error: 'DECISION_NOT_ALLOWED', message: 'This action has already been completed or the chat is closed.' });
+      return;
+    }
+    const statusMessage = action === 'grant'
+      ? `${credits.toLocaleString('en-US')} credits were added to your account.`
+      : action === 'deny'
+        ? 'The submitted purchase proof was denied. Reply in this chat if you believe this is a mistake.'
+        : 'This purchase-support chat was closed by an administrator.';
+    await accountStore.addPurchaseMessage(createPurchaseMessage({
+      caseId: req.params.caseId,
+      senderRole: 'admin',
+      body: statusMessage
+    }));
+    res.json({
+      purchaseCase: await loadPurchaseCaseDetail(await accountStore.findPurchaseCaseById(req.params.caseId)),
+      accountCredits: result.accountCredits
+    });
+  } catch (error) {
+    console.error('Admin purchase case decision failed:', error);
+    res.status(503).json({ error: 'DECISION_FAILED', message: 'The purchase decision could not be saved.' });
   }
 });
 

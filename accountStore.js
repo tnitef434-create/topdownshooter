@@ -3,7 +3,15 @@ import path from 'path';
 import { neon } from '@neondatabase/serverless';
 
 function createEmptyLocalDatabase() {
-  return { version: 2, users: {}, emailIndex: {}, sessions: {}, purchaseIntents: {} };
+  return {
+    version: 3,
+    users: {},
+    emailIndex: {},
+    sessions: {},
+    purchaseIntents: {},
+    purchaseCases: {},
+    purchaseMessages: {}
+  };
 }
 
 function mapDatabaseUser(row) {
@@ -30,6 +38,39 @@ function duplicateEmailError() {
   return error;
 }
 
+function mapPurchaseCase(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    userId: row.user_id,
+    userEmail: row.user_email || null,
+    orderNumber: row.order_number,
+    packageId: row.package_id,
+    requestedCredits: Number(row.requested_credits || 0),
+    status: row.status,
+    creditsGranted: Number(row.credits_granted || 0),
+    closed: Boolean(row.closed_at),
+    createdAt: new Date(row.created_at).toISOString(),
+    updatedAt: new Date(row.updated_at).toISOString(),
+    resolvedAt: row.resolved_at ? new Date(row.resolved_at).toISOString() : null,
+    closedAt: row.closed_at ? new Date(row.closed_at).toISOString() : null
+  };
+}
+
+function mapPurchaseMessage(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    caseId: row.case_id,
+    senderRole: row.sender_role,
+    body: row.body || '',
+    proofName: row.proof_name || null,
+    proofMime: row.proof_mime || null,
+    proofData: row.proof_data || null,
+    createdAt: new Date(row.created_at).toISOString()
+  };
+}
+
 export function createAccountStore({ databaseUrl = '', localFile }) {
   const sql = databaseUrl ? neon(databaseUrl) : null;
   let localDatabase = createEmptyLocalDatabase();
@@ -46,7 +87,9 @@ export function createAccountStore({ databaseUrl = '', localFile }) {
         users: parsed.users || {},
         emailIndex: parsed.emailIndex || {},
         sessions: parsed.sessions || {},
-        purchaseIntents: parsed.purchaseIntents || {}
+        purchaseIntents: parsed.purchaseIntents || {},
+        purchaseCases: parsed.purchaseCases || {},
+        purchaseMessages: parsed.purchaseMessages || {}
       };
     } catch (error) {
       console.error('Failed to load the local account database:', error);
@@ -113,6 +156,45 @@ export function createAccountStore({ databaseUrl = '', localFile }) {
           status TEXT NOT NULL,
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
+      `;
+      await sql`
+        CREATE TABLE IF NOT EXISTS operative_purchase_cases (
+          id UUID PRIMARY KEY,
+          user_id UUID NOT NULL REFERENCES operative_accounts(id) ON DELETE CASCADE,
+          order_number TEXT NOT NULL,
+          package_id TEXT NOT NULL,
+          requested_credits INTEGER NOT NULL CHECK (requested_credits > 0),
+          status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'approved', 'denied')),
+          credits_granted INTEGER NOT NULL DEFAULT 0 CHECK (credits_granted >= 0),
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          resolved_at TIMESTAMPTZ,
+          closed_at TIMESTAMPTZ
+        )
+      `;
+      await sql`
+        CREATE INDEX IF NOT EXISTS operative_purchase_cases_user_id_idx
+        ON operative_purchase_cases(user_id, updated_at DESC)
+      `;
+      await sql`
+        CREATE INDEX IF NOT EXISTS operative_purchase_cases_status_idx
+        ON operative_purchase_cases(status, updated_at DESC)
+      `;
+      await sql`
+        CREATE TABLE IF NOT EXISTS operative_purchase_messages (
+          id UUID PRIMARY KEY,
+          case_id UUID NOT NULL REFERENCES operative_purchase_cases(id) ON DELETE CASCADE,
+          sender_role TEXT NOT NULL CHECK (sender_role IN ('user', 'admin')),
+          body TEXT NOT NULL DEFAULT '',
+          proof_name TEXT,
+          proof_mime TEXT,
+          proof_data TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `;
+      await sql`
+        CREATE INDEX IF NOT EXISTS operative_purchase_messages_case_id_idx
+        ON operative_purchase_messages(case_id, created_at ASC)
       `;
       ready = true;
       console.log('Persistent operative account database connected.');
@@ -260,6 +342,269 @@ export function createAccountStore({ databaseUrl = '', localFile }) {
     saveLocalDatabase();
   }
 
+  async function createPurchaseCase(purchaseCase, initialMessage) {
+    if (sql) {
+      const rows = await sql`
+        INSERT INTO operative_purchase_cases (
+          id,
+          user_id,
+          order_number,
+          package_id,
+          requested_credits,
+          status,
+          credits_granted,
+          created_at,
+          updated_at
+        ) VALUES (
+          ${purchaseCase.id},
+          ${purchaseCase.userId},
+          ${purchaseCase.orderNumber},
+          ${purchaseCase.packageId},
+          ${purchaseCase.requestedCredits},
+          ${purchaseCase.status},
+          0,
+          ${purchaseCase.createdAt},
+          ${purchaseCase.updatedAt}
+        )
+        RETURNING *
+      `;
+      try {
+        await sql`
+          INSERT INTO operative_purchase_messages (
+            id,
+            case_id,
+            sender_role,
+            body,
+            proof_name,
+            proof_mime,
+            proof_data,
+            created_at
+          ) VALUES (
+            ${initialMessage.id},
+            ${purchaseCase.id},
+            ${initialMessage.senderRole},
+            ${initialMessage.body},
+            ${initialMessage.proofName},
+            ${initialMessage.proofMime},
+            ${initialMessage.proofData},
+            ${initialMessage.createdAt}
+          )
+        `;
+      } catch (error) {
+        await sql`DELETE FROM operative_purchase_cases WHERE id = ${purchaseCase.id}`;
+        throw error;
+      }
+      return mapPurchaseCase(rows[0]);
+    }
+
+    localDatabase.purchaseCases[purchaseCase.id] = { ...purchaseCase, creditsGranted: 0, closed: false, resolvedAt: null, closedAt: null };
+    localDatabase.purchaseMessages[initialMessage.id] = { ...initialMessage, caseId: purchaseCase.id };
+    saveLocalDatabase();
+    return localDatabase.purchaseCases[purchaseCase.id];
+  }
+
+  async function listPurchaseCasesForUser(userId) {
+    if (sql) {
+      const rows = await sql`
+        SELECT *
+        FROM operative_purchase_cases
+        WHERE user_id = ${userId}
+        ORDER BY updated_at DESC
+      `;
+      return rows.map(mapPurchaseCase);
+    }
+    return Object.values(localDatabase.purchaseCases)
+      .filter(item => item.userId === userId)
+      .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+  }
+
+  async function findPurchaseCaseForUser(caseId, userId) {
+    if (sql) {
+      const rows = await sql`
+        SELECT *
+        FROM operative_purchase_cases
+        WHERE id = ${caseId} AND user_id = ${userId}
+        LIMIT 1
+      `;
+      return mapPurchaseCase(rows[0]);
+    }
+    const purchaseCase = localDatabase.purchaseCases[caseId];
+    return purchaseCase?.userId === userId ? purchaseCase : null;
+  }
+
+  async function findPurchaseCaseById(caseId) {
+    if (sql) {
+      const rows = await sql`
+        SELECT purchase_case.*, account.email AS user_email
+        FROM operative_purchase_cases AS purchase_case
+        JOIN operative_accounts AS account ON account.id = purchase_case.user_id
+        WHERE purchase_case.id = ${caseId}
+        LIMIT 1
+      `;
+      return mapPurchaseCase(rows[0]);
+    }
+    const purchaseCase = localDatabase.purchaseCases[caseId];
+    if (!purchaseCase) return null;
+    return { ...purchaseCase, userEmail: localDatabase.users[purchaseCase.userId]?.email || null };
+  }
+
+  async function listAllPurchaseCases() {
+    if (sql) {
+      const rows = await sql`
+        SELECT purchase_case.*, account.email AS user_email
+        FROM operative_purchase_cases AS purchase_case
+        JOIN operative_accounts AS account ON account.id = purchase_case.user_id
+        ORDER BY
+          CASE WHEN purchase_case.closed_at IS NULL THEN 0 ELSE 1 END,
+          purchase_case.updated_at DESC
+      `;
+      return rows.map(mapPurchaseCase);
+    }
+    return Object.values(localDatabase.purchaseCases)
+      .map(item => ({ ...item, userEmail: localDatabase.users[item.userId]?.email || null }))
+      .sort((a, b) => Number(a.closed) - Number(b.closed) || new Date(b.updatedAt) - new Date(a.updatedAt));
+  }
+
+  async function listPurchaseMessages(caseId) {
+    if (sql) {
+      const rows = await sql`
+        SELECT *
+        FROM operative_purchase_messages
+        WHERE case_id = ${caseId}
+        ORDER BY created_at ASC
+      `;
+      return rows.map(mapPurchaseMessage);
+    }
+    return Object.values(localDatabase.purchaseMessages)
+      .filter(message => message.caseId === caseId)
+      .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+  }
+
+  async function addPurchaseMessage(message) {
+    if (sql) {
+      const rows = await sql`
+        INSERT INTO operative_purchase_messages (
+          id,
+          case_id,
+          sender_role,
+          body,
+          proof_name,
+          proof_mime,
+          proof_data,
+          created_at
+        ) VALUES (
+          ${message.id},
+          ${message.caseId},
+          ${message.senderRole},
+          ${message.body},
+          ${message.proofName},
+          ${message.proofMime},
+          ${message.proofData},
+          ${message.createdAt}
+        )
+        RETURNING *
+      `;
+      await sql`
+        UPDATE operative_purchase_cases
+        SET updated_at = ${message.createdAt}
+        WHERE id = ${message.caseId}
+      `;
+      return mapPurchaseMessage(rows[0]);
+    }
+    localDatabase.purchaseMessages[message.id] = message;
+    const purchaseCase = localDatabase.purchaseCases[message.caseId];
+    if (purchaseCase) purchaseCase.updatedAt = message.createdAt;
+    saveLocalDatabase();
+    return message;
+  }
+
+  async function decidePurchaseCase(caseId, action, credits = 0) {
+    if (sql) {
+      if (action === 'grant') {
+        const rows = await sql`
+          WITH decided AS (
+            UPDATE operative_purchase_cases
+            SET
+              status = 'approved',
+              credits_granted = ${credits},
+              resolved_at = NOW(),
+              updated_at = NOW()
+            WHERE id = ${caseId}
+              AND status <> 'approved'
+              AND closed_at IS NULL
+            RETURNING *
+          ), credited AS (
+            UPDATE operative_accounts
+            SET credits = operative_accounts.credits + ${credits}, updated_at = NOW()
+            FROM decided
+            WHERE operative_accounts.id = decided.user_id
+            RETURNING operative_accounts.credits
+          )
+          SELECT decided.*, credited.credits AS account_credits
+          FROM decided
+          JOIN credited ON TRUE
+        `;
+        if (!rows[0]) return null;
+        return { purchaseCase: mapPurchaseCase(rows[0]), accountCredits: Number(rows[0].account_credits || 0) };
+      }
+
+      if (action === 'deny') {
+        const rows = await sql`
+          UPDATE operative_purchase_cases
+          SET status = 'denied', resolved_at = NOW(), updated_at = NOW()
+          WHERE id = ${caseId}
+            AND status <> 'approved'
+            AND closed_at IS NULL
+          RETURNING *
+        `;
+        return rows[0] ? { purchaseCase: mapPurchaseCase(rows[0]), accountCredits: null } : null;
+      }
+
+      if (action === 'close') {
+        const rows = await sql`
+          UPDATE operative_purchase_cases
+          SET closed_at = COALESCE(closed_at, NOW()), updated_at = NOW()
+          WHERE id = ${caseId} AND closed_at IS NULL
+          RETURNING *
+        `;
+        return rows[0] ? { purchaseCase: mapPurchaseCase(rows[0]), accountCredits: null } : null;
+      }
+      return null;
+    }
+
+    const purchaseCase = localDatabase.purchaseCases[caseId];
+    if (!purchaseCase) return null;
+    const now = new Date().toISOString();
+    if (action === 'grant') {
+      if (purchaseCase.status === 'approved' || purchaseCase.closed) return null;
+      const user = localDatabase.users[purchaseCase.userId];
+      if (!user) return null;
+      user.credits = Number(user.credits || 0) + credits;
+      user.updatedAt = now;
+      purchaseCase.status = 'approved';
+      purchaseCase.creditsGranted = credits;
+      purchaseCase.resolvedAt = now;
+      purchaseCase.updatedAt = now;
+      saveLocalDatabase();
+      return { purchaseCase, accountCredits: user.credits };
+    }
+    if (action === 'deny') {
+      if (purchaseCase.status === 'approved' || purchaseCase.closed) return null;
+      purchaseCase.status = 'denied';
+      purchaseCase.resolvedAt = now;
+      purchaseCase.updatedAt = now;
+    } else if (action === 'close') {
+      if (purchaseCase.closed) return null;
+      purchaseCase.closed = true;
+      purchaseCase.closedAt = purchaseCase.closedAt || now;
+      purchaseCase.updatedAt = now;
+    } else {
+      return null;
+    }
+    saveLocalDatabase();
+    return { purchaseCase, accountCredits: null };
+  }
+
   return {
     initialize,
     findUserByEmail,
@@ -269,6 +614,14 @@ export function createAccountStore({ databaseUrl = '', localFile }) {
     findSession,
     deleteSession,
     createPurchaseIntent,
+    createPurchaseCase,
+    listPurchaseCasesForUser,
+    findPurchaseCaseForUser,
+    findPurchaseCaseById,
+    listAllPurchaseCases,
+    listPurchaseMessages,
+    addPurchaseMessage,
+    decidePurchaseCase,
     get isPersistent() {
       return Boolean(sql);
     },

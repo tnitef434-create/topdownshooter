@@ -11,8 +11,8 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=Orbitron:wght@500;700;900&display=swap" rel="stylesheet">
   <!-- Style sheet -->
   <!-- Socket.io client (loaded dynamically via bundler or server, or we can just import from socket.io-client) -->
-  <script type="module" crossorigin src="/assets/index-DPwi7ikR.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-DgpD-IzV.css">
+  <script type="module" crossorigin src="/assets/index-2bxNuYhA.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-xTvl14AC.css">
 </head>
 <body>
   
@@ -116,6 +116,8 @@
           <button id="btn-open-account" class="btn-text account-nav">SIGN IN</button>
           <span class="divider">|</span>
           <button id="btn-open-settings" class="btn-text">SETTINGS</button>
+          <span class="divider">|</span>
+          <button id="btn-open-admin" class="btn-text admin-nav">ADMIN</button>
           <span class="divider">|</span>
           <span class="version">v2 Stable</span>
         </footer>
@@ -691,8 +693,89 @@
         </div>
 
         <div class="credit-shop-footer">
-          <p><strong>PAYMENT NOTICE</strong> Credit delivery is not automatic yet. Keep your Revolut receipt for verification.</p>
+          <div class="purchase-support-entry">
+            <div><strong>PAYMENT SUPPORT CHAT</strong><span>Paid already? Send your receipt and order number. Replies arrive within 1–12 hours.</span></div>
+            <button id="btn-open-purchase-support" class="purchase-support-open-btn" type="button">SUBMIT PURCHASE PROOF <span>→</span></button>
+          </div>
           <button id="btn-close-credit-shop" class="btn secondary" type="button">EXIT CREDIT SHOP</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Purchase Verification Chat -->
+    <div id="purchase-support-modal" class="modal-overlay purchase-support-overlay">
+      <div class="modal-card purchase-support-card" role="dialog" aria-modal="true" aria-labelledby="purchase-support-title">
+        <button id="btn-close-purchase-support" class="support-close-btn" type="button" aria-label="Close payment support">×</button>
+        <header class="support-header">
+          <div>
+            <span class="section-kicker">SECURE PURCHASE VERIFICATION</span>
+            <h2 id="purchase-support-title">PAYMENT SUPPORT</h2>
+            <p>Submit proof after checkout and continue the conversation here.</p>
+          </div>
+          <div class="support-response-time"><span>ESTIMATED REPLY</span><strong>1–12 HOURS</strong></div>
+        </header>
+        <div id="purchase-support-message" class="support-notice" aria-live="polite"></div>
+        <div class="purchase-support-layout">
+          <section class="support-submit-panel">
+            <div class="support-panel-heading"><span>NEW REQUEST</span><strong>VERIFY A PAYMENT</strong></div>
+            <form id="purchase-support-form" class="support-form">
+              <label for="purchase-order-number">ORDER NUMBER</label>
+              <input id="purchase-order-number" type="text" maxlength="100" required placeholder="Shown on your payment receipt">
+              <label for="purchase-package">CREDIT PACKAGE</label>
+              <select id="purchase-package" required>
+                <option value="50">50 credits · €0.99</option>
+              </select>
+              <label for="purchase-support-text">MESSAGE</label>
+              <textarea id="purchase-support-text" maxlength="1500" rows="4" placeholder="Add any details that help us verify the purchase."></textarea>
+              <label for="purchase-proof-file">PROOF OF PURCHASE</label>
+              <input id="purchase-proof-file" class="support-file-input" type="file" accept="image/png,image/jpeg,image/webp" required>
+              <small>PNG, JPG, or WebP · maximum 1.5 MB</small>
+              <button class="support-primary-btn" type="submit">START VERIFICATION CHAT <span>→</span></button>
+            </form>
+          </section>
+          <section class="support-thread-panel">
+            <div class="support-thread-toolbar">
+              <div class="support-panel-heading"><span>YOUR REQUESTS</span><strong>CONVERSATIONS</strong></div>
+              <button id="btn-refresh-purchase-support" type="button">REFRESH</button>
+            </div>
+            <div id="purchase-support-cases" class="purchase-support-cases">
+              <div class="support-empty-state">No purchase-verification chats yet.</div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+
+    <!-- Admin Purchase Dashboard -->
+    <div id="admin-modal" class="modal-overlay admin-overlay">
+      <div class="modal-card admin-card" role="dialog" aria-modal="true" aria-labelledby="admin-title">
+        <button id="btn-close-admin" class="support-close-btn" type="button" aria-label="Close admin dashboard">×</button>
+        <header class="admin-header">
+          <div><span class="section-kicker">RESTRICTED ACCESS</span><h2 id="admin-title">PURCHASE COMMAND</h2><p>Review receipts, reply to users, and issue credits.</p></div>
+          <span class="admin-security-chip">SERVER AUTHENTICATED</span>
+        </header>
+
+        <div id="admin-login-view" class="admin-login-view">
+          <form id="admin-login-form" class="support-form admin-login-form">
+            <div class="support-panel-heading"><span>ADMINISTRATOR</span><strong>AUTHENTICATION REQUIRED</strong></div>
+            <div id="admin-login-message" class="support-notice" aria-live="polite"></div>
+            <label for="admin-username">USERNAME</label>
+            <input id="admin-username" type="text" autocomplete="username" required>
+            <label for="admin-password">PASSWORD</label>
+            <input id="admin-password" type="password" autocomplete="current-password" required>
+            <button class="support-primary-btn" type="submit">OPEN DASHBOARD <span>→</span></button>
+          </form>
+        </div>
+
+        <div id="admin-dashboard-view" class="admin-dashboard-view" hidden>
+          <div class="admin-toolbar">
+            <div><span class="admin-live-dot"></span><strong>VERIFICATION QUEUE</strong></div>
+            <div><button id="btn-refresh-admin-cases" type="button">REFRESH</button><button id="btn-admin-logout" type="button">SIGN OUT</button></div>
+          </div>
+          <div class="admin-dashboard-layout">
+            <aside id="admin-case-list" class="admin-case-list"><div class="support-empty-state">No messages submitted.</div></aside>
+            <main id="admin-case-detail" class="admin-case-detail"><div class="support-empty-state">Select a purchase chat to review it.</div></main>
+          </div>
         </div>
       </div>
     </div>
