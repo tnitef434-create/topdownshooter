@@ -34,7 +34,6 @@ let accountSession = {
 };
 
 function getBackendUrl() {
-  if (gameSettings?.serverUrl) return gameSettings.serverUrl.replace(/\/$/, '');
   if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
     return window.location.port === '3000' ? window.location.origin : 'http://localhost:3000';
   }
@@ -104,8 +103,7 @@ const settings = {
   volumeVal: document.getElementById('volume-val'),
   blood: document.getElementById('setting-blood'),
   shadows: document.getElementById('setting-shadows'),
-  laser: document.getElementById('setting-laser'),
-  serverUrl: document.getElementById('setting-server-url')
+  laser: document.getElementById('setting-laser')
 };
 
 const gameOverModal = document.getElementById('game-over-modal');
@@ -808,7 +806,6 @@ const gameSettings = {
   blood: true,
   shadows: true,
   laser: true,
-  serverUrl: '',
   musicMuted: false,
   sfxMuted: false,
   performanceMode: false,
@@ -824,6 +821,7 @@ function initSettings() {
   if (savedSettings) {
     try {
       const parsed = JSON.parse(savedSettings);
+      delete parsed.serverUrl;
       Object.assign(gameSettings, parsed);
       
       if (settings.volume) settings.volume.value = gameSettings.volume * 100;
@@ -831,7 +829,6 @@ function initSettings() {
       if (settings.blood) settings.blood.checked = gameSettings.blood;
       if (settings.shadows) settings.shadows.checked = gameSettings.shadows;
       if (settings.laser) settings.laser.checked = gameSettings.laser;
-      if (settings.serverUrl) settings.serverUrl.value = gameSettings.serverUrl || '';
       if (showFpsCb) showFpsCb.checked = !!gameSettings.showFps;
       
       const counter = document.getElementById('fps-counter');
@@ -858,13 +855,6 @@ function initSettings() {
       if (counter) {
         counter.style.display = gameSettings.showFps ? 'block' : 'none';
       }
-      saveSettings();
-    });
-  }
-
-  if (settings.serverUrl) {
-    settings.serverUrl.addEventListener('input', (e) => {
-      gameSettings.serverUrl = e.target.value.trim();
       saveSettings();
     });
   }
