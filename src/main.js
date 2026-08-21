@@ -2372,6 +2372,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initSettings();
   initNewsModal();
   initWhatsNewModal();
+  initCreditShop();
   initItemShop();
   setupWeaponSelector();
   setupMainMenuWeaponSelector();
@@ -2466,6 +2467,29 @@ function initWhatsNewModal() {
   
   closeWhatsNewBtn.addEventListener('click', () => {
     whatsNewModal.classList.remove('active');
+    playMenuClick();
+  });
+}
+
+function initCreditShop() {
+  const creditShopModal = document.getElementById('credit-shop-modal');
+  const openCreditShopBtn = document.getElementById('btn-open-credit-shop');
+  const closeCreditShopBtn = document.getElementById('btn-close-credit-shop');
+  const buyCreditsBtn = document.getElementById('btn-buy-50-credits');
+
+  if (!creditShopModal || !openCreditShopBtn || !closeCreditShopBtn) return;
+
+  openCreditShopBtn.addEventListener('click', () => {
+    creditShopModal.classList.add('active');
+    playMenuClick();
+  });
+
+  closeCreditShopBtn.addEventListener('click', () => {
+    creditShopModal.classList.remove('active');
+    playMenuClick();
+  });
+
+  buyCreditsBtn?.addEventListener('click', () => {
     playMenuClick();
   });
 }

@@ -110,6 +110,8 @@
           <span class="divider">|</span>
           <button id="btn-open-shop" class="btn-text" style="color: var(--neon-yellow); font-weight: bold;">ITEM SHOP</button>
           <span class="divider">|</span>
+          <button id="btn-open-credit-shop" class="btn-text credit-shop-nav">CREDIT SHOP</button>
+          <span class="divider">|</span>
           <button id="btn-open-settings" class="btn-text">SETTINGS</button>
           <span class="divider">|</span>
           <button id="btn-toggle-mute" class="btn-text">MUTE MUSIC</button>
@@ -616,7 +618,8 @@
       <div class="modal-card" style="max-width: 480px; border: 1px solid var(--neon-teal); box-shadow: 0 0 30px rgba(102, 252, 241, 0.15); padding: 35px 28px;">
          <div style="font-family: var(--font-title); font-size: 10px; color: var(--neon-yellow); letter-spacing: 2px; font-weight: 700; margin-bottom: 6px;">TACTICSTRIKE CHANGELOG</div>
          <h2 style="font-family: var(--font-title); font-size: 26px; color: #fff; margin-bottom: 15px; letter-spacing: 1.5px; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 12px; font-weight: 900;">WHAT'S NEW</h2>
-         <div style="font-family: 'Inter', sans-serif; font-size: 13px; line-height: 1.6; color: #a2aab8; margin-bottom: 25px; max-height: 280px; overflow-y: auto; padding-right: 8px;">
+         <div class="whats-new-feed">
+             <p style="margin-bottom: 14px;">🪙 <strong style="color: #ffe6a3;">CREDIT SHOP ONLINE:</strong> <span style="background: rgba(212,175,55,0.15); color: #d4af37; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; margin-left: 4px; border: 1px solid rgba(212,175,55,0.3);">NEW</span><br>The new Credit Shop is live from the main menu. The 50-credit Field Drop is available now through secure Revolut checkout, with larger credit caches coming soon.</p>
              <p style="margin-bottom: 14px;">🕶️ <strong style="color: #d4af37;">FIRST PERSON MATCH MODE:</strong> <span style="background: rgba(212,175,55,0.15); color: #d4af37; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; margin-left: 4px; border: 1px solid rgba(212,175,55,0.3);">NEW</span><br>Lock into a full 3D viewport with pointer-lock. Run across tactical maps from a premium first-person perspective using a beautiful female elf model and procedural weapon bobs.</p>
              <p style="margin-bottom: 14px;">🧱 <strong style="color: #66fcf1;">AAA 2.5D WALL EXTRUSION:</strong> <span style="background: rgba(102,252,241,0.15); color: #66fcf1; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; margin-left: 4px; border: 1px solid rgba(102,252,241,0.3);">NEW</span><br>Experience top-down battle with perspective-extruded 3D walls, furniture, and crates. Obstacles dynamically project height relative to the player's view, creating a high-fidelity 2.5D visual aesthetic.</p>
              <p style="margin-bottom: 14px;">💻 <strong style="color: #ffd700;">HACKING TERMINALS & MINIGAMES:</strong> <span style="background: rgba(255,215,0,0.15); color: #ffd700; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; margin-left: 4px; border: 1px solid rgba(255,215,0,0.3);">NEW</span><br>Interactive supply terminals have been added. Stand near a console and hold [E] to engage. Completing the timed key-sequence defusal hacking minigame successfully drops high-tier items (Adrenaline/Medkits).</p>
@@ -626,6 +629,71 @@
          <div class="modal-actions" style="margin-top: 15px;">
            <button id="btn-close-whats-new" class="btn primary btn-3d" style="width: 100%; font-size: 12px; padding: 12px;">CLOSE</button>
          </div>
+      </div>
+    </div>
+
+    <!-- Credit Shop Screen Modal -->
+    <div id="credit-shop-modal" class="modal-overlay credit-shop-overlay">
+      <div class="modal-card credit-shop-card">
+        <div class="credit-shop-hero">
+          <img src="/credit-shop-banner.png" alt="Tactical supply case filled with glowing gold credit tokens">
+          <div class="credit-shop-hero-shade"></div>
+          <div class="credit-shop-hero-copy">
+            <span class="credit-shop-eyebrow">TACTICSTRIKE ARMORY</span>
+            <h2>CREDIT SHOP</h2>
+            <p>Secure your next tactical loadout.</p>
+          </div>
+          <div class="revolut-badge">REVOLUT ONLY</div>
+        </div>
+
+        <div class="credit-shop-intro">
+          <div>
+            <span class="section-kicker">SELECT CREDIT DROP</span>
+            <p>Payments open in a secure Revolut checkout.</p>
+          </div>
+          <span class="shop-status"><i></i> 1 PACK ONLINE</span>
+        </div>
+
+        <div class="credit-pack-grid">
+          <article class="credit-pack credit-pack-featured">
+            <span class="credit-pack-status">AVAILABLE NOW</span>
+            <div class="credit-token-mark" aria-hidden="true"><span>50</span></div>
+            <h3>50 CREDITS</h3>
+            <p class="credit-pack-subtitle">FIELD DROP</p>
+            <div class="credit-pack-price"><span>€</span>0.99</div>
+            <a
+              id="btn-buy-50-credits"
+              class="credit-buy-btn btn-3d"
+              href="https://checkout.revolut.com/payment-link/7ee65845-014a-4590-b0ec-010becb401c2"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Buy 50 TacticStrike credits for €0.99 with Revolut"
+            >BUY WITH REVOLUT <span>↗</span></a>
+          </article>
+
+          <article class="credit-pack credit-pack-locked" aria-disabled="true">
+            <span class="credit-pack-status">COMING SOON</span>
+            <div class="credit-token-mark" aria-hidden="true"><span>500</span></div>
+            <h3>500 CREDITS</h3>
+            <p class="credit-pack-subtitle">STRIKE CACHE</p>
+            <div class="credit-pack-price"><span>€</span>4.99</div>
+            <button class="credit-buy-btn" type="button" disabled>OFFLINE</button>
+          </article>
+
+          <article class="credit-pack credit-pack-locked" aria-disabled="true">
+            <span class="credit-pack-status">COMING SOON</span>
+            <div class="credit-token-mark" aria-hidden="true"><span>2K</span></div>
+            <h3>2,000 CREDITS</h3>
+            <p class="credit-pack-subtitle">OPERATIVE VAULT</p>
+            <div class="credit-pack-price"><span>€</span>12.99</div>
+            <button class="credit-buy-btn" type="button" disabled>OFFLINE</button>
+          </article>
+        </div>
+
+        <div class="credit-shop-footer">
+          <p><strong>PAYMENT NOTICE</strong> Credit delivery is not automatic yet. Keep your Revolut receipt for verification.</p>
+          <button id="btn-close-credit-shop" class="btn secondary" type="button">EXIT CREDIT SHOP</button>
+        </div>
       </div>
     </div>
 
