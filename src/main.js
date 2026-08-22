@@ -1749,10 +1749,17 @@ function setupUIListeners() {
   const btnDeployMain = document.getElementById('btn-deploy-main');
   const btnCloseDeploy = document.getElementById('btn-close-deploy');
   const deployModal = document.getElementById('deploy-modal');
+  const btnPlayWorldloom = document.getElementById('btn-play-worldloom');
+  const btnCloseWorldloom = document.getElementById('btn-close-worldloom');
+  const worldloomSiteScreen = document.getElementById('worldloom-site-screen');
+  const worldloomFrame = document.getElementById('worldloom-frame');
+  const worldloomFrameLoading = document.getElementById('worldloom-frame-loading');
   
   if (btnDeployMain && deployModal) {
     btnDeployMain.addEventListener('click', () => {
       deployModal.classList.add('active');
+      const deployCard = deployModal.querySelector('.deploy-card');
+      if (deployCard) deployCard.scrollTop = 0;
       playMenuClick();
       menuMusic.pause();
       menuMusic.currentTime = 0;
@@ -1772,6 +1779,51 @@ function setupUIListeners() {
       deployMusic.currentTime = 0;
       if (!isMusicMuted) {
         playMenuMusic();
+      }
+    });
+  }
+
+  if (btnPlayWorldloom) {
+    btnPlayWorldloom.addEventListener('click', () => {
+      playMenuClick();
+      window.stopAllMusic();
+      if (deployModal) deployModal.classList.remove('active');
+      if (worldloomSiteScreen) {
+        worldloomSiteScreen.classList.add('active');
+        worldloomSiteScreen.setAttribute('aria-hidden', 'false');
+      }
+      document.body.classList.add('is-worldloom-open');
+      if (worldloomFrameLoading) worldloomFrameLoading.classList.remove('is-hidden');
+      if (worldloomFrame && !worldloomFrame.getAttribute('src')) {
+        worldloomFrame.setAttribute('src', btnPlayWorldloom.dataset.worldloomPath || './worldloom/index.html');
+      }
+    });
+  }
+
+  if (worldloomFrame) {
+    worldloomFrame.addEventListener('load', () => {
+      if (worldloomFrame.getAttribute('src') && worldloomFrameLoading) {
+        worldloomFrameLoading.classList.add('is-hidden');
+      }
+    });
+  }
+
+  if (btnCloseWorldloom) {
+    btnCloseWorldloom.addEventListener('click', () => {
+      playMenuClick();
+      if (document.pointerLockElement) document.exitPointerLock();
+      if (worldloomFrame) worldloomFrame.removeAttribute('src');
+      if (worldloomSiteScreen) {
+        worldloomSiteScreen.classList.remove('active');
+        worldloomSiteScreen.setAttribute('aria-hidden', 'true');
+      }
+      document.body.classList.remove('is-worldloom-open');
+      if (worldloomFrameLoading) worldloomFrameLoading.classList.remove('is-hidden');
+      if (deployModal) deployModal.classList.add('active');
+      if (!isMusicMuted) {
+        deployMusic.volume = 0.15;
+        deployMusic.currentTime = 0;
+        deployMusic.play().catch(() => {});
       }
     });
   }

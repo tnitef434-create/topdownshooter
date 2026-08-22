@@ -930,6 +930,27 @@
           <p style="font-size: 10px; color: var(--text-muted); margin-top: 4px; letter-spacing: 1px;">PREPARE FOR DEPLOYMENT</p>
         </div>
 
+        <!-- Lazy-loaded companion game: its assets are requested only after this button is pressed. -->
+        <section class="worldloom-operation" aria-labelledby="worldloom-operation-title">
+          <div class="worldloom-operation-copy">
+            <div class="worldloom-operation-meta">
+              <span class="worldloom-operation-badge">NEW FRONTIER</span>
+              <span>PLAYABLE IN BROWSER</span>
+            </div>
+            <h3 id="worldloom-operation-title">WORLDLOOM</h3>
+            <p>Explore a living voxel wilderness with caves, weather, wildlife, crafting, and cinematic lighting.</p>
+          </div>
+          <button
+            id="btn-play-worldloom"
+            class="worldloom-launch-btn"
+            type="button"
+            data-worldloom-path="./worldloom/index.html"
+          >
+            <span>PLAY WORLDLOOM</span>
+            <small>LOAD IN SITE · NOTHING INSTALLED</small>
+          </button>
+        </section>
+
         <!-- 1. Massive Ranked Section -->
         <div style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px;">
           <h3 style="font-family: var(--font-title); font-size: 12px; color: #d4af37; letter-spacing: 1.5px; border-left: 3px solid #d4af37; padding-left: 8px; margin-bottom: 4px; font-weight: 700;">COMPETITIVE RANKED</h3>
@@ -990,6 +1011,29 @@
         </div>
       </div>
     </div>
+
+    <section id="worldloom-site-screen" class="worldloom-site-screen" aria-label="Worldloom" aria-hidden="true">
+      <div class="worldloom-site-toolbar">
+        <div>
+          <span>TACTICSTRIKE // FRONTIER PORTAL</span>
+          <strong>WORLDLOOM</strong>
+        </div>
+        <button id="btn-close-worldloom" type="button" aria-label="Return to TacticStrike">
+          <span aria-hidden="true">←</span> RETURN TO TACTICSTRIKE
+        </button>
+      </div>
+      <div id="worldloom-frame-loading" class="worldloom-frame-loading" role="status" aria-live="polite">
+        <span></span>
+        <strong>OPENING WORLDLOOM</strong>
+        <small>Loading the frontier only when requested…</small>
+      </div>
+      <iframe
+        id="worldloom-frame"
+        title="Worldloom voxel adventure"
+        allow="autoplay; fullscreen; gamepad"
+        allowfullscreen
+      ></iframe>
+    </section>
 
   </div>
 

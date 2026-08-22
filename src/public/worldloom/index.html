@@ -1,0 +1,351 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta
+      name="description"
+      content="Worldloom — an original voxel-fantasy world to gather, shape, and illuminate."
+    />
+    <meta name="theme-color" content="#07130f" />
+    <title>Worldloom</title>
+    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main-menu">Skip to game menu</a>
+
+    <main id="game-shell">
+      <canvas id="game" tabindex="0" aria-label="Worldloom game world">
+        Your browser does not support the canvas element required to play Worldloom.
+      </canvas>
+
+      <section id="unsupported" class="system-message hidden" role="alert">
+        <div class="system-message__mark" aria-hidden="true">!</div>
+        <h1>This world cannot open</h1>
+        <p>
+          Worldloom needs WebGL 2 and hardware acceleration. Try updating your browser or
+          enabling graphics acceleration, then reload the page.
+        </p>
+      </section>
+
+      <section id="loading-screen" class="screen loading-screen" aria-live="polite">
+        <div class="loading-atmosphere" aria-hidden="true">
+          <span class="voxel voxel--one"></span>
+          <span class="voxel voxel--two"></span>
+          <span class="voxel voxel--three"></span>
+        </div>
+        <div class="loading-card">
+          <div class="brand brand--loading" aria-label="Worldloom">
+            <span class="brand__eyebrow">A world shaped by you</span>
+            <span class="brand__name">Worldloom</span>
+            <span class="brand__sigil" aria-hidden="true"></span>
+          </div>
+          <div class="loading-track" role="progressbar" aria-label="Loading world" aria-valuemin="0" aria-valuemax="100" aria-valuenow="8">
+            <span id="loading-bar"></span>
+          </div>
+          <p id="loading-text">Waking the wilds…</p>
+        </div>
+      </section>
+
+      <section id="main-menu" class="screen menu-screen hidden" aria-labelledby="main-title">
+        <div class="menu-scenery" aria-hidden="true">
+          <span class="sun-disc"></span>
+          <span class="ridge ridge--far"></span>
+          <span class="ridge ridge--near"></span>
+        </div>
+        <div class="menu-layout">
+          <header class="brand brand--hero">
+            <span class="brand__eyebrow">Gather · Shape · Illuminate</span>
+            <h1 id="main-title" class="brand__name">Worldloom</h1>
+            <p class="brand__tagline">Vaster peaks. Deeper caves. Wilder horizons.</p>
+          </header>
+
+          <div class="menu-card surface-panel">
+            <div class="menu-actions">
+              <button id="continue-button" class="button button--primary button--wide" type="button">
+                <span class="button__label">Continue</span>
+                <span class="button__hint">Last world</span>
+              </button>
+
+              <div class="new-world-form">
+                <label for="seed-input">World seed <span>optional</span></label>
+                <div class="seed-field">
+                  <input
+                    id="seed-input"
+                    type="text"
+                    maxlength="48"
+                    autocomplete="off"
+                    spellcheck="false"
+                    placeholder="Leave blank for a surprise"
+                  />
+                </div>
+
+                <fieldset class="mode-picker">
+                  <legend>Journey</legend>
+                  <label class="mode-option">
+                    <input type="radio" name="mode" value="survival" checked="checked" />
+                    <span>
+                      <strong>Wayfarer</strong>
+                      <small>Gather, craft, and face the night</small>
+                    </span>
+                  </label>
+                  <label class="mode-option">
+                    <input type="radio" name="mode" value="builder" />
+                    <span>
+                      <strong>Dreamweaver</strong>
+                      <small>Build freely and take to the sky</small>
+                    </span>
+                  </label>
+                </fieldset>
+
+                <button id="new-world-button" class="button button--accent button--wide" type="button">
+                  Weave a new world
+                </button>
+              </div>
+
+              <div class="menu-actions__secondary">
+                <button id="settings-button" class="button button--quiet" type="button">Settings</button>
+                <button id="credits-button" class="button button--quiet" type="button">Credits</button>
+              </div>
+            </div>
+          </div>
+
+          <p class="control-hint">
+            <kbd>WASD</kbd> move <span aria-hidden="true">·</span> <kbd>Mouse</kbd> look
+            <span aria-hidden="true">·</span> <kbd>E</kbd> pack <span aria-hidden="true">·</span>
+            <kbd>Esc</kbd> pause
+          </p>
+        </div>
+      </section>
+
+      <section id="pause-menu" class="screen overlay-screen hidden" role="dialog" aria-modal="true" aria-labelledby="pause-title">
+        <div class="dialog-card surface-panel dialog-card--compact">
+          <p class="dialog-card__eyebrow">The world is resting</p>
+          <h2 id="pause-title">Paused</h2>
+          <div class="dialog-actions">
+            <button id="resume-button" class="button button--primary button--wide" type="button">Return to world</button>
+            <button id="save-button" class="button button--secondary button--wide" type="button">Save world</button>
+            <button id="pause-settings-button" class="button button--secondary button--wide" type="button">Settings</button>
+            <button id="title-button" class="button button--danger button--wide" type="button">Save &amp; leave</button>
+          </div>
+          <p class="dialog-note"><kbd>Esc</kbd> to resume</p>
+        </div>
+      </section>
+
+      <section id="hud" class="hud hidden" aria-label="Game status">
+        <div class="hud-top">
+          <div class="objective-card">
+            <span class="objective-card__kicker">Current thread</span>
+            <p id="objective-text">Gather loose flint and branches</p>
+          </div>
+          <div id="time-label" class="time-chip" aria-label="Time of day">
+            <span class="time-chip__sun" aria-hidden="true"></span>
+            <span>Morning</span>
+          </div>
+        </div>
+
+        <div id="crosshair" aria-hidden="true">
+          <span></span><span></span>
+        </div>
+        <p id="target-label" class="target-label"></p>
+
+        <div class="hud-bottom">
+          <div class="status-stack" aria-label="Player status">
+            <div class="status-row status-row--health">
+              <span class="status-icon" aria-hidden="true">◆</span>
+              <span class="status-track" title="Vitality" role="progressbar" aria-label="Vitality" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100">
+                <span id="health-fill" class="status-fill"></span>
+              </span>
+              <span class="sr-only">Vitality</span>
+            </div>
+            <div class="status-row status-row--stamina">
+              <span class="status-icon" aria-hidden="true">◇</span>
+              <span class="status-track" title="Vigor" role="progressbar" aria-label="Vigor" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100">
+                <span id="stamina-fill" class="status-fill"></span>
+              </span>
+              <span class="sr-only">Vigor</span>
+            </div>
+          </div>
+
+          <div id="hotbar" class="hotbar" aria-label="Quick inventory">
+            <button class="hotbar-slot is-selected" type="button" aria-label="Slot 1" data-slot="0"><span class="slot-key">1</span></button>
+            <button class="hotbar-slot" type="button" aria-label="Slot 2" data-slot="1"><span class="slot-key">2</span></button>
+            <button class="hotbar-slot" type="button" aria-label="Slot 3" data-slot="2"><span class="slot-key">3</span></button>
+            <button class="hotbar-slot" type="button" aria-label="Slot 4" data-slot="3"><span class="slot-key">4</span></button>
+            <button class="hotbar-slot" type="button" aria-label="Slot 5" data-slot="4"><span class="slot-key">5</span></button>
+            <button class="hotbar-slot" type="button" aria-label="Slot 6" data-slot="5"><span class="slot-key">6</span></button>
+            <button class="hotbar-slot" type="button" aria-label="Slot 7" data-slot="6"><span class="slot-key">7</span></button>
+            <button class="hotbar-slot" type="button" aria-label="Slot 8" data-slot="7"><span class="slot-key">8</span></button>
+          </div>
+        </div>
+      </section>
+
+      <section id="inventory-panel" class="screen overlay-screen hidden" role="dialog" aria-modal="true" aria-labelledby="inventory-title">
+        <div class="inventory-window surface-panel">
+          <header class="panel-header">
+            <div>
+              <p class="panel-kicker">Craft · build · survive</p>
+              <h2 id="inventory-title">Inventory</h2>
+            </div>
+            <button id="inventory-close" class="icon-button" type="button" aria-label="Close inventory">×</button>
+          </header>
+
+          <div class="inventory-layout">
+            <section class="inventory-section" aria-labelledby="pack-title">
+              <div class="section-heading">
+                <h3 id="pack-title">Storage</h3>
+                <span>36 slots · bottom row is your hotbar</span>
+              </div>
+              <div id="inventory-grid" class="inventory-grid" aria-label="Backpack slots"></div>
+              <p class="inventory-tip">Select one slot, then another, to move items</p>
+            </section>
+
+            <section class="craft-section" aria-labelledby="craft-title">
+              <div class="section-heading">
+                <h3 id="craft-title">Recipe book</h3>
+                <span>Workbench and furnace recipes included</span>
+              </div>
+              <label class="search-field" for="recipe-search">
+                <span class="search-field__icon" aria-hidden="true"></span>
+                <input id="recipe-search" type="search" autocomplete="off" placeholder="Search recipes…" />
+              </label>
+              <div id="craft-list" class="craft-list" aria-live="polite">
+                <p class="empty-state">Gather materials to discover new patterns.</p>
+              </div>
+            </section>
+          </div>
+        </div>
+      </section>
+
+      <section id="settings-panel" class="screen overlay-screen hidden" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+        <div class="dialog-card surface-panel settings-window">
+          <header class="panel-header">
+            <div>
+              <p class="panel-kicker">Make it yours</p>
+              <h2 id="settings-title">Settings</h2>
+            </div>
+            <button id="settings-close" class="icon-button" type="button" aria-label="Close settings">×</button>
+          </header>
+
+          <div class="settings-list">
+            <label class="setting-row" for="graphics-quality">
+              <span><strong>Graphics mode</strong><small>Instant performance and atmosphere preset</small></span>
+              <select id="graphics-quality" class="setting-select">
+                <option value="low">Low · maximum speed</option>
+                <option value="balanced" selected>Balanced · filmic + fast</option>
+                <option value="high">High · GTAO lighting</option>
+                <option value="ultra">Ultra · cinematic maximum</option>
+              </select>
+            </label>
+            <label class="setting-row" for="sensitivity">
+              <span><strong>Look sensitivity</strong><small>Mouse turn speed</small></span>
+              <span class="range-control">
+                <input id="sensitivity" type="range" min="0.0004" max="0.006" step="0.0001" value="0.0022" />
+                <output id="sensitivity-value" for="sensitivity">100%</output>
+              </span>
+            </label>
+            <label class="setting-row" for="fov">
+              <span><strong>Field of view</strong><small>Wider views may feel faster</small></span>
+              <span class="range-control">
+                <input id="fov" type="range" min="60" max="100" step="1" value="75" />
+                <output id="fov-value" for="fov">75°</output>
+              </span>
+            </label>
+            <label class="setting-row" for="view-distance">
+              <span><strong>View distance</strong><small>Higher values use more memory</small></span>
+              <span class="range-control">
+                <input id="view-distance" type="range" min="2" max="9" step="1" value="4" />
+                <output id="view-distance-value" for="view-distance">4 chunks</output>
+              </span>
+            </label>
+            <label class="setting-row" for="render-scale">
+              <span><strong>Render scale</strong><small>Lower this for smoother play</small></span>
+              <span class="range-control">
+                <input id="render-scale" type="range" min="0.6" max="1.25" step="0.05" value="1" />
+                <output id="render-scale-value" for="render-scale">100%</output>
+              </span>
+            </label>
+            <label class="setting-row" for="volume">
+              <span><strong>Master volume</strong><small>All Worldloom audio</small></span>
+              <span class="range-control">
+                <input id="volume" type="range" min="0" max="1" step="0.02" value="0.72" />
+                <output id="volume-value" for="volume">72%</output>
+              </span>
+            </label>
+            <label class="setting-row" for="music-volume">
+              <span><strong>Music volume</strong><small>Soft flow-state soundtrack</small></span>
+              <span class="range-control">
+                <input id="music-volume" type="range" min="0" max="1" step="0.02" value="0.28" />
+                <output id="music-volume-value" for="music-volume">28%</output>
+              </span>
+            </label>
+            <label class="setting-row" for="ambience-volume">
+              <span><strong>Ambient volume</strong><small>Wind, wildlife, caves, water, and rain</small></span>
+              <span class="range-control">
+                <input id="ambience-volume" type="range" min="0" max="1" step="0.02" value="0.68" />
+                <output id="ambience-volume-value" for="ambience-volume">68%</output>
+              </span>
+            </label>
+            <label class="setting-row setting-row--toggle" for="music-enabled">
+              <span><strong>Background music</strong><small>Fades gently between play and menus</small></span>
+              <span class="toggle">
+                <input id="music-enabled" type="checkbox" checked />
+                <span aria-hidden="true"></span>
+              </span>
+            </label>
+            <label class="setting-row setting-row--toggle" for="weather-effects">
+              <span><strong>Weather effects</strong><small>Rain streaks, mist, and ground splashes</small></span>
+              <span class="toggle">
+                <input id="weather-effects" type="checkbox" checked />
+                <span aria-hidden="true"></span>
+              </span>
+            </label>
+            <label class="setting-row setting-row--toggle" for="reduced-motion">
+              <span><strong>Reduced motion</strong><small>Softens sway, shake, and transitions</small></span>
+              <span class="toggle">
+                <input id="reduced-motion" type="checkbox" />
+                <span aria-hidden="true"></span>
+              </span>
+            </label>
+          </div>
+          <p class="dialog-note">Changes are saved automatically.</p>
+        </div>
+      </section>
+
+      <section id="credits-panel" class="screen overlay-screen hidden" role="dialog" aria-modal="true" aria-labelledby="credits-title">
+        <div class="dialog-card surface-panel credits-window">
+          <header class="panel-header">
+            <div>
+              <p class="panel-kicker">The hands behind the horizon</p>
+              <h2 id="credits-title">Credits</h2>
+            </div>
+            <button id="credits-close" class="icon-button" type="button" aria-label="Close credits">×</button>
+          </header>
+          <div class="credits-copy">
+            <div class="brand-mark" aria-hidden="true"><span></span></div>
+            <p>
+              Worldloom is an original voxel-fantasy experiment about quiet discovery,
+              expressive building, and bringing light back to a sleeping land.
+            </p>
+            <dl>
+              <div><dt>Design &amp; development</dt><dd>Worldloom team</dd></div>
+              <div><dt>Built with</dt><dd>WebGL, care, and far too many little cubes</dd></div>
+              <div><dt>Animated animals</dt><dd>Quaternius Ultimate Animated Animal Pack · CC0 1.0</dd></div>
+              <div><dt>Background music</dt><dd>User-supplied flow-state soundtrack</dd></div>
+              <div><dt>Rain recording</dt><dd>User-supplied rain-on-grass field recording</dd></div>
+              <div><dt>Nature &amp; mining audio</dt><dd>User-supplied birds, seawater, dirt, sand, and stone recordings</dd></div>
+            </dl>
+          </div>
+          <p class="credits-footer">Thank you for stepping into the weave.</p>
+        </div>
+      </section>
+
+      <div id="toast-layer" aria-live="polite" aria-atomic="true"></div>
+      <div id="damage-vignette" aria-hidden="true"></div>
+      <div id="water-overlay" aria-hidden="true"></div>
+      <pre id="debug-panel" class="hidden" aria-label="Debug information"></pre>
+    </main>
+    <script type="module" src="src/main.js"></script>
+  </body>
+</html>

@@ -3354,15 +3354,296 @@ footer {
 }
 
 /* Modal Cards */
+#deploy-modal {
+  position: fixed;
+  inset: 0;
+  width: auto;
+  height: auto;
+}
+
 .modal-card.deploy-card {
   max-width: 580px;
   width: 90%;
+  max-height: min(900px, 94vh);
+  overflow-x: hidden;
+  overflow-y: auto;
   border: 1px solid rgba(212, 175, 55, 0.25) !important;
   box-shadow: 0 0 40px rgba(212, 175, 55, 0.15) !important;
   padding: 30px;
   border-radius: 8px;
   background: rgba(12, 14, 18, 0.98) !important;
   backdrop-filter: blur(12px);
+}
+
+/* Worldloom is lazy-loaded into a full-screen site view only after selection. */
+.worldloom-operation {
+  position: relative;
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(190px, 0.72fr);
+  gap: 14px;
+  width: 100%;
+  margin-top: 14px;
+  padding: 16px;
+  overflow: hidden;
+  border: 1px solid rgba(83, 211, 154, 0.36);
+  border-radius: 7px;
+  background:
+    radial-gradient(circle at 12% 10%, rgba(74, 221, 144, 0.16), transparent 38%),
+    linear-gradient(135deg, rgba(8, 31, 25, 0.98), rgba(8, 15, 18, 0.98));
+  box-shadow: inset 3px 0 #4add90, 0 16px 35px rgba(0, 0, 0, 0.24);
+  text-align: left;
+}
+
+.worldloom-operation::after {
+  content: '';
+  position: absolute;
+  right: -36px;
+  bottom: -48px;
+  width: 150px;
+  height: 150px;
+  border: 1px solid rgba(96, 239, 172, 0.11);
+  transform: rotate(45deg);
+  pointer-events: none;
+}
+
+.worldloom-operation-copy,
+.worldloom-launch-btn {
+  position: relative;
+  z-index: 1;
+}
+
+.worldloom-operation-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #75a58f;
+  font-family: var(--font-title);
+  font-size: 7px;
+  font-weight: 700;
+  letter-spacing: 1.2px;
+}
+
+.worldloom-operation-badge {
+  padding: 3px 5px;
+  border: 1px solid rgba(90, 235, 164, 0.45);
+  border-radius: 3px;
+  background: rgba(74, 221, 144, 0.12);
+  color: #82f3b7;
+}
+
+.worldloom-operation h3 {
+  margin: 8px 0 5px;
+  color: #f2fff7;
+  font-family: var(--font-title);
+  font-size: 18px;
+  font-weight: 900;
+  letter-spacing: 3px;
+  text-shadow: 0 0 18px rgba(91, 234, 164, 0.28);
+}
+
+.worldloom-operation p {
+  margin: 0;
+  color: #93a9a0;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.worldloom-launch-btn {
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 70px;
+  padding: 12px;
+  border: 1px solid #63dba0;
+  border-radius: 5px;
+  background: linear-gradient(135deg, #45ce87, #19704a);
+  color: #04110a;
+  font-family: var(--font-title);
+  text-align: center;
+  text-decoration: none;
+  box-shadow: 0 3px 0 #0c422b, 0 10px 22px rgba(19, 121, 74, 0.22);
+  transition: filter 0.16s ease, transform 0.12s ease, box-shadow 0.12s ease;
+}
+
+.worldloom-launch-btn span {
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 1.5px;
+}
+
+.worldloom-launch-btn small {
+  margin-top: 5px;
+  color: rgba(4, 17, 10, 0.72);
+  font-size: 7px;
+  font-weight: 800;
+  letter-spacing: 0.75px;
+}
+
+.worldloom-launch-btn:hover,
+.worldloom-launch-btn:focus-visible {
+  filter: brightness(1.12);
+  outline: 2px solid rgba(131, 255, 188, 0.45);
+  outline-offset: 2px;
+}
+
+.worldloom-launch-btn:active {
+  transform: translateY(2px);
+  box-shadow: 0 1px 0 #0c422b, 0 5px 12px rgba(19, 121, 74, 0.2);
+}
+
+@media (max-width: 620px), (max-height: 760px) {
+  .modal-card.deploy-card {
+    padding: 20px;
+  }
+
+  .worldloom-operation {
+    grid-template-columns: 1fr;
+  }
+
+}
+
+.is-worldloom-open {
+  overflow: hidden;
+}
+
+.worldloom-site-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 30000;
+  display: grid;
+  grid-template-rows: 48px minmax(0, 1fr);
+  visibility: hidden;
+  background: #030806;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.24s ease, visibility 0s linear 0.24s;
+}
+
+.worldloom-site-screen.active {
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+  transition-delay: 0s;
+}
+
+.worldloom-site-toolbar {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 0 14px 0 18px;
+  border-bottom: 1px solid rgba(103, 227, 164, 0.24);
+  background: linear-gradient(90deg, #08130f, #080d10 58%, #11100a);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.42);
+}
+
+.worldloom-site-toolbar > div {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  min-width: 0;
+  font-family: var(--font-title);
+}
+
+.worldloom-site-toolbar span {
+  color: #668075;
+  font-size: 7px;
+  font-weight: 700;
+  letter-spacing: 1.2px;
+}
+
+.worldloom-site-toolbar strong {
+  color: #ceffe4;
+  font-size: 12px;
+  letter-spacing: 2.5px;
+}
+
+.worldloom-site-toolbar button {
+  padding: 8px 11px;
+  border: 1px solid rgba(104, 227, 164, 0.38);
+  border-radius: 4px;
+  background: rgba(55, 169, 109, 0.1);
+  color: #a9eac8;
+  font-family: var(--font-title);
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  cursor: pointer;
+}
+
+.worldloom-site-toolbar button:hover,
+.worldloom-site-toolbar button:focus-visible {
+  border-color: #6be3a7;
+  background: rgba(75, 205, 139, 0.18);
+  outline: none;
+}
+
+#worldloom-frame {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #06100c;
+}
+
+.worldloom-frame-loading {
+  position: absolute;
+  inset: 48px 0 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background:
+    radial-gradient(circle at 50% 45%, rgba(61, 170, 111, 0.17), transparent 30%),
+    #030806;
+  color: #d8ffe9;
+  font-family: var(--font-title);
+  transition: opacity 0.3s ease, visibility 0s linear 0s;
+}
+
+.worldloom-frame-loading.is-hidden {
+  visibility: hidden;
+  opacity: 0;
+  transition-delay: 0s, 0.3s;
+}
+
+.worldloom-frame-loading > span {
+  width: 38px;
+  height: 38px;
+  border: 2px solid rgba(101, 227, 165, 0.18);
+  border-top-color: #65e3a5;
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+
+.worldloom-frame-loading strong {
+  font-size: 12px;
+  letter-spacing: 2px;
+}
+
+.worldloom-frame-loading small {
+  color: #71877d;
+  font-family: var(--font-body);
+  font-size: 10px;
+  letter-spacing: 0.4px;
+}
+
+@media (max-width: 620px) {
+  .worldloom-site-toolbar > div span {
+    display: none;
+  }
+
+  .worldloom-site-toolbar button {
+    font-size: 7px;
+  }
 }
 
 .modal-card.shop-card {

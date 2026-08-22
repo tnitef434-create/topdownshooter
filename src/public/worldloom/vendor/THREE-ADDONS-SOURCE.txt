@@ -1,0 +1,21 @@
+Three.js r184 addons used by Worldloom
+
+GLTFLoader.js
+https://github.com/mrdoob/three.js/blob/r184/examples/jsm/loaders/GLTFLoader.js
+
+SkeletonUtils.js
+https://github.com/mrdoob/three.js/blob/r184/examples/jsm/utils/SkeletonUtils.js
+
+BufferGeometryUtils.js
+https://github.com/mrdoob/three.js/blob/r184/examples/jsm/utils/BufferGeometryUtils.js
+
+Official r184 post-processing modules:
+EffectComposer.js, Pass.js, RenderPass.js, ShaderPass.js, MaskPass.js,
+OutputPass.js, GTAOPass.js, UnrealBloomPass.js, CopyShader.js,
+OutputShader.js, FXAAShader.js, GTAOShader.js, PoissonDenoiseShader.js,
+LuminosityHighPassShader.js, and SimplexNoise.js.
+https://github.com/mrdoob/three.js/tree/r184/examples/jsm
+
+The import specifiers and relative module locations were adjusted to use
+Worldloom's vendored r184 module.
+These files are covered by the Three.js MIT license in THREE-LICENSE.txt.
