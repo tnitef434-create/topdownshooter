@@ -855,6 +855,10 @@ kbd {
 }
 
 .status-row--stamina .status-icon { color: var(--gold-300); }
+.status-row--nourishment .status-icon { color: #91ca68; }
+.status-row--wetness .status-icon,
+.status-row--oxygen .status-icon { color: #6fcde8; }
+.status-row.is-hidden { display: none; }
 
 .status-track {
   height: 9px;
@@ -881,6 +885,21 @@ kbd {
 #stamina-fill {
   background: linear-gradient(90deg, #ad812e, #ebca69);
   box-shadow: 0 0 7px rgba(235, 202, 105, 0.32);
+}
+
+#nourishment-fill {
+  background: linear-gradient(90deg, #4f8d43, #9dd36d);
+  box-shadow: 0 0 7px rgba(126, 198, 94, 0.3);
+}
+
+#wetness-fill {
+  background: linear-gradient(90deg, #32698d, #77c7e2);
+  box-shadow: 0 0 7px rgba(88, 177, 215, 0.3);
+}
+
+#oxygen-fill {
+  background: linear-gradient(90deg, #457fa5, #b4edff);
+  box-shadow: 0 0 8px rgba(166, 232, 255, 0.38);
 }
 
 .hotbar {
@@ -2052,4 +2071,38 @@ kbd {
   .inventory-layout { grid-template-columns: 1fr; }
   .inventory-grid { width: max-content; max-width: 100%; }
   .craft-list { max-height: 300px; }
+}
+
+@media (max-width: 520px) {
+  .inventory-window.surface-panel {
+    width: 100%;
+    max-width: 100%;
+    padding-inline: 10px;
+  }
+
+  .inventory-grid {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .inventory-slot {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .time-chip { min-width: 0; }
+}
+
+@media (max-width: 760px) {
+  .hotbar {
+    width: min(100%, 480px);
+  }
+
+  .hotbar-slot {
+    flex: 1 1 0;
+    width: auto;
+    min-width: 0;
+    max-width: 49px;
+  }
 }

@@ -74,6 +74,7 @@ export class AudioSystem {
     this.musicEnabled = true;
     this.musicActive = true;
     this.musicLoopFading = false;
+    this.musicPauseTimer = null;
     this.noiseBuffer = null;
     this.lastStep = 0;
     this.ambientNodes = null;
@@ -85,6 +86,7 @@ export class AudioSystem {
       inOcean: false,
       nearTrees: 0,
       rainIntensity: 0,
+      sheltered: false,
       active: true,
     };
     if (typeof document !== 'undefined') {
@@ -95,14 +97,27 @@ export class AudioSystem {
   }
 
   async unlock() {
-    if (!this.enabled) return;
-    if (!this.context) this._create();
-    if (!this.context) return;
-    if (this.context.state === 'suspended') await this.context.resume();
-    await this._playMusic();
-    this.setEnvironment(this.environment);
-    this.setMusicActive(this.musicActive, 3.5);
-    this.ui('open');
+    if (!this.enabled) return false;
+    try {
+      if (!this.context) this._create();
+      if (!this.context) return false;
+      if (this.context.state === 'suspended') await this.context.resume();
+      await this._playMusic();
+      this.setEnvironment(this.environment);
+      this.setMusicActive(this.musicActive, 3.5);
+      this.ui('open');
+      return true;
+    } catch (error) {
+      // Audio is an enhancement, never a boot dependency. Browsers can reject
+      // resume() because of policy, privacy mode, or a transient device loss.
+      console.warn('Worldloom audio is unavailable; continuing silently.', error);
+      this.enabled = false;
+      [this.musicElement, this.rainElement, this.birdsElement, this.seawaterElement]
+        .forEach((element) => element?.pause?.());
+      this.breakRecordings.forEach(({ element }) => element?.pause?.());
+      this.context?.close?.().catch(() => {});
+      return false;
+    }
   }
 
   _create() {
@@ -312,8 +327,20 @@ export class AudioSystem {
 
   setMusicActive(active, fadeSeconds = 2.5) {
     this.musicActive = Boolean(active);
-    if (this.musicActive && this.musicEnabled) this._playMusic();
-    this._setMusicGain(this.musicActive && this.musicEnabled ? 1 : 0, fadeSeconds);
+    clearTimeout(this.musicPauseTimer);
+    this.musicPauseTimer = null;
+    const shouldPlay = this.enabled && this.musicActive && this.musicEnabled
+      && this.volume > 0.001 && this.musicVolume > 0.001;
+    if (shouldPlay) this._playMusic();
+    this._setMusicGain(shouldPlay ? 1 : 0, fadeSeconds);
+    if (!shouldPlay && this.musicElement) {
+      this.musicPauseTimer = setTimeout(() => {
+        const audibleNow = this.enabled && this.musicActive && this.musicEnabled
+          && this.volume > 0.001 && this.musicVolume > 0.001;
+        if (!audibleNow) this.musicElement?.pause();
+        this.musicPauseTimer = null;
+      }, Math.max(60, fadeSeconds * 1000 + 80));
+    }
   }
 
   setPaused(paused) {
@@ -322,8 +349,8 @@ export class AudioSystem {
     if (paused) this.stopBreaking();
     this._syncEnvironmentRecordings();
     if (this.ambience && this.context) {
-      const target = 0.14 * this.ambienceVolume * (paused ? 0.38 : 1);
-      this.ambience.gain.setTargetAtTime(target, this.context.currentTime, 0.5);
+      const target = 0.14 * this.ambienceVolume * (paused ? 0 : 1);
+      this.ambience.gain.setTargetAtTime(target, this.context.currentTime, paused ? 0.08 : 0.5);
     }
   }
 
@@ -333,10 +360,10 @@ export class AudioSystem {
     this.ambienceVolume = clamp01(settings.ambienceVolume ?? this.ambienceVolume);
     this.musicEnabled = settings.musicEnabled !== false;
     if (this.ambience && this.context) {
-      this.ambience.gain.setTargetAtTime(0.14 * this.ambienceVolume, this.context.currentTime, 0.15);
+      const activeGain = this.environment.active ? 1 : 0;
+      this.ambience.gain.setTargetAtTime(0.14 * this.ambienceVolume * activeGain, this.context.currentTime, 0.15);
     }
-    if (this.musicEnabled) this._playMusic();
-    this._setMusicGain(this.musicEnabled && this.musicActive ? 1 : 0, 0.35);
+    this.setMusicActive(this.musicActive, 0.35);
     this._syncEnvironmentRecordings();
   }
 
@@ -349,7 +376,7 @@ export class AudioSystem {
     if (!this.context || !this.ambientNodes) return;
 
     const {
-      dayAmount, caveDepth, nearTrees, rainIntensity, inWater, inOcean, biome,
+      dayAmount, caveDepth, nearTrees, rainIntensity, inWater, inOcean, biome, sheltered,
     } = this.environment;
     const forest = biome === 'forest' ? 1 : biome === 'plains' ? 0.35 : 0.08;
     const night = 1 - dayAmount;
@@ -371,9 +398,10 @@ export class AudioSystem {
         : Math.max(0, Math.min(1, (0.16 - caveDepth) / 0.1));
       // The supplied rain file is very quiet (-41 dB mean). This calibrated
       // gain makes it the clear primary rain layer without clipping the bus.
-      const rainLevel = rainIntensity * caveGate * (inWater ? 7.5 : 22);
+      const shelterGain = sheltered ? 0.34 : 1;
+      const rainLevel = rainIntensity * caveGate * shelterGain * (inWater ? 7.5 : 22);
       this.rainRecordingGain.gain.setTargetAtTime(Math.max(0.0001, rainLevel), now, 0.65);
-      this.rainRecordingFilter.frequency.setTargetAtTime(inWater ? 620 : 15000, now, 0.25);
+      this.rainRecordingFilter.frequency.setTargetAtTime(inWater ? 620 : sheltered ? 2100 : 15000, now, 0.25);
     }
     if (this.birdsRecordingGain) {
       const birdsAllowed = nearTrees > 0.08
@@ -400,13 +428,14 @@ export class AudioSystem {
       active, caveDepth, nearTrees, rainIntensity, inWater, inOcean, biome,
     } = this.environment;
     const surface = caveDepth < 0.08;
-    this._setLoopPlayback(this.rainElement, active && surface && rainIntensity > 0.004);
+    const audible = this.enabled && active && this.volume > 0.001 && this.ambienceVolume > 0.001;
+    this._setLoopPlayback(this.rainElement, audible && surface && rainIntensity > 0.004);
     this._setLoopPlayback(
       this.birdsElement,
-      active && surface && nearTrees > 0.08 && !inWater && !inOcean && biome !== 'desert',
+      audible && surface && nearTrees > 0.08 && !inWater && !inOcean && biome !== 'desert',
       true,
     );
-    this._setLoopPlayback(this.seawaterElement, active && Boolean(inWater), true);
+    this._setLoopPlayback(this.seawaterElement, audible && Boolean(inWater), true);
   }
 
   hasRecordedBreak(material) {
@@ -481,6 +510,42 @@ export class AudioSystem {
     this.duckMusic(0.72, 0.35);
   }
 
+  combatSwing(weight = 1) {
+    if (!this._ready()) return;
+    const amount = Math.max(0.35, Math.min(1.35, Number(weight) || 1));
+    const now = this.context.currentTime;
+    // A short filtered air movement reads as a physical swing without the
+    // synthetic laser-like tone used by the previous generic material effect.
+    this._noiseBurst(now, 0.12 + amount * 0.035, 1450 - amount * 310, 0.038 * amount, 'bandpass');
+    this._tone(now, 205 - amount * 42, 0.105 + amount * 0.025, 0.022 * amount, 'triangle', 0.48);
+  }
+
+  combatImpact(strength = 1, defeated = false) {
+    if (!this._ready()) return;
+    const amount = Math.max(0.3, Math.min(1.5, Number(strength) || 1));
+    const now = this.context.currentTime;
+    this._noiseBurst(now, defeated ? 0.28 : 0.17, defeated ? 510 : 720, 0.075 * amount, 'lowpass');
+    this._tone(now, defeated ? 72 : 104, defeated ? 0.31 : 0.18, 0.06 * amount, 'sine', 0.52);
+    if (defeated) this._noiseBurst(now + 0.06, 0.32, 230, 0.055 * amount, 'lowpass');
+    this.duckMusic(defeated ? 0.48 : 0.72, defeated ? 0.65 : 0.28);
+  }
+
+  playerHurt(strength = 1) {
+    if (!this._ready()) return;
+    const amount = Math.max(0.3, Math.min(1.4, Number(strength) || 1));
+    const now = this.context.currentTime;
+    this._noiseBurst(now, 0.19, 390, 0.07 * amount, 'lowpass');
+    this._tone(now, 92, 0.22, 0.052 * amount, 'sawtooth', 0.62);
+    this.duckMusic(0.58, 0.42);
+  }
+
+  itemDrop() {
+    if (!this._ready()) return;
+    const now = this.context.currentTime;
+    this._noiseBurst(now, 0.09, 920, 0.026, 'lowpass');
+    this._tone(now, 185, 0.11, 0.025, 'triangle', 0.58);
+  }
+
   pickup() {
     if (!this._ready()) return;
     const now = this.context.currentTime;
@@ -508,6 +573,20 @@ export class AudioSystem {
     const now = this.context.currentTime;
     [523, 659, 784, 1047].forEach((freq, i) => this._tone(now + i * 0.09, freq, 0.4, 0.034, 'sine', 0.95));
     this.duckMusic(0.5, 1.1);
+  }
+
+  thunder(distance = 70, strength = 1) {
+    if (!this._ready()) return;
+    const amount = Math.max(0.15, Math.min(1, Number(strength) || 0));
+    const delay = Math.max(0.06, Math.min(1.2, (Number(distance) || 70) / 343));
+    const caveMuffle = 1 - clamp01(this.environment.caveDepth) * 0.82;
+    const shelterMuffle = this.environment.sheltered ? 0.58 : 1;
+    const gain = amount * caveMuffle * shelterMuffle;
+    const now = this.context.currentTime + delay;
+    this._noiseBurst(now, 2.35, this.environment.sheltered ? 240 : 420, 0.34 * gain, 'lowpass');
+    this._noiseBurst(now + 0.12, 1.7, 115, 0.23 * gain, 'lowpass');
+    this._tone(now, 54, 1.45, 0.12 * gain, 'sine', 0.56);
+    this.duckMusic(0.36, 2.4);
   }
 
   _ready() {

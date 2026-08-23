@@ -70,6 +70,12 @@ const CinematicShader = {
       color *= mix(vec3(1.0), warmLight, highlight * strength);
       color *= mix(vec3(1.0), coolShadow, shadow * strength);
 
+      // Depth should remove unlit detail instead of applying a grey overlay.
+      // Bright torch/lava highlights survive, while low-luminance cave surfaces
+      // fall toward black as the player descends.
+      float caveVisibility = 0.2 + smoothstep(0.025, 0.3, luminance) * 0.8;
+      color *= mix(1.0, caveVisibility, caveAmount * 0.88);
+
       vec2 centeredUv = vUv * 2.0 - 1.0;
       centeredUv.x *= texelSize.y / max(texelSize.x, 0.000001);
       float edge = smoothstep(0.32, 1.45, dot(centeredUv, centeredUv));
@@ -128,8 +134,10 @@ export class GraphicsPipeline {
     if (this.aoEnabled && this.gtaoPass) this.composer.addPass(this.gtaoPass);
     if (this.bloomEnabled) this.composer.addPass(this.bloomPass);
     this.composer.addPass(this.cinematicPass);
-    this.composer.addPass(this.outputPass);
+    // Antialias the linear scene before OutputPass performs the final display
+    // color-space conversion; doing it afterwards produced dark edge halos.
     this.composer.addPass(this.fxaaPass);
+    this.composer.addPass(this.outputPass);
     this._resizePasses();
   }
 

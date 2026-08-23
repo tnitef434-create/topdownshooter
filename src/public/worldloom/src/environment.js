@@ -1,9 +1,9 @@
 import * as THREE from '../vendor/three.module.min.js';
-import { BLOCK, BLOCKS } from './blocks.js';
+import { BLOCK, BLOCKS, blockShapeHeight } from './blocks.js';
 import { CRACK_STAGES, createCrackAtlasTexture } from './crack-texture.js';
 import { GRAPHICS_PRESETS } from './save.js';
 
-const LIGHT_BLOCKS = new Set([BLOCK.TORCH, BLOCK.LUMEN_CRYSTAL, BLOCK.KILN, BLOCK.FURNACE, BLOCK.GLOW_MUSHROOM]);
+const LIGHT_BLOCKS = new Set([BLOCK.TORCH, BLOCK.LUMEN_CRYSTAL, BLOCK.KILN, BLOCK.FURNACE]);
 
 function makeAtmosphereMaterial() {
   return new THREE.ShaderMaterial({
@@ -109,10 +109,16 @@ function enhanceTerrainMaterial(material, sharedUniforms) {
     injectWorldPosition(shader, `
       vec2 worldloomAtlasCell = floor(uv * 7.0);
       float worldloomTile = worldloomAtlasCell.x + (6.0 - worldloomAtlasCell.y) * 7.0;
-      float worldloomLeafMask = 1.0 - step(0.45, abs(worldloomTile - 8.0));
+      float worldloomLeafMask = max(
+        1.0 - step(0.45, abs(worldloomTile - 8.0)),
+        1.0 - step(0.45, abs(worldloomTile - 38.0))
+      );
       float worldloomPlantMask = max(
         1.0 - step(0.45, abs(worldloomTile - 24.0)),
-        max(1.0 - step(0.45, abs(worldloomTile - 25.0)), 1.0 - step(0.45, abs(worldloomTile - 34.0)))
+        max(
+          1.0 - step(0.45, abs(worldloomTile - 25.0)),
+          max(1.0 - step(0.45, abs(worldloomTile - 34.0)), 1.0 - step(0.45, abs(worldloomTile - 39.0)))
+        )
       );
       float worldloomPlantTip = smoothstep(0.08, 0.92, fract(uv.y * 7.0));
       vec3 worldloomWindPosition = (modelMatrix * vec4(position, 1.0)).xyz;
@@ -131,7 +137,7 @@ function enhanceTerrainMaterial(material, sharedUniforms) {
     );
     material.userData.worldloomShader = shader;
   };
-  material.customProgramCacheKey = () => 'worldloom-terrain-wind-v3';
+  material.customProgramCacheKey = () => 'worldloom-terrain-wind-v4';
   material.needsUpdate = true;
 }
 
@@ -259,13 +265,16 @@ class RainField {
     this.enabled = true;
     this.density = GRAPHICS_PRESETS.balanced.rainDensity;
     this.reducedMotion = false;
-    this.initialized = false;
+    this.initializedCount = 0;
     this.sheltered = false;
     this.shelterTimer = 0;
+    this.groundCache = new Map();
     this.windX = 4.8;
     this.windZ = 1.9;
     this.heads = new Float32Array(MAX_RAIN_DROPS * 3);
     this.grounds = new Float32Array(MAX_RAIN_DROPS);
+    this.groundCellX = new Int32Array(MAX_RAIN_DROPS);
+    this.groundCellZ = new Int32Array(MAX_RAIN_DROPS);
     this.speeds = new Float32Array(MAX_RAIN_DROPS);
     this.positions = new Float32Array(MAX_RAIN_DROPS * 6);
     const geometry = new THREE.BufferGeometry();
@@ -336,7 +345,8 @@ class RainField {
 
   setWorld(world) {
     this.world = world || null;
-    this.initialized = false;
+    this.initializedCount = 0;
+    this.groundCache.clear();
     if (!world) {
       this.streaks.visible = false;
       this.splashes.visible = false;
@@ -349,9 +359,32 @@ class RainField {
     this.reducedMotion = Boolean(reducedMotion);
   }
 
-  _groundAt(x, z, fallback) {
-    if (!this.world?.terrainHeight) return fallback;
-    return this.world.terrainHeight(Math.floor(x), Math.floor(z)) + 1.03;
+  _groundAt(x, z, fallback, maxY = null) {
+    if (!this.world?.getBlock) return fallback;
+    const blockX = Math.floor(x);
+    const blockZ = Math.floor(z);
+    const key = `${blockX},${blockZ}`;
+    const now = performance.now();
+    const worldHeight = Number(this.world.worldHeight) || 96;
+    const scanTop = Number.isFinite(maxY)
+      ? Math.max(0, Math.min(worldHeight - 1, Math.ceil(maxY)))
+      : worldHeight - 1;
+    const cached = this.groundCache.get(key);
+    if (cached && cached.expires > now && cached.scanTop >= scanTop && cached.height <= scanTop + 1.05) {
+      return cached.height;
+    }
+    let height = Number(this.world.terrainHeight?.(blockX, blockZ)) + 1.03;
+    for (let y = scanTop; y >= 0; y--) {
+      const id = this.world.getBlock(blockX, y, blockZ);
+      const definition = BLOCKS[id];
+      if (!definition?.solid && !definition?.liquid && !definition?.hazard) continue;
+      const liquidSurface = definition.liquid ? this.world.getFluidSurfaceY?.(blockX, y, blockZ) : null;
+      height = (liquidSurface ?? (y + blockShapeHeight(id))) + 0.025;
+      break;
+    }
+    if (this.groundCache.size > 2048) this.groundCache.delete(this.groundCache.keys().next().value);
+    this.groundCache.set(key, { height, scanTop, expires: now + 750 });
+    return Number.isFinite(height) ? height : fallback;
   }
 
   _spawn(index, focus, fromTop = true) {
@@ -364,6 +397,8 @@ class RainField {
     this.heads[offset + 1] = fromTop ? Math.max(focus.y + 12, ground + 12) + Math.random() * 22 : ground + Math.random() * 28;
     this.heads[offset + 2] = z;
     this.grounds[index] = ground;
+    this.groundCellX[index] = Math.floor(x);
+    this.groundCellZ[index] = Math.floor(z);
     this.speeds[index] = 19 + Math.random() * 12;
   }
 
@@ -372,7 +407,7 @@ class RainField {
     const x = Math.floor(focus.x);
     const z = Math.floor(focus.z);
     const startY = Math.max(0, Math.floor(focus.y + 1.8));
-    const endY = Math.min(Number(this.world.worldHeight) || 128, startY + 48);
+    const endY = Number(this.world.worldHeight) || 128;
     for (let y = startY; y < endY; y++) {
       const id = this.world.getBlock(x, y, z);
       if (BLOCKS[id]?.solid) return true;
@@ -397,16 +432,19 @@ class RainField {
       this.shelterTimer = 0.42;
       this.sheltered = this._checkShelter(focus);
     }
-    const outdoors = visibleIntensity > 0.012 && !this.sheltered;
-    this.streaks.visible = outdoors;
-    this.splashes.visible = outdoors;
-    if (!outdoors) return;
+    // Keep precipitation outside a roof visible from beneath it. Per-column
+    // ground probing stops each streak on the actual roof/leaf/water surface;
+    // deep-cave rain remains naturally occluded by terrain.
+    const raining = visibleIntensity > 0.012;
+    this.streaks.visible = raining;
+    this.splashes.visible = raining;
+    if (!raining) return;
 
     const density = this.density * (this.reducedMotion ? 0.62 : 1);
     const active = Math.min(MAX_RAIN_DROPS, Math.max(90, Math.round(1720 * density * visibleIntensity)));
-    if (!this.initialized) {
-      for (let index = 0; index < MAX_RAIN_DROPS; index++) this._spawn(index, focus, false);
-      this.initialized = true;
+    if (active > this.initializedCount) {
+      for (let index = this.initializedCount; index < active; index++) this._spawn(index, focus, false);
+      this.initializedCount = active;
     }
     const gust = Math.sin(performance.now() * 0.00023) * 1.1;
     const windX = this.windX + gust;
@@ -417,6 +455,18 @@ class RainField {
       this.heads[headOffset] += windX * dt;
       this.heads[headOffset + 1] -= this.speeds[index] * dt;
       this.heads[headOffset + 2] += windZ * dt;
+      const cellX = Math.floor(this.heads[headOffset]);
+      const cellZ = Math.floor(this.heads[headOffset + 2]);
+      if (cellX !== this.groundCellX[index] || cellZ !== this.groundCellZ[index]) {
+        this.grounds[index] = this._groundAt(
+          this.heads[headOffset],
+          this.heads[headOffset + 2],
+          this.grounds[index],
+          this.heads[headOffset + 1],
+        );
+        this.groundCellX[index] = cellX;
+        this.groundCellZ[index] = cellZ;
+      }
       if (this.heads[headOffset + 1] <= this.grounds[index]
         || Math.abs(this.heads[headOffset] - focus.x) > 27
         || Math.abs(this.heads[headOffset + 2] - focus.z) > 27) {
@@ -584,6 +634,184 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, Number(value) || 0));
 }
 
+class LightningField {
+  constructor(scene) {
+    this.scene = scene;
+    this.world = null;
+    this.timer = 10;
+    this.age = 10;
+    this.duration = 0.24;
+    this.intensity = 0;
+    this.distance = 0;
+    this.reducedMotion = false;
+    this.enabled = true;
+    this.randomState = 0x6d2b79f5;
+    this.geometry = new THREE.BufferGeometry();
+    this.material = new THREE.LineBasicMaterial({
+      color: 0xe8f2ff,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      toneMapped: false,
+      fog: true,
+    });
+    this.bolt = new THREE.LineSegments(this.geometry, this.material);
+    this.bolt.name = 'Procedural storm lightning';
+    this.bolt.visible = false;
+    this.bolt.renderOrder = 20;
+    this.flash = new THREE.SpotLight(0xdcecff, 0, 210, Math.PI * 0.42, 0.48, 1.35);
+    this.flash.name = 'Lightning flash';
+    this.flash.castShadow = true;
+    this.flash.shadow.mapSize.set(512, 512);
+    this.flash.shadow.camera.near = 1;
+    this.flash.shadow.camera.far = 210;
+    this.flash.shadow.bias = -0.0015;
+    this.flash.shadow.normalBias = 0.035;
+    this.flash.target.name = 'Lightning flash target';
+    scene.add(this.bolt, this.flash, this.flash.target);
+  }
+
+  setWorld(world) {
+    this.world = world || null;
+    this.randomState = ((Number(world?.seed) >>> 0) ^ 0xa511e9b3) || 0x6d2b79f5;
+    this.timer = 7 + this._random() * 14;
+    this.age = 10;
+    this.bolt.visible = false;
+    this.flash.intensity = 0;
+  }
+
+  setQuality(enabled, reducedMotion) {
+    this.enabled = Boolean(enabled);
+    this.reducedMotion = Boolean(reducedMotion);
+    this.flash.castShadow = this.enabled && !this.reducedMotion;
+    if (!this.enabled) {
+      this.bolt.visible = false;
+      this.flash.intensity = 0;
+    }
+  }
+
+  _random() {
+    this.randomState = (this.randomState + 0x6d2b79f5) >>> 0;
+    let value = this.randomState;
+    value = Math.imul(value ^ (value >>> 15), value | 1);
+    value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
+    return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
+  }
+
+  _strike(focus, stormIntensity) {
+    let angle = 0;
+    let distance = 0;
+    let targetX = focus.x;
+    let targetZ = focus.z;
+    let targetReady = false;
+    for (let attempt = 0; attempt < 8; attempt++) {
+      angle = this._random() * Math.PI * 2;
+      distance = 28 + this._random() * 76;
+      targetX = focus.x + Math.cos(angle) * distance;
+      targetZ = focus.z + Math.sin(angle) * distance;
+      if (this.world?.isPositionReady?.(targetX, targetZ)) {
+        targetReady = true;
+        break;
+      }
+    }
+    if (!targetReady) {
+      for (const fallbackDistance of [22, 14, 7, 0]) {
+        angle = this._random() * Math.PI * 2;
+        distance = fallbackDistance;
+        targetX = focus.x + Math.cos(angle) * distance;
+        targetZ = focus.z + Math.sin(angle) * distance;
+        if (this.world?.isPositionReady?.(targetX, targetZ)) {
+          targetReady = true;
+          break;
+        }
+      }
+    }
+    if (!targetReady) return null;
+    let targetY = (Number(this.world?.terrainHeight?.(targetX, targetZ)) || 0) + 1;
+    const blockX = Math.floor(targetX);
+    const blockZ = Math.floor(targetZ);
+    for (let y = (Number(this.world.worldHeight) || 96) - 1; y >= 0; y--) {
+      const id = this.world.getBlock(blockX, y, blockZ);
+      const definition = BLOCKS[id];
+      if (definition?.liquid) {
+        targetY = this.world.getFluidSurfaceY?.(blockX, y, blockZ) ?? y + 0.92;
+        break;
+      }
+      if (definition?.solid) {
+        targetY = y + blockShapeHeight(id);
+        break;
+      }
+    }
+    const cloudY = Math.max(targetY + 30, 76 + this._random() * 22);
+    const vertices = [];
+    let previous = new THREE.Vector3(targetX + (this._random() - 0.5) * 5, cloudY, targetZ + (this._random() - 0.5) * 5);
+    const segments = 16;
+    for (let index = 1; index <= segments; index++) {
+      const amount = index / segments;
+      const spread = (1 - amount) * 6.5;
+      const next = new THREE.Vector3(
+        THREE.MathUtils.lerp(previous.x, targetX, 0.32) + (this._random() - 0.5) * spread,
+        THREE.MathUtils.lerp(cloudY, targetY, amount),
+        THREE.MathUtils.lerp(previous.z, targetZ, 0.32) + (this._random() - 0.5) * spread,
+      );
+      vertices.push(previous.x, previous.y, previous.z, next.x, next.y, next.z);
+      if (index > 3 && index < segments - 2 && this._random() < 0.3) {
+        const branchLength = 3 + this._random() * 8;
+        vertices.push(
+          next.x, next.y, next.z,
+          next.x + (this._random() - 0.5) * branchLength,
+          next.y - 2 - this._random() * 5,
+          next.z + (this._random() - 0.5) * branchLength,
+        );
+      }
+      previous = next;
+    }
+    this.geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+    this.geometry.computeBoundingSphere();
+    this.age = 0;
+    this.intensity = clamp(stormIntensity, 0.35, 1);
+    this.distance = distance;
+    this.bolt.visible = true;
+    this.flash.position.set(targetX, targetY + 38, targetZ);
+    this.flash.target.position.set(targetX, targetY, targetZ);
+    this.flash.target.updateMatrixWorld();
+    return { distance, intensity: this.intensity };
+  }
+
+  update(dt, focus, rainIntensity, cloudCover, localCoverage, sheltered = false) {
+    if (!this.enabled || !this.world) return null;
+    if (dt <= 0) {
+      this.age = this.duration + 1;
+      this.bolt.visible = false;
+      this.flash.intensity = 0;
+      return null;
+    }
+    const stormReady = rainIntensity > 0.52 && cloudCover > 0.76 && localCoverage > 0.22;
+    if (stormReady) this.timer -= dt;
+    else this.timer = Math.max(this.timer, 3.5);
+    let event = null;
+    if (stormReady && this.timer <= 0) {
+      event = this._strike(focus, rainIntensity);
+      this.timer = 7 + this._random() * 19;
+    }
+    this.age += dt;
+    if (this.age <= this.duration) {
+      const firstPulse = Math.exp(-Math.pow((this.age - 0.035) / 0.027, 2));
+      const secondPulse = Math.exp(-Math.pow((this.age - 0.13) / 0.045, 2)) * 0.48;
+      const pulse = Math.min(1, firstPulse + secondPulse);
+      const safePulse = this.reducedMotion ? pulse * 0.28 : pulse;
+      this.material.opacity = safePulse;
+      // The sky flash is occluded while underground or beneath a roof, avoiding
+      // the old point-light leak through cave walls.
+      this.flash.intensity = sheltered ? 0 : safePulse * this.intensity * (this.reducedMotion ? 38 : 180);
+    } else {
+      this.bolt.visible = false;
+      this.flash.intensity = 0;
+    }
+    return event;
+  }
+}
+
 export class Environment {
   constructor(scene, renderer) {
     this.scene = scene;
@@ -597,16 +825,23 @@ export class Environment {
     this.cloudCoverTarget = 0.34;
     this.localCloudCoverage = 0;
     this.localCloudCount = 0;
+    this.nearestCloudDistance = Number.POSITIVE_INFINITY;
     this.weatherPhase = 'clear';
     this.stormIntensity = 0.72;
+    this.weatherBuildAge = 0;
+    this.pendingStormDuration = 100;
     this.weatherTimer = 6 + Math.random() * 14;
     this.weatherWorld = null;
+    this.onLightning = null;
     this.weatherEnabled = true;
     this.graphicsQuality = 'balanced';
     this.graphicsProfile = GRAPHICS_PRESETS.balanced;
     this.localLightLimit = this.graphicsProfile.localLights;
     this.localShadowLightLimit = 0;
     this.shadowExtent = 46;
+    this.skyExposure = 1;
+    this.skyExposureTarget = 1;
+    this.skyExposureTimer = 0;
     this.skyColor = new THREE.Color();
     this.fogColor = new THREE.Color();
     this.daySky = new THREE.Color('#70bce8');
@@ -700,6 +935,7 @@ export class Environment {
     scene.add(this.clouds);
     this.rain = new RainField(scene);
     this.fallingLeaves = new FallingLeaves(scene);
+    this.lightning = new LightningField(scene);
     this.localLights = Array.from({ length: 8 }, (_, index) => {
       const light = new THREE.PointLight(0xffb45f, 0, 10, 2);
       light.name = `Nearby voxel light ${index + 1}`;
@@ -719,15 +955,20 @@ export class Environment {
     this.weatherWorld = world || null;
     this.rain.setWorld(this.weatherWorld);
     this.fallingLeaves.setWorld(this.weatherWorld);
+    this.lightning.setWorld(this.weatherWorld);
   }
 
   forceWeather(kind = 'rain', intensity = 0.78, duration = 120) {
     const raining = kind === 'rain';
-    this.weatherPhase = raining ? 'rain' : 'clear';
-    this.cloudCover = raining ? Math.max(this.cloudCover, 0.8) : this.cloudCover;
+    // Forced storms still obey the visual contract: clouds gather and darken
+    // overhead first; precipitation is never switched on beneath a blue sky.
+    this.weatherPhase = raining ? 'building' : 'clear';
     this.cloudCoverTarget = raining ? 0.96 : 0.32;
-    this.rainTarget = raining ? clamp(intensity, 0, 1) : 0;
-    this.weatherTimer = Math.max(1, Number(duration) || 120);
+    this.stormIntensity = raining ? clamp(intensity, 0, 1) : this.stormIntensity;
+    this.pendingStormDuration = Math.max(12, Number(duration) || 120);
+    this.weatherBuildAge = 0;
+    this.rainTarget = 0;
+    this.weatherTimer = raining ? 12 : Math.max(1, Number(duration) || 120);
   }
 
   getWeatherState() {
@@ -738,6 +979,7 @@ export class Environment {
       cloudCover: this.cloudCover,
       localCloudCoverage: this.localCloudCoverage,
       localCloudCount: this.localCloudCount,
+      skyExposure: this.skyExposure,
     };
   }
 
@@ -754,6 +996,7 @@ export class Environment {
     this.shadowExtent = Number(profile.shadowExtent) || 46;
     this.rain.setQuality(profile, this.weatherEnabled, settings.reducedMotion);
     this.fallingLeaves.setQuality(profile, true, settings.reducedMotion);
+    this.lightning.setQuality(this.weatherEnabled && profile.atmosphereDetail >= 0.6, settings.reducedMotion);
     this.graphicsUniforms.windStrength.value = settings.reducedMotion ? 0.22 : 1;
 
     if (this.renderer?.shadowMap) {
@@ -774,8 +1017,10 @@ export class Environment {
       this.sunLight.shadow.map = null;
       this.sunLight.shadow.needsUpdate = true;
     }
-    const cloudCount = Math.max(3, Math.round(this.clouds.children.length * this.cloudCover * Math.min(1, profile.cloudAmount + 0.25)));
-    this.clouds.children.forEach((cloud, index) => { cloud.visible = index < cloudCount; });
+    const cloudCount = Math.max(2, Math.round(this.clouds.children.length * this.cloudCover * Math.min(1, profile.cloudAmount + 0.25)));
+    this.clouds.children.forEach((cloud, index) => {
+      cloud.userData.targetVisible = index < cloudCount;
+    });
     this.atmosphere.material.uniforms.atmosphereDetail.value = profile.atmosphereDetail;
     if (this.renderer) this.renderer.toneMappingExposure = quality === 'low' ? 0.96 : quality === 'ultra' ? 1.04 : 1.01;
     this.localLights.forEach((light, index) => {
@@ -856,7 +1101,11 @@ export class Environment {
       const pieces = 3 + Math.floor(random() * 4);
       for (let p = 0; p < pieces; p++) {
         const mesh = new THREE.Mesh(geometry, material);
-        mesh.position.set(p * 5 + random() * 2, random() * 1.4, random() * 5);
+        mesh.position.set(
+          (p - (pieces - 1) * 0.5) * 5 + (random() - 0.5) * 2,
+          random() * 1.4,
+          (random() - 0.5) * 5,
+        );
         mesh.scale.set(8 + random() * 8, 1.1 + random() * 1.4, 4 + random() * 5);
         cloud.add(mesh);
       }
@@ -865,6 +1114,11 @@ export class Environment {
       cloud.position.set(Math.cos(angle) * radius, 78 + random() * 22, Math.sin(angle) * radius);
       cloud.userData.speed = 0.35 + random() * 0.45;
       cloud.userData.wrapOffset = random() * 18;
+      cloud.userData.centerOffsetX = 0;
+      cloud.userData.coverageRadius = 18 + pieces * 3.4;
+      cloud.userData.appearance = i < 3 ? 1 : 0;
+      cloud.userData.targetVisible = i < 3;
+      cloud.scale.setScalar(Math.max(0.001, cloud.userData.appearance));
       group.add(cloud);
     }
     group.renderOrder = -1;
@@ -873,33 +1127,66 @@ export class Environment {
 
   _updateCloudField(dt, focus) {
     const cloudRange = 155;
-    this.clouds.children.forEach((cloud) => {
+    const ranked = [];
+    this.clouds.children.forEach((cloud, index) => {
       cloud.position.x += dt * cloud.userData.speed;
       if (cloud.position.x < focus.x - cloudRange) cloud.position.x = focus.x + cloudRange + cloud.userData.wrapOffset;
       if (cloud.position.x > focus.x + cloudRange) cloud.position.x = focus.x - cloudRange - cloud.userData.wrapOffset;
       if (cloud.position.z < focus.z - cloudRange) cloud.position.z += cloudRange * 2;
       if (cloud.position.z > focus.z + cloudRange) cloud.position.z -= cloudRange * 2;
+      const cloudX = cloud.position.x + cloud.userData.centerOffsetX;
+      const distance = Math.hypot(cloudX - focus.x, cloud.position.z - focus.z);
+      ranked.push({ cloud, index, distance });
     });
-    const visibleClouds = Math.max(3, Math.round(
+    const visibleClouds = Math.max(2, Math.round(
       this.clouds.children.length * this.cloudCover * Math.min(1, this.graphicsProfile.cloudAmount + 0.25),
     ));
-    this.clouds.children.forEach((cloud, index) => { cloud.visible = index < visibleClouds; });
+    // Storm fronts prioritize physically nearby cloud banks. Their independent
+    // world positions and wind motion do not follow the player, but this makes
+    // the visible buildup happen overhead before rain is permitted.
+    if (this.weatherPhase === 'building' || this.weatherPhase === 'rain') {
+      ranked.sort((a, b) => a.distance - b.distance);
+    }
+    const selected = new Set(ranked.slice(0, visibleClouds).map(({ cloud }) => cloud));
+    for (const { cloud } of ranked) {
+      const target = selected.has(cloud) ? 1 : 0;
+      cloud.userData.targetVisible = target > 0;
+      const response = target > cloud.userData.appearance ? 2.6 : 4.8;
+      cloud.userData.appearance += (target - cloud.userData.appearance) * (1 - Math.exp(-dt / response));
+      const appearance = clamp(cloud.userData.appearance, 0, 1);
+      cloud.visible = appearance > 0.018;
+      cloud.scale.set(
+        Math.max(0.001, appearance),
+        Math.max(0.001, 0.32 + appearance * 0.68),
+        Math.max(0.001, appearance),
+      );
+    }
 
-    const localRadius = 100;
+    const localRadius = 105;
     let weightedCoverage = 0;
     let nearbyCount = 0;
-    this.clouds.children.forEach((cloud) => {
-      if (!cloud.visible) return;
-      const distance = Math.hypot(cloud.position.x - focus.x, cloud.position.z - focus.z);
+    let nearest = Number.POSITIVE_INFINITY;
+    ranked.forEach(({ cloud, distance }) => {
+      const appearance = Number(cloud.userData.appearance) || 0;
+      if (!cloud.visible || appearance < 0.12) return;
       if (distance >= localRadius) return;
-      nearbyCount++;
-      weightedCoverage += 1 - distance / localRadius;
+      nearest = Math.min(nearest, distance);
+      if (distance < 88 && appearance > 0.55) nearbyCount++;
+      weightedCoverage += (1 - distance / localRadius)
+        * (Number(cloud.userData.coverageRadius) || 25) / 25
+        * appearance;
     });
+    const overheadPermission = Number.isFinite(nearest)
+      ? 1 - THREE.MathUtils.smoothstep(nearest, 34, 78)
+      : 0;
+    const areaCoverage = clamp(weightedCoverage / 2.1, 0, 1);
     this.localCloudCount = nearbyCount;
-    this.localCloudCoverage = nearbyCount >= 2 ? clamp(weightedCoverage / 1.1, 0, 1) : 0;
+    this.nearestCloudDistance = nearest;
+    this.localCloudCoverage = nearbyCount >= 3 ? Math.min(areaCoverage, overheadPermission) : 0;
   }
 
   _updateWeather(dt) {
+    if (this.weatherPhase === 'building') this.weatherBuildAge += dt;
     if (this.weatherWorld && this.weatherEnabled) {
       this.weatherTimer -= dt;
       if (this.weatherTimer <= 0) {
@@ -909,16 +1196,23 @@ export class Environment {
           this.cloudCoverTarget = 0.22 + Math.random() * 0.28;
           this.weatherTimer = 105 + Math.random() * 210;
         } else if (this.weatherPhase === 'building') {
-          if (this.cloudCover >= 0.72 && this.localCloudCount >= 2 && this.localCloudCoverage >= 0.24) {
+          if (
+            this.weatherBuildAge >= 10
+            && this.cloudCover >= 0.8
+            && this.localCloudCount >= 3
+            && this.localCloudCoverage >= 0.58
+          ) {
             this.weatherPhase = 'rain';
             this.rainTarget = this.stormIntensity;
-            this.weatherTimer = 65 + Math.random() * 145;
+            this.weatherTimer = this.pendingStormDuration || (65 + Math.random() * 145);
           } else {
-            this.weatherTimer = 3;
+            this.weatherTimer = 2.5;
           }
         } else {
           this.weatherPhase = 'building';
           this.stormIntensity = 0.48 + Math.random() * 0.5;
+          this.pendingStormDuration = 65 + Math.random() * 145;
+          this.weatherBuildAge = 0;
           this.cloudCoverTarget = 0.84 + Math.random() * 0.16;
           this.rainTarget = 0;
           this.weatherTimer = 14 + Math.random() * 12;
@@ -929,9 +1223,9 @@ export class Environment {
       this.weatherPhase = 'clear';
     }
     this.cloudCover += (this.cloudCoverTarget - this.cloudCover) * (1 - Math.exp(-dt / 8.5));
-    const cloudPermission = THREE.MathUtils.smoothstep(this.cloudCover, 0.58, 0.78);
-    const localPermission = this.localCloudCount >= 2
-      ? THREE.MathUtils.smoothstep(this.localCloudCoverage, 0.2, 0.7)
+    const cloudPermission = THREE.MathUtils.smoothstep(this.cloudCover, 0.7, 0.86);
+    const localPermission = this.localCloudCount >= 3
+      ? THREE.MathUtils.smoothstep(this.localCloudCoverage, 0.54, 0.78)
       : 0;
     const permittedRain = this.rainTarget * cloudPermission * localPermission;
     const response = permittedRain > this.rainIntensity ? 7 : 1.25;
@@ -942,11 +1236,76 @@ export class Environment {
     if (this.rainIntensity < 0.0005) this.rainIntensity = 0;
   }
 
+  _updateSkyExposure(dt, focus) {
+    this.skyExposureTimer -= dt;
+    if (this.skyExposureTimer <= 0) {
+      this.skyExposureTimer = 0.18;
+      const world = this.weatherWorld;
+      if (!world?.getBlock || !focus) {
+        this.skyExposureTarget = 1;
+      } else {
+        const startY = Math.floor(focus.y + 1.55);
+        const maxY = Math.max(startY, (Number(world.worldHeight) || 96) - 1);
+        // Most outdoor skylight arrives through the column directly above the
+        // player. Keep a small peripheral contribution for cave mouths, while
+        // ensuring a one-block roof cannot remain almost as bright as open sky.
+        const samples = [
+          [0, 0, 0.84],
+          [0.62, 0, 0.04],
+          [-0.62, 0, 0.04],
+          [0, 0.62, 0.04],
+          [0, -0.62, 0.04],
+        ];
+        let exposure = 0;
+        let centerTransmission = 1;
+        for (const [offsetX, offsetZ, weight] of samples) {
+          const x = Math.floor(focus.x + offsetX);
+          const z = Math.floor(focus.z + offsetZ);
+          let transmission = 1;
+          for (let y = startY; y <= maxY; y++) {
+            const definition = BLOCKS[world.getBlock(x, y, z)];
+            if (!definition?.solid || definition.liquid) continue;
+            if (definition.transparent) {
+              transmission *= 0.58;
+              if (transmission > 0.08) continue;
+            }
+            transmission = 0;
+            break;
+          }
+          if (offsetX === 0 && offsetZ === 0) centerTransmission = transmission;
+          exposure += transmission * weight;
+        }
+        if (centerTransmission <= 0.001) {
+          const centerX = Math.floor(focus.x);
+          const centerZ = Math.floor(focus.z);
+          const enclosureY = Math.floor(focus.y + 0.85);
+          const wallCount = [[-1, 0], [1, 0], [0, -1], [0, 1]].reduce((count, [dx, dz]) => {
+            const definition = BLOCKS[world.getBlock(centerX + dx, enclosureY, centerZ + dz)];
+            return count + Number(Boolean(definition?.solid && !definition.liquid && !definition.transparent));
+          }, 0);
+          if (wallCount >= 4) exposure = 0;
+          else if (wallCount === 3) exposure *= 0.08;
+          else if (wallCount === 2) exposure *= 0.28;
+        }
+        const surface = Number(world.terrainHeight?.(focus.x, focus.z));
+        const depth = Number.isFinite(surface)
+          ? clamp((surface + 1 - focus.y) / 18, 0, 1)
+          : 0;
+        const depthTransmission = 1 - THREE.MathUtils.smoothstep(depth, 0.04, 1) * 0.8;
+        this.skyExposureTarget = clamp(exposure * depthTransmission, 0, 1);
+      }
+    }
+    const response = this.skyExposureTarget < this.skyExposure ? 0.18 : 0.62;
+    this.skyExposure += (this.skyExposureTarget - this.skyExposure) * (1 - Math.exp(-dt / response));
+    if (this.skyExposure < 0.002) this.skyExposure = 0;
+  }
+
   update(dt, focus, viewDistance = 4) {
     this.graphicsUniforms.time.value += dt;
     this.time = (this.time + dt / this.cycleSeconds) % 1;
     this._updateCloudField(dt, focus);
     this._updateWeather(dt);
+    this._updateSkyExposure(dt, focus);
     const angle = this.time * Math.PI * 2 - Math.PI * 0.5;
     const solar = Math.sin(angle);
     this.dayAmount = THREE.MathUtils.smoothstep(solar, -0.18, 0.22);
@@ -957,7 +1316,8 @@ export class Environment {
     this.skyColor.copy(this._colorA).lerp(this.dawnSky, twilight * 0.62);
     this._colorB.copy(this.nightFog).lerp(this.dayFog, this.dayAmount);
     this.fogColor.copy(this._colorB).lerp(this.dawnFog, twilight * 0.7);
-    const stormAmount = Math.max(this.rainIntensity * 0.72, Math.max(0, this.cloudCover - 0.55) * 0.34);
+    const formingFront = THREE.MathUtils.smoothstep(this.cloudCover, 0.58, 0.92);
+    const stormAmount = Math.max(this.rainIntensity * 0.72, formingFront * 0.38);
     this.skyColor.lerp(this._stormSky, stormAmount);
     this.fogColor.lerp(this._stormFog, stormAmount * 0.82);
     this.scene.background.copy(this.skyColor);
@@ -975,14 +1335,21 @@ export class Environment {
 
     // Keep skylight subordinate to the directional sources so form is defined
     // by light and shadow instead of the previous flat ambient wash.
-    this.hemisphere.intensity = (0.2 + this.dayAmount * 0.72) * (1 - this.rainIntensity * 0.2);
+    const skyAccess = 0.02 + this.skyExposure * 0.98;
+    // Keep a small global directional component so a cave entrance remains
+    // visibly brighter than its interior; roof shadows and baked cover lighting
+    // still remove that component from enclosed surfaces.
+    const directSky = 0.08 + THREE.MathUtils.smoothstep(this.skyExposure, 0.08, 0.62) * 0.92;
+    this.hemisphere.intensity = (0.2 + this.dayAmount * 0.72) * (1 - this.rainIntensity * 0.2) * skyAccess;
     this.hemisphere.color.setRGB(0.34 + this.dayAmount * 0.44, 0.42 + this.dayAmount * 0.45, 0.66 + this.dayAmount * 0.34);
     this.hemisphere.groundColor.setRGB(0.055 + this.dayAmount * 0.09, 0.07 + this.dayAmount * 0.11, 0.095 + this.dayAmount * 0.035);
-    this.sunLight.intensity = (0.015 + this.dayAmount * 3.65) * (1 - this.rainIntensity * 0.62);
+    this.sunLight.intensity = (0.015 + this.dayAmount * 3.65) * (1 - this.rainIntensity * 0.62) * directSky;
     this.sunLight.color.copy(this._sunDawn).lerp(this._sunDay, this.dayAmount);
-    this.moonLight.intensity = Math.pow(1 - this.dayAmount, 1.55) * 0.24;
+    this.moonLight.intensity = Math.pow(1 - this.dayAmount, 1.55) * 0.24 * directSky;
     if ('environmentIntensity' in this.scene) {
-      this.scene.environmentIntensity = (0.14 + this.dayAmount * 0.36) * (1 - this.rainIntensity * 0.28);
+      this.scene.environmentIntensity = (0.035 + this.dayAmount * 0.43)
+        * (1 - this.rainIntensity * 0.28)
+        * (0.025 + this.skyExposure * 0.975);
     }
     if (this.renderer) {
       const baseExposure = this.graphicsQuality === 'low' ? 0.96 : this.graphicsQuality === 'ultra' ? 1.04 : 1.01;
@@ -991,7 +1358,7 @@ export class Environment {
     }
 
     const radius = 92;
-    const sunPosition = new THREE.Vector3(Math.cos(angle) * radius, solar * radius, Math.sin(angle * 0.43) * radius * 0.35);
+    const sunPosition = new THREE.Vector3(Math.cos(angle) * radius, solar * radius, Math.sin(angle) * radius * 0.35);
     this.sun.position.copy(focus).add(sunPosition);
     this.moon.position.copy(focus).sub(sunPosition);
     this.sun.material.opacity = THREE.MathUtils.smoothstep(solar, -0.16, 0.03);
@@ -1020,7 +1387,7 @@ export class Environment {
     const cloudMaterial = this.clouds.children[0]?.children[0]?.material;
     if (cloudMaterial) {
       cloudMaterial.color.copy(this._cloudNight).lerp(this._cloudDay, this.dayAmount).lerp(this._cloudDawn, twilight * 0.25);
-      cloudMaterial.color.lerp(this._stormSky, this.rainIntensity * 0.65);
+      cloudMaterial.color.lerp(this._stormSky, Math.max(this.rainIntensity * 0.65, formingFront * 0.52));
       cloudMaterial.opacity = Math.min(0.94, (0.34 + this.dayAmount * 0.2 + this.cloudCover * 0.34 + this.rainIntensity * 0.12) * Math.min(1, this.graphicsProfile.cloudAmount + 0.28));
     }
     const clock = performance.now();
@@ -1032,6 +1399,15 @@ export class Environment {
     });
     this.rain.update(dt, focus, this.rainIntensity);
     this.fallingLeaves.update(dt, focus, this.graphicsUniforms.windStrength.value, this.rainIntensity);
+    const lightningEvent = this.lightning.update(
+      dt,
+      focus,
+      this.rainIntensity,
+      this.cloudCover,
+      this.localCloudCoverage,
+      this.rain.sheltered,
+    );
+    if (lightningEvent) this.onLightning?.(lightningEvent);
   }
 
   updateLocalLights(world, focus) {
@@ -1078,10 +1454,6 @@ export class Environment {
         light.color.set(0xff7a3d);
         light.userData.baseIntensity = 28;
         light.distance = 8;
-      } else if (source.id === BLOCK.GLOW_MUSHROOM) {
-        light.color.set(0x65e3d5);
-        light.userData.baseIntensity = 9;
-        light.distance = 5.5;
       } else {
         light.color.set(0xffb05d);
         light.userData.baseIntensity = 42;

@@ -166,27 +166,69 @@ function drawSword(context, item) {
   context.stroke();
 }
 
-function drawFood(context, item, cooked = false) {
-  const gradient = context.createRadialGradient(27, 24, 3, 33, 34, 30);
-  gradient.addColorStop(0, cooked ? '#edb36c' : '#f29a91');
-  gradient.addColorStop(0.5, cooked ? '#b96b3f' : '#c7605a');
-  gradient.addColorStop(1, cooked ? '#633a2d' : '#752f36');
-  path(context, [[10, 25], [17, 13], [35, 8], [52, 18], [56, 35], [46, 51], [27, 57], [12, 47], [7, 35]]);
-  context.fillStyle = gradient;
+function drawFood(context, item, cooked = false, random = Math.random) {
+  context.save();
+  context.shadowColor = 'rgba(18, 10, 8, .48)';
+  context.shadowBlur = 5;
+  context.shadowOffsetY = 3;
+  path(context, [[7, 30], [11, 19], [22, 10], [38, 8], [53, 17], [58, 29], [54, 43], [43, 54], [26, 58], [12, 49], [6, 39]]);
+  const fat = context.createLinearGradient(9, 9, 55, 55);
+  fat.addColorStop(0, cooked ? '#e8b66f' : '#f2c9b6');
+  fat.addColorStop(0.48, cooked ? '#b96e3f' : '#dd8d83');
+  fat.addColorStop(1, cooked ? '#5a3025' : '#81333b');
+  context.fillStyle = fat;
   context.fill();
-  roundedStroke(context, cooked ? '#4c3029' : '#6c2f35', 2.5);
+  roundedStroke(context, cooked ? '#45271f' : '#642b32', 2.8);
   context.stroke();
-  roundedStroke(context, cooked ? 'rgba(255,210,142,.6)' : 'rgba(255,211,205,.7)', 2);
+  context.restore();
+
+  // The inset cut and pale fat cap make the icon read as a steak rather than a
+  // generic red blob, even at the 32px size used by the hotbar.
+  path(context, [[12, 29], [16, 20], [27, 14], [39, 13], [50, 20], [53, 30], [48, 41], [38, 49], [25, 52], [15, 45], [10, 37]]);
+  const meat = context.createRadialGradient(26, 22, 2, 33, 34, 27);
+  meat.addColorStop(0, cooked ? '#dc8b4d' : '#f28e8d');
+  meat.addColorStop(0.5, cooked ? '#a95732' : '#c84f59');
+  meat.addColorStop(1, cooked ? '#633127' : '#792d38');
+  context.fillStyle = meat;
+  context.fill();
+  roundedStroke(context, cooked ? '#7d402d' : '#9a414b', 1.8);
+  context.stroke();
+
+  // Bone, marrow and a small highlight.
+  context.save();
+  context.translate(39, 37);
+  context.rotate(-0.42);
+  context.fillStyle = cooked ? '#e4c390' : '#f1d6c4';
+  context.strokeStyle = cooked ? '#7a5037' : '#9c6c68';
+  context.lineWidth = 1.8;
   context.beginPath();
-  context.moveTo(17, 25);
-  context.quadraticCurveTo(31, 14, 47, 23);
+  context.ellipse(0, 0, 8, 5.2, 0, 0, Math.PI * 2);
+  context.fill();
   context.stroke();
+  context.fillStyle = cooked ? '#8f5437' : '#b96f72';
+  context.beginPath();
+  context.ellipse(0.5, 0.2, 3.5, 2.1, 0, 0, Math.PI * 2);
+  context.fill();
+  context.restore();
+
   if (cooked) {
-    roundedStroke(context, 'rgba(68,35,27,.55)', 2);
-    [[20, 33, 30, 27], [28, 43, 39, 36], [14, 41, 23, 36]].forEach(([x1, y1, x2, y2]) => {
+    roundedStroke(context, 'rgba(54, 27, 21, .72)', 2.2);
+    [[16, 28, 28, 21], [17, 38, 31, 29], [24, 47, 34, 41], [32, 20, 44, 26]].forEach(([x1, y1, x2, y2]) => {
       context.beginPath();
       context.moveTo(x1, y1);
       context.lineTo(x2, y2);
+      context.stroke();
+    });
+    for (let index = 0; index < 12; index++) {
+      context.fillStyle = random() > 0.45 ? 'rgba(255,191,105,.32)' : 'rgba(52,24,18,.24)';
+      context.fillRect(14 + random() * 35, 18 + random() * 29, 0.8 + random(), 0.8 + random());
+    }
+  } else {
+    roundedStroke(context, 'rgba(255, 205, 196, .58)', 1.45);
+    [[16, 27, 30, 20], [14, 38, 29, 31], [23, 48, 34, 42]].forEach(([x1, y1, x2, y2]) => {
+      context.beginPath();
+      context.moveTo(x1, y1);
+      context.bezierCurveTo(x1 + 4, y1 - 2, x2 - 5, y2 + 3, x2, y2);
       context.stroke();
     });
   }
@@ -207,7 +249,7 @@ export function createItemArtwork(item) {
   else if (item.tool === 'axe') drawAxe(context, item, random);
   else if (item.tool === 'sword') drawSword(context, item);
   else if (item.category === 'relic') drawCore(context, item);
-  else if (item.category === 'food') drawFood(context, item, /roast|cook/i.test(item.name || ''));
+  else if (item.category === 'food') drawFood(context, item, item.cooked === true || /roast|cook/i.test(item.name || ''), random);
   else if (/ingot/i.test(item.name || '')) drawIngot(context, item, random);
   else drawRod(context, item);
   return canvas;

@@ -95,17 +95,41 @@ function makeToolModel(item) {
     group.add(tip);
     cylinder(group, 0.047, 0.075, [0, -0.44, 0], 0xd4b05f, [0, 0, 0], { metalness: 0.68, roughness: 0.26 });
   } else if (item.category === 'food') {
-    const cooked = /roast|cook/i.test(item.name || '');
+    const cooked = item.cooked === true || /roast|cook/i.test(item.name || '');
     const meat = new THREE.Mesh(
-      new THREE.SphereGeometry(0.19, 10, 7),
-      material(cooked ? 0xb96b3f : 0xc7605a, { roughness: 0.74 }),
+      new THREE.SphereGeometry(0.19, 16, 10),
+      material(cooked ? 0xa95732 : 0xc95e63, { roughness: cooked ? 0.84 : 0.68 }),
     );
-    meat.scale.set(1.25, 0.58, 0.72);
+    meat.scale.set(1.3, 0.62, 0.74);
     meat.rotation.set(0.25, -0.3, -0.2);
     group.add(meat);
+    const fatRim = new THREE.Mesh(
+      new THREE.TorusGeometry(0.19, 0.022, 7, 22),
+      material(cooked ? 0xd49a5c : 0xefc2b0, { roughness: 0.82 }),
+    );
+    fatRim.position.set(0, 0, 0.135);
+    fatRim.rotation.set(0.25, -0.3, -0.2);
+    fatRim.scale.set(1.22, 0.58, 0.72);
+    group.add(fatRim);
+
+    const bone = cylinder(group, 0.041, 0.2, [0.075, -0.015, 0.16], cooked ? 0xdfbf8e : 0xf0d2c0, [0, 0, Math.PI / 2], { roughness: 0.76 });
+    bone.scale.z = 0.7;
+    for (const side of [-1, 1]) {
+      const joint = new THREE.Mesh(
+        new THREE.SphereGeometry(0.055, 9, 7),
+        material(cooked ? 0xdfbf8e : 0xf0d2c0, { roughness: 0.76 }),
+      );
+      joint.position.set(0.075 + side * 0.095, -0.015, 0.16);
+      joint.scale.set(0.82, 0.58, 0.45);
+      group.add(joint);
+    }
     if (cooked) {
+      for (let index = -2; index <= 1; index++) {
+        box(group, [0.018, 0.22, 0.014], [index * 0.065, 0.018, 0.171], 0x4d281f, [0, 0, -0.62], { roughness: 0.94 });
+      }
+    } else {
       for (let index = -1; index <= 1; index++) {
-        box(group, [0.025, 0.22, 0.012], [index * 0.08, 0.015, 0.145], 0x5c3028, [0, 0, -0.55], { roughness: 0.9 });
+        box(group, [0.012, 0.18, 0.01], [index * 0.075 - 0.035, 0.01, 0.166], 0xf1b0aa, [0, 0, -0.48 + index * 0.2], { roughness: 0.72 });
       }
     }
   } else if (item.category === 'relic') {
@@ -140,6 +164,36 @@ function disposeObject(root) {
       entry?.dispose?.();
     });
   });
+}
+
+/** A compact, depth-tested version of the first-person model for world drops. */
+export function createDroppedItemModel(id, atlas) {
+  const item = getItem(id);
+  const block = BLOCKS[id];
+  const model = block?.tiles ? makeBlockModel(block, atlas) : makeToolModel(item);
+  const wrapper = new THREE.Group();
+  wrapper.name = `Dropped ${item.name}`;
+  wrapper.add(model);
+  model.scale.multiplyScalar(block?.tiles ? 1.35 : 0.92);
+  wrapper.traverse((node) => {
+    if (!node.isMesh) return;
+    node.renderOrder = 0;
+    node.frustumCulled = true;
+    node.castShadow = true;
+    node.receiveShadow = true;
+    const materials = Array.isArray(node.material) ? node.material : [node.material];
+    for (const entry of materials) {
+      if (!entry) continue;
+      entry.depthTest = true;
+      entry.depthWrite = !entry.transparent;
+      entry.needsUpdate = true;
+    }
+  });
+  return wrapper;
+}
+
+export function disposeItemModel(root) {
+  disposeObject(root);
 }
 
 export class HeldItemView {

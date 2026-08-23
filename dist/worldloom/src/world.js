@@ -11,7 +11,7 @@ import {
   smoothRange,
   normalizeSeed,
 } from './noise.js';
-import { buildChunkGeometry } from './mesher.js';
+import { createChunkGeometryJob } from './mesher.js';
 
 export const CHUNK_SIZE = 16;
 // Horizontal coordinates are intentionally not bounded: chunks stream around the
@@ -21,15 +21,15 @@ export const WORLD_HEIGHT = 96;
 export const SEA_LEVEL = 32;
 
 const CHUNK_VOLUME = CHUNK_SIZE * CHUNK_SIZE * WORLD_HEIGHT;
-const COLUMN_CACHE_LIMIT = 65_536;
+const COLUMN_CACHE_LIMIT = 32_768;
 const TREE_CELL_SIZE = 5;
 const PLANT_CELL_SIZE = 3;
 const CACTUS_CELL_SIZE = 7;
 const CAVE_CELL_SIZE = 34;
 const FISSURE_CELL_SIZE = 78;
-const CAVE_NODE_CACHE_LIMIT = 8_192;
+const CAVE_NODE_CACHE_LIMIT = 4_096;
 const MAX_FLUID_LEVEL = 7;
-const MAX_FLUID_QUEUE = 8_192;
+const MAX_FLUID_QUEUE = 32_768;
 const FLUID_DIRECTIONS = Object.freeze([
   [1, 0],
   [0, 1],
@@ -75,7 +75,10 @@ const LAVA = resolveBlock(['LAVA'], AIR);
 const FERN = resolveBlock(['FERN'], AIR);
 const WILDFLOWER = resolveBlock(['WILDFLOWER'], AIR);
 const CACTUS = resolveBlock(['CACTUS'], AIR);
-const GLOW_MUSHROOM = resolveBlock(['GLOW_MUSHROOM'], AIR);
+const CAVE_MUSHROOM = resolveBlock(['CAVE_MUSHROOM', 'GLOW_MUSHROOM'], AIR);
+const PINE_LOG = resolveBlock(['PINE_LOG'], LOG);
+const PINE_NEEDLES = resolveBlock(['PINE_NEEDLES'], LEAVES);
+const SHORT_GRASS = resolveBlock(['SHORT_GRASS'], AIR);
 
 function floorDiv(value, divisor) {
   return Math.floor(value / divisor);
@@ -139,6 +142,17 @@ function clampNoise(value) {
   // clearer around a signed zero, so every coherent-noise sample crosses this
   // conversion boundary exactly once.
   return THREE.MathUtils.clamp(Number.isFinite(value) ? value * 2 - 1 : 0, -1, 1);
+}
+
+function trimCache(cache, limit) {
+  if (cache.size < limit) return;
+  const removeCount = Math.max(1, Math.floor(limit / 8));
+  const keys = cache.keys();
+  for (let index = 0; index < removeCount; index++) {
+    const next = keys.next();
+    if (next.done) break;
+    cache.delete(next.value);
+  }
 }
 
 function textureFromAtlas(atlas) {
@@ -212,6 +226,8 @@ function createChunk(cx, cz) {
     blocks,
     data: blocks,
     generated: false,
+    generationCursor: 0,
+    generationPhase: 'base',
     dirty: true,
     meshDirty: true,
     revision: 0,
@@ -219,6 +235,8 @@ function createChunk(cx, cz) {
     glassMesh: null,
     waterMesh: null,
     glowMesh: null,
+    meshJob: null,
+    meshJobRevision: -1,
     faces: 0,
     triangles: 0,
     lastTouched: 0,
@@ -239,6 +257,11 @@ export class World {
     this.edits = new Map();
     this.generationQueue = [];
     this.queuedChunks = new Set();
+    // The closest thirteen warmup chunks complete synchronously behind the
+    // loading overlay. Main then finishes the outer support ring incrementally
+    // so all nine chunks around spawn can be meshed without a visible void;
+    // every later travel chunk also uses incremental slices.
+    this._preloadChunksRemaining = 13;
     this.centerChunk = { cx: 0, cz: 0 };
     this.renderDistance = 5;
     this._streamTick = 0;
@@ -248,6 +271,7 @@ export class World {
     // river blocks are implicit level-zero sources supplied by world generation.
     this.fluidLevels = new Map();
     this.fluidQueue = [];
+    this.fluidQueueHead = 0;
     this.fluidQueued = new Set();
     this._noiseSeeds = {
       continent: (this.seed ^ 0x29a9f31d) >>> 0,
@@ -270,6 +294,7 @@ export class World {
       ore: (this.seed ^ 0x27d4eb2f) >>> 0,
       trees: (this.seed ^ 0x85ebca6b) >>> 0,
       plants: (this.seed ^ 0x4b1d3f27) >>> 0,
+      grassPatches: (this.seed ^ 0x6d703ef3) >>> 0,
       cavePools: (this.seed ^ 0x93c467e3) >>> 0,
     };
 
@@ -375,7 +400,7 @@ export class World {
       entranceLength: 10 + sample(0xc0ac29b7) * 15,
       entranceRadius: 1.85 + sample(0xc97c50dd) * 1.55,
     };
-    if (this._caveNodeCache.size >= CAVE_NODE_CACHE_LIMIT) this._caveNodeCache.clear();
+    trimCache(this._caveNodeCache, CAVE_NODE_CACHE_LIMIT);
     this._caveNodeCache.set(key, node);
     return node;
   }
@@ -672,7 +697,7 @@ export class World {
       caveEntrances: caveTopology.entrances,
       caveFissure: caveTopology.fissure,
     };
-    if (this._columnCache.size >= COLUMN_CACHE_LIMIT) this._columnCache.clear();
+    trimCache(this._columnCache, COLUMN_CACHE_LIMIT);
     this._columnCache.set(key, info);
     return info;
   }
@@ -826,7 +851,9 @@ export class World {
     y = Math.floor(y);
     z = Math.floor(z);
     id = Math.floor(Number(id));
-    if (y < 0 || y >= WORLD_HEIGHT || !Number.isFinite(id) || id < 0 || id > 255) return false;
+    // The foundation is a hard invariant. Old saves that managed to edit this
+    // layer are filtered during load so players can never create a void shaft.
+    if (y <= 0 || y >= WORLD_HEIGHT || !Number.isFinite(id) || id < 0 || id > 255) return false;
     if (this.getBlock(x, y, z) === id) return false;
 
     const cx = floorDiv(x, CHUNK_SIZE);
@@ -834,7 +861,19 @@ export class World {
     const lx = localCoordinate(x, cx);
     const lz = localCoordinate(z, cz);
     const index = localIndex(lx, y, lz);
-    this._editMap(cx, cz, true).set(index, id);
+    const editMap = this._editMap(cx, cz, true);
+    const previousEdit = editMap.get(index);
+    const generatedBase = this._baseBlockAt(x, y, z);
+    // Canonicalize common reversions without erasing AIR edits that suppress a
+    // deterministic tree or plant decoration after a chunk is regenerated.
+    const revertsTerrain = generatedBase !== AIR && id === generatedBase;
+    const retractsFlow = id === generatedBase && previousEdit === WATER;
+    if (revertsTerrain || retractsFlow) {
+      editMap.delete(index);
+      if (!editMap.size) this.edits.delete(chunkKey(cx, cz));
+    } else {
+      editMap.set(index, id);
+    }
     const chunk = this.chunks.get(chunkKey(cx, cz));
     if (chunk?.generated) {
       chunk.blocks[index] = id;
@@ -871,7 +910,8 @@ export class World {
     x = Math.floor(x);
     y = Math.floor(y);
     z = Math.floor(z);
-    if (!this._fluidCellAvailable(x, y, z) || this.fluidQueue.length >= MAX_FLUID_QUEUE) return false;
+    const pending = this.fluidQueue.length - this.fluidQueueHead;
+    if (!this._fluidCellAvailable(x, y, z) || pending >= MAX_FLUID_QUEUE) return false;
     const key = voxelKey(x, y, z);
     if (this.fluidQueued.has(key)) return false;
     this.fluidQueued.add(key);
@@ -894,6 +934,56 @@ export class World {
     return this.fluidLevels.get(voxelKey(x, y, z)) ?? 0;
   }
 
+  isPositionReady(x, z) {
+    const cx = floorDiv(Math.floor(x), CHUNK_SIZE);
+    const cz = floorDiv(Math.floor(z), CHUNK_SIZE);
+    const chunk = this.chunks.get(chunkKey(cx, cz));
+    return Boolean(chunk?.generated && chunk.wanted !== false);
+  }
+
+  isPositionRendered(x, z) {
+    const cx = floorDiv(Math.floor(x), CHUNK_SIZE);
+    const cz = floorDiv(Math.floor(z), CHUNK_SIZE);
+    return this.isChunkRendered(cx, cz);
+  }
+
+  isChunkRendered(cx, cz) {
+    const chunk = this.chunks.get(chunkKey(Math.floor(cx), Math.floor(cz)));
+    const positions = chunk?.opaqueMesh?.geometry?.getAttribute?.('position');
+    return Boolean(
+      chunk?.generated
+      && chunk.opaqueMesh?.visible
+      && positions?.count > 0
+      && !chunk.meshDirty
+    );
+  }
+
+  isImmediateNeighborhoodRendered(x, z) {
+    const cx = floorDiv(Math.floor(x), CHUNK_SIZE);
+    const cz = floorDiv(Math.floor(z), CHUNK_SIZE);
+    for (let dz = -1; dz <= 1; dz++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (!this.isChunkRendered(cx + dx, cz + dz)) return false;
+      }
+    }
+    return true;
+  }
+
+  getFluidLevel(x, y, z) {
+    if (this.getBlock(x, y, z) !== WATER) return null;
+    return this.fluidLevels.get(voxelKey(Math.floor(x), Math.floor(y), Math.floor(z))) ?? 0;
+  }
+
+  getFluidSurfaceY(x, y, z) {
+    x = Math.floor(x);
+    y = Math.floor(y);
+    z = Math.floor(z);
+    if (this.getBlock(x, y, z) !== WATER) return null;
+    if (this.getBlock(x, y + 1, z) === WATER) return y + 1;
+    const level = THREE.MathUtils.clamp(this.fluidLevels.get(voxelKey(x, y, z)) ?? 0, 0, MAX_FLUID_LEVEL);
+    return y + Math.max(0.3, 0.92 - level * 0.085);
+  }
+
   _fluidHasSupport(x, y, z, level) {
     if (level <= 0) return true;
     if (this._fluidCellAvailable(x, y + 1, z) && this.getBlock(x, y + 1, z) === WATER) return true;
@@ -908,7 +998,9 @@ export class World {
     if (!this._fluidCellAvailable(x, y, z)) return false;
     const id = this.getBlock(x, y, z);
     const boundedLevel = THREE.MathUtils.clamp(Math.floor(level), 1, MAX_FLUID_LEVEL);
-    if (id === AIR) {
+    const definition = BLOCKS[id];
+    const replaceable = id === AIR || (!definition?.solid && !definition?.liquid && !definition?.hazard);
+    if (replaceable) {
       return this.setBlock(x, y, z, WATER, { fluidLevel: boundedLevel, skipStats: true });
     }
     if (id !== WATER) return false;
@@ -916,6 +1008,25 @@ export class World {
     const currentLevel = this.fluidLevels.get(key);
     if (currentLevel === undefined || currentLevel <= boundedLevel) return false;
     this.fluidLevels.set(key, boundedLevel);
+    // A flow level changes the rendered surface height even though the block id
+    // stays WATER. Treat it as a normal voxel mutation so an in-flight mesh job
+    // cannot publish stale geometry, including on chunk boundaries.
+    const cx = floorDiv(x, CHUNK_SIZE);
+    const cz = floorDiv(z, CHUNK_SIZE);
+    const lx = localCoordinate(x, cx);
+    const lz = localCoordinate(z, cz);
+    this._markDirty(this.chunks.get(chunkKey(cx, cz)));
+    if (lx === 0) this._markDirty(this.chunks.get(chunkKey(cx - 1, cz)));
+    if (lx === CHUNK_SIZE - 1) this._markDirty(this.chunks.get(chunkKey(cx + 1, cz)));
+    if (lz === 0) this._markDirty(this.chunks.get(chunkKey(cx, cz - 1)));
+    if (lz === CHUNK_SIZE - 1) this._markDirty(this.chunks.get(chunkKey(cx, cz + 1)));
+    // Water top vertices average a 2x2 footprint. At a double boundary, the
+    // changed height therefore contributes to the diagonally touching chunk.
+    const boundaryX = lx === 0 ? -1 : lx === CHUNK_SIZE - 1 ? 1 : 0;
+    const boundaryZ = lz === 0 ? -1 : lz === CHUNK_SIZE - 1 ? 1 : 0;
+    if (boundaryX && boundaryZ) {
+      this._markDirty(this.chunks.get(chunkKey(cx + boundaryX, cz + boundaryZ)));
+    }
     this._scheduleFluidAround(x, y, z);
     return true;
   }
@@ -930,7 +1041,7 @@ export class World {
     const limit = THREE.MathUtils.clamp(Math.floor(Number(maxSteps) || 0), 0, 256);
     let processed = 0;
     let changed = 0;
-    let cursor = 0;
+    let cursor = this.fluidQueueHead;
     while (processed < limit && cursor < this.fluidQueue.length) {
       const key = this.fluidQueue[cursor++];
       this.fluidQueued.delete(key);
@@ -959,15 +1070,25 @@ export class World {
         if (this._flowInto(x + dx, y, z + dz, nextLevel)) changed++;
       }
     }
-    // One batched compaction is substantially cheaper than shifting the queue
-    // once per cell when a waterfall has several thousand pending updates.
-    if (cursor > 0) this.fluidQueue.splice(0, cursor);
+    this.fluidQueueHead = cursor;
+    // Keep a queue head instead of splicing every frame. Compact only after a
+    // meaningful prefix has drained, avoiding O(n) churn in large waterfalls.
+    if (this.fluidQueueHead >= this.fluidQueue.length) {
+      this.fluidQueue.length = 0;
+      this.fluidQueueHead = 0;
+    } else if (this.fluidQueueHead > 2_048 && this.fluidQueueHead * 2 > this.fluidQueue.length) {
+      this.fluidQueue = this.fluidQueue.slice(this.fluidQueueHead);
+      this.fluidQueueHead = 0;
+    }
     if (changed) this._refreshStats();
-    return { processed, changed, remaining: this.fluidQueue.length };
+    return { processed, changed, remaining: this.fluidQueue.length - this.fluidQueueHead };
   }
 
   _markDirty(chunk) {
     if (!chunk?.generated) return;
+    chunk.meshJob?.disposePartial?.();
+    chunk.meshJob = null;
+    chunk.meshJobRevision = -1;
     chunk.dirty = true;
     chunk.meshDirty = true;
     chunk.revision++;
@@ -987,6 +1108,26 @@ export class World {
       this.queuedChunks.add(key);
       this.generationQueue.push(key);
     }
+    return chunk;
+  }
+
+  /**
+   * Synchronously materialize the decorated chunk at a world position. This is
+   * reserved for rare correctness-critical teleports (spawn, beds and respawn):
+   * unloaded getBlock() calls intentionally expose only base terrain and cannot
+   * see a deterministic tree canopy that will return when streaming catches up.
+   */
+  ensurePositionGenerated(x, z) {
+    const cx = floorDiv(Math.floor(Number(x) || 0), CHUNK_SIZE);
+    const cz = floorDiv(Math.floor(Number(z) || 0), CHUNK_SIZE);
+    const key = chunkKey(cx, cz);
+    const chunk = this.ensureChunk(cx, cz);
+    if (chunk.generated) return chunk;
+    this.queuedChunks.delete(key);
+    this.generationQueue = this.generationQueue.filter((queuedKey) => queuedKey !== key);
+    this._generateChunk(chunk);
+    this.stats.generatedTotal++;
+    this._refreshStats();
     return chunk;
   }
 
@@ -1038,10 +1179,11 @@ export class World {
         return da - db;
       });
     this.queuedChunks = new Set(this.generationQueue);
-    this.fluidQueue = this.fluidQueue.filter((key) => {
+    this.fluidQueue = this.fluidQueue.slice(this.fluidQueueHead).filter((key) => {
       const { x, y, z } = parseVoxelKey(key);
       return this._fluidCellAvailable(x, y, z);
     });
+    this.fluidQueueHead = 0;
     this.fluidQueued = new Set(this.fluidQueue);
     this._refreshStats();
   }
@@ -1096,33 +1238,74 @@ export class World {
         );
         if (slope > 2) continue;
 
-        const trunkHeight = 4 + Math.floor(
-          hashUnit(hash2D(rootX, rootZ, this._noiseSeeds.trees ^ 0x27d4eb2d)) * 4,
+        const speciesRoll = hashUnit(hash2D(rootX, rootZ, this._noiseSeeds.trees ^ 0x6a09e667));
+        const pineClimate = THREE.MathUtils.clamp(
+          (0.54 - info.temperature) * 1.6 + Math.max(0, info.height - SEA_LEVEL - 18) / 36,
+          0,
+          0.82,
+        );
+        const isPine = PINE_LOG !== AIR && PINE_NEEDLES !== AIR
+          && speciesRoll < 0.2 + pineClimate * 0.72;
+        const trunkBlock = isPine ? PINE_LOG : LOG;
+        const leafBlock = isPine ? PINE_NEEDLES : LEAVES;
+        const trunkHeight = (isPine ? 7 : 4) + Math.floor(
+          hashUnit(hash2D(rootX, rootZ, this._noiseSeeds.trees ^ 0x27d4eb2d)) * (isPine ? 4 : 4),
         );
         const rootY = info.height + 1;
         for (let dy = 0; dy < trunkHeight; dy++) {
-          this._writeGenerated(chunk, rootX, rootY + dy, rootZ, LOG, (id) => id === AIR || id === LEAVES);
+          this._writeGenerated(chunk, rootX, rootY + dy, rootZ, trunkBlock, (id) => (
+            id === AIR || id === LEAVES || id === PINE_NEEDLES
+          ));
         }
-        const crownY = rootY + trunkHeight - 1;
-        for (let dy = -2; dy <= 2; dy++) {
-          const radius = dy >= 2 ? 1 : dy <= -2 ? 1 : 2;
-          for (let dz = -radius; dz <= radius; dz++) {
-            for (let dx = -radius; dx <= radius; dx++) {
-              if (Math.abs(dx) === radius && Math.abs(dz) === radius && dy !== 0) continue;
-              this._writeGenerated(
-                chunk,
-                rootX + dx,
-                crownY + dy,
-                rootZ + dz,
-                LEAVES,
-                (id) => id === AIR || id === WATER || id === LEAVES,
-              );
+        if (isPine) {
+          // Alternating, tapered bough layers produce a readable conifer profile
+          // without resorting to an imported model or copyrighted texture.
+          const canopyBottom = rootY + 2;
+          const canopyTop = rootY + trunkHeight + 1;
+          for (let canopyY = canopyBottom; canopyY <= canopyTop; canopyY++) {
+            const fromTop = canopyTop - canopyY;
+            const radius = canopyY === canopyTop ? 0 : Math.min(3, 1 + Math.floor(fromTop / 2));
+            const layerInset = fromTop % 2 === 0 ? 0 : 0.58;
+            for (let dz = -radius; dz <= radius; dz++) {
+              for (let dx = -radius; dx <= radius; dx++) {
+                const distance = Math.hypot(dx, dz);
+                if (distance > radius + 0.12 - layerInset || (radius > 1 && distance < 0.7)) continue;
+                this._writeGenerated(
+                  chunk,
+                  rootX + dx,
+                  canopyY,
+                  rootZ + dz,
+                  leafBlock,
+                  (id) => id === AIR || id === WATER || id === LEAVES || id === PINE_NEEDLES,
+                );
+              }
+            }
+          }
+          this._writeGenerated(chunk, rootX, canopyTop, rootZ, leafBlock, (id) => id === AIR || id === leafBlock);
+        } else {
+          const crownY = rootY + trunkHeight - 1;
+          for (let dy = -2; dy <= 2; dy++) {
+            const radius = dy >= 2 ? 1 : dy <= -2 ? 1 : 2;
+            for (let dz = -radius; dz <= radius; dz++) {
+              for (let dx = -radius; dx <= radius; dx++) {
+                if (Math.abs(dx) === radius && Math.abs(dz) === radius && dy !== 0) continue;
+                this._writeGenerated(
+                  chunk,
+                  rootX + dx,
+                  crownY + dy,
+                  rootZ + dz,
+                  leafBlock,
+                  (id) => id === AIR || id === WATER || id === LEAVES || id === PINE_NEEDLES,
+                );
+              }
             }
           }
         }
         // Restore the visible trunk through the lower canopy.
         for (let dy = 0; dy < trunkHeight; dy++) {
-          this._writeGenerated(chunk, rootX, rootY + dy, rootZ, LOG, (id) => id === AIR || id === LEAVES || id === LOG);
+          this._writeGenerated(chunk, rootX, rootY + dy, rootZ, trunkBlock, (id) => (
+            id === AIR || id === LEAVES || id === PINE_NEEDLES || id === LOG || id === PINE_LOG
+          ));
         }
       }
     }
@@ -1154,6 +1337,31 @@ export class World {
       }
     }
 
+    // Dense values of one low-frequency field create connected tufts spanning
+    // several blocks, while the per-cell thinning keeps most meadow turf clear.
+    // These are non-solid and non-selectable, so walking never catches on them.
+    if (SHORT_GRASS !== AIR) {
+      const originX = chunk.cx * CHUNK_SIZE;
+      const originZ = chunk.cz * CHUNK_SIZE;
+      for (let z = 0; z < CHUNK_SIZE; z++) {
+        for (let x = 0; x < CHUNK_SIZE; x++) {
+          const worldX = originX + x;
+          const worldZ = originZ + z;
+          const info = this._columnInfo(worldX, worldZ);
+          if (info.surfaceSand || info.height <= SEA_LEVEL || info.caveMouth || info.rockiness > 0.62) continue;
+          const patch = fbm2D(worldX / 11, worldZ / 11, this._noiseSeeds.grassPatches, {
+            octaves: 2,
+            lacunarity: 2.05,
+            gain: 0.48,
+          });
+          const thinning = hashUnit(hash2D(worldX, worldZ, this._noiseSeeds.grassPatches ^ 0x9e3779b9));
+          if (patch < 0.55 || thinning < 0.24) continue;
+          const rootY = info.height + 1;
+          this._writeGenerated(chunk, worldX, rootY, worldZ, SHORT_GRASS, (id) => id === AIR);
+        }
+      }
+    }
+
     if (CACTUS === AIR) return;
     const minCactusX = floorDiv(minX, CACTUS_CELL_SIZE);
     const minCactusZ = floorDiv(minZ, CACTUS_CELL_SIZE);
@@ -1182,7 +1390,7 @@ export class World {
   }
 
   _decorateCaveLife(chunk) {
-    if (GLOW_MUSHROOM === AIR) return;
+    if (CAVE_MUSHROOM === AIR) return;
     const originX = chunk.cx * CHUNK_SIZE;
     const originZ = chunk.cz * CHUNK_SIZE;
     for (let z = 0; z < CHUNK_SIZE; z++) {
@@ -1194,8 +1402,8 @@ export class World {
           const aboveIndex = localIndex(x, y + 1, z);
           if (!isSolid(floorId) || chunk.blocks[aboveIndex] !== AIR) continue;
           const roll = hashUnit(hash3D(worldX, y, worldZ, this._noiseSeeds.plants ^ 0x94d049bb));
-          if (roll < 0.9915) continue;
-          chunk.blocks[aboveIndex] = GLOW_MUSHROOM;
+          if (roll < 0.996) continue;
+          chunk.blocks[aboveIndex] = CAVE_MUSHROOM;
         }
       }
     }
@@ -1237,51 +1445,118 @@ export class World {
     }
   }
 
-  _generateChunk(chunk) {
-    chunk.blocks.fill(AIR);
+  _stepChunkGeneration(chunk, maxColumns = 32, maxMilliseconds = 4.5) {
     const originX = chunk.cx * CHUNK_SIZE;
     const originZ = chunk.cz * CHUNK_SIZE;
-    for (let z = 0; z < CHUNK_SIZE; z++) {
-      const worldZ = originZ + z;
-      for (let x = 0; x < CHUNK_SIZE; x++) {
+    const now = () => (
+      typeof performance !== 'undefined' && typeof performance.now === 'function'
+        ? performance.now()
+        : Date.now()
+    );
+    const deadline = Number.isFinite(maxMilliseconds)
+      ? now() + Math.max(0.5, maxMilliseconds)
+      : Number.POSITIVE_INFINITY;
+
+    if (chunk.generationPhase === 'base') {
+      if (chunk.generationCursor === 0) chunk.blocks.fill(AIR);
+      const columnLimit = Number.isFinite(maxColumns)
+        ? Math.max(1, Math.floor(maxColumns))
+        : Number.POSITIVE_INFINITY;
+      let columns = 0;
+      while (
+        chunk.generationCursor < CHUNK_SIZE * CHUNK_SIZE
+        && columns < columnLimit
+        && now() < deadline
+      ) {
+        const cursor = chunk.generationCursor++;
+        const x = cursor % CHUNK_SIZE;
+        const z = Math.floor(cursor / CHUNK_SIZE);
         const worldX = originX + x;
+        const worldZ = originZ + z;
         const info = this._columnInfo(worldX, worldZ);
         for (let y = 0; y < WORLD_HEIGHT; y++) {
           chunk.blocks[localIndex(x, y, z)] = this._baseBlockWithInfo(worldX, y, worldZ, info);
         }
+        columns++;
       }
+      if (chunk.generationCursor < CHUNK_SIZE * CHUNK_SIZE) return false;
+      chunk.generationPhase = 'trees';
+      if (Number.isFinite(maxMilliseconds)) return false;
     }
-    this._decorateTrees(chunk);
-    this._decorateSurfacePlants(chunk);
-    this._decorateCaveLife(chunk);
-    const edits = this._editMap(chunk.cx, chunk.cz);
-    if (edits) {
-      for (const [index, id] of edits) {
-        if (index >= 0 && index < CHUNK_VOLUME) chunk.blocks[index] = id;
-      }
-    }
-    chunk.generated = true;
-    chunk.dirty = true;
-    chunk.meshDirty = true;
-    chunk.revision++;
-    this._activateChunkFluids(chunk, edits);
 
-    for (const [dx, dz] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
-      this._markDirty(this.chunks.get(chunkKey(chunk.cx + dx, chunk.cz + dz)));
+    if (chunk.generationPhase === 'trees') {
+      this._decorateTrees(chunk);
+      chunk.generationPhase = 'plants';
+      if (Number.isFinite(maxMilliseconds)) return false;
+    }
+    if (chunk.generationPhase === 'plants') {
+      this._decorateSurfacePlants(chunk);
+      chunk.generationPhase = 'cave-life';
+      if (Number.isFinite(maxMilliseconds)) return false;
+    }
+    if (chunk.generationPhase === 'cave-life') {
+      this._decorateCaveLife(chunk);
+      chunk.generationPhase = 'finalize';
+      if (Number.isFinite(maxMilliseconds)) return false;
+    }
+    if (chunk.generationPhase === 'finalize') {
+      const edits = this._editMap(chunk.cx, chunk.cz);
+      if (edits) {
+        for (const [index, id] of edits) {
+          if (index >= 0 && index < CHUNK_VOLUME) chunk.blocks[index] = id;
+        }
+      }
+      chunk.generated = true;
+      chunk.generationPhase = 'complete';
+      chunk.dirty = true;
+      chunk.meshDirty = true;
+      chunk.revision++;
+      this._activateChunkFluids(chunk, edits);
+
+      for (const [dx, dz] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
+        this._markDirty(this.chunks.get(chunkKey(chunk.cx + dx, chunk.cz + dz)));
+      }
+    }
+    return chunk.generated;
+  }
+
+  _generateChunk(chunk) {
+    chunk.generated = false;
+    chunk.generationCursor = 0;
+    chunk.generationPhase = 'base';
+    while (!this._stepChunkGeneration(
+      chunk,
+      Number.POSITIVE_INFINITY,
+      Number.POSITIVE_INFINITY,
+    )) {
+      // Synchronous materialization is reserved for spawn/teleport correctness.
     }
   }
 
   processQueue(maxChunks = 1) {
     const limit = Math.max(0, Math.floor(maxChunks));
     let processed = 0;
-    while (processed < limit && this.generationQueue.length) {
-      const key = this.generationQueue.shift();
-      this.queuedChunks.delete(key);
+    let slices = 0;
+    while (processed < limit && slices < limit && this.generationQueue.length) {
+      const key = this.generationQueue[0];
       const chunk = this.chunks.get(key);
-      if (!chunk || chunk.generated) continue;
-      this._generateChunk(chunk);
-      processed++;
-      this.stats.generatedTotal++;
+      if (!chunk || chunk.generated) {
+        this.generationQueue.shift();
+        this.queuedChunks.delete(key);
+        continue;
+      }
+      slices++;
+      const warmingSpawn = this._preloadChunksRemaining > 0;
+      const completed = warmingSpawn
+        ? (this._generateChunk(chunk), true)
+        : this._stepChunkGeneration(chunk, 128, 4.5);
+      if (completed) {
+        this.generationQueue.shift();
+        this.queuedChunks.delete(key);
+        processed++;
+        this.stats.generatedTotal++;
+        if (warmingSpawn) this._preloadChunksRemaining--;
+      }
     }
     this._refreshStats();
     return processed;
@@ -1323,21 +1598,32 @@ export class World {
     const { cx, cz } = this.centerChunk;
     const dirty = [...this.chunks.values()]
       .filter((chunk) => chunk.generated && chunk.meshDirty && this._neighborsReadyForMesh(chunk))
-      .sort((a, b) => ((a.cx - cx) ** 2 + (a.cz - cz) ** 2) - ((b.cx - cx) ** 2 + (b.cz - cz) ** 2));
+      .sort((a, b) => {
+        if (Boolean(a.meshJob) !== Boolean(b.meshJob)) return a.meshJob ? -1 : 1;
+        return ((a.cx - cx) ** 2 + (a.cz - cz) ** 2) - ((b.cx - cx) ** 2 + (b.cz - cz) ** 2);
+      });
     let rebuilt = 0;
     for (const chunk of dirty) {
       if (rebuilt >= limit) break;
-      const revision = chunk.revision;
-      const result = buildChunkGeometry(this, chunk, this.atlas);
-      // Meshing is synchronous today, but retaining a revision check makes this
-      // safe if the function is later moved into a Worker.
+      if (!chunk.meshJob || chunk.meshJobRevision !== chunk.revision) {
+        chunk.meshJob?.disposePartial?.();
+        chunk.meshJob = createChunkGeometryJob(this, chunk, this.atlas);
+        chunk.meshJobRevision = chunk.revision;
+      }
+      const revision = chunk.meshJobRevision;
+      const complete = chunk.meshJob.step({ maxVoxels: 8192, maxMilliseconds: 4.2 });
       if (revision !== chunk.revision || !this.chunks.has(chunk.key)) {
-        result.opaque?.dispose();
-        result.glass?.dispose();
-        result.water?.dispose();
-        result.glow?.dispose();
+        chunk.meshJob.disposePartial?.();
+        chunk.meshJob = null;
+        chunk.meshJobRevision = -1;
         continue;
       }
+      // Only one partial job advances per idle callback. Existing mesh geometry
+      // remains visible until the replacement is fully assembled.
+      if (!complete) break;
+      const result = chunk.meshJob.result;
+      chunk.meshJob = null;
+      chunk.meshJobRevision = -1;
       this._replaceMesh(chunk, 'opaqueMesh', result.opaque, this.opaqueMaterial, 'Terrain');
       this._replaceMesh(chunk, 'glassMesh', result.glass, this.glassMaterial, 'Glass');
       this._replaceMesh(chunk, 'waterMesh', result.water, this.waterMaterial, 'Water');
@@ -1354,6 +1640,8 @@ export class World {
   }
 
   _removeChunk(key, chunk) {
+    chunk.meshJob?.disposePartial?.();
+    chunk.meshJob = null;
     for (const mesh of [chunk.opaqueMesh, chunk.glassMesh, chunk.waterMesh, chunk.glowMesh]) {
       if (!mesh) continue;
       this.scene?.remove(mesh);
@@ -1438,6 +1726,7 @@ export class World {
     this.edits.clear();
     this.fluidLevels.clear();
     this.fluidQueue.length = 0;
+    this.fluidQueueHead = 0;
     this.fluidQueued.clear();
     let source = payload?.chunks ?? payload ?? [];
     if (!Array.isArray(source) && typeof source === 'object') {
@@ -1459,7 +1748,14 @@ export class World {
       for (const entry of blocks) {
         const index = Math.floor(Number(Array.isArray(entry) ? entry[0] : entry?.index));
         const id = Math.floor(Number(Array.isArray(entry) ? entry[1] : entry?.id));
-        if (index >= 0 && index < CHUNK_VOLUME && id >= 0 && id <= 255) editMap.set(index, id);
+        if (index < 0 || index >= CHUNK_VOLUME || id < 0 || id > 255) continue;
+        const local = decodeLocalIndex(index);
+        if (local.y <= 0) continue;
+        const worldX = cx * CHUNK_SIZE + local.x;
+        const worldZ = cz * CHUNK_SIZE + local.z;
+        const generatedBase = this._baseBlockAt(worldX, local.y, worldZ);
+        if (generatedBase !== AIR && id === generatedBase) continue;
+        editMap.set(index, id);
       }
       if (!editMap.size) this.edits.delete(chunkKey(cx, cz));
     }
@@ -1504,7 +1800,7 @@ export class World {
     this.stats.triangles = triangles;
     this.stats.edits = editCount;
     this.stats.flowingWater = this.fluidLevels.size;
-    this.stats.fluidQueue = this.fluidQueue.length;
+    this.stats.fluidQueue = this.fluidQueue.length - this.fluidQueueHead;
   }
 
   getStats() {
@@ -1517,6 +1813,7 @@ export class World {
     this.generationQueue.length = 0;
     this.queuedChunks.clear();
     this.fluidQueue.length = 0;
+    this.fluidQueueHead = 0;
     this.fluidQueued.clear();
     this.fluidLevels.clear();
     this.opaqueMaterial.dispose();

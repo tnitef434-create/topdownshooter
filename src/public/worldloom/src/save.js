@@ -1,6 +1,9 @@
 const SAVE_KEY = 'worldloom.save.v1';
 const BACKUP_KEY = 'worldloom.save.backup.v1';
 const SETTINGS_KEY = 'worldloom.settings.v1';
+const SCHEMA_VERSION = 1;
+const GENERATOR_VERSION = 1;
+const REGISTRY_VERSION = 1;
 
 export const GRAPHICS_PRESETS = Object.freeze({
   low: Object.freeze({
@@ -134,14 +137,89 @@ function safeParse(value) {
 }
 
 function validateSave(data) {
-  return data && data.schemaVersion === 1 && Number.isInteger(data.seed)
-    && data.player && data.inventory && Array.isArray(data.inventory.slots);
+  if (!data || data.schemaVersion !== SCHEMA_VERSION || !Number.isInteger(data.seed)) return false;
+  // Legacy v1 snapshots did not always include these fields. Once present,
+  // however, never apply seed-relative edits to an incompatible generator or
+  // block registry: doing so would silently reshape a player's world.
+  if (data.generatorVersion != null && data.generatorVersion !== GENERATOR_VERSION) return false;
+  if (data.registryVersion != null && data.registryVersion !== REGISTRY_VERSION) return false;
+  if (!data.player || !Array.isArray(data.player.position) || data.player.position.length !== 3) return false;
+  if (!data.player.position.every((value, index) => Number.isFinite(value)
+    && (index === 1 ? value >= -256 && value <= 512 : Math.abs(value) <= 50_000_000))) return false;
+  if (data.player.velocity != null && (!Array.isArray(data.player.velocity)
+    || data.player.velocity.length !== 3
+    || !data.player.velocity.every((value) => Number.isFinite(value) && Math.abs(value) <= 100))) return false;
+  if (data.objectiveIndex != null && (!Number.isInteger(data.objectiveIndex)
+    || data.objectiveIndex < 0 || data.objectiveIndex > 64)) return false;
+  if (data.respawnPoint != null && (!Array.isArray(data.respawnPoint)
+    || data.respawnPoint.length !== 3
+    || !data.respawnPoint.every((value, index) => Number.isFinite(value)
+      && (index === 1 ? value >= 0 && value <= 512 : Math.abs(value) <= 50_000_000)))) return false;
+  if (!data.inventory || !Array.isArray(data.inventory.slots) || data.inventory.slots.length > 72) return false;
+  const inventoryValid = data.inventory.slots.every((slot) => slot && Number.isInteger(slot.id)
+    && slot.id >= 0 && slot.id <= 4096 && Number.isInteger(slot.count)
+    && slot.count >= 0 && slot.count <= 99
+    && ((slot.id === 0 && slot.count === 0) || (slot.id > 0 && slot.count > 0)));
+  if (!inventoryValid) return false;
+  if (data.droppedItems == null) return true;
+  if (!Array.isArray(data.droppedItems) || data.droppedItems.length > 256) return false;
+  return data.droppedItems.every((drop) => drop && Number.isInteger(drop.id)
+    && drop.id > 0 && drop.id <= 4096
+    && Number.isInteger(drop.count) && drop.count > 0 && drop.count <= 99
+    && Array.isArray(drop.position) && drop.position.length === 3
+    && drop.position.every((value, index) => Number.isFinite(value)
+      && (index === 1 ? value >= -256 && value <= 512 : Math.abs(value) <= 50_000_000))
+    && (drop.velocity == null || (Array.isArray(drop.velocity) && drop.velocity.length === 3
+      && drop.velocity.every((value) => Number.isFinite(value) && Math.abs(value) <= 40))));
 }
 
 export class SaveStore {
   constructor() {
     this.lastSavedAt = 0;
     this.saveError = null;
+    this.memory = new Map();
+    this.storageAvailable = true;
+  }
+
+  _get(key) {
+    // An in-memory value is the newest write for this session. Prefer it over
+    // readable-but-stale disk data after QuotaExceededError or privacy changes.
+    if (this.memory.has(key)) return this.memory.get(key);
+    try {
+      const value = localStorage.getItem(key);
+      this.storageAvailable = true;
+      return value;
+    } catch (error) {
+      this.storageAvailable = false;
+      this.saveError = error;
+      return this.memory.get(key) ?? null;
+    }
+  }
+
+  _set(key, value) {
+    this.memory.set(key, value);
+    try {
+      localStorage.setItem(key, value);
+      this.storageAvailable = true;
+      return true;
+    } catch (error) {
+      this.storageAvailable = false;
+      this.saveError = error;
+      return false;
+    }
+  }
+
+  _remove(key) {
+    // Keep a tombstone so a failed remove cannot expose an older disk save.
+    this.memory.set(key, null);
+    try {
+      localStorage.removeItem(key);
+      return true;
+    } catch (error) {
+      this.storageAvailable = false;
+      this.saveError = error;
+      return false;
+    }
   }
 
   hasSave() {
@@ -149,28 +227,41 @@ export class SaveStore {
   }
 
   load() {
-    const primary = safeParse(localStorage.getItem(SAVE_KEY));
-    if (validateSave(primary)) return primary;
-    const backup = safeParse(localStorage.getItem(BACKUP_KEY));
-    return validateSave(backup) ? backup : null;
+    const primary = safeParse(this._get(SAVE_KEY));
+    const backup = safeParse(this._get(BACKUP_KEY));
+    const primaryValid = validateSave(primary);
+    const backupValid = validateSave(backup);
+    if (!primaryValid) return backupValid ? backup : null;
+    if (!backupValid) return primary;
+
+    // A failed primary write may still leave a newer, valid snapshot in the
+    // backup slot. Prefer it only when both records carry comparable timestamps;
+    // legacy records and ties retain the primary as the conservative default.
+    const primaryTime = Date.parse(primary.updatedAt ?? '');
+    const backupTime = Date.parse(backup.updatedAt ?? '');
+    if (Number.isFinite(primaryTime) && Number.isFinite(backupTime) && backupTime > primaryTime) {
+      return backup;
+    }
+    return primary;
   }
 
   save(snapshot) {
     const data = {
       ...snapshot,
-      schemaVersion: 1,
-      generatorVersion: 1,
-      registryVersion: 1,
+      schemaVersion: SCHEMA_VERSION,
+      generatorVersion: GENERATOR_VERSION,
+      registryVersion: REGISTRY_VERSION,
       updatedAt: new Date().toISOString(),
     };
     const encoded = JSON.stringify(data);
     try {
-      const current = localStorage.getItem(SAVE_KEY);
-      if (current) localStorage.setItem(BACKUP_KEY, current);
-      localStorage.setItem(SAVE_KEY, encoded);
+      const current = this._get(SAVE_KEY);
+      // Never replace a known-good backup with a corrupt primary record.
+      if (validateSave(safeParse(current))) this._set(BACKUP_KEY, current);
+      const persisted = this._set(SAVE_KEY, encoded);
       this.lastSavedAt = Date.now();
-      this.saveError = null;
-      return true;
+      if (persisted) this.saveError = null;
+      return persisted;
     } catch (error) {
       this.saveError = error;
       console.warn('Worldloom could not save this world.', error);
@@ -179,18 +270,19 @@ export class SaveStore {
   }
 
   clear() {
-    localStorage.removeItem(SAVE_KEY);
+    this._remove(SAVE_KEY);
+    this._remove(BACKUP_KEY);
   }
 
   loadSettings() {
-    const stored = safeParse(localStorage.getItem(SETTINGS_KEY));
+    const stored = safeParse(this._get(SETTINGS_KEY));
     return this.sanitizeSettings({ ...DEFAULT_SETTINGS, ...(stored || {}) });
   }
 
   saveSettings(settings) {
     const clean = this.sanitizeSettings(settings);
     try {
-      localStorage.setItem(SETTINGS_KEY, JSON.stringify(clean));
+      this._set(SETTINGS_KEY, JSON.stringify(clean));
     } catch (error) {
       console.warn('Worldloom could not save settings.', error);
     }
@@ -248,8 +340,29 @@ export class Inventory {
     return this.count(id) >= count;
   }
 
+  capacityFor(id) {
+    if (!id) return 0;
+    return this.slots.reduce((capacity, slot) => {
+      if (!slot.id || slot.count <= 0) return capacity + 99;
+      if (slot.id === id) return capacity + Math.max(0, 99 - slot.count);
+      return capacity;
+    }, 0);
+  }
+
+  canAdd(id, count = 1) {
+    return this.capacityFor(id) >= Math.max(0, Number(count) || 0);
+  }
+
+  clone() {
+    const copy = new Inventory(this.slotCount);
+    copy.load(this.serialize());
+    return copy;
+  }
+
   add(id, count = 1) {
-    if (!id || count <= 0) return 0;
+    id = Math.floor(Number(id));
+    count = Math.floor(Number(count));
+    if (!Number.isInteger(id) || id <= 0 || !Number.isInteger(count) || count <= 0) return 0;
     let remaining = count;
     for (const slot of this.slots) {
       if (slot.id === id && slot.count < 99) {
@@ -292,8 +405,10 @@ export class Inventory {
   }
 
   consume(slotIndex, count = 1) {
+    slotIndex = Math.floor(Number(slotIndex));
+    count = Math.floor(Number(count));
     const slot = this.slots[slotIndex];
-    if (!slot?.id || slot.count < count) return false;
+    if (!slot?.id || !Number.isInteger(count) || count <= 0 || slot.count < count) return false;
     slot.count -= count;
     if (slot.count <= 0) {
       slot.id = 0;
@@ -304,11 +419,14 @@ export class Inventory {
   }
 
   selectedSlot() {
-    return this.slots[this.selected] || this.slots[0];
+    const slot = this.slots[this.selected] || this.slots[0];
+    return slot?.id && slot.count > 0 ? slot : { id: 0, count: 0 };
   }
 
   move(from, to) {
-    if (from === to || !this.slots[from] || !this.slots[to]) return;
+    from = Math.floor(Number(from));
+    to = Math.floor(Number(to));
+    if (from === to || !this.slots[from] || !this.slots[to]) return false;
     const a = this.slots[from];
     const b = this.slots[to];
     if (a.id && a.id === b.id && b.count < 99) {
@@ -320,6 +438,26 @@ export class Inventory {
       [this.slots[from], this.slots[to]] = [b, a];
     }
     this.changed = true;
+    return true;
+  }
+
+  /** Remove an exact amount (or the whole stack) from one slot. */
+  take(slotIndex, count = Infinity) {
+    slotIndex = Math.floor(Number(slotIndex));
+    const slot = this.slots[slotIndex];
+    if (!slot?.id || slot.count <= 0) return null;
+    const requested = Number.isFinite(Number(count))
+      ? Math.max(1, Math.floor(Number(count)))
+      : slot.count;
+    const taken = Math.min(slot.count, requested);
+    const stack = { id: slot.id, count: taken };
+    slot.count -= taken;
+    if (slot.count <= 0) {
+      slot.id = 0;
+      slot.count = 0;
+    }
+    this.changed = true;
+    return stack;
   }
 
   serialize() {
@@ -330,9 +468,11 @@ export class Inventory {
     if (!data || !Array.isArray(data.slots)) return;
     this.slots = Array.from({ length: this.slotCount }, (_, index) => {
       const slot = data.slots[index];
+      const count = Number.isInteger(slot?.count) ? Math.max(0, Math.min(99, slot.count)) : 0;
+      const id = Number.isInteger(slot?.id) && slot.id > 0 && count > 0 ? slot.id : 0;
       return {
-        id: Number.isInteger(slot?.id) ? slot.id : 0,
-        count: Number.isInteger(slot?.count) ? Math.max(0, Math.min(99, slot.count)) : 0,
+        id,
+        count: id ? count : 0,
       };
     });
     this.selected = Number.isInteger(data.selected) ? Math.max(0, Math.min(8, data.selected)) : 0;

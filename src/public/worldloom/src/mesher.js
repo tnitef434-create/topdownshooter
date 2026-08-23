@@ -3,18 +3,19 @@ import { BLOCK, BLOCKS, isSolid, isTransparent, isLiquid } from './blocks.js';
 
 const AIR = Number.isInteger(BLOCK?.AIR) ? BLOCK.AIR : 0;
 const DEFAULT_ATLAS_COLUMNS = 4;
-const WATER_SURFACE_HEIGHT = 0.86;
+const WATER_SURFACE_HEIGHT = 0.92;
+const WATER_LEVEL_DROP = 0.085;
 const AO_DARKENING = 0.14;
-const CAVE_DARKENING = 0.46;
+const CAVE_DARKENING = 0.92;
 
 // The corner order for every face is counter-clockwise when viewed from outside.
 const FACES = Object.freeze([
   {
-    name: 'east', normal: [1, 0, 0], shade: 0.82, tile: 'side',
+    name: 'east', normal: [1, 0, 0], shade: 0.95, tile: 'side',
     corners: [[1, 0, 1], [1, 0, 0], [1, 1, 0], [1, 1, 1]],
   },
   {
-    name: 'west', normal: [-1, 0, 0], shade: 0.74, tile: 'side',
+    name: 'west', normal: [-1, 0, 0], shade: 0.95, tile: 'side',
     corners: [[0, 0, 0], [0, 0, 1], [0, 1, 1], [0, 1, 0]],
   },
   {
@@ -22,15 +23,15 @@ const FACES = Object.freeze([
     corners: [[0, 1, 1], [1, 1, 1], [1, 1, 0], [0, 1, 0]],
   },
   {
-    name: 'bottom', normal: [0, -1, 0], shade: 0.52, tile: 'bottom',
+    name: 'bottom', normal: [0, -1, 0], shade: 0.72, tile: 'bottom',
     corners: [[0, 0, 0], [1, 0, 0], [1, 0, 1], [0, 0, 1]],
   },
   {
-    name: 'south', normal: [0, 0, 1], shade: 0.88, tile: 'side',
+    name: 'south', normal: [0, 0, 1], shade: 0.95, tile: 'side',
     corners: [[0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]],
   },
   {
-    name: 'north', normal: [0, 0, -1], shade: 0.68, tile: 'side',
+    name: 'north', normal: [0, 0, -1], shade: 0.95, tile: 'side',
     corners: [[1, 0, 0], [0, 0, 0], [0, 1, 0], [1, 1, 0]],
   },
 ]);
@@ -151,12 +152,17 @@ function colorFor(definition, shade, y, worldHeight, x = 0, z = 0, block = 0) {
   return color;
 }
 
-function buildSkyline(world, originX, originZ, size, height) {
+function createSkylineState(world, originX, originZ, size, height) {
   const width = size + 2;
   const values = new Int16Array(width * width);
   values.fill(-1);
-  for (let localZ = -1; localZ <= size; localZ++) {
-    for (let localX = -1; localX <= size; localX++) {
+  const total = width * width;
+  let cursor = 0;
+  const step = (maxColumns = total, deadline = Number.POSITIVE_INFINITY) => {
+    let processed = 0;
+    while (cursor < total && processed < maxColumns && performanceNow() < deadline) {
+      const localX = cursor % width - 1;
+      const localZ = Math.floor(cursor / width) - 1;
       const worldX = originX + localX;
       const worldZ = originZ + localZ;
       let top = -1;
@@ -168,13 +174,23 @@ function buildSkyline(world, originX, originZ, size, height) {
         }
       }
       values[(localZ + 1) * width + localX + 1] = top;
+      cursor++;
+      processed++;
     }
-  }
-  return (worldX, worldZ) => {
+    return cursor >= total;
+  };
+  const sample = (worldX, worldZ) => {
     const localX = THREE.MathUtils.clamp(Math.floor(worldX - originX) + 1, 0, width - 1);
     const localZ = THREE.MathUtils.clamp(Math.floor(worldZ - originZ) + 1, 0, width - 1);
     return values[localZ * width + localX];
   };
+  return { step, sample, get complete() { return cursor >= total; } };
+}
+
+function performanceNow() {
+  return typeof performance !== 'undefined' && typeof performance.now === 'function'
+    ? performance.now()
+    : Date.now();
 }
 
 function occlusionAt(world, x, y, z) {
@@ -219,9 +235,11 @@ function cornerLight(world, worldX, y, worldZ, face, corner, skyline) {
   const coverZ = worldZ + (normal[2] === 0 ? corner[2] * 0.999 : normal[2]);
   const coverY = skyline(coverX, coverZ);
   const coverDepth = Math.max(0, coverY - surfaceY);
-  const caveShade = 1 - THREE.MathUtils.smoothstep(coverDepth, 1, 14) * CAVE_DARKENING;
+  const enclosedShade = coverDepth > 0.1 ? 0.34 : 1;
+  const caveShade = enclosedShade
+    * (1 - THREE.MathUtils.smoothstep(coverDepth, 0.2, 13) * CAVE_DARKENING);
   const skyFacing = normal[1] > 0 ? 1.025 : normal[1] < 0 ? 0.92 : 1;
-  return THREE.MathUtils.clamp(ambientOcclusion * caveShade * skyFacing, 0.42, 1.025);
+  return THREE.MathUtils.clamp(ambientOcclusion * caveShade * skyFacing, 0.045, 1.025);
 }
 
 function glowColorFor(definition) {
@@ -246,6 +264,30 @@ function faceIsVisible(block, neighbor) {
   return !isSolid(neighbor) || isTransparent(neighbor);
 }
 
+function fluidCellHeight(world, x, y, z) {
+  if (!isLiquid(world.getBlock(x, y, z))) return null;
+  if (isLiquid(world.getBlock(x, y + 1, z))) return 1;
+  const level = Number(world.getFluidLevel?.(x, y, z));
+  const normalizedLevel = Number.isFinite(level) ? THREE.MathUtils.clamp(level, 0, 7) : 0;
+  return Math.max(0.3, WATER_SURFACE_HEIGHT - normalizedLevel * WATER_LEVEL_DROP);
+}
+
+function fluidCornerHeights(world, x, y, z, face) {
+  return face.corners.map((corner) => {
+    if (corner[1] !== 1) return corner[1];
+    let height = fluidCellHeight(world, x, y, z) ?? WATER_SURFACE_HEIGHT;
+    const vertexX = x + corner[0];
+    const vertexZ = z + corner[2];
+    for (const sampleX of [vertexX - 1, vertexX]) {
+      for (const sampleZ of [vertexZ - 1, vertexZ]) {
+        const candidate = fluidCellHeight(world, sampleX, y, sampleZ);
+        if (candidate != null) height = Math.max(height, candidate);
+      }
+    }
+    return height;
+  });
+}
+
 class GeometryWriter {
   constructor() {
     this.positions = [];
@@ -256,11 +298,11 @@ class GeometryWriter {
     this.faces = 0;
   }
 
-  addFace(x, y, z, face, uv, color, lowerWaterTop, cornerLights = null) {
+  addFace(x, y, z, face, uv, color, waterHeights = null, cornerLights = null) {
     const offset = this.positions.length / 3;
     for (let cornerIndex = 0; cornerIndex < 4; cornerIndex++) {
       const corner = face.corners[cornerIndex];
-      const cornerY = lowerWaterTop && corner[1] === 1 ? WATER_SURFACE_HEIGHT : corner[1];
+      const cornerY = waterHeights && corner[1] === 1 ? waterHeights[cornerIndex] : corner[1];
       const light = cornerLights?.[cornerIndex] ?? 1;
       this.positions.push(x + corner[0], y + cornerY, z + corner[2]);
       this.normals.push(face.normal[0], face.normal[1], face.normal[2]);
@@ -333,109 +375,211 @@ class GeometryWriter {
 }
 
 /**
- * Builds culled-face geometry for a chunk. Positions are local to the chunk;
- * World positions the resulting meshes at (cx * size, 0, cz * size).
+ * Incremental chunk meshing job. Skyline analysis, voxel traversal, and buffer
+ * creation are all split into small slices so streaming cannot monopolize a
+ * render frame. `buildChunkGeometry` below remains the synchronous compatibility
+ * wrapper used by tests and correctness-critical callers.
  */
-export function buildChunkGeometry(world, chunk, atlas) {
-  const size = Number(world?.chunkSize ?? chunk?.size ?? 16);
-  const height = Number(world?.worldHeight ?? chunk?.height ?? 64);
-  const blocks = chunk?.blocks ?? chunk?.data;
-  if (!blocks) throw new TypeError('Chunk is missing its block buffer.');
+export class ChunkGeometryJob {
+  constructor(world, chunk, atlas) {
+    this.world = world;
+    this.chunk = chunk;
+    this.size = Number(world?.chunkSize ?? chunk?.size ?? 16);
+    this.height = Number(world?.worldHeight ?? chunk?.height ?? 64);
+    this.blocks = chunk?.blocks ?? chunk?.data;
+    if (!this.blocks) throw new TypeError('Chunk is missing its block buffer.');
+    this.atlasMeta = atlasInfo(atlas);
+    this.writers = {
+      opaque: new GeometryWriter(),
+      glass: new GeometryWriter(),
+      water: new GeometryWriter(),
+      glow: new GeometryWriter(),
+    };
+    this.originX = chunk.cx * this.size;
+    this.originZ = chunk.cz * this.size;
+    this.skylineState = createSkylineState(
+      world,
+      this.originX,
+      this.originZ,
+      this.size,
+      this.height,
+    );
+    this.voxelCursor = 0;
+    this.voxelTotal = this.size * this.size * this.height;
+    this.finishCursor = 0;
+    this.geometry = { opaque: null, glass: null, water: null, glow: null };
+    this.complete = false;
+    this.result = null;
+  }
 
-  const atlasMeta = atlasInfo(atlas);
-  const opaque = new GeometryWriter();
-  const glass = new GeometryWriter();
-  const water = new GeometryWriter();
-  const glow = new GeometryWriter();
-  const originX = chunk.cx * size;
-  const originZ = chunk.cz * size;
-  const skyline = buildSkyline(world, originX, originZ, size, height);
+  _writeVoxel(index) {
+    const layerSize = this.size * this.size;
+    const y = Math.floor(index / layerSize);
+    const withinLayer = index - y * layerSize;
+    const z = Math.floor(withinLayer / this.size);
+    const x = withinLayer - z * this.size;
+    const block = this.blocks[index];
+    if (block === AIR) return;
+    const definition = getDefinition(block);
+    const writer = isLiquid(block)
+      ? this.writers.water
+      : definition?.transparent && Number(definition?.opacity) < 1
+        ? this.writers.glass
+        : this.writers.opaque;
+    const worldX = this.originX + x;
+    const worldZ = this.originZ + z;
+    const skyline = this.skylineState.sample;
 
-  for (let y = 0; y < height; y++) {
-    for (let z = 0; z < size; z++) {
-      for (let x = 0; x < size; x++) {
-        const index = x + size * (z + size * y);
-        const block = blocks[index];
-        if (block === AIR) continue;
-        const definition = getDefinition(block);
-        const writer = isLiquid(block)
-          ? water
-          : definition?.transparent && Number(definition?.opacity) < 1
-            ? glass
-            : opaque;
-        const worldX = originX + x;
-        const worldZ = originZ + z;
+    if (['cross', 'cross-short', 'grass-tuft'].includes(definition?.shape)) {
+      const uv = tileCoordinates(readTile(definition, FACES[4]), this.atlasMeta);
+      const coverDepth = Math.max(0, skyline(worldX, worldZ) - y);
+      const plantLight = coverDepth > 0
+        ? 0.36 * (1 - THREE.MathUtils.smoothstep(coverDepth, 1, 10) * 0.78)
+        : 1;
+      const color = colorFor(definition, 0.92 * plantLight, y, this.height, worldX, worldZ, block);
+      const plantHeight = definition.shape === 'grass-tuft' ? 0.3 : definition.shape === 'cross-short' ? 0.54 : 1;
+      const plantSpread = definition.shape === 'grass-tuft' ? 0.9 : definition.shape === 'cross-short' ? 0.62 : 0.76;
+      writer.addCross(x, y, z, uv, color, plantHeight, plantSpread);
+      if (definition?.emissive && !isLiquid(block)) {
+        this.writers.glow.addCross(x, y, z, uv, glowColorFor(definition), plantHeight, plantSpread);
+      }
+      return;
+    }
 
-        if (definition?.shape === 'cross' || definition?.shape === 'cross-short') {
-          const uv = tileCoordinates(readTile(definition, FACES[4]), atlasMeta);
-          const coverDepth = Math.max(0, skyline(worldX, worldZ) - y);
-          const plantLight = 1 - THREE.MathUtils.smoothstep(coverDepth, 1, 10) * 0.38;
-          const color = colorFor(definition, 0.92 * plantLight, y, height, worldX, worldZ, block);
-          const plantHeight = definition.shape === 'cross-short' ? 0.54 : 1;
-          const plantSpread = definition.shape === 'cross-short' ? 0.62 : 0.76;
-          writer.addCross(x, y, z, uv, color, plantHeight, plantSpread);
-          if (definition?.emissive && !isLiquid(block)) glow.addCross(x, y, z, uv, glowColorFor(definition), plantHeight, plantSpread);
-          continue;
-        }
+    if (definition?.shape === 'slab' || definition?.shape === 'slab-high') {
+      const slabHeight = definition.shape === 'slab-high' ? 0.78 : 0.46;
+      for (const face of FACES) {
+        const uv = tileCoordinates(readTile(definition, face), this.atlasMeta);
+        const color = colorFor(definition, face.shade, y, this.height, worldX, worldZ, block);
+        const points = face.corners.map((corner) => [
+          x + corner[0],
+          y + corner[1] * slabHeight,
+          z + corner[2],
+        ]);
+        writer.addQuad(points, face.normal, uv, color);
+        if (definition?.emissive) this.writers.glow.addQuad(points, face.normal, uv, glowColorFor(definition));
+      }
+      return;
+    }
 
-        if (definition?.shape === 'slab' || definition?.shape === 'slab-high') {
-          const slabHeight = definition.shape === 'slab-high' ? 0.78 : 0.46;
-          for (const face of FACES) {
-            const uv = tileCoordinates(readTile(definition, face), atlasMeta);
-            const color = colorFor(definition, face.shade, y, height, worldX, worldZ, block);
-            const points = face.corners.map((corner) => [
-              x + corner[0],
-              y + corner[1] * slabHeight,
-              z + corner[2],
-            ]);
-            writer.addQuad(points, face.normal, uv, color);
-            if (definition?.emissive) glow.addQuad(points, face.normal, uv, glowColorFor(definition));
-          }
-          continue;
-        }
-
-        for (const face of FACES) {
-          if (y === 0 && face.normal[1] < 0) continue;
-          const neighbor = world.getBlock(
-            worldX + face.normal[0],
-            y + face.normal[1],
-            worldZ + face.normal[2],
-          );
-          if (!faceIsVisible(block, neighbor)) continue;
-          const uv = tileCoordinates(readTile(definition, face), atlasMeta);
-          const color = colorFor(definition, face.shade, y, height, worldX, worldZ, block);
-          const cornerLights = face.corners.map((corner) => (
-            cornerLight(world, worldX, y, worldZ, face, corner, skyline)
-          ));
-          const lowerWaterTop = isLiquid(block)
-            && !isLiquid(world.getBlock(worldX, y + 1, worldZ));
-          writer.addFace(x, y, z, face, uv, color, lowerWaterTop, cornerLights);
-          if (definition?.emissive && !isLiquid(block)) glow.addFace(x, y, z, face, uv, glowColorFor(definition), false);
-        }
+    for (const face of FACES) {
+      if (y === 0 && face.normal[1] < 0) continue;
+      const neighbor = this.world.getBlock(
+        worldX + face.normal[0],
+        y + face.normal[1],
+        worldZ + face.normal[2],
+      );
+      if (!faceIsVisible(block, neighbor)) continue;
+      const uv = tileCoordinates(readTile(definition, face), this.atlasMeta);
+      const color = colorFor(definition, face.shade, y, this.height, worldX, worldZ, block);
+      const cornerLights = face.corners.map((corner) => (
+        cornerLight(this.world, worldX, y, worldZ, face, corner, skyline)
+      ));
+      const waterHeights = isLiquid(block) && !isLiquid(this.world.getBlock(worldX, y + 1, worldZ))
+        ? fluidCornerHeights(this.world, worldX, y, worldZ, face)
+        : null;
+      writer.addFace(x, y, z, face, uv, color, waterHeights, cornerLights);
+      if (definition?.emissive && !isLiquid(block)) {
+        this.writers.glow.addFace(x, y, z, face, uv, glowColorFor(definition), false);
       }
     }
   }
 
-  const opaqueGeometry = opaque.finish();
-  const glassGeometry = glass.finish();
-  const waterGeometry = water.finish();
-  const glowGeometry = glow.finish();
-  return {
-    opaque: opaqueGeometry,
-    glass: glassGeometry,
-    water: waterGeometry,
-    glow: glowGeometry,
-    opaqueGeometry,
-    glassGeometry,
-    waterGeometry,
-    glowGeometry,
-    opaqueFaces: opaque.faces,
-    glassFaces: glass.faces,
-    waterFaces: water.faces,
-    glowFaces: glow.faces,
-    faces: opaque.faces + glass.faces + water.faces,
-    triangles: (opaque.faces + glass.faces + water.faces + glow.faces) * 2,
-  };
+  _finishNext() {
+    const key = ['opaque', 'glass', 'water', 'glow'][this.finishCursor];
+    if (!key) {
+      const { opaque, glass, water, glow } = this.geometry;
+      this.result = {
+        opaque,
+        glass,
+        water,
+        glow,
+        opaqueGeometry: opaque,
+        glassGeometry: glass,
+        waterGeometry: water,
+        glowGeometry: glow,
+        opaqueFaces: this.writers.opaque.faces,
+        glassFaces: this.writers.glass.faces,
+        waterFaces: this.writers.water.faces,
+        glowFaces: this.writers.glow.faces,
+        faces: this.writers.opaque.faces + this.writers.glass.faces + this.writers.water.faces,
+        triangles: (
+          this.writers.opaque.faces + this.writers.glass.faces
+          + this.writers.water.faces + this.writers.glow.faces
+        ) * 2,
+      };
+      this.complete = true;
+      return;
+    }
+    this.geometry[key] = this.writers[key].finish();
+    if (key === 'water') this.geometry.water?.computeVertexNormals();
+    this.finishCursor++;
+  }
+
+  step({ maxVoxels = 1536, maxMilliseconds = 4 } = {}) {
+    if (this.complete) return true;
+    const voxelBudget = Number.isFinite(maxVoxels)
+      ? Math.max(1, Math.floor(maxVoxels))
+      : Number.POSITIVE_INFINITY;
+    const deadline = Number.isFinite(maxMilliseconds)
+      ? performanceNow() + Math.max(0.5, maxMilliseconds)
+      : Number.POSITIVE_INFINITY;
+
+    if (!this.skylineState.complete) {
+      const columnBudget = Number.isFinite(voxelBudget)
+        ? Math.max(2, Math.floor(voxelBudget / Math.max(1, this.height)))
+        : Number.POSITIVE_INFINITY;
+      this.skylineState.step(columnBudget, deadline);
+      if (!this.skylineState.complete || performanceNow() >= deadline) return false;
+    }
+
+    let processed = 0;
+    while (
+      this.voxelCursor < this.voxelTotal
+      && processed < voxelBudget
+      && performanceNow() < deadline
+    ) {
+      this._writeVoxel(this.voxelCursor++);
+      processed++;
+    }
+    if (this.voxelCursor < this.voxelTotal || performanceNow() >= deadline) return false;
+
+    // Typed-array allocation and GPU buffer setup are also distributed. Empty
+    // material buckets are skipped in the same turn, while no more than one
+    // non-empty geometry is allocated per idle slice.
+    let finalizedNonEmpty = false;
+    while (!this.complete && performanceNow() < deadline) {
+      const nextKey = ['opaque', 'glass', 'water', 'glow'][this.finishCursor];
+      if (finalizedNonEmpty && nextKey && this.writers[nextKey].faces > 0) break;
+      const hadFaces = nextKey ? this.writers[nextKey].faces > 0 : false;
+      this._finishNext();
+      finalizedNonEmpty ||= hadFaces;
+    }
+    return this.complete;
+  }
+
+  disposePartial() {
+    for (const geometry of Object.values(this.geometry)) geometry?.dispose?.();
+    this.complete = true;
+    this.result = null;
+  }
+}
+
+export function createChunkGeometryJob(world, chunk, atlas) {
+  return new ChunkGeometryJob(world, chunk, atlas);
+}
+
+/**
+ * Synchronous compatibility wrapper. Runtime streaming uses the incremental job
+ * through World.rebuildDirty(), while tests and explicit one-off calls retain the
+ * original immediate return contract.
+ */
+export function buildChunkGeometry(world, chunk, atlas) {
+  const job = createChunkGeometryJob(world, chunk, atlas);
+  while (!job.step({ maxVoxels: Number.POSITIVE_INFINITY, maxMilliseconds: Number.POSITIVE_INFINITY })) {
+    // The infinite budget completes every phase in a bounded number of passes.
+  }
+  return job.result;
 }
 
 export const meshChunk = buildChunkGeometry;

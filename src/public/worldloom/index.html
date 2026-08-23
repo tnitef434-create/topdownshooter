@@ -113,8 +113,11 @@
 
           <p class="control-hint">
             <kbd>WASD</kbd> move <span aria-hidden="true">·</span> <kbd>Mouse</kbd> look
-            <span aria-hidden="true">·</span> <kbd>E</kbd> pack <span aria-hidden="true">·</span>
-            <kbd>Esc</kbd> pause
+            <span aria-hidden="true">·</span> <kbd>Space</kbd> jump/swim <span aria-hidden="true">·</span>
+            <kbd>Shift</kbd> sprint <span aria-hidden="true">·</span> <kbd>LMB</kbd> mine/attack
+            <span aria-hidden="true">·</span> <kbd>RMB</kbd> place/use <span aria-hidden="true">·</span>
+            <kbd>E</kbd> pack <span aria-hidden="true">·</span> <kbd>F</kbd> interact <span aria-hidden="true">·</span>
+            <kbd>J</kbd> objective <span aria-hidden="true">·</span> <kbd>Esc</kbd> pause
           </p>
         </div>
       </section>
@@ -141,7 +144,7 @@
           </div>
           <div id="time-label" class="time-chip" aria-label="Time of day">
             <span class="time-chip__sun" aria-hidden="true"></span>
-            <span>Morning</span>
+            <span id="time-text">Day 1 · Morning</span>
           </div>
         </div>
 
@@ -165,6 +168,27 @@
                 <span id="stamina-fill" class="status-fill"></span>
               </span>
               <span class="sr-only">Vigor</span>
+            </div>
+            <div class="status-row status-row--nourishment">
+              <span class="status-icon" aria-hidden="true">●</span>
+              <span class="status-track" title="Nourishment" role="progressbar" aria-label="Nourishment" aria-valuemin="0" aria-valuemax="100" aria-valuenow="90">
+                <span id="nourishment-fill" class="status-fill" style="width: 90%"></span>
+              </span>
+              <span class="sr-only">Nourishment</span>
+            </div>
+            <div class="status-row status-row--wetness is-hidden">
+              <span class="status-icon" aria-hidden="true">≈</span>
+              <span class="status-track" title="Wetness" role="progressbar" aria-label="Wetness" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                <span id="wetness-fill" class="status-fill" style="width: 0%"></span>
+              </span>
+              <span class="sr-only">Wetness</span>
+            </div>
+            <div class="status-row status-row--oxygen is-hidden">
+              <span class="status-icon" aria-hidden="true">○</span>
+              <span class="status-track" title="Breath" role="progressbar" aria-label="Breath" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100">
+                <span id="oxygen-fill" class="status-fill"></span>
+              </span>
+              <span class="sr-only">Breath</span>
             </div>
           </div>
 

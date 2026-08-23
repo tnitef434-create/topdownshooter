@@ -1,5 +1,5 @@
 import * as THREE from '../vendor/three.module.min.js';
-import { BLOCKS, isSolid, isLiquid } from './blocks.js';
+import { BLOCKS, isSolid, isLiquid, blockShapeHeight } from './blocks.js';
 
 export const PLAYER = Object.freeze({
   width: 0.62,
@@ -15,6 +15,42 @@ export const PLAYER = Object.freeze({
 
 const EPSILON = 0.0001;
 
+export const FALL_DAMAGE = Object.freeze({
+  // A standing jump lands at roughly 8.2 m/s. This threshold leaves normal
+  // jumps, one-block steps and short ledge drops comfortably damage-free.
+  safeImpact: 13,
+  energyScale: 340,
+  maximum: 0.86,
+});
+
+export function fallDamageForImpact(impact, tuning = FALL_DAMAGE) {
+  const speed = Math.max(0, Number(impact) || 0);
+  const safeImpact = Math.max(0, Number(tuning?.safeImpact) || FALL_DAMAGE.safeImpact);
+  if (speed <= safeImpact) return 0;
+  // Impact energy grows with velocity squared. This gives a gentle warning on
+  // medium falls, then makes genuinely long drops dangerous without an abrupt
+  // damage cliff at the threshold.
+  const energyScale = Math.max(1, Number(tuning?.energyScale) || FALL_DAMAGE.energyScale);
+  const maximum = THREE.MathUtils.clamp(
+    Number(tuning?.maximum) || FALL_DAMAGE.maximum,
+    0,
+    1,
+  );
+  return THREE.MathUtils.clamp(
+    (speed * speed - safeImpact * safeImpact) / energyScale,
+    0,
+    maximum,
+  );
+}
+
+function intersectsBlockShape(aabb, x, y, z, blockId) {
+  if (!isSolid(blockId)) return false;
+  const height = blockShapeHeight(blockId);
+  return aabb.maxX > x + EPSILON && aabb.minX < x + 1 - EPSILON
+    && aabb.maxY > y + EPSILON && aabb.minY < y + height - EPSILON
+    && aabb.maxZ > z + EPSILON && aabb.minZ < z + 1 - EPSILON;
+}
+
 export class InputController {
   constructor(canvas) {
     this.canvas = canvas;
@@ -28,7 +64,7 @@ export class InputController {
     this.onButtonDown = null;
     this.onButtonUp = null;
     this.onKeyDown = null;
-    this.maxMouseDelta = 180;
+    this.maxMouseDelta = 1400;
 
     this._keyDown = (event) => {
       if (!this.enabled) return;
@@ -49,10 +85,8 @@ export class InputController {
       if (!this.locked || !this.enabled) return;
       const dx = Number(event.movementX) || 0;
       const dy = Number(event.movementY) || 0;
-      // Some Windows/browser combinations report a one-frame cursor-warp spike
-      // at a monitor edge. Discard that impossible event instead of converting it
-      // into a visible camera jump; ordinary deltas still accumulate without a
-      // horizontal boundary, so any number of complete turns remains continuous.
+      // Ignore only impossible cursor-warp events. Legitimate high-DPI flicks can
+      // exceed 180px and must remain continuous through any number of full turns.
       if (Math.abs(dx) <= this.maxMouseDelta) this.mouseDX += dx;
       if (Math.abs(dy) <= this.maxMouseDelta) this.mouseDY += dy;
     };
@@ -129,9 +163,11 @@ export class PlayerController {
     this.pitch = 0;
     this.grounded = false;
     this.inWater = false;
+    this.headUnderwater = false;
     this.coyote = 0;
     this.jumpBuffer = 0;
     this.stamina = 1;
+    this.staminaRecoveryDelay = 0;
     this.health = 1;
     this.bobTime = 0;
     this.bobBlend = 0;
@@ -144,6 +180,7 @@ export class PlayerController {
     this.onLand = null;
     this.onSplash = null;
     this.onDamage = null;
+    this.onVoid = null;
     this.flying = false;
     this._lastJumpTap = -Infinity;
     this._time = 0;
@@ -158,8 +195,29 @@ export class PlayerController {
   setPosition(x, y, z) {
     this.position.set(x, y, z);
     this.velocity.set(0, 0, 0);
+    this.grounded = false;
+    this.wasGrounded = false;
+    this.landingImpact = 0;
     this._lastSafe.copy(this.position);
     this._syncCamera(0, false, this.camera.fov || 75);
+  }
+
+  canSpendStamina(amount, reserve = 0) {
+    const cost = THREE.MathUtils.clamp(Number(amount) || 0, 0, 1);
+    const minimumReserve = THREE.MathUtils.clamp(Number(reserve) || 0, 0, 1);
+    return this.stamina + EPSILON >= Math.min(1, cost + minimumReserve);
+  }
+
+  spendStamina(amount, recoveryDelay = 0.58) {
+    const cost = THREE.MathUtils.clamp(Number(amount) || 0, 0, 1);
+    if (cost <= 0) return true;
+    if (!this.canSpendStamina(cost)) return false;
+    this.stamina = Math.max(0, this.stamina - cost);
+    this.staminaRecoveryDelay = Math.max(
+      this.staminaRecoveryDelay,
+      THREE.MathUtils.clamp(Number(recoveryDelay) || 0, 0, 3),
+    );
+    return true;
   }
 
   get feetAABB() {
@@ -174,16 +232,22 @@ export class PlayerController {
     };
   }
 
-  intersectsBlock(x, y, z) {
-    const a = this.feetAABB;
-    return a.maxX > x + EPSILON && a.minX < x + 1 - EPSILON
-      && a.maxY > y + EPSILON && a.minY < y + 1 - EPSILON
-      && a.maxZ > z + EPSILON && a.minZ < z + 1 - EPSILON;
+  intersectsBlock(x, y, z, blockId = this.world.getBlock(x, y, z)) {
+    return intersectsBlockShape(this.feetAABB, x, y, z, blockId);
+  }
+
+  isColliding() {
+    return this._collidesAt(this.position);
+  }
+
+  isCollidingAt(position) {
+    return this._collidesAt(position);
   }
 
   update(dt, input, settings = {}) {
     dt = Math.min(dt, 0.05);
     this._time += dt;
+    this.staminaRecoveryDelay = Math.max(0, this.staminaRecoveryDelay - dt);
     const sensitivity = Number(settings.sensitivity ?? 0.0022);
     const look = input.consumeLook();
     this.yaw -= look.x * sensitivity;
@@ -202,15 +266,28 @@ export class PlayerController {
     const crouching = input.isDown('ControlLeft', 'ControlRight');
     const wantsSprint = input.isDown('ShiftLeft', 'ShiftRight') && forwardInput > 0 && !crouching;
     const sprinting = wantsSprint && this.stamina > 0.025 && !this.inWater;
-    const targetSpeed = crouching ? PLAYER.crouchSpeed : sprinting ? PLAYER.sprintSpeed : PLAYER.walkSpeed;
+    const speedMultiplier = THREE.MathUtils.clamp(Number(settings.speedMultiplier) || 1, 0.5, 1.25);
+    const sprintCostMultiplier = THREE.MathUtils.clamp(Number(settings.sprintCostMultiplier) || 1, 0.5, 3);
+    const staminaRecoveryMultiplier = THREE.MathUtils.clamp(Number(settings.staminaRecoveryMultiplier) || 1, 0.2, 2);
+    const targetSpeed = (crouching ? PLAYER.crouchSpeed : sprinting ? PLAYER.sprintSpeed : PLAYER.walkSpeed)
+      * speedMultiplier;
 
     this._forward.set(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
     this._right.set(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
     this._wish.copy(this._forward).multiplyScalar(forwardInput).addScaledVector(this._right, sideInput);
     if (this._wish.lengthSq() > 1) this._wish.normalize();
 
-    if (sprinting && this._wish.lengthSq() > 0.1) this.stamina = Math.max(0, this.stamina - dt * 0.12);
-    else this.stamina = Math.min(1, this.stamina + dt * (this.grounded ? 0.18 : 0.09));
+    if (sprinting && this._wish.lengthSq() > 0.1) {
+      this.stamina = Math.max(0, this.stamina - dt * 0.12 * sprintCostMultiplier);
+      this.staminaRecoveryDelay = Math.max(this.staminaRecoveryDelay, 0.24);
+    } else if (this.staminaRecoveryDelay <= 0) {
+      this.stamina = Math.min(1, this.stamina + dt * (this.grounded ? 0.18 : 0.09) * staminaRecoveryMultiplier);
+    }
+
+    const wasInWater = this.inWater;
+    this.inWater = this._sampleLiquid();
+    this.headUnderwater = this._sampleHeadLiquid();
+    if (!wasInWater && this.inWater) this.onSplash?.();
 
     if (this.flying) {
       const vertical = (input.isDown('Space') ? 1 : 0) - (crouching ? 1 : 0);
@@ -224,7 +301,6 @@ export class PlayerController {
       this.velocity.x += (this._wish.x * targetSpeed - this.velocity.x) * Math.min(1, response * dt);
       this.velocity.z += (this._wish.z * targetSpeed - this.velocity.z) * Math.min(1, response * dt);
 
-      this.inWater = this._sampleLiquid();
       const waterExit = this.inWater && input.isDown('Space')
         ? this._findWaterExit(this._wish)
         : null;
@@ -267,10 +343,13 @@ export class PlayerController {
     this.wasGrounded = this.grounded;
     if (this.grounded && !this._collidesAt(this.position)) this._lastSafe.copy(this.position);
     if (this.position.y < -16 || !Number.isFinite(this.position.x + this.position.y + this.position.z)) {
-      this.position.copy(this._lastSafe).add(new THREE.Vector3(0, 2, 0));
-      this.velocity.set(0, 0, 0);
-      this.health = Math.max(0.2, this.health - 0.2);
-      this.onDamage?.(0.2);
+      if (typeof this.onVoid === 'function') this.onVoid();
+      else {
+        this.position.copy(this._lastSafe).add(new THREE.Vector3(0, 2, 0));
+        this.velocity.set(0, 0, 0);
+        this.health = Math.max(0.2, this.health - 0.2);
+        this.onDamage?.(0.2);
+      }
     }
 
     const moving = this.grounded && this._wish.lengthSq() > 0.08;
@@ -278,7 +357,13 @@ export class PlayerController {
     this.bobTime += dt * (sprinting ? 11.8 : crouching ? 5.2 : 8.2);
     this.landingKick *= Math.exp(-dt * 12);
     this._syncCamera(dt, sprinting, Number(settings.fov ?? 75), settings.reducedMotion);
-    return { sprinting, crouching };
+    return {
+      sprinting,
+      crouching,
+      moving: Math.min(1, this._wish.length()),
+      inWater: this.inWater,
+      headUnderwater: this.headUnderwater,
+    };
   }
 
   _moveWithCollisions(dt) {
@@ -311,7 +396,7 @@ export class PlayerController {
       for (let z = minZ; z <= maxZ; z++) {
         for (let x = minX; x <= maxX; x++) {
           const id = this.world.getBlock(x, y, z);
-          if (!isSolid(id)) continue;
+          if (!intersectsBlockShape(a, x, y, z, id)) continue;
           if (axis === 'x') {
             this.position.x = amount > 0 ? x - half - EPSILON : x + 1 + half + EPSILON;
             this.velocity.x = 0;
@@ -322,7 +407,7 @@ export class PlayerController {
             if (amount > 0) {
               this.position.y = y - PLAYER.height - EPSILON;
             } else {
-              this.position.y = y + 1 + EPSILON;
+              this.position.y = y + blockShapeHeight(id) + EPSILON;
               this.grounded = true;
               this.landingImpact = Math.max(this.landingImpact, -this.velocity.y);
             }
@@ -341,7 +426,8 @@ export class PlayerController {
     for (let y = Math.floor(a.minY + EPSILON); y <= Math.floor(a.maxY - EPSILON); y++) {
       for (let z = Math.floor(a.minZ + EPSILON); z <= Math.floor(a.maxZ - EPSILON); z++) {
         for (let x = Math.floor(a.minX + EPSILON); x <= Math.floor(a.maxX - EPSILON); x++) {
-          if (isSolid(this.world.getBlock(x, y, z))) return true;
+          const id = this.world.getBlock(x, y, z);
+          if (intersectsBlockShape(a, x, y, z, id)) return true;
         }
       }
     }
@@ -351,7 +437,23 @@ export class PlayerController {
   _sampleLiquid() {
     const x = Math.floor(this.position.x);
     const z = Math.floor(this.position.z);
-    return isLiquid(this.world.getBlock(x, Math.floor(this.position.y + 0.65), z));
+    const sampleY = this.position.y + 0.65;
+    const blockY = Math.floor(sampleY);
+    const surface = this.world.getFluidSurfaceY?.(x, blockY, z);
+    return surface == null
+      ? isLiquid(this.world.getBlock(x, blockY, z))
+      : sampleY < surface;
+  }
+
+  _sampleHeadLiquid() {
+    const x = Math.floor(this.position.x);
+    const z = Math.floor(this.position.z);
+    const sampleY = this.position.y + PLAYER.eye + 0.08;
+    const blockY = Math.floor(sampleY);
+    const surface = this.world.getFluidSurfaceY?.(x, blockY, z);
+    return surface == null
+      ? isLiquid(this.world.getBlock(x, blockY, z))
+      : sampleY < surface;
   }
 
   _findWaterExit(direction) {
@@ -365,7 +467,7 @@ export class PlayerController {
 
     for (let y = maxY; y >= minY; y--) {
       if (!isSolid(this.world.getBlock(blockX, y, blockZ))) continue;
-      const top = y + 1 + EPSILON;
+      const top = y + blockShapeHeight(this.world.getBlock(blockX, y, blockZ)) + EPSILON;
       const rise = top - this.position.y;
       if (rise < -0.15 || rise > 1.22) continue;
       const target = this.position.clone();
@@ -436,12 +538,19 @@ export class PlayerController {
   loadState(state) {
     if (!state) return;
     if (Array.isArray(state.position) && state.position.every(Number.isFinite)) this.position.fromArray(state.position);
-    if (Array.isArray(state.velocity) && state.velocity.every(Number.isFinite)) this.velocity.fromArray(state.velocity);
-    this.yaw = Number.isFinite(state.yaw) ? state.yaw : 0;
-    this.pitch = Number.isFinite(state.pitch) ? state.pitch : 0;
+    if (Array.isArray(state.velocity) && state.velocity.every(Number.isFinite)) {
+      this.velocity.fromArray(state.velocity).clampScalar(-40, 40);
+    }
+    this.yaw = Number.isFinite(state.yaw) ? state.yaw % (Math.PI * 2) : 0;
+    this.pitch = Number.isFinite(state.pitch)
+      ? THREE.MathUtils.clamp(state.pitch, -Math.PI * 0.495, Math.PI * 0.495)
+      : 0;
     this.health = Number.isFinite(state.health) ? THREE.MathUtils.clamp(state.health, 0, 1) : 1;
     this.stamina = Number.isFinite(state.stamina) ? THREE.MathUtils.clamp(state.stamina, 0, 1) : 1;
     this.flying = Boolean(state.flying);
+    this.staminaRecoveryDelay = 0;
+    this.wasGrounded = false;
+    this.landingImpact = 0;
     this._lastSafe.copy(this.position);
     this._syncCamera(0, false, this.camera.fov || 75);
   }
@@ -467,7 +576,12 @@ export function raycastVoxels(origin, direction, maxDistance, world) {
   for (let iteration = 0; iteration < 256 && distance <= maxDistance; iteration++) {
     const block = world.getBlock(x, y, z);
     const def = BLOCKS[block];
-    if (block && def && def.selectable !== false) {
+    // Liquids are intentionally transparent to the interaction ray. Worldloom
+    // has no bucket interaction, so selecting the cell containing the camera
+    // would otherwise make mining from underwater impossible and shallow water
+    // would behave like an invisible full-height wall.
+    if (block && def && def.selectable !== false && !def.liquid
+      && rayIntersectsShape(origin, direction, maxDistance, x, y, z, block)) {
       return {
         block: { x, y, z, id: block },
         adjacent: { ...previous },
@@ -494,4 +608,26 @@ export function raycastVoxels(origin, direction, maxDistance, world) {
     }
   }
   return null;
+}
+
+function rayIntersectsShape(origin, direction, maxDistance, x, y, z, blockId) {
+  const bounds = [
+    [origin.x, direction.x, x, x + 1],
+    [origin.y, direction.y, y, y + blockShapeHeight(blockId)],
+    [origin.z, direction.z, z, z + 1],
+  ];
+  let entry = 0;
+  let exit = maxDistance;
+  for (const [point, velocity, min, max] of bounds) {
+    if (Math.abs(velocity) < 1e-9) {
+      if (point < min || point > max) return false;
+      continue;
+    }
+    const first = (min - point) / velocity;
+    const second = (max - point) / velocity;
+    entry = Math.max(entry, Math.min(first, second));
+    exit = Math.min(exit, Math.max(first, second));
+    if (exit + EPSILON < entry) return false;
+  }
+  return exit >= 0 && entry <= maxDistance;
 }

@@ -28,6 +28,12 @@ export const BLOCK = Object.freeze({
   CHEST: 24,
   BED: 25,
   GLOW_MUSHROOM: 26,
+  // Save-compatible alias: older worlds used the glowing name for this id.
+  CAVE_MUSHROOM: 26,
+  BEDROCK: 27,
+  PINE_LOG: 28,
+  PINE_NEEDLES: 29,
+  SHORT_GRASS: 30,
 });
 
 const TILE = Object.freeze({
@@ -66,6 +72,11 @@ const TILE = Object.freeze({
   BED_TOP: 32,
   BED_SIDE: 33,
   GLOW_MUSHROOM: 34,
+  BEDROCK: 35,
+  PINE_LOG_TOP: 36,
+  PINE_LOG_SIDE: 37,
+  PINE_NEEDLES: 38,
+  SHORT_GRASS: 39,
 });
 
 const ATLAS_COLUMNS = 7;
@@ -176,7 +187,8 @@ export const BLOCKS = Object.freeze([
     alphaTest: 0.35,
   }),
   defineBlock(BLOCK.ASH_PLANKS, {
-    name: 'Ashwood Planks',
+    name: 'Wooden Planks',
+    description: 'Planed building boards crafted from either ash or highland pine.',
     hardness: 2,
     color: 0xb39b70,
     tiles: { top: TILE.ASH_PLANKS, side: TILE.ASH_PLANKS, bottom: TILE.ASH_PLANKS },
@@ -449,21 +461,81 @@ export const BLOCKS = Object.freeze([
     shape: 'slab',
   }),
   defineBlock(BLOCK.GLOW_MUSHROOM, {
-    name: 'Glowcap Cluster',
-    description: 'A cool, softly glowing colony from damp cave floors.',
+    name: 'Cave Button Mushroom',
+    description: 'A small, earthy mushroom that grows on naturally damp cave floors.',
     hardness: 0.05,
-    color: 0x72e2d6,
+    color: 0x9a7654,
     tiles: { top: TILE.GLOW_MUSHROOM, side: TILE.GLOW_MUSHROOM, bottom: TILE.GLOW_MUSHROOM },
     drop: BLOCK.GLOW_MUSHROOM,
     tool: 'hand',
     opaque: false,
     transparent: true,
-    emissive: 0x51dbc9,
-    emissiveIntensity: 1.15,
+    emissive: 0x000000,
     solid: false,
     liquid: false,
     alphaTest: 0.18,
     shape: 'cross-short',
+  }),
+  defineBlock(BLOCK.BEDROCK, {
+    name: 'Worldroot Bedrock',
+    description: 'The unbreakable foundation beneath the woven world.',
+    hardness: Number.POSITIVE_INFINITY,
+    color: 0x25292d,
+    tiles: { top: TILE.BEDROCK, side: TILE.BEDROCK, bottom: TILE.BEDROCK },
+    drop: null,
+    tool: 'none',
+    opaque: true,
+    transparent: false,
+    emissive: 0x000000,
+    solid: true,
+    liquid: false,
+    unbreakable: true,
+  }),
+  defineBlock(BLOCK.PINE_LOG, {
+    name: 'Highland Pine Log',
+    description: 'A resinous, reddish trunk from the highland pine.',
+    hardness: 2.15,
+    color: 0x74513b,
+    tiles: { top: TILE.PINE_LOG_TOP, side: TILE.PINE_LOG_SIDE, bottom: TILE.PINE_LOG_TOP },
+    drop: BLOCK.PINE_LOG,
+    tool: 'axe',
+    opaque: true,
+    transparent: false,
+    emissive: 0x000000,
+    solid: true,
+    liquid: false,
+  }),
+  defineBlock(BLOCK.PINE_NEEDLES, {
+    name: 'Highland Pine Needles',
+    description: 'Dense evergreen boughs with fine, blue-green needles.',
+    hardness: 0.18,
+    color: 0x315e47,
+    tiles: { top: TILE.PINE_NEEDLES, side: TILE.PINE_NEEDLES, bottom: TILE.PINE_NEEDLES },
+    drop: BLOCK.PINE_NEEDLES,
+    tool: 'shears',
+    opaque: false,
+    transparent: true,
+    emissive: 0x000000,
+    solid: true,
+    liquid: false,
+    alphaTest: 0.42,
+  }),
+  defineBlock(BLOCK.SHORT_GRASS, {
+    name: 'Meadow Shortgrass',
+    description: 'Soft native grass growing in loose, walk-through patches.',
+    hardness: 0.02,
+    color: 0x6d9f4d,
+    tiles: { top: TILE.SHORT_GRASS, side: TILE.SHORT_GRASS, bottom: TILE.SHORT_GRASS },
+    drop: null,
+    tool: 'hand',
+    opaque: false,
+    transparent: true,
+    emissive: 0x000000,
+    solid: false,
+    liquid: false,
+    selectable: false,
+    alphaTest: 0.28,
+    shape: 'grass-tuft',
   }),
 ]);
 
@@ -498,6 +570,15 @@ export function isLiquid(blockId) {
 
 export function isHazard(blockId) {
   return Boolean(BLOCKS[blockId]?.hazard);
+}
+
+export function blockShapeHeight(blockId) {
+  const shape = BLOCKS[blockId]?.shape;
+  if (shape === 'slab') return 0.46;
+  if (shape === 'slab-high') return 0.78;
+  if (shape === 'cross-short') return 0.54;
+  if (shape === 'grass-tuft') return 0.3;
+  return 1;
 }
 
 function tileRandom(seed) {
@@ -833,16 +914,69 @@ function paintAtlas(context) {
     rect(tile, '#4a3a31', 26, 29, 4, 3);
   });
 
-  paintTile(context, TILE.GLOW_MUSHROOM, (tile) => {
+  paintTile(context, TILE.GLOW_MUSHROOM, (tile, random) => {
     tile.clearRect(0, 0, 32, 32);
-    rect(tile, '#597e72', 9, 21, 3, 11);
-    rect(tile, '#71978b', 21, 23, 2, 9);
-    rect(tile, '#65dacc', 4, 15, 13, 8);
-    rect(tile, '#b7fff3', 7, 13, 8, 5);
-    rect(tile, '#49bcae', 17, 19, 10, 7);
-    rect(tile, '#a8fff1', 19, 17, 7, 5);
-    rect(tile, '#e5fff9', 9, 15, 3, 2);
-    rect(tile, '#d6fff8', 21, 19, 2, 2);
+    rect(tile, '#725844', 9, 21, 3, 11);
+    rect(tile, '#866a51', 21, 23, 2, 9);
+    rect(tile, '#8f6745', 4, 15, 13, 8);
+    rect(tile, '#b89062', 7, 13, 8, 5);
+    rect(tile, '#775238', 17, 19, 10, 7);
+    rect(tile, '#a77d52', 19, 17, 7, 5);
+    scatter(tile, random, ['#5c4232', '#d0aa78', '#6d4a35'], 11, 1, 2);
+  });
+
+  paintTile(context, TILE.BEDROCK, (tile, random) => {
+    rect(tile, '#25292d', 0, 0, TILE_SIZE, TILE_SIZE);
+    scatter(tile, random, ['#171a1d', '#30363a', '#3b4145'], 72, 1, 4);
+    for (let index = 0; index < 7; index++) {
+      const x = Math.floor(random() * TILE_SIZE);
+      const y = Math.floor(random() * TILE_SIZE);
+      rect(tile, '#111416', x, y, 1 + random() * 5, 1);
+      rect(tile, '#3c4246', x, y + 1, 1 + random() * 3, 1);
+    }
+  });
+
+  paintTile(context, TILE.PINE_LOG_TOP, (tile, random) => {
+    rect(tile, '#8c6447', 0, 0, 32, 32);
+    for (let inset = 3; inset <= 12; inset += 3) {
+      tile.strokeStyle = inset % 2 ? '#5c3e30' : '#b08056';
+      tile.lineWidth = 1;
+      tile.strokeRect(inset, inset, 32 - inset * 2, 32 - inset * 2);
+    }
+    scatter(tile, random, ['#4c342a', '#c09262'], 14, 1, 2);
+  });
+
+  paintTile(context, TILE.PINE_LOG_SIDE, (tile, random) => {
+    rect(tile, '#6e4b39', 0, 0, 32, 32);
+    for (let x = 1; x < 32; x += 5) {
+      rect(tile, random() > 0.45 ? '#8c6043' : '#50382f', x, 0, 2 + random() * 2, 32);
+    }
+    scatter(tile, random, ['#a0734e', '#49342b', '#76513b'], 28, 1, 4);
+  });
+
+  paintTile(context, TILE.PINE_NEEDLES, (tile, random) => {
+    tile.clearRect(0, 0, 32, 32);
+    rect(tile, '#315e47', 0, 0, 32, 32);
+    for (let index = 0; index < 62; index++) {
+      const x = Math.floor(random() * 32);
+      const y = Math.floor(random() * 32);
+      const length = 2 + Math.floor(random() * 5);
+      rect(tile, random() > 0.45 ? '#47785b' : '#244b3b', x, y, 1, length);
+      if (random() > 0.76) tile.clearRect(x, y, 1, 1);
+    }
+    scatter(tile, random, ['#5a8968', '#1e3d32'], 22, 1, 2);
+  });
+
+  paintTile(context, TILE.SHORT_GRASS, (tile, random) => {
+    tile.clearRect(0, 0, 32, 32);
+    const colors = ['#527f3c', '#6b9c48', '#83ad55', '#426f39'];
+    for (let blade = 0; blade < 25; blade++) {
+      const x = 2 + Math.floor(random() * 28);
+      const height = 8 + Math.floor(random() * 15);
+      const width = random() > 0.82 ? 2 : 1;
+      rect(tile, colors[Math.floor(random() * colors.length)], x, 31 - height, width, height);
+      if (random() > 0.5) rect(tile, '#9abb65', x, 31 - height, 1, 3);
+    }
   });
 }
 

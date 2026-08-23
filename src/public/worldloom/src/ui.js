@@ -1,5 +1,5 @@
 import { BLOCKS } from './blocks.js';
-import { getItem, RECIPES } from './data.js';
+import { getItem, RECIPES, recipeRequirements, recipeStations } from './data.js';
 import { GRAPHICS_PRESETS } from './save.js';
 import { createItemArtwork } from './item-art.js';
 
@@ -71,7 +71,11 @@ export class UI {
       hotbar: $('hotbar'),
       health: $('health-fill'),
       stamina: $('stamina-fill'),
+      nourishment: $('nourishment-fill'),
+      wetness: $('wetness-fill'),
+      oxygen: $('oxygen-fill'),
       time: $('time-label'),
+      timeText: $('time-text'),
       objective: $('objective-text'),
       target: $('target-label'),
       toast: $('toast-layer'),
@@ -87,7 +91,9 @@ export class UI {
     this.settingsOpen = false;
     this.creditsOpen = false;
     this.returnFocus = null;
+    this.settingsParentWasPause = false;
     this.onInventoryMove = null;
+    this.onInventoryDrop = null;
     this.onSelectHotbar = null;
     this.onCraft = null;
     this.onInventoryClose = null;
@@ -97,6 +103,9 @@ export class UI {
     this.onSave = null;
     this.onTitle = null;
     this.onSettingsChanged = null;
+    this.inventoryPointer = null;
+    this.inventoryDragGhost = null;
+    this.suppressInventoryClickUntil = 0;
     this._toastTimer = null;
     this._loadingHideTimer = null;
     this._bindStatic();
@@ -104,6 +113,8 @@ export class UI {
   }
 
   _bindStatic() {
+    const inventoryTip = document.querySelector('.inventory-tip');
+    if (inventoryTip) inventoryTip.textContent = 'Drag stacks to move them · drag beyond the window to drop them into the world';
     $('new-world-button')?.addEventListener('click', () => {
       const seedValue = $('seed-input')?.value.trim() || `${Date.now()}`;
       const mode = document.querySelector('input[name="mode"]:checked')?.value || 'survival';
@@ -148,7 +159,7 @@ export class UI {
         return;
       }
       if (event.key !== 'Tab') return;
-      const focusable = [...openDialog.querySelectorAll('button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])')]
+      const focusable = [...openDialog.querySelectorAll('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [contenteditable="true"], [tabindex]:not([tabindex="-1"])')]
         .filter((element) => !element.hidden && element.getClientRects().length);
       if (!focusable.length) return;
       const first = focusable[0];
@@ -193,12 +204,14 @@ export class UI {
     this.elements.main?.classList.remove('hidden');
     this.elements.pause?.classList.add('hidden');
     this.elements.hud?.classList.add('hidden');
+    this.elements.hud?.classList.remove('soft-hidden');
   }
 
   showGame() {
     this.elements.main?.classList.add('hidden');
     this.elements.pause?.classList.add('hidden');
     this.elements.hud?.classList.remove('hidden');
+    this.elements.hud?.classList.remove('soft-hidden');
     this.closePanels();
   }
 
@@ -214,6 +227,7 @@ export class UI {
   }
 
   closePanels() {
+    this._cancelInventoryPointer();
     this.inventoryOpen = false;
     this.settingsOpen = false;
     this.creditsOpen = false;
@@ -221,11 +235,17 @@ export class UI {
     this.elements.inventory?.classList.add('hidden');
     this.elements.settings?.classList.add('hidden');
     this.elements.credits?.classList.add('hidden');
+    this.elements.pause?.removeAttribute('aria-hidden');
+    if (this.elements.pause) this.elements.pause.inert = false;
+    this.settingsParentWasPause = false;
   }
 
   setInventory(open) {
     this.inventoryOpen = Boolean(open);
-    if (!open) this.inventorySelection = null;
+    if (!open) {
+      this._cancelInventoryPointer();
+      this.inventorySelection = null;
+    }
     this.elements.inventory?.classList.toggle('hidden', !open);
     if (open) {
       this.renderInventory();
@@ -235,11 +255,25 @@ export class UI {
   }
 
   setSettings(open) {
-    if (open) this.returnFocus = document.activeElement;
+    if (open) {
+      this.returnFocus = document.activeElement;
+      this.settingsParentWasPause = Boolean(this.elements.pause && !this.elements.pause.classList.contains('hidden'));
+      if (this.settingsParentWasPause) {
+        this.elements.pause.classList.add('hidden');
+        this.elements.pause.setAttribute('aria-hidden', 'true');
+        this.elements.pause.inert = true;
+      }
+    }
     this.settingsOpen = Boolean(open);
     this.elements.settings?.classList.toggle('hidden', !open);
     if (open) document.getElementById('settings-close')?.focus();
     else {
+      if (this.settingsParentWasPause && this.elements.pause) {
+        this.elements.pause.classList.remove('hidden');
+        this.elements.pause.removeAttribute('aria-hidden');
+        this.elements.pause.inert = false;
+      }
+      this.settingsParentWasPause = false;
       this.onSettingsChanged?.(this.readSettings());
       this.returnFocus?.focus?.();
       this.returnFocus = null;
@@ -317,10 +351,15 @@ export class UI {
   renderHotbar() {
     const root = this.elements.hotbar;
     if (!root || !this.inventory) return;
+    const focusedIndex = root.contains(document.activeElement)
+      ? Number(document.activeElement?.dataset?.index)
+      : null;
     root.replaceChildren();
     for (let index = 0; index < 9; index++) {
       const slot = this.inventory.slots[index];
       const element = button('', `hotbar-slot${index === this.inventory.selected ? ' selected' : ''}`);
+      element.dataset.index = `${index}`;
+      element.setAttribute('aria-pressed', index === this.inventory.selected ? 'true' : 'false');
       element.setAttribute('aria-label', slot?.id ? `${index + 1}: ${getItem(slot.id).name}, ${slot.count}` : `${index + 1}: Empty`);
       const key = document.createElement('span');
       key.className = 'slot-key';
@@ -338,6 +377,7 @@ export class UI {
       element.addEventListener('click', () => this.onSelectHotbar?.(index));
       root.append(element);
     }
+    if (Number.isInteger(focusedIndex)) root.querySelector(`[data-index="${focusedIndex}"]`)?.focus();
     const chosen = this.inventory.selectedSlot();
     root.dataset.itemName = chosen?.id ? getItem(chosen.id).name : 'Empty hand';
   }
@@ -345,10 +385,16 @@ export class UI {
   renderInventory() {
     const root = this.elements.inventoryGrid;
     if (!root || !this.inventory) return;
+    const focusedIndex = root.contains(document.activeElement)
+      ? Number(document.activeElement?.dataset?.index)
+      : null;
     root.replaceChildren();
     this.inventory.slots.forEach((slot, index) => {
       const element = button('', `inventory-slot${index === this.inventorySelection ? ' selected' : ''}`);
       element.dataset.index = `${index}`;
+      element.style.touchAction = 'none';
+      element.setAttribute('aria-pressed', index === this.inventorySelection ? 'true' : 'false');
+      element.setAttribute('aria-grabbed', index === this.inventorySelection ? 'true' : 'false');
       element.setAttribute('aria-label', slot.id ? `${getItem(slot.id).name}, ${slot.count}` : `Empty slot ${index + 1}`);
       if (slot.id) {
         const item = getItem(slot.id);
@@ -367,6 +413,7 @@ export class UI {
         element.append(tooltip);
       }
       element.addEventListener('click', () => {
+        if (performance.now() < this.suppressInventoryClickUntil) return;
         if (this.inventorySelection === null) {
           if (slot.id) this.inventorySelection = index;
         } else {
@@ -376,14 +423,127 @@ export class UI {
         this.renderInventory();
         this.renderHotbar();
       });
+      element.addEventListener('pointerdown', (event) => this._beginInventoryPointer(event, index));
+      element.addEventListener('keydown', (event) => {
+        if (!slot.id || !['Delete', 'Backspace'].includes(event.key)) return;
+        event.preventDefault();
+        this.onInventoryDrop?.(index);
+        this.inventorySelection = null;
+        this.renderInventory();
+        this.renderHotbar();
+      });
       root.append(element);
     });
+    if (Number.isInteger(focusedIndex)) root.querySelector(`[data-index="${focusedIndex}"]`)?.focus();
+  }
+
+  _beginInventoryPointer(event, index) {
+    if (event.button !== 0 || !this.inventory?.slots[index]?.id || this.inventoryPointer) return;
+    this.inventoryPointer = {
+      pointerId: event.pointerId,
+      index,
+      startX: event.clientX,
+      startY: event.clientY,
+      dragging: false,
+    };
+    const move = (moveEvent) => this._moveInventoryPointer(moveEvent);
+    const finish = (upEvent) => this._finishInventoryPointer(upEvent, false);
+    const cancel = (cancelEvent) => this._finishInventoryPointer(cancelEvent, true);
+    this.inventoryPointer.move = move;
+    this.inventoryPointer.finish = finish;
+    this.inventoryPointer.cancel = cancel;
+    window.addEventListener('pointermove', move, { passive: false });
+    window.addEventListener('pointerup', finish, { passive: false });
+    window.addEventListener('pointercancel', cancel, { passive: false });
+  }
+
+  _moveInventoryPointer(event) {
+    const drag = this.inventoryPointer;
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    const distance = Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY);
+    if (!drag.dragging && distance < 7) return;
+    event.preventDefault();
+    if (!drag.dragging) {
+      drag.dragging = true;
+      this.inventorySelection = drag.index;
+      const stack = this.inventory.slots[drag.index];
+      const ghost = document.createElement('div');
+      ghost.className = 'inventory-slot inventory-drag-ghost';
+      ghost.setAttribute('aria-hidden', 'true');
+      Object.assign(ghost.style, {
+        position: 'fixed',
+        zIndex: '9999',
+        width: '48px',
+        height: '48px',
+        pointerEvents: 'none',
+        opacity: '0.9',
+        transform: 'translate(-50%, -50%) scale(1.08)',
+        boxShadow: '0 10px 28px rgba(0,0,0,.48)',
+      });
+      ghost.append(itemIcon(getItem(stack.id)));
+      if (stack.count > 1) {
+        const count = document.createElement('span');
+        count.className = 'slot-count';
+        count.textContent = `${stack.count}`;
+        ghost.append(count);
+      }
+      document.body.append(ghost);
+      this.inventoryDragGhost = ghost;
+      this.renderInventory();
+    }
+    if (this.inventoryDragGhost) {
+      this.inventoryDragGhost.style.left = `${event.clientX}px`;
+      this.inventoryDragGhost.style.top = `${event.clientY}px`;
+    }
+    const hovered = document.elementFromPoint(event.clientX, event.clientY)?.closest?.('.inventory-slot');
+    for (const slot of this.elements.inventoryGrid?.children || []) {
+      slot.style.outline = slot === hovered ? '2px solid rgba(255,255,255,.9)' : '';
+    }
+  }
+
+  _finishInventoryPointer(event, cancelled) {
+    const drag = this.inventoryPointer;
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    if (drag.dragging) {
+      event.preventDefault();
+      this.suppressInventoryClickUntil = performance.now() + 350;
+      if (!cancelled) {
+        const target = document.elementFromPoint(event.clientX, event.clientY);
+        const slotTarget = target?.closest?.('.inventory-slot');
+        const targetIndex = Number(slotTarget?.dataset?.index);
+        if (Number.isInteger(targetIndex) && targetIndex >= 0) {
+          this.onInventoryMove?.(drag.index, targetIndex);
+        } else if (!target?.closest?.('.inventory-window')) {
+          this.onInventoryDrop?.(drag.index);
+        }
+      }
+    }
+    this._cancelInventoryPointer();
+    this.inventorySelection = null;
+    this.renderInventory();
+    this.renderHotbar();
+  }
+
+  _cancelInventoryPointer() {
+    const drag = this.inventoryPointer;
+    if (drag) {
+      window.removeEventListener('pointermove', drag.move);
+      window.removeEventListener('pointerup', drag.finish);
+      window.removeEventListener('pointercancel', drag.cancel);
+    }
+    this.inventoryPointer = null;
+    this.inventoryDragGhost?.remove();
+    this.inventoryDragGhost = null;
+    for (const slot of this.elements.inventoryGrid?.children || []) slot.style.outline = '';
   }
 
   renderRecipes() {
     const root = this.elements.craftList;
     if (!root || !this.inventory) return;
     const query = (this.elements.recipeSearch?.value || '').trim().toLowerCase();
+    const focusedRecipe = root.contains(document.activeElement)
+      ? document.activeElement?.dataset?.recipeId
+      : null;
     root.replaceChildren();
     for (const recipe of RECIPES) {
       if (query && !`${recipe.name} ${recipe.description}`.toLowerCase().includes(query)) continue;
@@ -401,16 +561,24 @@ export class UI {
       description.textContent = recipe.description;
       const ingredients = document.createElement('div');
       ingredients.className = 'recipe-ingredients';
-      ingredients.textContent = recipe.ingredients.map(({ id, count }) => `${count} ${getItem(id).name}`).join(' · ');
+      const requirements = recipeRequirements(recipe);
+      ingredients.textContent = requirements.map(({ id, count }) => {
+        const owned = this.inventory.count(id);
+        return `${owned >= count ? '✓ ' : ''}${getItem(id).name} ${Math.min(owned, count)}/${count}`;
+      }).join(' · ');
       const requirement = document.createElement('small');
-      requirement.textContent = availability.reason || (recipe.station ? `Near ${BLOCKS[recipe.station]?.name || 'workstation'}` : 'Craft in your pack');
+      const stations = recipeStations(recipe);
+      const stationLabel = stations.map((id) => BLOCKS[id]?.name || 'workstation').join(' or ');
+      requirement.textContent = availability.reason || (stations.length ? `Near ${stationLabel}` : 'Craft in your pack');
       copy.append(heading, description, ingredients, requirement);
       const craft = button('Craft', 'craft-button');
+      craft.dataset.recipeId = recipe.id;
       craft.disabled = !availability.craftable;
       craft.addEventListener('click', () => this.onCraft?.(recipe));
       card.append(icon, copy, craft);
       root.append(card);
     }
+    if (focusedRecipe) root.querySelector(`[data-recipe-id="${CSS.escape(focusedRecipe)}"]`)?.focus();
     if (!root.childElementCount) {
       const empty = document.createElement('p');
       empty.className = 'empty-recipes';
@@ -419,18 +587,21 @@ export class UI {
     }
   }
 
-  updateHUD({ health, stamina, time, objective, target, inWater, debug }) {
-    if (this.elements.health) {
-      const value = Math.round(health * 100);
-      this.elements.health.style.width = `${value}%`;
-      this.elements.health.parentElement?.setAttribute('aria-valuenow', `${value}`);
-    }
-    if (this.elements.stamina) {
-      const value = Math.round(stamina * 100);
-      this.elements.stamina.style.width = `${value}%`;
-      this.elements.stamina.parentElement?.setAttribute('aria-valuenow', `${value}`);
-    }
-    if (this.elements.time) this.elements.time.textContent = time || '';
+  updateHUD({ health, stamina, nourishment = 1, wetness = 0, oxygen = 1, time, objective, target, inWater, debug }) {
+    const updateBar = (element, amount) => {
+      if (!element) return;
+      const value = Math.round(Math.max(0, Math.min(1, Number(amount) || 0)) * 100);
+      element.style.width = `${value}%`;
+      element.parentElement?.setAttribute('aria-valuenow', `${value}`);
+    };
+    updateBar(this.elements.health, health);
+    updateBar(this.elements.stamina, stamina);
+    updateBar(this.elements.nourishment, nourishment);
+    updateBar(this.elements.wetness, wetness);
+    updateBar(this.elements.oxygen, oxygen);
+    this.elements.wetness?.closest('.status-row')?.classList.toggle('is-hidden', wetness < 0.025);
+    this.elements.oxygen?.closest('.status-row')?.classList.toggle('is-hidden', oxygen > 0.995);
+    if (this.elements.timeText) this.elements.timeText.textContent = time || '';
     if (this.elements.objective && objective) this.elements.objective.textContent = objective;
     if (this.elements.target) this.elements.target.textContent = target || '';
     this.elements.water?.classList.toggle('visible', Boolean(inWater));

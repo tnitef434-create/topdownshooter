@@ -3550,6 +3550,22 @@ footer {
   font-family: var(--font-title);
 }
 
+.worldloom-site-actions {
+  justify-content: flex-end;
+  margin-left: auto;
+}
+
+#worldloom-portal-status {
+  color: #ffd087;
+  font-size: 8px;
+  letter-spacing: 0.6px;
+}
+
+#btn-leave-worldloom-unsaved {
+  border-color: rgba(255, 176, 91, 0.55);
+  color: #ffd2a4;
+}
+
 .worldloom-site-toolbar span {
   color: #668075;
   font-size: 7px;
@@ -3636,10 +3652,47 @@ footer {
   letter-spacing: 0.4px;
 }
 
+.worldloom-frame-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.worldloom-frame-actions button {
+  padding: 8px 12px;
+  border: 1px solid rgba(101, 227, 165, 0.42);
+  border-radius: 4px;
+  background: rgba(55, 169, 109, 0.1);
+  color: #bff5d8;
+  font: 800 8px var(--font-title);
+  letter-spacing: 1px;
+  cursor: pointer;
+}
+
+.worldloom-frame-actions button:focus-visible,
+.worldloom-frame-actions button:hover {
+  border-color: #6be3a7;
+  outline: none;
+}
+
+.worldloom-frame-loading.has-error > span {
+  border-color: #ffb05b;
+  border-radius: 4px;
+  animation: none;
+  transform: rotate(45deg) scale(0.72);
+}
+
+.worldloom-site-toolbar [hidden],
+.worldloom-frame-actions[hidden] {
+  display: none !important;
+}
+
 @media (max-width: 620px) {
-  .worldloom-site-toolbar > div span {
+  .worldloom-site-brand > span {
     display: none;
   }
+
+  #worldloom-portal-status { display: none; }
 
   .worldloom-site-toolbar button {
     font-size: 7px;

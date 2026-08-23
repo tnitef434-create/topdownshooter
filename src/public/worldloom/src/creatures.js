@@ -1,14 +1,37 @@
 import * as THREE from '../vendor/three.module.min.js';
 import { GLTFLoader } from '../vendor/GLTFLoader.js';
 import { clone as cloneSkeleton } from '../vendor/SkeletonUtils.js';
-import { isLiquid, isSolid } from './blocks.js';
+import { isLiquid, isSolid, blockShapeHeight } from './blocks.js';
 
 const MAX_CREATURES = 14;
 const MIN_SPAWN_RADIUS = 38;
 const MAX_SPAWN_RADIUS = 66;
 const DESPAWN_DISTANCE_SQ = 96 * 96;
-const PLAYER_DAMAGE_INTERVAL = 1.05;
+const PLAYER_DAMAGE_INTERVAL = 0.46;
 const GRAVITY = 21;
+
+export const CREATURE_COMBAT = Object.freeze({
+  bramblehog: Object.freeze({
+    damage: 0.22,
+    windup: 0.34,
+    duration: 0.82,
+    cooldown: 1.38,
+    range: 2.08,
+    knockback: 4.9,
+  }),
+  gloomling: Object.freeze({
+    damage: 0.18,
+    windup: 0.28,
+    duration: 0.7,
+    cooldown: 1.16,
+    range: 1.92,
+    knockback: 4.25,
+  }),
+});
+
+export function creatureCombatProfile(type) {
+  return CREATURE_COMBAT[type] ?? CREATURE_COMBAT.gloomling;
+}
 
 const QUATERNIUS_SOURCE = 'https://quaternius.com/packs/ultimateanimatedanimals.html';
 
@@ -57,7 +80,6 @@ const STATE_CLIP_CANDIDATES = Object.freeze({
   chase: Object.freeze(['Gallop', 'Walk']),
   flee: Object.freeze(['Gallop', 'Walk']),
   sprint: Object.freeze(['Gallop', 'Walk']),
-  dart: Object.freeze(['Gallop', 'Walk']),
   wander: Object.freeze(['Walk', 'Idle']),
   guard: Object.freeze(['Idle_2', 'Idle']),
   scan: Object.freeze(['Idle_2', 'Idle']),
@@ -79,7 +101,6 @@ const CREATURE_CAPS = Object.freeze({
   dapple: 4,
   bramblehog: 3,
   dunetail: 4,
-  lumenwing: 4,
   gloomling: 5,
 });
 
@@ -138,6 +159,7 @@ export class CreatureSystem {
     this._spawnSerial = 0;
     this._nextId = 1;
     this._lastPlayerDamage = -Infinity;
+    this._playerAttackReadyAt = 0;
     this._disposed = false;
     this._geometries = new Set();
     this._materials = new Set();
@@ -150,12 +172,33 @@ export class CreatureSystem {
     this._animalLoader = typeof window !== 'undefined' && this.scene ? new GLTFLoader() : null;
     this._attackDirection = new THREE.Vector3();
     this._attackPoint = new THREE.Vector3();
+    this._strikeOrigin = new THREE.Vector3();
+    this._strikeDirection = new THREE.Vector3();
     this._spawnForward = new THREE.Vector3();
     this._resources = this._createResources();
   }
 
   get count() {
     return this.creatures.length;
+  }
+
+  get playerAttackRecovery() {
+    return Math.max(0, this._playerAttackReadyAt - this._time);
+  }
+
+  hasThreatNear(position, radius = 8) {
+    if (!position) return false;
+    const radiusSq = radius * radius;
+    return this.creatures.some((creature) => {
+      if (creature.dead) return false;
+      const hostile = creature.type === 'gloomling'
+        || (creature.type === 'bramblehog' && creature.provoked > 0);
+      if (!hostile) return false;
+      const dx = creature.root.position.x - position.x;
+      const dy = creature.root.position.y - position.y;
+      const dz = creature.root.position.z - position.z;
+      return dx * dx + dy * dy + dz * dz <= radiusSq;
+    });
   }
 
   _geometry(geometry) {
@@ -206,11 +249,6 @@ export class CreatureSystem {
       duneWing: this._geometry(new THREE.BoxGeometry(0.06, 0.46, 0.66)),
       duneTail: this._geometry(new THREE.ConeGeometry(0.13, 0.8, 4)),
       crest: this._geometry(new THREE.ConeGeometry(0.095, 0.3, 4)),
-      lumenBody: this._geometry(new THREE.OctahedronGeometry(0.29, 1)),
-      lumenHead: this._geometry(new THREE.SphereGeometry(0.19, 8, 6)),
-      lumenWing: this._geometry(new THREE.BoxGeometry(0.66, 0.035, 0.45)),
-      lumenTail: this._geometry(new THREE.ConeGeometry(0.11, 0.42, 6)),
-      antenna: this._geometry(new THREE.CylinderGeometry(0.018, 0.026, 0.33, 5)),
       gloomBody: this._geometry(new THREE.OctahedronGeometry(0.67, 0)),
       gloomHead: this._geometry(new THREE.BoxGeometry(0.58, 0.47, 0.5)),
       gloomLeg: this._geometry(new THREE.ConeGeometry(0.14, 0.56, 4)),
@@ -237,36 +275,16 @@ export class CreatureSystem {
       duneLight: this._material({ color: 0xefd18a, roughness: 0.9, metalness: 0, flatShading: true }),
       duneDark: this._material({ color: 0x5d3a32, roughness: 0.94, metalness: 0, flatShading: true }),
       duneBeak: this._material({ color: 0xe6ad45, roughness: 0.74, metalness: 0.02, flatShading: true }),
-      lumenHide: this._material({ color: 0x244a4e, roughness: 0.66, metalness: 0.04, flatShading: true }),
-      lumenGlow: this._material({
-        color: 0x8ffff0,
-        emissive: 0x50ffe1,
-        emissiveIntensity: 3.4,
-        roughness: 0.24,
-        metalness: 0,
-        toneMapped: false,
-      }),
-      lumenWing: this._material({
-        color: 0xa8f5e8,
-        emissive: 0x256e68,
-        emissiveIntensity: 1.2,
-        transparent: true,
-        opacity: 0.62,
-        depthWrite: false,
-        side: THREE.DoubleSide,
-        roughness: 0.3,
-        metalness: 0,
-      }),
       gloomHide: this._material({ color: 0x24243b, roughness: 0.72, metalness: 0.08, flatShading: true }),
       gloomPlate: this._material({ color: 0x3c3659, roughness: 0.64, metalness: 0.12, flatShading: true }),
       gloomClaw: this._material({ color: 0x70698a, roughness: 0.7, metalness: 0.1, flatShading: true }),
       gloomEye: this._material({
-        color: 0xa9fff0,
-        emissive: 0x55ffe0,
-        emissiveIntensity: 3,
-        roughness: 0.25,
+        color: 0x65736e,
+        emissive: 0x000000,
+        emissiveIntensity: 0,
+        roughness: 0.78,
         metalness: 0,
-        toneMapped: false,
+        toneMapped: true,
       }),
       hit: this._basicMaterial({
         color: 0xff6652,
@@ -810,80 +828,6 @@ export class CreatureSystem {
     };
   }
 
-  _makeLumenwing(x, y, z, seed) {
-    const { geometries: geometry, materials: material } = this._resources;
-    const root = new THREE.Group();
-    const model = new THREE.Group();
-    root.add(model);
-
-    const body = prepareMesh(new THREE.Mesh(geometry.lumenBody, material.lumenHide));
-    body.scale.set(0.75, 1, 1.35);
-    model.add(body);
-    const abdomen = prepareMesh(new THREE.Mesh(geometry.lumenBody, material.lumenGlow), false);
-    abdomen.position.z = -0.36;
-    abdomen.scale.set(0.56, 0.66, 1.1);
-    model.add(abdomen);
-    const headPivot = new THREE.Group();
-    headPivot.position.z = 0.37;
-    const head = prepareMesh(new THREE.Mesh(geometry.lumenHead, material.lumenHide));
-    headPivot.add(head);
-    for (const side of [-1, 1]) {
-      const eye = prepareMesh(new THREE.Mesh(geometry.eye, material.lumenGlow), false);
-      eye.position.set(side * 0.14, 0.03, 0.16);
-      eye.scale.set(0.7, 0.75, 0.7);
-      headPivot.add(eye);
-      const antenna = prepareMesh(new THREE.Mesh(geometry.antenna, material.lumenHide));
-      antenna.position.set(side * 0.11, 0.2, 0.06);
-      antenna.rotation.z = side * -0.45;
-      antenna.rotation.x = 0.38;
-      headPivot.add(antenna);
-    }
-    model.add(headPivot);
-
-    const wings = [];
-    for (const [side, back] of [[-1, 0], [1, 0], [-1, 1], [1, 1]]) {
-      const pivot = new THREE.Group();
-      pivot.position.set(side * 0.18, 0.02, back ? -0.2 : 0.13);
-      const wing = prepareMesh(new THREE.Mesh(geometry.lumenWing, material.lumenWing), false);
-      wing.position.x = side * 0.3;
-      wing.scale.set(back ? 0.72 : 1, 1, back ? 0.72 : 1);
-      pivot.add(wing);
-      model.add(pivot);
-      wings.push(pivot);
-    }
-
-    const tail = prepareMesh(new THREE.Mesh(geometry.lumenTail, material.lumenGlow), false);
-    tail.position.set(0, 0, -0.72);
-    tail.rotation.x = -Math.PI / 2;
-    model.add(tail);
-
-    const hitGlow = prepareMesh(new THREE.Mesh(geometry.lumenBody, material.hit), false);
-    hitGlow.scale.set(0.84, 1.08, 1.45);
-    hitGlow.visible = false;
-    hitGlow.renderOrder = 4;
-    model.add(hitGlow);
-
-    const scale = 0.82 + unitHash(seed, 9, 0x90d4c2a5) * 0.23;
-    root.position.set(x, y + 1.8 + unitHash(seed, 12) * 1.6, z);
-    root.scale.setScalar(scale);
-    root.name = `Lumenwing ${this._nextId}`;
-    this.scene?.add(root);
-
-    return {
-      id: this._nextId++, type: 'lumenwing', name: 'Lumenwing', root, model,
-      parts: { body, abdomen, headPivot, wings, tail, hitGlow },
-      radius: 0.65 * scale, centerHeight: 0, baseScale: scale,
-      heading: unitHash(seed, 14, 0x37bd1267) * Math.PI * 2, targetHeading: 0,
-      desiredSpeed: 0, verticalVelocity: 0, knockbackX: 0, knockbackZ: 0,
-      state: 'wander', stateTime: 0, stateDuration: 2, health: 2, maxHealth: 2,
-      hitTime: 0, dead: false, deathTime: 0, age: 0, mismatchTime: 0,
-      phase: unitHash(seed, 19, 0x6f12d44d) * Math.PI * 2,
-      randomState: mix32(seed ^ 0xb42f1369), attackCooldown: 0, attackLanded: false,
-      provoked: 0, turnRate: 5.8, homeBiome: 'forest', activeMin: 0.08, activeMax: 0.68,
-      flying: true, hoverBase: root.position.y, hoverTarget: root.position.y,
-    };
-  }
-
   _makeGloomling(x, y, z, seed) {
     const { geometries: geometry, materials: material } = this._resources;
     const root = new THREE.Group();
@@ -1024,17 +968,8 @@ export class CreatureSystem {
     return !isSolid(atFeet) && !isSolid(atHead) && !isLiquid(atFeet);
   }
 
-  _canFlyAt(x, y, z) {
-    if (!this.world) return true;
-    const blockX = Math.floor(x);
-    const blockY = Math.floor(y);
-    const blockZ = Math.floor(z);
-    return !isSolid(this.world.getBlock?.(blockX, blockY, blockZ))
-      && !isSolid(this.world.getBlock?.(blockX, blockY + 1, blockZ))
-      && !isLiquid(this.world.getBlock?.(blockX, blockY, blockZ));
-  }
-
   _validSpawn(x, z, playerPosition) {
+    if (this.world?.isPositionReady && !this.world.isPositionReady(x, z)) return null;
     const ground = this._groundHeight(x, z, playerPosition.y);
     const terrain = Number(this.world?.terrainHeight?.(x, z));
     if (Number.isFinite(terrain) && Math.abs(ground - (terrain + 1)) > 1.1) return null;
@@ -1065,13 +1000,7 @@ export class CreatureSystem {
   }
 
   _typeForSpawn(biome, daylight, roll) {
-    const twilight = daylight > 0.18 && daylight < 0.68;
-    if (daylight <= 0.36) {
-      if (biome === 'forest' && roll < 0.46) return 'lumenwing';
-      if (biome === 'plains' && roll < 0.18) return 'lumenwing';
-      return 'gloomling';
-    }
-    if (twilight && biome === 'forest' && roll < 0.42) return 'lumenwing';
+    if (daylight <= 0.36) return 'gloomling';
     if (biome === 'desert') return 'dunetail';
     if (biome === 'forest') return roll < 0.62 ? 'bramblehog' : 'dapple';
     return roll < 0.82 ? 'dapple' : 'dunetail';
@@ -1082,7 +1011,6 @@ export class CreatureSystem {
     if (type === 'dapple') creature = this._makeDapple(x, ground, z, seed);
     else if (type === 'bramblehog') creature = this._makeBramblehog(x, ground, z, seed);
     else if (type === 'dunetail') creature = this._makeDunetail(x, ground, z, seed);
-    else if (type === 'lumenwing') creature = this._makeLumenwing(x, ground, z, seed);
     else creature = this._makeGloomling(x, ground, z, seed);
     this._requestAnimalVisual(creature, seed);
     return creature;
@@ -1211,6 +1139,7 @@ export class CreatureSystem {
   }
 
   _updateBramblehogIntent(creature, player, playerPosition, daylight) {
+    const combat = CREATURE_COMBAT.bramblehog;
     const dx = playerPosition.x - creature.root.position.x;
     const dz = playerPosition.z - creature.root.position.z;
     const dy = playerPosition.y - creature.root.position.y;
@@ -1221,13 +1150,18 @@ export class CreatureSystem {
     }
     if (creature.state === 'attack') {
       creature.targetHeading = Math.atan2(dx, dz);
-      creature.desiredSpeed = creature.stateTime < 0.24 ? 3.2 : 0;
-      if (!creature.attackLanded && creature.stateTime >= 0.25) {
+      // A readable head-lower windup precedes one committed lunge. Moving the
+      // damage frame after the visual tell keeps the hit threatening but fair.
+      creature.desiredSpeed = creature.stateTime >= combat.windup - 0.1
+        && creature.stateTime < combat.windup + 0.12 ? 3.55 : 0;
+      if (!creature.attackLanded && creature.stateTime >= combat.windup) {
         creature.attackLanded = true;
-        if (distance < 2.05 && Math.abs(dy) < 2.2) this._damagePlayer(player, creature);
+        if (distance < combat.range && Math.abs(dy) < 2.2 && this._canDamagePlayer(creature, playerPosition)) {
+          this._damagePlayer(player, creature);
+        }
       }
-      if (creature.stateTime >= 0.72) {
-        creature.attackCooldown = 1.4;
+      if (creature.stateTime >= combat.duration) {
+        creature.attackCooldown = combat.cooldown;
         setState(creature, 'guard', 0.8);
       }
       return;
@@ -1236,7 +1170,7 @@ export class CreatureSystem {
     if (creature.provoked > 0 && daylight >= 0.12) {
       creature.targetHeading = Math.atan2(dx, dz);
       if (distance < 1.72 && creature.attackCooldown <= 0) {
-        setState(creature, 'attack', 0.72);
+        setState(creature, 'attack', combat.duration);
         creature.desiredSpeed = 0;
       } else {
         setState(creature, 'charge', 1);
@@ -1295,41 +1229,15 @@ export class CreatureSystem {
     if (creature.state === 'wander') this._steerWithFlock(creature, 0.18);
   }
 
-  _updateLumenwingIntent(creature, playerPosition, daylight) {
-    const dx = playerPosition.x - creature.root.position.x;
-    const dz = playerPosition.z - creature.root.position.z;
-    const distanceSq = dx * dx + dz * dz;
-    if (distanceSq < 3.4 * 3.4 || creature.state === 'hit') {
-      creature.targetHeading = Math.atan2(-dx, -dz) + (nextRandom(creature) - 0.5) * 0.45;
-      creature.desiredSpeed = 2.9;
-      creature.hoverTarget = Math.max(creature.hoverTarget, playerPosition.y + 2.6);
-      setState(creature, 'dart', 1.15);
-      return;
-    }
-    if (creature.state === 'dart' && creature.stateTime < creature.stateDuration) {
-      creature.desiredSpeed = 2.5;
-      return;
-    }
-    if (creature.stateTime >= creature.stateDuration) {
-      creature.targetHeading += (nextRandom(creature) - 0.5) * 2.3;
-      creature.hoverTarget = this._groundHeight(
-        creature.root.position.x, creature.root.position.z, creature.root.position.y,
-      ) + 1.7 + nextRandom(creature) * 2.4;
-      setState(creature, nextRandom(creature) < 0.24 ? 'hover' : 'wander', 1.2 + nextRandom(creature) * 2.8);
-    }
-    creature.desiredSpeed = creature.state === 'hover' ? 0.18 : 1.15;
-    this._steerWithFlock(creature, 0.2);
-    if (daylight > 0.74) creature.desiredSpeed = Math.max(creature.desiredSpeed, 1.8);
-  }
-
   _damagePlayer(player, creature) {
     if (this._time - this._lastPlayerDamage < PLAYER_DAMAGE_INTERVAL) return false;
     this._lastPlayerDamage = this._time;
-    const damage = creature.type === 'bramblehog' ? 0.16 : 0.12;
+    const combat = creatureCombatProfile(creature.type);
+    const damage = combat.damage;
 
     if (typeof this.onPlayerDamage === 'function') {
       // The callback owns damage application so game modes can ignore or alter it.
-      this.onPlayerDamage(damage, creature.root.position, creature);
+      this.onPlayerDamage(damage, creature.root.position, creature, combat);
     } else {
       if (Number.isFinite(player?.health)) player.health = Math.max(0, player.health - damage);
       player?.onDamage?.(damage, creature);
@@ -1342,15 +1250,16 @@ export class CreatureSystem {
         const length = Math.hypot(dx, dz) || 1;
         dx /= length;
         dz /= length;
-        velocity.x += dx * 2.9;
-        velocity.y = Math.max(velocity.y, 2.1);
-        velocity.z += dz * 2.9;
+        velocity.x += dx * combat.knockback;
+        velocity.y = Math.max(velocity.y, 2.5 + combat.knockback * 0.12);
+        velocity.z += dz * combat.knockback;
       }
     }
     return true;
   }
 
   _updateGloomlingIntent(creature, player, playerPosition, daylight) {
+    const combat = CREATURE_COMBAT.gloomling;
     const dx = playerPosition.x - creature.root.position.x;
     const dz = playerPosition.z - creature.root.position.z;
     const dy = playerPosition.y - creature.root.position.y;
@@ -1372,21 +1281,24 @@ export class CreatureSystem {
     }
 
     if (creature.state === 'attack') {
-      creature.desiredSpeed = 0;
+      creature.desiredSpeed = creature.stateTime >= combat.windup - 0.07
+        && creature.stateTime < combat.windup + 0.09 ? 2.6 : 0;
       creature.targetHeading = Math.atan2(dx, dz);
-      if (!creature.attackLanded && creature.stateTime >= 0.22) {
+      if (!creature.attackLanded && creature.stateTime >= combat.windup) {
         creature.attackLanded = true;
-        if (distance < 1.9 && Math.abs(dy) < 2.25) this._damagePlayer(player, creature);
+        if (distance < combat.range && Math.abs(dy) < 2.25 && this._canDamagePlayer(creature, playerPosition)) {
+          this._damagePlayer(player, creature);
+        }
       }
-      if (creature.stateTime >= 0.62) {
-        creature.attackCooldown = 1.08;
+      if (creature.stateTime >= combat.duration) {
+        creature.attackCooldown = combat.cooldown;
         setState(creature, 'chase', 0.5);
       }
       return;
     }
 
     if (distance < 1.62 && Math.abs(dy) < 2.25 && creature.attackCooldown <= 0) {
-      setState(creature, 'attack', 0.62);
+      setState(creature, 'attack', combat.duration);
       creature.targetHeading = Math.atan2(dx, dz);
       creature.desiredSpeed = 0;
       return;
@@ -1416,24 +1328,6 @@ export class CreatureSystem {
     const moveZ = Math.cos(creature.heading) * speed + creature.knockbackZ;
     const nextX = creature.root.position.x + moveX * dt;
     const nextZ = creature.root.position.z + moveZ * dt;
-
-    if (creature.flying) {
-      const ground = this._groundHeight(nextX, nextZ, creature.root.position.y);
-      const safeTarget = Math.max(ground + 1.25, creature.hoverTarget ?? ground + 2.3);
-      const rise = clamp((safeTarget - creature.root.position.y) * 2.1, -2.1, 2.1);
-      const nextY = creature.root.position.y + rise * dt;
-      if (this._canFlyAt(nextX, nextY, nextZ)) {
-        creature.root.position.set(nextX, nextY, nextZ);
-      } else {
-        creature.targetHeading += (nextRandom(creature) > 0.5 ? 1 : -1) * 1.4;
-        creature.hoverTarget = Math.max(creature.root.position.y + 1.1, safeTarget);
-      }
-      const damping = Math.exp(-5.5 * dt);
-      creature.knockbackX *= damping;
-      creature.knockbackZ *= damping;
-      creature.root.rotation.y = creature.heading;
-      return speed;
-    }
 
     const nextGround = this._groundHeight(nextX, nextZ, creature.root.position.y);
     const climb = nextGround - creature.root.position.y;
@@ -1515,7 +1409,7 @@ export class CreatureSystem {
     const rooting = creature.state === 'root';
     const guard = creature.state === 'guard';
     const attackPulse = creature.state === 'attack'
-      ? Math.sin(clamp(creature.stateTime / 0.72, 0, 1) * Math.PI)
+      ? Math.sin(clamp(creature.stateTime / CREATURE_COMBAT.bramblehog.duration, 0, 1) * Math.PI)
       : 0;
     headPivot.rotation.x = rooting
       ? 0.62 + Math.sin(this._time * 5.2 + creature.phase) * 0.12
@@ -1559,27 +1453,6 @@ export class CreatureSystem {
     hitGlow.visible = creature.hitTime > 0 && Math.floor(creature.hitTime * 36) % 2 === 0;
   }
 
-  _animateLumenwing(creature, speed) {
-    const { body, abdomen, headPivot, wings, tail, hitGlow } = creature.parts;
-    const darting = creature.state === 'dart';
-    const cycle = this._time * (darting ? 31 : 22) + creature.phase;
-    const flap = Math.sin(cycle) * (darting ? 0.74 : 0.56);
-    for (let index = 0; index < wings.length; index += 1) {
-      const side = index % 2 === 0 ? -1 : 1;
-      const rear = index >= 2;
-      wings[index].rotation.z = side * (0.14 + flap * (rear ? -0.82 : 1));
-      wings[index].rotation.y = side * (rear ? -0.2 : 0.08);
-    }
-    body.position.y = Math.sin(this._time * 4.2 + creature.phase) * 0.035;
-    abdomen.scale.set(0.56, 0.66, 1.1 + Math.sin(this._time * 3.4 + creature.phase) * 0.08);
-    headPivot.rotation.y = Math.sin(this._time * 1.8 + creature.phase) * 0.22;
-    headPivot.rotation.x = darting ? -0.18 : Math.sin(this._time * 2.2 + creature.phase) * 0.05;
-    tail.rotation.z = Math.sin(this._time * 5.5 + creature.phase) * 0.18;
-    creature.model.rotation.z = Math.sin(this._time * 1.6 + creature.phase) * 0.07;
-    creature.model.rotation.x = speed > 1.8 ? -0.16 : 0;
-    hitGlow.visible = creature.hitTime > 0 && Math.floor(creature.hitTime * 38) % 2 === 0;
-  }
-
   _animateGloomling(creature, speed) {
     const { body, shoulderPlates, headPivot, eye, jaw, legs, hitGlow } = creature.parts;
     const moving = speed > 0.08;
@@ -1600,7 +1473,9 @@ export class CreatureSystem {
       legs[index].rotation.z = Math.sin(cycle * 0.5 + index) * 0.05;
     }
 
-    const attackPulse = creature.state === 'attack' ? Math.sin(Math.min(1, creature.stateTime / 0.62) * Math.PI) : 0;
+    const attackPulse = creature.state === 'attack'
+      ? Math.sin(Math.min(1, creature.stateTime / CREATURE_COMBAT.gloomling.duration) * Math.PI)
+      : 0;
     headPivot.position.z = 0.5 + attackPulse * 0.28;
     headPivot.rotation.x = -attackPulse * 0.16;
     jaw.rotation.x = attackPulse * 0.65;
@@ -1674,14 +1549,12 @@ export class CreatureSystem {
         this._updateBramblehogIntent(creature, player, playerPosition, daylight);
       } else if (creature.type === 'dunetail') {
         this._updateDunetailIntent(creature, playerPosition, daylight);
-      } else if (creature.type === 'lumenwing') {
-        this._updateLumenwingIntent(creature, playerPosition, daylight);
       } else this._updateGloomlingIntent(creature, player, playerPosition, daylight);
 
       if (creature.state === 'hit' && creature.hitTime <= 0) {
         if (creature.type === 'bramblehog') setState(creature, 'charge', 1.2);
         else if (creature.type === 'gloomling') setState(creature, daylight <= 0.43 ? 'chase' : 'flee', 1.2);
-        else setState(creature, creature.type === 'lumenwing' ? 'dart' : 'flee', 1.8);
+        else setState(creature, 'flee', 1.8);
       }
 
       const speed = this._moveCreature(creature, dt);
@@ -1689,7 +1562,6 @@ export class CreatureSystem {
       else if (creature.type === 'dapple') this._animateDapple(creature, speed);
       else if (creature.type === 'bramblehog') this._animateBramblehog(creature, speed);
       else if (creature.type === 'dunetail') this._animateDunetail(creature, speed);
-      else if (creature.type === 'lumenwing') this._animateLumenwing(creature, speed);
       else this._animateGloomling(creature, speed);
     }
   }
@@ -1698,20 +1570,79 @@ export class CreatureSystem {
     if (!this.world?.getBlock || distance <= 0.35) return false;
     for (let step = 0.32; step < distance - 0.2; step += 0.34) {
       const x = Math.floor(origin.x + direction.x * step);
-      const y = Math.floor(origin.y + direction.y * step);
+      const sampleY = origin.y + direction.y * step;
+      const y = Math.floor(sampleY);
       const z = Math.floor(origin.z + direction.z * step);
-      if (isSolid(this.world.getBlock(x, y, z))) return true;
+      const id = this.world.getBlock(x, y, z);
+      if (isSolid(id) && sampleY <= y + blockShapeHeight(id)) return true;
     }
     return false;
   }
 
-  attack(origin, direction, reach = 4, damage = 1) {
+  _canDamagePlayer(creature, playerPosition) {
+    if (!creature?.root || !playerPosition) return false;
+    this._strikeOrigin.set(
+      creature.root.position.x,
+      creature.root.position.y + Math.max(0.45, creature.centerHeight * 0.72),
+      creature.root.position.z,
+    );
+    this._strikeDirection.set(
+      playerPosition.x - this._strikeOrigin.x,
+      playerPosition.y + 0.92 - this._strikeOrigin.y,
+      playerPosition.z - this._strikeOrigin.z,
+    );
+    const distance = this._strikeDirection.length();
+    if (distance <= 0.2) return true;
+    this._strikeDirection.multiplyScalar(1 / distance);
+    return !this._lineBlocked(this._strikeOrigin, this._strikeDirection, distance);
+  }
+
+  hasAttackTarget(origin, direction, reach = 4) {
+    if (this._disposed || !origin || !direction) return false;
+    const maxReach = clamp(Number(reach) || 0, 0, 4.75);
+    if (maxReach <= 0) return false;
+    this._attackDirection.set(Number(direction.x) || 0, Number(direction.y) || 0, Number(direction.z) || 0);
+    if (this._attackDirection.lengthSq() < 1e-8) return false;
+    this._attackDirection.normalize();
+    for (const creature of this.creatures) {
+      if (creature.dead) continue;
+      const toX = creature.root.position.x - Number(origin.x || 0);
+      const toY = creature.root.position.y + creature.centerHeight - Number(origin.y || 0);
+      const toZ = creature.root.position.z - Number(origin.z || 0);
+      const along = toX * this._attackDirection.x
+        + toY * this._attackDirection.y
+        + toZ * this._attackDirection.z;
+      if (along < 0 || along > maxReach) continue;
+      const distanceSq = toX * toX + toY * toY + toZ * toZ;
+      const perpendicularSq = Math.max(0, distanceSq - along * along);
+      const radiusSq = creature.radius * creature.radius;
+      if (perpendicularSq > radiusSq) continue;
+      const entry = Math.max(0, along - Math.sqrt(radiusSq - perpendicularSq));
+      if (!this._lineBlocked(origin, this._attackDirection, entry)) return true;
+    }
+    return false;
+  }
+
+  attack(origin, direction, reach = 4, damage = 1, recovery = null) {
     if (this._disposed || !origin || !direction) return null;
-    const maxReach = clamp(Number(reach) || 0, 0, 12);
+    const maxReach = clamp(Number(reach) || 0, 0, 4.75);
     if (maxReach <= 0) return null;
     this._attackDirection.set(Number(direction.x) || 0, Number(direction.y) || 0, Number(direction.z) || 0);
     if (this._attackDirection.lengthSq() < 1e-8) return null;
     this._attackDirection.normalize();
+    if (this._time + 1e-6 < this._playerAttackReadyAt) return null;
+
+    const appliedDamage = clamp(Number(damage) || 1, 0.5, 8);
+    const recoverySeconds = clamp(
+      recovery != null && Number.isFinite(Number(recovery))
+        ? Number(recovery)
+        : 0.4 + appliedDamage * 0.12,
+      0.38,
+      1.2,
+    );
+    // Recovery starts even on a miss. Otherwise rapid clicks can probe every
+    // frame until one connects, effectively bypassing the visible swing speed.
+    this._playerAttackReadyAt = this._time + recoverySeconds;
 
     let nearest = null;
     let nearestDistance = maxReach + 1;
@@ -1738,13 +1669,27 @@ export class CreatureSystem {
     }
 
     if (!nearest) return null;
-    const appliedDamage = clamp(Number(damage) || 1, 0.5, 8);
     nearest.health -= appliedDamage;
-    nearest.hitTime = 0.26;
+    nearest.hitTime = 0.29 + Math.min(0.11, appliedDamage * 0.025);
     if (nearest.type === 'bramblehog') nearest.provoked = 9;
-    nearest.knockbackX += this._attackDirection.x * 4.2;
-    nearest.knockbackZ += this._attackDirection.z * 4.2;
-    nearest.verticalVelocity = Math.max(nearest.verticalVelocity, 2.25);
+    const resistance = nearest.type === 'bramblehog' ? 0.62 : nearest.type === 'gloomling' ? 0.82 : 1;
+    let pushX = nearest.root.position.x - Number(origin.x || 0);
+    let pushZ = nearest.root.position.z - Number(origin.z || 0);
+    const pushLength = Math.hypot(pushX, pushZ);
+    if (pushLength > 1e-5) {
+      pushX /= pushLength;
+      pushZ /= pushLength;
+    } else {
+      pushX = this._attackDirection.x;
+      pushZ = this._attackDirection.z;
+    }
+    const knockback = (3.15 + Math.min(3.1, appliedDamage * 0.72)) * resistance;
+    nearest.knockbackX = clamp(nearest.knockbackX + pushX * knockback, -6.4, 6.4);
+    nearest.knockbackZ = clamp(nearest.knockbackZ + pushZ * knockback, -6.4, 6.4);
+    nearest.verticalVelocity = Math.max(
+      nearest.verticalVelocity,
+      (1.45 + Math.min(1.15, appliedDamage * 0.3)) * resistance,
+    );
     const killed = nearest.health <= 0;
     if (killed) {
       nearest.health = 0;
@@ -1772,6 +1717,7 @@ export class CreatureSystem {
       point: this._attackPoint.clone(),
       position: nearest.root.position.clone(),
       creature: nearest,
+      recovery: recoverySeconds,
       meat: killed && ['dapple', 'bramblehog', 'dunetail'].includes(nearest.type)
         ? (nearest.type === 'bramblehog' ? 4 : nearest.type === 'dapple' ? 3 : 2)
         : 0,

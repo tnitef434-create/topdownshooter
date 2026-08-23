@@ -8,8 +8,11 @@
     "start": "node server.js",
     "dev:server": "node server.js dev",
     "dev:client": "vite src",
-    "build": "vite build src --outDir ../dist",
-    "preview": "vite preview src"
+    "build": "vite build src --outDir ../dist --emptyOutDir",
+    "preview": "vite preview src",
+    "test": "node --test tests/worldloom-core.test.mjs",
+    "test:worldloom": "node --test tests/worldloom-core.test.mjs",
+    "test:browser": "node tests/worldloom-browser-smoke.mjs"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",

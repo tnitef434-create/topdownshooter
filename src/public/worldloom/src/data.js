@@ -21,9 +21,9 @@ const TOOL_ITEMS = {
   [ITEM.ASH_HATCHET]: { id: ITEM.ASH_HATCHET, name: 'Ash Hatchet', color: '#c58a5c', category: 'tool', tool: 'axe', speed: 4.6, description: 'Makes short work of ashwood.' },
   [ITEM.COPPER_INGOT]: { id: ITEM.COPPER_INGOT, name: 'Copper Ingot', color: '#e08b5f', category: 'material', description: 'Warm metal refined in a nearby kiln.' },
   [ITEM.LIGHTCORE]: { id: ITEM.LIGHTCORE, name: 'Lightcore', color: '#6fffe1', category: 'relic', description: 'A pulsing heart of copper and captured lumen.' },
-  [ITEM.RAW_MEAT]: { id: ITEM.RAW_MEAT, name: 'Raw Game Meat', color: '#c7605a', category: 'food', description: 'Fresh meat dropped by a hunted animal. Cook it before eating.' },
-  [ITEM.COOKED_MEAT]: { id: ITEM.COOKED_MEAT, name: 'Roasted Game', color: '#b96b3f', category: 'food', food: 0.38, description: 'Furnace-roasted meat that restores vitality when used.' },
-  [ITEM.COPPER_SWORD]: { id: ITEM.COPPER_SWORD, name: 'Copper Longblade', color: '#dc8453', category: 'weapon', tool: 'sword', speed: 1.25, damage: 2.4, description: 'A balanced forged blade with a wrapped ashwood grip.' },
+  [ITEM.RAW_MEAT]: { id: ITEM.RAW_MEAT, name: 'Raw Game Steak', color: '#c95e63', category: 'food', model: 'bone-steak', cooked: false, food: 0.04, nutrition: 0.12, foodRisk: 0.35, description: 'A fresh bone-in cut. Cook it over steady heat for a safe, filling meal.' },
+  [ITEM.COOKED_MEAT]: { id: ITEM.COOKED_MEAT, name: 'Fire-Roasted Steak', color: '#a95732', category: 'food', model: 'bone-steak', cooked: true, food: 0.24, nutrition: 0.48, description: 'A browned, bone-in steak with a crisp seared edge. Restores vitality and nourishment.' },
+  [ITEM.COPPER_SWORD]: { id: ITEM.COPPER_SWORD, name: 'Copper Longblade', color: '#dc8453', category: 'weapon', tool: 'sword', speed: 1.25, damage: 2.4, attackSpeed: 1.45, reach: 3.75, description: 'A balanced forged blade with a wrapped ashwood grip.' },
 };
 
 export function getItem(id) {
@@ -34,12 +34,13 @@ export function getItem(id) {
       : block.color;
     return {
       ...block,
+      name: id === BLOCK.ASH_PLANKS ? 'Wooden Planks' : block.name,
       color: cssColor,
       requiredTool: block.tool,
       tool: undefined,
       id,
       category: block.category || 'block',
-      placeable: id !== BLOCK.AIR,
+      placeable: id !== BLOCK.AIR && !block.unbreakable,
       description: block.description || 'A piece of the living voxel frontier.',
     };
   }
@@ -49,10 +50,17 @@ export function getItem(id) {
 export const RECIPES = [
   {
     id: 'ash_planks',
-    name: 'Ash Planks',
+    name: 'Ashwood Planks',
     output: { id: BLOCK.ASH_PLANKS, count: 4 },
     ingredients: [{ id: BLOCK.ASH_LOG, count: 1 }],
     description: 'Square ashwood into warm building boards.',
+  },
+  {
+    id: 'pine_planks',
+    name: 'Pinewood Planks',
+    output: { id: BLOCK.ASH_PLANKS, count: 4 },
+    ingredients: [{ id: BLOCK.PINE_LOG, count: 1 }],
+    description: 'Dress a pine log into boards compatible with every wood recipe.',
   },
   {
     id: 'ash_rods',
@@ -118,7 +126,7 @@ export const RECIPES = [
     name: 'Clear Glass',
     output: { id: BLOCK.GLASS, count: 3 },
     ingredients: [{ id: BLOCK.SAND, count: 3 }, { id: BLOCK.COALSTONE, count: 1 }],
-    station: BLOCK.KILN,
+    stations: [BLOCK.KILN, BLOCK.FURNACE],
     description: 'Kiln-fused panes with a faint sea tint.',
   },
   {
@@ -126,7 +134,7 @@ export const RECIPES = [
     name: 'Copper Ingot',
     output: { id: ITEM.COPPER_INGOT, count: 1 },
     ingredients: [{ id: BLOCK.COPPER_ORE, count: 1 }, { id: BLOCK.COALSTONE, count: 1 }],
-    station: BLOCK.KILN,
+    stations: [BLOCK.KILN, BLOCK.FURNACE],
     description: 'Refine raw copper into useful metal.',
   },
   {
@@ -142,8 +150,8 @@ export const RECIPES = [
     name: 'Lightcore',
     output: { id: ITEM.LIGHTCORE, count: 1 },
     ingredients: [{ id: BLOCK.LUMEN_CRYSTAL, count: 3 }, { id: ITEM.COPPER_INGOT, count: 2 }, { id: BLOCK.GLASS, count: 1 }],
-    station: BLOCK.KILN,
-    description: 'The end of the first journey—and the beginning of your world.',
+    station: BLOCK.CAMP_BENCH,
+    description: 'Assemble crystal, glass and refined copper into the first journey’s final artifact.',
   },
   {
     id: 'framed_window',
@@ -178,6 +186,14 @@ export const RECIPES = [
     description: 'A low ashwood frame topped with a soft leaf-fibre mattress.',
   },
   {
+    id: 'pine_wayfarer_bed',
+    name: 'Pine-Fibre Wayfarer Bed',
+    output: { id: BLOCK.BED, count: 1 },
+    ingredients: [{ id: BLOCK.ASH_PLANKS, count: 3 }, { id: BLOCK.PINE_NEEDLES, count: 3 }],
+    station: BLOCK.CAMP_BENCH,
+    description: 'The same sheltered bed, padded with dry pine needles.',
+  },
+  {
     id: 'copper_longblade',
     name: 'Copper Longblade',
     output: { id: ITEM.COPPER_SWORD, count: 1 },
@@ -190,21 +206,53 @@ export const RECIPES = [
     name: 'Roasted Game',
     output: { id: ITEM.COOKED_MEAT, count: 1 },
     ingredients: [{ id: ITEM.RAW_MEAT, count: 1 }, { id: BLOCK.COALSTONE, count: 1 }],
-    station: BLOCK.FURNACE,
-    description: 'Cook raw game meat over steady furnace heat.',
+    stations: [BLOCK.FURNACE, BLOCK.KILN],
+    description: 'Cook raw game meat over the steady heat of a furnace or kiln.',
   },
 ];
 
 export const OBJECTIVES = [
-  { id: 'gather', text: 'Gather your first ashwood log', test: ({ inventory }) => inventory.has(BLOCK.ASH_LOG) },
-  { id: 'planks', text: 'Craft ash planks in your pack', test: ({ inventory }) => inventory.has(BLOCK.ASH_PLANKS) },
+  { id: 'gather', text: 'Gather your first ash or pine log', test: ({ inventory }) => inventory.has(BLOCK.ASH_LOG) || inventory.has(BLOCK.PINE_LOG) },
+  { id: 'planks', text: 'Craft wooden planks in your pack', test: ({ inventory }) => inventory.has(BLOCK.ASH_PLANKS) },
   { id: 'tool', text: 'Craft a flint pick or ash hatchet', test: ({ inventory }) => inventory.has(ITEM.CRUDE_PICK) || inventory.has(ITEM.ASH_HATCHET) },
   { id: 'bench', text: 'Place a Camp Bench', test: ({ flags }) => flags.placedBench },
   { id: 'copper', text: 'Find copper beneath the stone', test: ({ inventory }) => inventory.has(BLOCK.COPPER_ORE) || inventory.has(ITEM.COPPER_INGOT) },
   { id: 'kiln', text: 'Build and place an Ember Kiln', test: ({ flags }) => flags.placedKiln },
+  { id: 'furnace', text: 'Build a Hearth Furnace for cooking', test: ({ flags }) => flags.placedFurnace },
+  { id: 'hunt', text: 'Hunt game and collect fresh meat', test: ({ inventory, flags }) => flags.huntedGame || inventory.has(ITEM.RAW_MEAT) || inventory.has(ITEM.COOKED_MEAT) },
+  { id: 'cook', text: 'Cook a nourishing meal over steady heat', test: ({ inventory, flags }) => flags.cookedMeal || inventory.has(ITEM.COOKED_MEAT) },
+  { id: 'bed', text: 'Place a Wayfarer Bed in your shelter', test: ({ flags }) => flags.placedBed },
+  { id: 'sleep', text: 'Sleep safely and bind your respawn point', test: ({ flags }) => flags.sleptInBed },
   { id: 'lumen', text: 'Harvest three Lumen Crystals', test: ({ inventory }) => inventory.count(BLOCK.LUMEN_CRYSTAL) >= 3 },
-  { id: 'lightcore', text: 'Craft the Lightcore', test: ({ inventory }) => inventory.has(ITEM.LIGHTCORE) },
+  { id: 'lightcore', text: 'Assemble the Lightcore at a Camp Bench', test: ({ inventory, flags }) => flags.completedJourney || inventory.has(ITEM.LIGHTCORE) },
 ];
+
+/**
+ * Return a recipe's material requirements with duplicate item rows combined.
+ * The same normalized list drives both the recipe display and the transaction,
+ * so "3 / 3" in the book can never disagree with the craft button.
+ */
+export function recipeRequirements(recipe) {
+  const totals = new Map();
+  for (const ingredient of Array.isArray(recipe?.ingredients) ? recipe.ingredients : []) {
+    const id = Math.floor(Number(ingredient?.id));
+    const count = Math.floor(Number(ingredient?.count));
+    if (!Number.isInteger(id) || id <= 0 || !Number.isInteger(count) || count <= 0) continue;
+    totals.set(id, (totals.get(id) || 0) + count);
+  }
+  return [...totals].map(([id, count]) => ({ id, count }));
+}
+
+export function recipeStations(recipe) {
+  const source = Array.isArray(recipe?.stations)
+    ? recipe.stations
+    : recipe?.station
+      ? [recipe.station]
+      : [];
+  return [...new Set(source
+    .map((id) => Math.floor(Number(id)))
+    .filter((id) => Number.isInteger(id) && id > 0 && BLOCKS[id]))];
+}
 
 export function toolMultiplier(itemId, blockId) {
   const item = getItem(itemId);
@@ -217,7 +265,7 @@ export function toolMultiplier(itemId, blockId) {
 
 export function canHarvest(itemId, blockId) {
   // Starter materials remain obtainable by hand, just deliberately slowly.
-  if ([BLOCK.TURF, BLOCK.LOAM, BLOCK.SAND, BLOCK.STONE, BLOCK.ASH_LOG, BLOCK.ASH_LEAVES].includes(blockId)) return true;
+  if ([BLOCK.TURF, BLOCK.LOAM, BLOCK.SAND, BLOCK.STONE, BLOCK.ASH_LOG, BLOCK.ASH_LEAVES, BLOCK.PINE_LOG, BLOCK.PINE_NEEDLES, BLOCK.SHORT_GRASS].includes(blockId)) return true;
   if (blockId === BLOCK.COPPER_ORE) return [ITEM.STONE_PICK, ITEM.COPPER_PICK].includes(itemId);
   if (blockId === BLOCK.LUMEN_CRYSTAL) return itemId === ITEM.COPPER_PICK;
   const block = BLOCKS[blockId];
@@ -227,4 +275,22 @@ export function canHarvest(itemId, blockId) {
 
 export function weaponDamage(itemId) {
   return Math.max(1, Number(getItem(itemId)?.damage) || 1);
+}
+
+export function combatProfile(itemId) {
+  const item = getItem(itemId);
+  const weapon = item.category === 'weapon';
+  const tool = item.category === 'tool';
+  const attacksPerSecond = weapon ? Number(item.attackSpeed) || 1.35 : tool ? 1.15 : 1.8;
+  return {
+    damage: weaponDamage(itemId),
+    reach: safeReach(item.reach, weapon ? 3.75 : 3.25),
+    recovery: 1 / Math.max(0.5, attacksPerSecond),
+    staminaCost: weapon ? 0.085 : tool ? 0.065 : 0.04,
+  };
+}
+
+function safeReach(value, fallback) {
+  const reach = Number(value);
+  return Number.isFinite(reach) ? Math.max(2.5, Math.min(4.25, reach)) : fallback;
 }
