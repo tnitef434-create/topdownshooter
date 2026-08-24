@@ -2580,6 +2580,101 @@ function setupUIListeners() {
       playMenuClick();
     });
   }
+
+  initCustomDropdown(inputs.lobbyModeSelect);
+  initCustomDropdown(inputs.lobbyMapSelect);
+  initCustomDropdown(inputs.lobbyStyleSelect);
+}
+
+// Site-themed custom dropdown that wraps a native <select> (kept in sync both ways)
+function closeAllCustomDropdowns(exceptWrapper = null) {
+  document.querySelectorAll('.custom-dropdown.open').forEach(w => {
+    if (w !== exceptWrapper) w.classList.remove('open');
+  });
+}
+
+function initCustomDropdown(select) {
+  if (!select || select.dataset.customDropdown === '1') return;
+  select.dataset.customDropdown = '1';
+
+  const wrapper = document.createElement('div');
+  wrapper.className = 'custom-dropdown';
+  select.parentNode.insertBefore(wrapper, select);
+  wrapper.appendChild(select);
+  select.classList.add('custom-dropdown-source');
+
+  const toggle = document.createElement('button');
+  toggle.type = 'button';
+  toggle.className = 'custom-dropdown-toggle';
+  toggle.innerHTML = '<span class="custom-dropdown-label"></span><span class="custom-dropdown-arrow">▾</span>';
+  wrapper.appendChild(toggle);
+
+  const menu = document.createElement('div');
+  menu.className = 'custom-dropdown-menu';
+  wrapper.appendChild(menu);
+
+  Array.from(select.options).forEach(opt => {
+    const item = document.createElement('div');
+    item.className = 'custom-dropdown-option';
+    item.dataset.value = opt.value;
+    item.textContent = opt.textContent;
+    item.addEventListener('click', () => {
+      if (select.disabled) return;
+      closeAllCustomDropdowns();
+      if (rawGetValue() !== opt.value) {
+        select.value = opt.value;
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    });
+    menu.appendChild(item);
+  });
+
+  const valueDesc = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value');
+  const rawGetValue = () => valueDesc.get.call(select);
+  const disabledDesc = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'disabled');
+
+  function syncDropdownUI() {
+    const current = rawGetValue();
+    const selectedOption = select.options[select.selectedIndex];
+    toggle.querySelector('.custom-dropdown-label').textContent = selectedOption ? selectedOption.textContent : '';
+    menu.querySelectorAll('.custom-dropdown-option').forEach(o => o.classList.toggle('active', o.dataset.value === current));
+    wrapper.classList.toggle('disabled', select.disabled);
+    toggle.setAttribute('aria-expanded', wrapper.classList.contains('open') ? 'true' : 'false');
+  }
+
+  Object.defineProperty(select, 'value', {
+    get: rawGetValue,
+    set(v) { rawSetValue(v); syncDropdownUI(); },
+    configurable: true
+  });
+  Object.defineProperty(select, 'disabled', {
+    get: () => disabledDesc.get.call(select),
+    set(v) { disabledDesc.set.call(select, v); syncDropdownUI(); },
+    configurable: true
+  });
+
+  toggle.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (select.disabled) return;
+    const wasOpen = wrapper.classList.contains('open');
+    closeAllCustomDropdowns();
+    if (!wasOpen) {
+      const rect = toggle.getBoundingClientRect();
+      if (window.innerHeight - rect.bottom < 150) {
+        wrapper.classList.add('drop-up');
+      } else {
+        wrapper.classList.remove('drop-up');
+      }
+      wrapper.classList.add('open');
+    }
+    syncDropdownUI();
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!wrapper.contains(e.target)) wrapper.classList.remove('open');
+  });
+
+  syncDropdownUI();
 }
 
 // 7. Chat Utilities
