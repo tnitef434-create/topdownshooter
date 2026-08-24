@@ -2119,7 +2119,12 @@ function setupUIListeners() {
       const remainingMs = banUntil - Date.now();
       const mins = Math.floor(remainingMs / 60000);
       const secs = Math.floor((remainingMs % 60000) / 1000);
-      alert(`MATCHMAKING BAN ACTIVE: ${mins}:${String(secs).padStart(2, '0')} remaining.\n\nLeaving ranked matches results in a temporary ban.`);
+      showInSiteDialog({
+        title: 'MATCHMAKING BAN ACTIVE',
+        message: `${mins}:${String(secs).padStart(2, '0')} remaining.\n\nLeaving ranked matches results in a temporary ban.`,
+        confirmText: 'UNDERSTOOD',
+        tone: 'ban'
+      });
       return;
     }
 
@@ -2378,18 +2383,37 @@ function setupUIListeners() {
     });
   }
   if (gameLeaveBtn && gameMenuOverlay) {
-    gameLeaveBtn.addEventListener('click', () => {
+    gameLeaveBtn.addEventListener('click', async () => {
       const matchActive = gameEngine && gameEngine.active && gameEngine.gameState !== 'match-over';
       if (matchActive) {
-        let leaveWarning;
+        let dialogConfig;
         if (gameEngine.isRanked) {
-          leaveWarning = 'WARNING: Leaving this ranked match will count it as a LOSS (-40 RP) and give you a 5-minute MATCHMAKING BAN.\n\nLeave anyway?';
+          dialogConfig = {
+            title: 'MATCHMAKING BAN WARNING',
+            message: 'Leaving this ranked match will count it as a LOSS (-40 RP) and give you a 5-minute MATCHMAKING BAN.',
+            confirmText: 'LEAVE MATCH',
+            cancelText: 'STAY IN MATCH',
+            tone: 'danger'
+          };
         } else if (gameEngine.mode === 'online') {
-          leaveWarning = 'WARNING: Leaving this online match will count it as a LOSS.\n\nLeave anyway?';
+          dialogConfig = {
+            title: 'LEAVE MATCH',
+            message: 'Leaving this online match will count it as a LOSS.',
+            confirmText: 'LEAVE MATCH',
+            cancelText: 'STAY IN MATCH',
+            tone: 'info'
+          };
         } else {
-          leaveWarning = 'Leave this match? Your current match progress will be lost.';
+          dialogConfig = {
+            title: 'LEAVE MATCH',
+            message: 'Your current match progress will be lost.',
+            confirmText: 'LEAVE',
+            cancelText: 'STAY',
+            tone: 'info'
+          };
         }
-        if (!confirm(leaveWarning)) {
+        const confirmed = await showInSiteDialog(dialogConfig);
+        if (!confirmed) {
           gameMenuOverlay.classList.remove('active');
           return;
         }
@@ -2851,9 +2875,19 @@ document.addEventListener('DOMContentLoaded', () => {
       const nextRP = Math.max(0, myRP - 40);
       localStorage.setItem('tacticstrike_rp', String(nextRP));
       localStorage.setItem('tacticstrike_mm_ban_until', String(Date.now() + 5 * 60 * 1000));
-      alert('GAME LOST\n\nYou left a ranked match. The result was recorded as a loss (-40 RP).\n\nMATCHMAKING BAN: 5 minutes.');
+      showInSiteDialog({
+        title: 'GAME LOST',
+        message: 'You left a ranked match. The result was recorded as a loss (-40 RP).\n\nMATCHMAKING BAN: 5 minutes.',
+        confirmText: 'UNDERSTOOD',
+        tone: 'danger'
+      });
     } else {
-      alert('GAME LOST\n\nYou disconnected from an active match. Recorded as a loss.');
+      showInSiteDialog({
+        title: 'GAME LOST',
+        message: 'You disconnected from an active match. Recorded as a loss.',
+        confirmText: 'UNDERSTOOD',
+        tone: 'danger'
+      });
     }
     localStorage.removeItem('tacticstrike_active_match');
   }
@@ -3906,6 +3940,47 @@ function buyWeapon(weaponKey) {
   
   renderShopItems();
   updateWeaponLocksUI();
+}
+
+function showInSiteDialog({ title, message, confirmText = 'CONFIRM', cancelText = null, tone = 'info' }) {
+  return new Promise((resolve) => {
+    const toneColor = tone === 'danger' ? '#ff3c3c' : (tone === 'ban' ? '#ff6ef7' : '#d4af37');
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay insite-dialog-overlay';
+    overlay.style.cssText = 'position: fixed; inset: 0; z-index: 130000;';
+
+    const confirmStyle = (tone === 'danger' || tone === 'ban')
+      ? 'background: linear-gradient(135deg, #a11c1c, #520f0f); border: 1px solid #7a1515; color: #ffbcbc;'
+      : '';
+
+    overlay.innerHTML = `
+      <div class="modal-card" style="width: 400px; max-width: 92vw; padding: 30px 26px; gap: 14px; border-color: ${toneColor}55; box-shadow: 0 0 45px ${toneColor}22;">
+        <div style="font-family: var(--font-title); font-size: 11px; letter-spacing: 2.5px; color: ${toneColor}; font-weight: 700; text-shadow: 0 0 10px ${toneColor}55;">${title}</div>
+        <div style="font-size: 12.5px; line-height: 1.65; color: #e8ecf2; white-space: pre-line;">${message}</div>
+        <div style="display: flex; gap: 10px; width: 100%; margin-top: 8px;">
+          ${cancelText ? `<button data-dialog-cancel class="btn secondary btn-3d" style="flex: 1; font-size: 11px; padding: 12px;">${cancelText}</button>` : ''}
+          <button data-dialog-confirm class="btn primary btn-3d" style="flex: 1; font-size: 11px; padding: 12px; ${confirmStyle}">${confirmText}</button>
+        </div>
+      </div>
+    `;
+
+    let settled = false;
+    const done = (result) => {
+      if (settled) return;
+      settled = true;
+      overlay.classList.remove('active');
+      setTimeout(() => overlay.remove(), 300);
+      resolve(result);
+    };
+
+    overlay.querySelector('[data-dialog-confirm]').addEventListener('click', () => done(true));
+    const cancelBtn = overlay.querySelector('[data-dialog-cancel]');
+    if (cancelBtn) cancelBtn.addEventListener('click', () => done(false));
+
+    const appRoot = document.getElementById('app') || document.body;
+    appRoot.appendChild(overlay);
+    requestAnimationFrame(() => overlay.classList.add('active'));
+  });
 }
 
 async function refreshPlayerCountsViaHttp() {
