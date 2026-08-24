@@ -36,6 +36,7 @@ export const BLOCK = Object.freeze({
   SHORT_GRASS: 30,
   OVERGROWN_ASH_LOG: 31,
   OVERGROWN_PINE_LOG: 32,
+  RED_FLOWER: 33,
 });
 
 const TILE = Object.freeze({
@@ -81,6 +82,7 @@ const TILE = Object.freeze({
   SHORT_GRASS: 39,
   OVERGROWN_ASH_LOG_SIDE: 40,
   OVERGROWN_PINE_LOG_SIDE: 41,
+  RED_FLOWER: 42,
 });
 
 const ATLAS_COLUMNS = 7;
@@ -569,6 +571,22 @@ export const BLOCKS = Object.freeze([
     solid: true,
     liquid: false,
   }),
+  defineBlock(BLOCK.RED_FLOWER, {
+    name: 'Emberpetal',
+    description: 'A rare voxel poppy sculpted by hand, glowing red in the meadow.',
+    hardness: 0.06,
+    color: 0xd72626,
+    tiles: { top: TILE.RED_FLOWER, side: TILE.RED_FLOWER, bottom: TILE.RED_FLOWER },
+    drop: null,
+    tool: 'hand',
+    opaque: false,
+    transparent: true,
+    emissive: 0x000000,
+    solid: false,
+    liquid: false,
+    alphaTest: 0.2,
+    shape: 'prop',
+  }),
 ]);
 
 export const HOTBAR_BLOCKS = Object.freeze([
@@ -610,6 +628,7 @@ export function blockShapeHeight(blockId) {
   if (shape === 'slab-high') return 0.78;
   if (shape === 'cross-short') return 0.54;
   if (shape === 'grass-tuft') return 0.3;
+  if (shape === 'prop') return 0.05;
   return 1;
 }
 
@@ -874,6 +893,16 @@ function paintAtlas(context) {
     petals.forEach(([x, y], index) => rect(tile, index % 2 ? '#f6d76d' : '#fff0a1', x, y, 5, 5));
     rect(tile, '#9b6a2c', 15, 9, 5, 5);
     rect(tile, '#e5a83c', 16, 10, 3, 3);
+  });
+  paintTile(context, TILE.RED_FLOWER, (tile) => {
+    tile.clearRect(0, 0, 32, 32);
+    rect(tile, '#2d5f2d', 15, 12, 2, 20);
+    rect(tile, '#3f8140', 10, 22, 5, 3);
+    rect(tile, '#67a84a', 17, 18, 6, 3);
+    const petals = [[11, 6], [16, 4], [21, 7], [20, 12], [12, 12], [8, 9]];
+    petals.forEach(([x, y], index) => rect(tile, index % 2 ? '#e02525' : '#ff5643', x, y, 5, 5));
+    rect(tile, '#7a1414', 15, 9, 5, 5);
+    rect(tile, '#ffd700', 16, 10, 3, 3);
   });
 
   paintTile(context, TILE.CACTUS_TOP, (tile, random) => {

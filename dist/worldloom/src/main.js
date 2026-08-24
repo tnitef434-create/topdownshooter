@@ -647,7 +647,7 @@ function connectPlayerAudio() {
 }
 
 function materialFor(blockId) {
-  if ([BLOCK.TURF, BLOCK.ASH_LEAVES, BLOCK.PINE_NEEDLES, BLOCK.FERN, BLOCK.WILDFLOWER, BLOCK.SHORT_GRASS, BLOCK.CAVE_MUSHROOM].includes(blockId)) return 'grass';
+  if ([BLOCK.TURF, BLOCK.ASH_LEAVES, BLOCK.PINE_NEEDLES, BLOCK.FERN, BLOCK.WILDFLOWER, BLOCK.RED_FLOWER, BLOCK.SHORT_GRASS, BLOCK.CAVE_MUSHROOM].includes(blockId)) return 'grass';
   if (blockId === BLOCK.LOAM) return 'dirt';
   if (blockId === BLOCK.SAND) return 'sand';
   if (treeLogSpecies(blockId) || [BLOCK.ASH_PLANKS, BLOCK.CAMP_BENCH, BLOCK.CHEST, BLOCK.BED, BLOCK.CACTUS].includes(blockId)) return 'wood';
@@ -1263,9 +1263,9 @@ function placeSelectedBlock() {
 function placementProblem(blockId, x, y, z) {
   const below = world.getBlock(x, y - 1, z);
   const solidBelow = Boolean(BLOCKS[below]?.solid);
-  if ([BLOCK.FERN, BLOCK.WILDFLOWER, BLOCK.GLOW_MUSHROOM, BLOCK.SHORT_GRASS].includes(blockId) && !solidBelow) {
-    return 'Plants need solid ground';
-  }
+  if ([BLOCK.FERN, BLOCK.WILDFLOWER, BLOCK.RED_FLOWER, BLOCK.GLOW_MUSHROOM, BLOCK.SHORT_GRASS].includes(blockId) && !solidBelow) {
+      return 'Plants need solid ground';
+    }
   if (blockId === BLOCK.CACTUS) {
     if (![BLOCK.SAND, BLOCK.CACTUS].includes(below)) return 'Cactus can only root in sand or another cactus';
     const blockedSide = [[1, 0], [-1, 0], [0, 1], [0, -1]]

@@ -446,6 +446,11 @@ export class ChunkGeometryJob {
     const worldZ = this.originZ + z;
     const skyline = this.skylineState.sample;
 
+    if (definition?.shape === 'prop') {
+      // Rendered by its own Blender prop (red-flowers.js), not the voxel mesher.
+      return;
+    }
+
     if (['cross', 'cross-short', 'grass-tuft'].includes(definition?.shape)) {
       const uv = tileCoordinates(readTile(definition, FACES[4]), this.atlasMeta);
       const coverDepth = Math.max(0, skyline(worldX, worldZ) - y);

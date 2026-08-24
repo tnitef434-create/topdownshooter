@@ -10,10 +10,10 @@ const SCAN_RADIUS = 40;
 const SCAN_CELL = 2;
 const PATCH_CELL = 24;
 const PATCH_CHANCE = 0.14;
-const FLOWER_CHANCE = 0.12;
+const FLOWER_CHANCE = 0.18;
 const MIN_SPACING_SQ = 16;
 const RESYNC_INTERVAL = 0.5;
-const TARGET_HEIGHT = 1.05;
+const TARGET_HEIGHT = 0.78;
 
 function clamp(value, minimum, maximum) {
   return Math.max(minimum, Math.min(maximum, Number(value) || 0));
@@ -216,8 +216,20 @@ export class RedFlowerField {
 
   _flowerStillValid(flower) {
     if (!this.world?.isPositionReady?.(flower.x, flower.z)) return false;
-    return this.world.getBlock?.(flower.x, flower.y - 1, flower.z) === BLOCK.TURF
-      && this.world.getBlock?.(flower.x, flower.y, flower.z) === BLOCK.AIR;
+    const at = this.world.getBlock?.(flower.x, flower.y, flower.z);
+    const below = this.world.getBlock?.(flower.x, flower.y - 1, flower.z);
+    if (at === BLOCK.RED_FLOWER) {
+      if (below !== BLOCK.TURF) {
+        this.world.setBlock?.(flower.x, flower.y, flower.z, BLOCK.AIR, { skipStats: true });
+        return false;
+      }
+      return true;
+    }
+    if (at === BLOCK.AIR && below === BLOCK.TURF) {
+      this.world.setBlock?.(flower.x, flower.y, flower.z, BLOCK.RED_FLOWER, { skipStats: true });
+      return true;
+    }
+    return false;
   }
 
   _sync(focus) {
