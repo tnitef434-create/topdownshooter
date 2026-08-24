@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { inflateSync } from 'node:zlib';
 import * as THREE from '../src/public/worldloom/vendor/three.module.min.js';
+import { BLOCK, BLOCKS } from '../src/public/worldloom/src/blocks.js';
 import { ITEM } from '../src/public/worldloom/src/data.js';
 import {
   HeldItemView,
@@ -88,6 +90,55 @@ function pngMetadata(buffer) {
     bitDepth: buffer[24],
     colorType: buffer[25],
   };
+}
+
+function paethPredictor(left, above, upperLeft) {
+  const estimate = left + above - upperLeft;
+  const leftDistance = Math.abs(estimate - left);
+  const aboveDistance = Math.abs(estimate - above);
+  const diagonalDistance = Math.abs(estimate - upperLeft);
+  if (leftDistance <= aboveDistance && leftDistance <= diagonalDistance) return left;
+  return aboveDistance <= diagonalDistance ? above : upperLeft;
+}
+
+function decodeRgbaPng(buffer) {
+  const metadata = pngMetadata(buffer);
+  assert.equal(metadata.bitDepth, 8, 'palette test requires an 8-bit PNG');
+  assert.equal(metadata.colorType, 6, 'palette test requires an RGBA PNG');
+  const idat = [];
+  for (let offset = 8; offset + 12 <= buffer.length;) {
+    const length = buffer.readUInt32BE(offset);
+    const type = buffer.subarray(offset + 4, offset + 8).toString('ascii');
+    if (type === 'IDAT') idat.push(buffer.subarray(offset + 8, offset + 8 + length));
+    offset += length + 12;
+    if (type === 'IEND') break;
+  }
+  const packed = inflateSync(Buffer.concat(idat));
+  const bytesPerPixel = 4;
+  const stride = metadata.width * bytesPerPixel;
+  assert.equal(packed.length, (stride + 1) * metadata.height);
+  const pixels = Buffer.alloc(stride * metadata.height);
+  let source = 0;
+  for (let y = 0; y < metadata.height; y++) {
+    const filter = packed[source++];
+    const rowStart = y * stride;
+    for (let x = 0; x < stride; x++) {
+      const raw = packed[source++];
+      const left = x >= bytesPerPixel ? pixels[rowStart + x - bytesPerPixel] : 0;
+      const above = y > 0 ? pixels[rowStart + x - stride] : 0;
+      const upperLeft = y > 0 && x >= bytesPerPixel
+        ? pixels[rowStart + x - stride - bytesPerPixel]
+        : 0;
+      let reconstructed = raw;
+      if (filter === 1) reconstructed += left;
+      else if (filter === 2) reconstructed += above;
+      else if (filter === 3) reconstructed += Math.floor((left + above) / 2);
+      else if (filter === 4) reconstructed += paethPredictor(left, above, upperLeft);
+      else assert.equal(filter, 0, `unsupported PNG row filter ${filter}`);
+      pixels[rowStart + x] = reconstructed & 0xff;
+    }
+  }
+  return { ...metadata, pixels };
 }
 
 function descendantNodeIndices(document, rootName) {
@@ -527,7 +578,8 @@ test('Blender hanging-leaf GLB is self-contained, pixel-authored and compact', (
   assert.ok((triangleAccessor?.count || 0) / 3 <= 64,
     'one hanging-leaf segment exceeded its 64-triangle authored budget');
 
-  const sourceAtlas = pngMetadata(readFileSync(HANGING_LEAVES_ATLAS_URL));
+  const sourceAtlasBuffer = readFileSync(HANGING_LEAVES_ATLAS_URL);
+  const sourceAtlas = pngMetadata(sourceAtlasBuffer);
   assert.deepEqual(sourceAtlas, { width: 64, height: 64, bitDepth: 8, colorType: 6 },
     'hanging-leaf atlas must remain an exact 64x64 RGBA PNG');
   assert.equal(document.images?.length, 1, 'exactly one atlas should be embedded');
@@ -546,13 +598,40 @@ test('Blender hanging-leaf GLB is self-contained, pixel-authored and compact', (
   assert.equal(sampler?.magFilter, 9728, 'authored foliage atlas must use nearest magnification');
   assert.ok([9728, 9984].includes(sampler?.minFilter),
     'authored foliage atlas must use nearest-only minification');
+
+  const decoded = decodeRgbaPng(sourceAtlasBuffer);
+  const histogram = new Map();
+  for (let index = 0; index < decoded.pixels.length; index += 4) {
+    if (decoded.pixels[index + 3] === 0) continue;
+    const hex = decoded.pixels.subarray(index, index + 3).toString('hex');
+    histogram.set(hex, (histogram.get(hex) || 0) + 1);
+  }
+  const expectedHistogram = new Map([
+    ['345f47', 0.076],
+    ['416e4c', 0.131],
+    ['4d7d51', 0.576],
+    ['6b9860', 0.128],
+    ['82a969', 0.090],
+  ]);
+  assert.deepEqual([...histogram.keys()].sort(), [...expectedHistogram.keys()].sort(),
+    'hanging foliage must contain only the exact Ashleaf canopy colors');
+  const opaquePixels = [...histogram.values()].reduce((sum, count) => sum + count, 0);
+  for (const [hex, expectedRatio] of expectedHistogram) {
+    assert.ok(Math.abs(histogram.get(hex) / opaquePixels - expectedRatio) < 0.015,
+      `Ashleaf palette ratio ${hex} drifted away from the canopy texture`);
+  }
+  assert.ok([...histogram.values()].every((count) => count % 16 === 0),
+    'every logical texture pixel must remain a crisp 4x4 atlas block');
 });
 
 test('Blender hanging-leaf generator preserves the reproducible GPT texture pipeline', () => {
   const source = readFileSync(HANGING_LEAVES_GENERATOR_URL, 'utf8');
   assert.match(source, /Hanging_Leaf_Asset/);
-  assert.match(source, /gpt-hanging-leaves-source\.png/,
+  assert.match(source, /gpt-hanging-leaves-source-v2\.png/,
     'generator must retain the project-local GPT-image source');
+  for (const color of ['0x4D', '0x7D', '0x51', '0x6B', '0x98', '0x60', '0x34', '0x5F', '0x47', '0x82', '0xA9', '0x69', '0x41', '0x6E', '0x4C']) {
+    assert.match(source, new RegExp(color), `generator lost Ashleaf palette component ${color}`);
+  }
   assert.match(source, /64/,
     'generator must explicitly build the compact pixel atlas');
   assert.match(source, /["']export_draco_mesh_compression_enable["']\s*:\s*False/,
@@ -616,6 +695,10 @@ test('hanging-leaf spring chains use one draw and react safely to the moving pla
   assert.ok(initial.segments >= 3 && initial.segments <= 4);
   assert.equal(initial.draws, 1);
   assert.ok(initial.triangles > 0);
+  const ashTint = new THREE.Color();
+  field.mesh.getColorAt(0, ashTint);
+  assert.equal(ashTint.getHex(), new THREE.Color(BLOCKS[BLOCK.ASH_LEAVES].tint).getHex(),
+    'runtime foliage must receive the same neutral render tint as Ashleaf canopy blocks');
   const strand = field.strands[0];
   const initialTip = strand.points.at(-1).clone();
   const player = new THREE.Vector3(initialTip.x - 0.12, initialTip.y - 0.45, initialTip.z);

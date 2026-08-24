@@ -1,11 +1,14 @@
 import * as THREE from '../vendor/three.module.min.js';
 import { GLTFLoader } from '../vendor/GLTFLoader.js';
 import { mergeGeometries } from '../vendor/BufferGeometryUtils.js';
+import { BLOCK, BLOCKS } from './blocks.js';
 
 const ASSET_URL = new URL('../assets/environment/hanging-tree-leaves.glb', import.meta.url).href;
 const DEFAULT_LOAD_TIMEOUT_MS = 8_000;
 const MAX_SEGMENTS = 768;
 const DOWN = new THREE.Vector3(0, -1, 0);
+const ASHLEAF_TINT = new THREE.Color(BLOCKS[BLOCK.ASH_LEAVES]?.tint ?? 0xffffff);
+const PINE_TINT = new THREE.Color(BLOCKS[BLOCK.PINE_NEEDLES]?.tint ?? 0xffffff);
 
 function clamp(value, minimum, maximum) {
   return Math.max(minimum, Math.min(maximum, Number(value) || 0));
@@ -553,7 +556,7 @@ export class HangingLeavesField {
         this._direction.multiplyScalar(1 / length);
         this._dummy.position.copy(start);
         this._dummy.quaternion.setFromUnitVectors(DOWN, this._direction);
-        this._spin.setFromAxisAngle(DOWN, strand.twist + index * 1.37);
+        this._spin.setFromAxisAngle(DOWN, strand.twist + index * 0.16);
         this._dummy.quaternion.multiply(this._spin);
         const taper = 1 - index / Math.max(6, strand.segmentCount * 2.8);
         this._dummy.scale.set(
@@ -562,12 +565,15 @@ export class HangingLeavesField {
           strand.width * taper,
         );
         this._dummy.updateMatrix();
-        this.mesh.setMatrixAt(instance++, this._dummy.matrix);
+        this.mesh.setMatrixAt(instance, this._dummy.matrix);
+        this.mesh.setColorAt(instance, strand.isPine ? PINE_TINT : ASHLEAF_TINT);
+        instance++;
       }
     }
     this.mesh.count = instance;
     this.mesh.visible = instance > 0;
     this.mesh.instanceMatrix.needsUpdate = true;
+    if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
   }
 
   update(dt, focus, context = {}) {

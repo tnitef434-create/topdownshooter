@@ -26,11 +26,27 @@ import bpy
 from mathutils import Vector
 
 
-GENERATOR_VERSION = "1.0.0"
+GENERATOR_VERSION = "1.1.0"
 DEFAULT_SEED = 240824
 ATLAS_SIZE = 64
+LOGICAL_ATLAS_SIZE = 16
+ATLAS_PIXEL_SCALE = ATLAS_SIZE // LOGICAL_ATLAS_SIZE
+ASHLEAF_PALETTE_SRGB = (
+    (0x4D / 255.0, 0x7D / 255.0, 0x51 / 255.0),
+    (0x6B / 255.0, 0x98 / 255.0, 0x60 / 255.0),
+    (0x34 / 255.0, 0x5F / 255.0, 0x47 / 255.0),
+    (0x82 / 255.0, 0xA9 / 255.0, 0x69 / 255.0),
+    (0x41 / 255.0, 0x6E / 255.0, 0x4C / 255.0),
+)
+ASHLEAF_PALETTE_HISTOGRAM = (
+    (2, 0.076),  # #345f47
+    (4, 0.131),  # #416e4c
+    (0, 0.576),  # #4d7d51 base
+    (1, 0.128),  # #6b9860
+    (3, 0.090),  # #82a969 sparse highlight
+)
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_SOURCE = REPOSITORY_ROOT / "tools/assets/hanging-leaves-textures/gpt-hanging-leaves-source.png"
+DEFAULT_SOURCE = REPOSITORY_ROOT / "tools/assets/hanging-leaves-textures/gpt-hanging-leaves-source-v2.png"
 DEFAULT_ATLAS = REPOSITORY_ROOT / "src/public/worldloom/assets/environment/hanging-tree-leaves-atlas.png"
 DEFAULT_OUTPUT = REPOSITORY_ROOT / "src/public/worldloom/assets/environment/hanging-tree-leaves.glb"
 DEFAULT_PREVIEW = REPOSITORY_ROOT / "outputs/hanging-tree-leaves-qa.png"
@@ -81,22 +97,8 @@ def reset_scene() -> None:
     scene.unit_settings.scale_length = 1.0
 
 
-def linear_to_srgb(value: float) -> float:
-    value = max(0.0, min(1.0, value))
-    return value * 12.92 if value <= 0.0031308 else 1.055 * value ** (1.0 / 2.4) - 0.055
-
-
-def srgb_to_linear(value: float) -> float:
-    value = max(0.0, min(1.0, value))
-    return value / 12.92 if value <= 0.04045 else ((value + 0.055) / 1.055) ** 2.4
-
-
-def quantize_srgb(value: float, levels: int = 16) -> float:
-    return round(max(0.0, min(1.0, value)) * (levels - 1)) / (levels - 1)
-
-
 def generate_atlas(source_path: Path, atlas_path: Path) -> bpy.types.Image:
-    """Extract a crisp airy vine curtain from the supplied seamless GPT source."""
+    """Extract a crisp Ashleaf-matched curtain from the transparent GPT source."""
     source = bpy.data.images.load(str(source_path), check_existing=False)
     source.colorspace_settings.name = "sRGB"
     width, height = (int(source.size[0]), int(source.size[1]))
@@ -106,68 +108,88 @@ def generate_atlas(source_path: Path, atlas_path: Path) -> bpy.types.Image:
 
     # A tall central crop preserves several authored stems while transparent
     # side gutters give the card a narrow chain-segment silhouette.
-    crop_left = 0.28
-    crop_right = 0.72
-    content_left = 14
-    content_right = 49
-    sampled: list[tuple[float, float, float, float]] = [(0.0, 0.0, 0.0, 0.0)] * (ATLAS_SIZE * ATLAS_SIZE)
-    keep = [False] * (ATLAS_SIZE * ATLAS_SIZE)
+    crop_left = 0.18
+    crop_right = 0.82
+    content_left = 3
+    content_right = 12
+    sampled: list[tuple[float, float, float, float]] = [
+        (0.0, 0.0, 0.0, 0.0)
+    ] * (LOGICAL_ATLAS_SIZE * LOGICAL_ATLAS_SIZE)
+    keep = [False] * (LOGICAL_ATLAS_SIZE * LOGICAL_ATLAS_SIZE)
 
-    for atlas_y in range(ATLAS_SIZE):
-        v = atlas_y / (ATLAS_SIZE - 1)
+    for atlas_y in range(LOGICAL_ATLAS_SIZE):
+        v = atlas_y / (LOGICAL_ATLAS_SIZE - 1)
         source_y = min(height - 1, max(0, round(v * (height - 1))))
         for atlas_x in range(content_left, content_right + 1):
             u = (atlas_x - content_left) / max(1, content_right - content_left)
             source_u = crop_left + (crop_right - crop_left) * u
             source_x = min(width - 1, max(0, round(source_u * (width - 1))))
             source_index = (source_y * width + source_x) * 4
-            r = linear_to_srgb(source_pixels[source_index])
-            g = linear_to_srgb(source_pixels[source_index + 1])
-            b = linear_to_srgb(source_pixels[source_index + 2])
+            r = source_pixels[source_index]
+            g = source_pixels[source_index + 1]
+            b = source_pixels[source_index + 2]
+            alpha = source_pixels[source_index + 3]
 
-            # The source deliberately has dark forest foliage behind its bright
-            # vines. A hard albedo key retains mossy leaves and ochre stems while
-            # dropping the deep background into true alpha-cutout pixels.
-            green_leaf = g >= 0.39 and g - max(r, b) >= 0.055
-            warm_stem = r >= 0.24 and g >= 0.22 and b <= 0.20 and abs(r - g) <= 0.22
-            index = atlas_y * ATLAS_SIZE + atlas_x
-            keep[index] = green_leaf or warm_stem
-            sampled[index] = (
-                quantize_srgb(r),
-                quantize_srgb(g),
-                quantize_srgb(b),
-                1.0,
-            )
+            # GPT-image v2 supplies real alpha. A hard cutoff removes its soft
+            # antialias fringe before the retained shading is rank-mapped onto
+            # the exact Ashleaf canopy palette below.
+            green_leaf = alpha >= 0.58 and g >= r * 1.08 and g >= b * 1.04
+            index = atlas_y * LOGICAL_ATLAS_SIZE + atlas_x
+            keep[index] = green_leaf
+            sampled[index] = (r, g, b, 1.0)
 
     # Remove single-pixel sampling flecks without softening authored corners.
     cleaned = keep[:]
-    for y in range(1, ATLAS_SIZE - 1):
-        for x in range(1, ATLAS_SIZE - 1):
-            index = y * ATLAS_SIZE + x
+    for y in range(1, LOGICAL_ATLAS_SIZE - 1):
+        for x in range(1, LOGICAL_ATLAS_SIZE - 1):
+            index = y * LOGICAL_ATLAS_SIZE + x
             if not keep[index]:
                 continue
             neighbors = sum(
                 1
                 for oy in (-1, 0, 1)
                 for ox in (-1, 0, 1)
-                if (ox or oy) and keep[(y + oy) * ATLAS_SIZE + x + ox]
+                if (ox or oy) and keep[(y + oy) * LOGICAL_ATLAS_SIZE + x + ox]
             )
             if neighbors < 2:
                 cleaned[index] = False
 
+    opaque_indices = [index for index, retained in enumerate(cleaned) if retained]
+    opaque_indices.sort(key=lambda index: (
+        0.2126 * sampled[index][0] + 0.7152 * sampled[index][1] + 0.0722 * sampled[index][2],
+        index,
+    ))
+    opaque_pixels = len(opaque_indices)
+    histogram_total = sum(weight for _, weight in ASHLEAF_PALETTE_HISTOGRAM)
+    cumulative_limits: list[tuple[float, tuple[float, float, float]]] = []
+    cumulative = 0.0
+    for palette_index, weight in ASHLEAF_PALETTE_HISTOGRAM:
+        cumulative += weight / histogram_total
+        cumulative_limits.append((cumulative, ASHLEAF_PALETTE_SRGB[palette_index]))
+
     atlas_pixels = [0.0] * (ATLAS_SIZE * ATLAS_SIZE * 4)
-    opaque_pixels = 0
-    for index, color in enumerate(sampled):
-        if not cleaned[index]:
-            continue
-        opaque_pixels += 1
-        target = index * 4
-        atlas_pixels[target] = srgb_to_linear(color[0])
-        atlas_pixels[target + 1] = srgb_to_linear(color[1])
-        atlas_pixels[target + 2] = srgb_to_linear(color[2])
-        atlas_pixels[target + 3] = 1.0
-    if opaque_pixels < 280:
-        raise RuntimeError(f"Atlas extraction retained too little foliage ({opaque_pixels} pixels)")
+    for rank, index in enumerate(opaque_indices):
+        quantile = (rank + 0.5) / max(1, opaque_pixels)
+        color = cumulative_limits[-1][1]
+        for limit, candidate in cumulative_limits:
+            if quantile <= limit:
+                color = candidate
+                break
+        logical_x = index % LOGICAL_ATLAS_SIZE
+        logical_y = index // LOGICAL_ATLAS_SIZE
+        for offset_y in range(ATLAS_PIXEL_SCALE):
+            for offset_x in range(ATLAS_PIXEL_SCALE):
+                atlas_x = logical_x * ATLAS_PIXEL_SCALE + offset_x
+                atlas_y = logical_y * ATLAS_PIXEL_SCALE + offset_y
+                target = (atlas_y * ATLAS_SIZE + atlas_x) * 4
+                # Blender writes generated image pixels directly when saving
+                # the PNG; preserve exact blocks.js sRGB bytes.
+                atlas_pixels[target] = color[0]
+                atlas_pixels[target + 1] = color[1]
+                atlas_pixels[target + 2] = color[2]
+                atlas_pixels[target + 3] = 1.0
+    if opaque_pixels < 18:
+        raise RuntimeError(f"Atlas extraction retained too little foliage ({opaque_pixels} logical pixels)")
 
     atlas = bpy.data.images.new("Worldloom_Hanging_Leaves_Atlas_64", ATLAS_SIZE, ATLAS_SIZE, alpha=True)
     atlas.colorspace_settings.name = "sRGB"
@@ -178,7 +200,8 @@ def generate_atlas(source_path: Path, atlas_path: Path) -> bpy.types.Image:
     atlas.save()
     atlas.pack()
     atlas["source_file"] = source_path.name
-    atlas["opaque_pixels"] = opaque_pixels
+    atlas["opaque_pixels"] = opaque_pixels * ATLAS_PIXEL_SCALE * ATLAS_PIXEL_SCALE
+    atlas["logical_pixels"] = LOGICAL_ATLAS_SIZE
     atlas["pixel_filter"] = "nearest"
     bpy.data.images.remove(source)
     return atlas
@@ -243,7 +266,7 @@ def create_hanging_segment(material: bpy.types.Material, scale: float, seed: int
     uvs: list[tuple[float, float]] = []
     rows = 6
     height = 1.18 * scale
-    base_widths = (0.10, 0.28, 0.34, 0.31, 0.25, 0.16)
+    base_widths = (0.15, 0.18, 0.19, 0.18, 0.17, 0.15)
     angles = (-0.24 + rng.uniform(-0.025, 0.025), 0.31 + rng.uniform(-0.025, 0.025))
 
     for ribbon_index, angle in enumerate(angles):
@@ -290,7 +313,7 @@ def create_hanging_segment(material: bpy.types.Material, scale: float, seed: int
     segment["top_pivot"] = True
     segment["hang_axis_gltf"] = "local_negative_y"
     segment["triangle_count"] = len(mesh.loop_triangles)
-    segment["source_texture"] = "gpt-hanging-leaves-source.png"
+    segment["source_texture"] = "gpt-hanging-leaves-source-v2.png"
     if len(mesh.loop_triangles) > 64:
         raise RuntimeError(f"Hanging segment exceeds 64 triangles: {len(mesh.loop_triangles)}")
     return segment
