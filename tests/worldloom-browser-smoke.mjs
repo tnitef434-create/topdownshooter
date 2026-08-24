@@ -31,6 +31,51 @@ try {
   await page.waitForSelector('#btn-deploy-main', { timeout: 15_000 });
   await page.evaluate(() => document.querySelector('#btn-deploy-main')?.click());
   await page.waitForFunction(() => document.querySelector('#deploy-modal')?.classList.contains('active'));
+  const deployPresentation = await page.evaluate(() => {
+    const card = document.querySelector('.modal-card.deploy-card');
+    const operation = document.querySelector('.worldloom-operation');
+    const badge = operation?.querySelector('.worldloom-operation-badge');
+    if (!card || !operation || !badge) return null;
+
+    const rules = [];
+    const collectRules = (ruleList) => {
+      for (const rule of ruleList || []) {
+        if (rule.selectorText?.includes('.modal-card.deploy-card::-webkit-scrollbar-thumb')) {
+          rules.push(rule.cssText);
+        }
+        if (rule.cssRules) collectRules(rule.cssRules);
+      }
+    };
+    for (const sheet of document.styleSheets) {
+      try {
+        collectRules(sheet.cssRules);
+      } catch {
+        // All application styles are same-origin, but ignore an injected sheet
+        // if the browser declines access to it.
+      }
+    }
+
+    const style = getComputedStyle(card);
+    return {
+      overflowY: style.overflowY,
+      scrollbarColor: style.scrollbarColor,
+      scrollbarGutter: style.scrollbarGutter,
+      scrollable: card.scrollHeight > card.clientHeight,
+      thumbRule: rules.join('\n'),
+      badge: badge.textContent?.trim() || '',
+      updateCopy: operation.textContent?.replace(/\s+/g, ' ').trim() || '',
+    };
+  });
+  assert(deployPresentation, 'Enter Battlefield deploy presentation is missing');
+  assert.match(deployPresentation.overflowY, /auto|scroll/, 'Deploy panel is not a scroll container');
+  assert.equal(deployPresentation.scrollable, true, 'Deploy panel does not expose its overflow through the custom scrollbar');
+  assert.match(deployPresentation.scrollbarColor, /212\D+175\D+55/, 'Deploy panel scrollbar is not TacticStrike gold');
+  assert.match(deployPresentation.scrollbarGutter, /stable/, 'Deploy panel scrollbar has no stable gutter');
+  assert.match(deployPresentation.thumbRule, /(?:#d4af37|rgb\(212\s*,\s*175\s*,\s*55\))/i,
+    'Deploy panel is missing its custom gold WebKit scrollbar thumb');
+  assert.match(deployPresentation.badge, /MAJOR UPDATE LIVE/i, 'Enter Battlefield does not badge the Worldloom update');
+  assert.match(deployPresentation.updateCopy, /rebuilt block interface/i, 'Enter Battlefield is missing the Worldloom interface update copy');
+  assert.match(deployPresentation.updateCopy, /faster terrain streaming/i, 'Enter Battlefield is missing the Worldloom performance update copy');
   await page.evaluate(() => document.querySelector('#btn-play-worldloom')?.click());
   await page.waitForFunction(() => document.body.classList.contains('is-worldloom-open'));
 
@@ -43,11 +88,73 @@ try {
   const frame = await frameHandle?.contentFrame();
   assert(frame, 'Worldloom iframe did not become available');
   await frame.waitForFunction(() => !document.querySelector('#main-menu')?.classList.contains('hidden'));
+  const mainMenuPresentation = await frame.evaluate(() => {
+    const menu = document.querySelector('.menu-card.surface-panel');
+    const titlePlate = document.querySelector('.brand--hero');
+    const title = document.querySelector('#main-title');
+    if (!menu || !titlePlate || !title) return null;
+    const inspectPlate = (element) => {
+      const style = getComputedStyle(element);
+      return {
+        borderWidths: [style.borderTopWidth, style.borderRightWidth, style.borderBottomWidth, style.borderLeftWidth],
+        borderColors: [style.borderTopColor, style.borderRightColor, style.borderBottomColor, style.borderLeftColor],
+        radii: [style.borderTopLeftRadius, style.borderTopRightRadius, style.borderBottomRightRadius, style.borderBottomLeftRadius],
+        backdropFilter: style.backdropFilter || style.webkitBackdropFilter || 'none',
+      };
+    };
+    return {
+      menu: inspectPlate(menu),
+      titlePlate: inspectPlate(titlePlate),
+      titleFont: getComputedStyle(title).fontFamily,
+      hasBlockMark: Boolean(titlePlate.querySelector('.brand__block-mark')),
+    };
+  });
+  assert(mainMenuPresentation, 'Worldloom main menu presentation is missing');
+  for (const [plateName, plate] of [
+    ['menu card', mainMenuPresentation.menu],
+    ['title plate', mainMenuPresentation.titlePlate],
+  ]) {
+    assert.deepEqual(plate.borderWidths, ['4px', '4px', '4px', '4px'], `${plateName} lost its 4px block bevel`);
+    assert(plate.radii.every((radius) => Number.parseFloat(radius) <= 2), `${plateName} is no longer square-edged`);
+    assert.notEqual(plate.borderColors[0], plate.borderColors[2], `${plateName} lost its light/shadow bevel contrast`);
+    assert.equal(plate.backdropFilter, 'none', `${plateName} reintroduced backdrop blur`);
+  }
+  assert.match(mainMenuPresentation.titleFont, /Consolas|Courier New|monospace/i,
+    'Worldloom title is no longer rendered in the approved block-built monospace style');
+  assert.equal(mainMenuPresentation.hasBlockMark, true, 'Worldloom title plate lost its voxel block mark');
   await frame.evaluate(() => document.querySelector('#new-world-button')?.click());
   await frame.waitForFunction(() => !document.querySelector('#hud')?.classList.contains('hidden'), {
     timeout: 60_000,
   });
   await delay(1_500);
+
+  const hudPresentation = await frame.evaluate(() => {
+    const inspectPlate = (selector) => {
+      const element = document.querySelector(selector);
+      if (!element) return null;
+      const style = getComputedStyle(element);
+      return {
+        borderWidths: [style.borderTopWidth, style.borderRightWidth, style.borderBottomWidth, style.borderLeftWidth],
+        borderColors: [style.borderTopColor, style.borderRightColor, style.borderBottomColor, style.borderLeftColor],
+        radii: [style.borderTopLeftRadius, style.borderTopRightRadius, style.borderBottomRightRadius, style.borderBottomLeftRadius],
+        backdropFilter: style.backdropFilter || style.webkitBackdropFilter || 'none',
+      };
+    };
+    return {
+      objective: inspectPlate('.objective-card'),
+      time: inspectPlate('.time-chip'),
+    };
+  });
+  for (const [plateName, plate] of [
+    ['objective HUD plate', hudPresentation.objective],
+    ['time HUD plate', hudPresentation.time],
+  ]) {
+    assert(plate, `${plateName} is missing`);
+    assert.deepEqual(plate.borderWidths, ['3px', '3px', '3px', '3px'], `${plateName} lost its square bevel`);
+    assert(plate.radii.every((radius) => Number.parseFloat(radius) <= 1), `${plateName} became rounded`);
+    assert.notEqual(plate.borderColors[0], plate.borderColors[2], `${plateName} lost its light/shadow bevel contrast`);
+    assert.equal(plate.backdropFilter, 'none', `${plateName} reintroduced glass blur`);
+  }
 
   const gameState = await frame.evaluate(() => {
     const graphics = window.__worldloomGraphics;
@@ -259,10 +366,65 @@ try {
   assert.match(movedStack.source, /Empty/);
   assert.match(movedStack.target, /Meadow Turf/);
   await dragSlot(20);
+
+  const secondStackBefore = await inventoryPage.evaluate(() => {
+    const slot = document.querySelector('#inventory-grid [data-index="1"]');
+    const label = slot?.getAttribute('aria-label') || '';
+    return {
+      label,
+      name: label.replace(/,\s*\d+\s*$/, ''),
+      hasBlockIcon: Boolean(slot?.querySelector('.item-cube')),
+    };
+  });
+  assert.doesNotMatch(secondStackBefore.label, /Empty/, 'second inventory block stack is unexpectedly empty');
+  assert.match(secondStackBefore.label, /,\s*99\s*$/, 'second inventory block stack does not contain a full stack');
+  assert.equal(secondStackBefore.hasBlockIcon, true, 'second inventory stack is not a placeable block');
+  await dragSlot(1, 21);
+  const movedSecondStack = await inventoryPage.evaluate(() => ({
+    source: document.querySelector('#inventory-grid [data-index="1"]')?.getAttribute('aria-label'),
+    target: document.querySelector('#inventory-grid [data-index="21"]')?.getAttribute('aria-label'),
+  }));
+  assert.match(movedSecondStack.source, /Empty/, 'non-first block stack remained in its source slot');
+  assert.equal(movedSecondStack.target, secondStackBefore.label, 'non-first block stack did not move intact to the target slot');
+  await dragSlot(21);
+  const visibleLooseItems = await inventoryPage.evaluate(() => {
+    const graphics = window.__worldloomGraphics;
+    const items = [];
+    for (const root of graphics?.scene?.children || []) {
+      if (!root.name?.startsWith('Loose ')) continue;
+      let visibleMeshCount = 0;
+      root.traverse?.((child) => {
+        if (child.isMesh && child.visible) visibleMeshCount++;
+      });
+      items.push({
+        name: root.name,
+        attachedToScene: root.parent === graphics.scene,
+        visible: root.visible,
+        visibleMeshCount,
+        finitePosition: root.position.toArray().every(Number.isFinite),
+      });
+    }
+    return items;
+  });
+  const meadowLooseItem = visibleLooseItems.find((item) => /Loose Meadow Turf x99/i.test(item.name));
+  const secondLooseItem = visibleLooseItems.find((item) => item.name === `Loose ${secondStackBefore.name} x99`);
+  for (const [itemName, item] of [['Meadow Turf', meadowLooseItem], [secondStackBefore.name, secondLooseItem]]) {
+    assert(item, `${itemName} drop did not create a loose world object`);
+    assert.equal(item.attachedToScene, true, `${itemName} loose object is detached from the live scene`);
+    assert.equal(item.visible, true, `${itemName} loose object is hidden`);
+    assert(item.visibleMeshCount > 0, `${itemName} loose object has no visible model`);
+    assert.equal(item.finitePosition, true, `${itemName} loose object spawned at an invalid position`);
+  }
   await inventoryPage.evaluate(() => window.dispatchEvent(new Event('beforeunload')));
   const looseItemSave = await inventoryPage.evaluate(() => JSON.parse(localStorage.getItem('worldloom.save.v1') || 'null'));
   assert.equal(looseItemSave?.inventory?.slots?.[20]?.id, 0, 'dropped stack remained in its inventory slot');
   assert.equal(looseItemSave?.droppedItems?.[0]?.count, 99, 'dropped stack was not persisted as a world item');
+  assert.equal(looseItemSave?.inventory?.slots?.[21]?.id, 0, 'second dropped stack remained in its inventory slot');
+  assert(looseItemSave?.droppedItems?.length >= 2, 'second dropped stack was not persisted');
+  assert.equal(new Set(looseItemSave.droppedItems.map((item) => item.id)).size >= 2, true,
+    'persisted loose items did not retain both distinct block types');
+  assert.equal(looseItemSave.droppedItems.filter((item) => item.count === 99).length >= 2, true,
+    'persisted loose items did not retain both full block stacks');
   await inventoryPage.close();
 
   const resilientPage = await browser.newPage();
@@ -331,10 +493,13 @@ try {
     ok: true,
     gameState,
     stormState,
+    deployPresentation,
+    mainMenuPresentation,
+    hudPresentation,
     mobileInventory,
     closeDuration,
     resilience: 'audio and storage failures recovered',
-    inventoryDrag: 'stacks move between slots and persist when dropped into the world',
+    inventoryDrag: 'multiple block stacks move between slots and persist as visible loose world items',
     exactResume: 'safe fractional X/Z position restored without snapping',
     webglRecovery: 'portal exposed retry and return actions',
   }, null, 2));

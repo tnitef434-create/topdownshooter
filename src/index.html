@@ -649,6 +649,7 @@
          <div style="font-family: var(--font-title); font-size: 10px; color: var(--neon-yellow); letter-spacing: 2px; font-weight: 700; margin-bottom: 6px;">TACTICSTRIKE V2 CHANGELOG</div>
          <h2 style="font-family: var(--font-title); font-size: 26px; color: #fff; margin-bottom: 15px; letter-spacing: 1.5px; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 12px; font-weight: 900;">WHAT'S NEW — V2</h2>
          <div class="whats-new-feed">
+             <p style="margin-bottom: 14px;">🧱 <strong style="color: #82f3b7;">WORLDLOOM — BLOCK &amp; MOTION UPDATE:</strong> <span style="background: rgba(74,221,144,0.14); color: #82f3b7; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; margin-left: 4px; border: 1px solid rgba(90,235,164,0.36);">LIVE</span><br>A rebuilt 3D block interface, faster terrain streaming, responsive mining and placement, reliable inventory handling, improved lighting, and repaired world animations are now playable in-browser.</p>
              <p style="margin-bottom: 14px;">🚀 <strong style="color: #66fcf1;">TACTICSTRIKE V2 IS LIVE:</strong> <span style="background: rgba(102,252,241,0.15); color: #66fcf1; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; margin-left: 4px; border: 1px solid rgba(102,252,241,0.3);">V2</span><br>A fresh account system, upgraded shops, new credit visuals, and cleaner navigation are now live.</p>
              <p style="margin-bottom: 14px;">🔐 <strong style="color: #39ff14;">OPERATIVE ACCOUNTS:</strong> <span style="background: rgba(57,255,20,0.15); color: #39ff14; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; margin-left: 4px; border: 1px solid rgba(57,255,20,0.3);">NEW</span><br>Create an account with your email and passcode, sign back in later, and use it when purchasing credits.</p>
              <p style="margin-bottom: 14px;">🛒 <strong style="color: #ff9f43;">BLACKSITE ARMORY OVERHAUL:</strong> <span style="background: rgba(255,159,67,0.14); color: #ffb46c; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; margin-left: 4px; border: 1px solid rgba(255,159,67,0.3);">UPGRADED</span><br>Browse cleaner weapon cards, compare stats and prices, and jump straight to credit packs whenever your balance is low.</p>
@@ -922,11 +923,11 @@
     </div>
 
     <!-- Deploy Modal Overlay -->
-    <div id="deploy-modal" class="modal-overlay" style="z-index: 10500; background: rgba(2, 3, 5, 0.95); backdrop-filter: blur(10px); border-color: rgba(212, 175, 55, 0.25);">
-      <div class="modal-card deploy-card">
+    <div id="deploy-modal" class="modal-overlay" style="z-index: 10500; background: rgba(2, 3, 5, 0.95); backdrop-filter: blur(10px); border-color: rgba(212, 175, 55, 0.25);" role="dialog" aria-modal="true" aria-labelledby="deploy-modal-title">
+      <div class="modal-card deploy-card" tabindex="-1">
         
         <div style="text-align: center; margin-bottom: 20px; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 12px;">
-          <h2 style="font-family: var(--font-title); font-size: 22px; color: #fff; margin: 0; letter-spacing: 3px; font-weight: 900;">SELECT OPERATION MODE</h2>
+          <h2 id="deploy-modal-title" style="font-family: var(--font-title); font-size: 22px; color: #fff; margin: 0; letter-spacing: 3px; font-weight: 900;">SELECT OPERATION MODE</h2>
           <p style="font-size: 10px; color: var(--text-muted); margin-top: 4px; letter-spacing: 1px;">PREPARE FOR DEPLOYMENT</p>
         </div>
 
@@ -934,11 +935,11 @@
         <section class="worldloom-operation" aria-labelledby="worldloom-operation-title">
           <div class="worldloom-operation-copy">
             <div class="worldloom-operation-meta">
-              <span class="worldloom-operation-badge">NEW FRONTIER</span>
+              <span class="worldloom-operation-badge">MAJOR UPDATE LIVE</span>
               <span>PLAYABLE IN BROWSER</span>
             </div>
             <h3 id="worldloom-operation-title">WORLDLOOM</h3>
-            <p>Explore a living voxel wilderness with caves, weather, wildlife, crafting, and cinematic lighting.</p>
+            <p>Explore a living voxel wilderness with a rebuilt block interface, faster terrain streaming, responsive building, crafting, wildlife, caves, and dynamic weather.</p>
           </div>
           <button
             id="btn-play-worldloom"
@@ -947,7 +948,7 @@
             data-worldloom-path="./worldloom/index.html"
           >
             <span>PLAY WORLDLOOM</span>
-            <small>LOAD IN SITE · NOTHING INSTALLED</small>
+            <small>PREPARE WORLD · PLAY IN SITE</small>
           </button>
         </section>
 

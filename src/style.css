@@ -3373,6 +3373,40 @@ footer {
   border-radius: 8px;
   background: rgba(12, 14, 18, 0.98) !important;
   backdrop-filter: blur(12px);
+  overscroll-behavior: contain;
+  scrollbar-color: #d4af37 #07080a;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+}
+
+.modal-card.deploy-card::-webkit-scrollbar {
+  width: 10px;
+}
+
+.modal-card.deploy-card::-webkit-scrollbar-track {
+  border: 1px solid rgba(212, 175, 55, 0.16);
+  border-radius: 2px;
+  background:
+    repeating-linear-gradient(
+      180deg,
+      rgba(212, 175, 55, 0.035) 0,
+      rgba(212, 175, 55, 0.035) 3px,
+      transparent 3px,
+      transparent 7px
+    ),
+    #07080a;
+}
+
+.modal-card.deploy-card::-webkit-scrollbar-thumb {
+  min-height: 52px;
+  border: 2px solid #07080a;
+  border-radius: 2px;
+  background: linear-gradient(180deg, #ffe6a3 0%, #d4af37 35%, #73510c 100%);
+  box-shadow: 0 0 9px rgba(212, 175, 55, 0.45);
+}
+
+.modal-card.deploy-card::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #fff3c9 0%, #edca68 45%, #947023 100%);
 }
 
 /* Worldloom is lazy-loaded into a full-screen site view only after selection. */

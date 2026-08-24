@@ -28,6 +28,11 @@ const CACTUS_CELL_SIZE = 7;
 const CAVE_CELL_SIZE = 34;
 const FISSURE_CELL_SIZE = 78;
 const CAVE_NODE_CACHE_LIMIT = 4_096;
+// Keep a modest amount of generated voxel data after a chunk leaves the view
+// radius. Walking back across a recently visited boundary then only needs a new
+// GPU mesh instead of repeating terrain, cave and decoration generation. At the
+// tallest view distance this is still only a few megabytes of Uint8Array data.
+const DORMANT_CHUNK_CACHE_LIMIT = 96;
 const MAX_FLUID_LEVEL = 7;
 const MAX_FLUID_QUEUE = 32_768;
 const FLUID_DIRECTIONS = Object.freeze([
@@ -253,6 +258,7 @@ export class World {
     this.worldHeight = WORLD_HEIGHT;
     this.seaLevel = SEA_LEVEL;
     this.chunks = new Map();
+    this.dormantChunks = new Map();
     // Map<"cx,cz", Map<localIndex, blockId>>. It remains valid after chunks unload.
     this.edits = new Map();
     this.generationQueue = [];
@@ -878,6 +884,11 @@ export class World {
     if (chunk?.generated) {
       chunk.blocks[index] = id;
       this._markDirty(chunk);
+    } else {
+      // A rare out-of-range edit must never resurrect stale cached voxels when
+      // the player returns. Dropping this one cache entry is cheaper and safer
+      // than partially replaying decoration and fluid state here.
+      this.dormantChunks.delete(chunkKey(cx, cz));
     }
     if (lx === 0) this._markDirty(this.chunks.get(chunkKey(cx - 1, cz)));
     if (lx === CHUNK_SIZE - 1) this._markDirty(this.chunks.get(chunkKey(cx + 1, cz)));
@@ -945,6 +956,19 @@ export class World {
     const cx = floorDiv(Math.floor(x), CHUNK_SIZE);
     const cz = floorDiv(Math.floor(z), CHUNK_SIZE);
     return this.isChunkRendered(cx, cz);
+  }
+
+  hasVisibleTerrainAt(x, z) {
+    const cx = floorDiv(Math.floor(x), CHUNK_SIZE);
+    const cz = floorDiv(Math.floor(z), CHUNK_SIZE);
+    const chunk = this.chunks.get(chunkKey(cx, cz));
+    const positions = chunk?.opaqueMesh?.geometry?.getAttribute?.('position');
+    return Boolean(
+      chunk?.generated
+      && chunk.wanted !== false
+      && chunk.opaqueMesh?.visible
+      && positions?.count > 0
+    );
   }
 
   isChunkRendered(cx, cz) {
@@ -1100,7 +1124,8 @@ export class World {
     const key = chunkKey(cx, cz);
     let chunk = this.chunks.get(key);
     if (!chunk) {
-      chunk = createChunk(cx, cz);
+      chunk = this.dormantChunks.get(key) ?? createChunk(cx, cz);
+      this.dormantChunks.delete(key);
       this.chunks.set(key, chunk);
     }
     chunk.lastTouched = ++this._streamTick;
@@ -1481,23 +1506,23 @@ export class World {
       }
       if (chunk.generationCursor < CHUNK_SIZE * CHUNK_SIZE) return false;
       chunk.generationPhase = 'trees';
-      if (Number.isFinite(maxMilliseconds)) return false;
+      if (now() >= deadline) return false;
     }
 
     if (chunk.generationPhase === 'trees') {
       this._decorateTrees(chunk);
       chunk.generationPhase = 'plants';
-      if (Number.isFinite(maxMilliseconds)) return false;
+      if (now() >= deadline) return false;
     }
     if (chunk.generationPhase === 'plants') {
       this._decorateSurfacePlants(chunk);
       chunk.generationPhase = 'cave-life';
-      if (Number.isFinite(maxMilliseconds)) return false;
+      if (now() >= deadline) return false;
     }
     if (chunk.generationPhase === 'cave-life') {
       this._decorateCaveLife(chunk);
       chunk.generationPhase = 'finalize';
-      if (Number.isFinite(maxMilliseconds)) return false;
+      if (now() >= deadline) return false;
     }
     if (chunk.generationPhase === 'finalize') {
       const edits = this._editMap(chunk.cx, chunk.cz);
@@ -1533,7 +1558,7 @@ export class World {
     }
   }
 
-  processQueue(maxChunks = 1) {
+  processQueue(maxChunks = 1, maxMilliseconds = 2.4) {
     const limit = Math.max(0, Math.floor(maxChunks));
     let processed = 0;
     let slices = 0;
@@ -1549,7 +1574,7 @@ export class World {
       const warmingSpawn = this._preloadChunksRemaining > 0;
       const completed = warmingSpawn
         ? (this._generateChunk(chunk), true)
-        : this._stepChunkGeneration(chunk, 128, 4.5);
+        : this._stepChunkGeneration(chunk, 128, maxMilliseconds);
       if (completed) {
         this.generationQueue.shift();
         this.queuedChunks.delete(key);
@@ -1592,15 +1617,25 @@ export class World {
     return true;
   }
 
-  rebuildDirty(maxChunks = 1) {
+  rebuildDirty(maxChunks = 1, maxMilliseconds = 2.4) {
     const limit = Math.max(0, Math.floor(maxChunks));
     if (limit === 0) return 0;
     const { cx, cz } = this.centerChunk;
     const dirty = [...this.chunks.values()]
-      .filter((chunk) => chunk.generated && chunk.meshDirty && this._neighborsReadyForMesh(chunk))
+      .filter((chunk) => (
+        chunk.generated
+        && chunk.wanted !== false
+        && chunk.meshDirty
+        && this._neighborsReadyForMesh(chunk)
+      ))
       .sort((a, b) => {
+        const distanceA = (a.cx - cx) ** 2 + (a.cz - cz) ** 2;
+        const distanceB = (b.cx - cx) ** 2 + (b.cz - cz) ** 2;
+        if (distanceA !== distanceB) return distanceA - distanceB;
+        // Continue an equally near partial job to avoid retaining several large
+        // geometry writers, but never let an old far job outrank visible ground.
         if (Boolean(a.meshJob) !== Boolean(b.meshJob)) return a.meshJob ? -1 : 1;
-        return ((a.cx - cx) ** 2 + (a.cz - cz) ** 2) - ((b.cx - cx) ** 2 + (b.cz - cz) ** 2);
+        return a.lastTouched - b.lastTouched;
       });
     let rebuilt = 0;
     for (const chunk of dirty) {
@@ -1611,7 +1646,7 @@ export class World {
         chunk.meshJobRevision = chunk.revision;
       }
       const revision = chunk.meshJobRevision;
-      const complete = chunk.meshJob.step({ maxVoxels: 8192, maxMilliseconds: 4.2 });
+      const complete = chunk.meshJob.step({ maxVoxels: 8192, maxMilliseconds });
       if (revision !== chunk.revision || !this.chunks.has(chunk.key)) {
         chunk.meshJob.disposePartial?.();
         chunk.meshJob = null;
@@ -1639,7 +1674,7 @@ export class World {
     return rebuilt;
   }
 
-  _removeChunk(key, chunk) {
+  _removeChunk(key, chunk, keepGeneratedData = true) {
     chunk.meshJob?.disposePartial?.();
     chunk.meshJob = null;
     for (const mesh of [chunk.opaqueMesh, chunk.glassMesh, chunk.waterMesh, chunk.glowMesh]) {
@@ -1651,9 +1686,24 @@ export class World {
     chunk.glassMesh = null;
     chunk.waterMesh = null;
     chunk.glowMesh = null;
+    chunk.faces = 0;
+    chunk.triangles = 0;
     this.chunks.delete(key);
     this.queuedChunks.delete(key);
     this.generationQueue = this.generationQueue.filter((queuedKey) => queuedKey !== key);
+    if (keepGeneratedData && chunk.generated) {
+      chunk.wanted = false;
+      chunk.dirty = true;
+      chunk.meshDirty = true;
+      // Refresh insertion order so Map doubles as a deterministic LRU queue.
+      this.dormantChunks.delete(key);
+      this.dormantChunks.set(key, chunk);
+      while (this.dormantChunks.size > DORMANT_CHUNK_CACHE_LIMIT) {
+        const oldest = this.dormantChunks.keys().next().value;
+        if (oldest === undefined) break;
+        this.dormantChunks.delete(oldest);
+      }
+    }
     for (const [dx, dz] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
       this._markDirty(this.chunks.get(chunkKey(chunk.cx + dx, chunk.cz + dz)));
     }
@@ -1724,6 +1774,9 @@ export class World {
       }
     }
     this.edits.clear();
+    // Cached chunks contain a materialized copy of the previous edit set.
+    // Importing/replacing a save invalidates those copies atomically.
+    this.dormantChunks.clear();
     this.fluidLevels.clear();
     this.fluidQueue.length = 0;
     this.fluidQueueHead = 0;
@@ -1787,7 +1840,7 @@ export class World {
     let editCount = 0;
     for (const chunk of this.chunks.values()) {
       if (chunk.generated) generated++;
-      if (chunk.generated && chunk.meshDirty) dirty++;
+      if (chunk.generated && chunk.wanted !== false && chunk.meshDirty) dirty++;
       faces += chunk.faces || 0;
       triangles += chunk.triangles || 0;
     }
@@ -1809,7 +1862,8 @@ export class World {
   }
 
   dispose() {
-    for (const [key, chunk] of [...this.chunks]) this._removeChunk(key, chunk);
+    for (const [key, chunk] of [...this.chunks]) this._removeChunk(key, chunk, false);
+    this.dormantChunks.clear();
     this.generationQueue.length = 0;
     this.queuedChunks.clear();
     this.fluidQueue.length = 0;

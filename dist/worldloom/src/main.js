@@ -684,7 +684,9 @@ function dropInventoryStack(slotIndex) {
   const before = inventory.serialize();
   const stack = inventory.take(slotIndex);
   if (!stack) return false;
-  if (!spawnDroppedItem(stack)) {
+  // Give an explicitly discarded stack enough owner grace to land visibly;
+  // otherwise a short throw can be collected again before the player sees it.
+  if (!spawnDroppedItem(stack, null, null, 1.35)) {
     inventory.load(before);
     ui.toast('There are too many loose items nearby', 'error', 1500);
     refreshInventoryUI();
@@ -706,13 +708,36 @@ function spawnDroppedItem(stack, position = null, velocity = null, pickupDelay =
 
   const look = player.getLookDirection(new THREE.Vector3());
   if (look.lengthSq() < 0.001) look.set(0, 0, -1);
-  const dropPosition = position?.isVector3
-    ? position.clone()
-    : player.getEyePosition(new THREE.Vector3()).addScaledVector(look, 1.35).add(new THREE.Vector3(0, -0.55, 0));
+  const horizontalLook = new THREE.Vector3(look.x, 0, look.z);
+  if (horizontalLook.lengthSq() < 0.001) horizontalLook.set(0, 0, -1);
+  else horizontalLook.normalize();
+  let dropPosition;
+  if (position?.isVector3) {
+    dropPosition = position.clone();
+  } else {
+    const base = new THREE.Vector3(player.position.x, player.position.y + 1.02, player.position.z);
+    // Looking into a wall or steeply into the floor used to create the item
+    // inside an opaque voxel, making a successful inventory transaction appear
+    // to produce nothing. Choose the furthest clear, rendered release point.
+    dropPosition = base.clone();
+    for (const distance of [0.95, 0.68, 0.38, 0]) {
+      const candidate = base.clone().addScaledVector(horizontalLook, distance);
+      const candidateId = world.getBlock(
+        Math.floor(candidate.x),
+        Math.floor(candidate.y),
+        Math.floor(candidate.z),
+      );
+      const visibleGround = !world.hasVisibleTerrainAt || world.hasVisibleTerrainAt(candidate.x, candidate.z);
+      if (!BLOCKS[candidateId]?.solid && visibleGround) {
+        dropPosition = candidate;
+        break;
+      }
+    }
+  }
   const dropVelocity = velocity?.isVector3
     ? velocity.clone()
-    : look.multiplyScalar(2.35).add(new THREE.Vector3(0, 1.75, 0));
-  const merge = droppedItems.find((candidate) => candidate.id === id
+    : horizontalLook.multiplyScalar(1.95).add(new THREE.Vector3(0, 1.65 + Math.max(-0.3, look.y) * 0.55, 0));
+  const merge = pickupDelay < 1 && droppedItems.find((candidate) => candidate.id === id
     && candidate.count + count <= 99
     && candidate.root.position.distanceToSquared(dropPosition) <= 4);
   if (merge) {
@@ -774,9 +799,21 @@ function updateDroppedItems(dt) {
       drop.velocity.z *= Math.exp(-dt * 0.55);
     }
 
-    const previousY = position.y;
-    position.addScaledVector(drop.velocity, dt);
     const radius = 0.16;
+    const previousY = position.y;
+    const blocksDropAt = (x, y, z) => {
+      const blockY = Math.floor(y);
+      const id = world.getBlock(Math.floor(x), blockY, Math.floor(z));
+      if (!BLOCKS[id]?.solid) return false;
+      return y - radius < blockY + blockShapeHeight(id) && y + radius > blockY;
+    };
+    const nextX = position.x + drop.velocity.x * dt;
+    if (blocksDropAt(nextX, position.y, position.z)) drop.velocity.x *= -0.16;
+    else position.x = nextX;
+    const nextZ = position.z + drop.velocity.z * dt;
+    if (blocksDropAt(position.x, position.y, nextZ)) drop.velocity.z *= -0.16;
+    else position.z = nextZ;
+    position.y += drop.velocity.y * dt;
     const supportY = Math.floor(position.y - radius);
     const supportId = world.getBlock(Math.floor(position.x), supportY, Math.floor(position.z));
     if (BLOCKS[supportId]?.solid) {
@@ -1130,6 +1167,9 @@ function placeSelectedBlock() {
     return;
   }
   if (world.setBlock(x, y, z, placedId)) {
+    // Pointer actions happen between animation frames. Kick the bounded mesh
+    // worker here so the visible edit does not wait for the streaming timer.
+    scheduleWorldWork();
     heldItem?.use(0.9);
     if (placedId === BLOCK.CAMP_BENCH) flags.placedBench = true;
     if (placedId === BLOCK.KILN) flags.placedKiln = true;
@@ -1208,12 +1248,12 @@ function updateMining(dt, hit) {
   suppressMining = Math.max(0, suppressMining - dt);
   if (!hit || !input.buttons.has(0) || attackGesture || suppressMining > 0) {
     resetMining();
-    return;
+    return false;
   }
   const { x, y, z, id } = hit.block;
   if (!id || id === BLOCK.WATER || id === BLOCK.LAVA) {
     resetMining();
-    return;
+    return false;
   }
   if (BLOCKS[id]?.unbreakable) {
     resetMining();
@@ -1221,7 +1261,7 @@ function updateMining(dt, hit) {
       unbreakableToastTimer = 2.2;
       ui.toast('Worldroot bedrock cannot be broken', 'normal', 1200);
     }
-    return;
+    return false;
   }
   const key = `${x},${y},${z}`;
   if (key !== miningTarget) {
@@ -1248,12 +1288,13 @@ function updateMining(dt, hit) {
       && droppedItems.length >= MAX_DROPPED_ITEMS && !inventory.canAdd(dropId, 1)) {
       ui.toast('Too many loose items nearby · pick something up first', 'error', 1700);
       resetMining();
-      return;
+      return false;
     }
     if (!world.setBlock(x, y, z, BLOCK.AIR)) {
       resetMining();
-      return;
+      return false;
     }
+    scheduleWorldWork();
     if (mode !== 'builder' && harvestable && dropId) {
       const dropPosition = new THREE.Vector3(x + 0.5, y + 0.55, z + 0.5);
       const dropVelocity = new THREE.Vector3((Math.random() - 0.5) * 1.2, 2.1, (Math.random() - 0.5) * 1.2);
@@ -1268,7 +1309,9 @@ function updateMining(dt, hit) {
     resetMining();
     refreshInventoryUI();
     checkObjectives();
+    return true;
   }
+  return false;
 }
 
 function currentObjective() {
@@ -1327,24 +1370,45 @@ function scheduleWorldWork() {
     worldWorkScheduled = false;
     if (!world || world !== scheduledWorld || token !== worldWorkToken) return;
     const timedOut = Boolean(deadline?.didTimeout);
-    const inputPending = navigator.scheduling?.isInputPending?.() === true;
-    const hasBudget = !deadline || timedOut || deadline.timeRemaining() >= 2.5;
-    if ((inputPending && !timedOut) || !hasBudget) {
-      scheduleWorldWork();
-      return;
+    const startedAt = performance.now();
+    const inputPendingAtStart = navigator.scheduling?.isInputPending?.() === true;
+    // A normal idle period may use several small slices instead of wasting the
+    // remainder after one call. A timeout or pending input gets a much smaller
+    // cap, guaranteeing progress without turning mouse/keyboard work into a
+    // long frame. Each World method independently observes the same slice cap.
+    const hardBudget = inputPendingAtStart ? 1.15 : timedOut ? 2.4 : deadline ? 6.5 : 2.4;
+    let passes = 0;
+    while (
+      passes < 6
+      && (world.generationQueue.length || world.stats.dirty > 0)
+    ) {
+      if (passes > 0 && navigator.scheduling?.isInputPending?.() === true) break;
+      const elapsed = performance.now() - startedAt;
+      const wallRemaining = hardBudget - elapsed;
+      const idleRemaining = deadline && !timedOut
+        ? deadline.timeRemaining() - 0.75
+        : wallRemaining;
+      const sliceBudget = Math.min(2.4, wallRemaining, idleRemaining);
+      if (sliceBudget < 0.55) break;
+
+      streamWorkFlip = !streamWorkFlip;
+      if (streamWorkFlip && world.generationQueue.length) {
+        world.processQueue(1, sliceBudget);
+      } else if (world.stats.dirty > 0) {
+        world.rebuildDirty(1, sliceBudget);
+      } else if (world.generationQueue.length) {
+        world.processQueue(1, sliceBudget);
+      }
+      passes++;
     }
-    streamWorkFlip = !streamWorkFlip;
-    if (streamWorkFlip && world.generationQueue.length) world.processQueue(1);
-    else if (world.stats.dirty > 0) world.rebuildDirty(1);
-    else if (world.generationQueue.length) world.processQueue(1);
     if (world.generationQueue.length || world.stats.dirty > 0) scheduleWorldWork();
   };
   if (typeof window.requestIdleCallback === 'function') {
-    // The timeout guarantees one bounded generation/mesh slice even on busy
-    // high-refresh-rate render loops that never expose a long idle window.
-    window.requestIdleCallback(work, { timeout: 120 });
+    // The timeout guarantees a very small bounded slice even on busy
+    // high-refresh-rate render loops that expose no long idle window.
+    window.requestIdleCallback(work, { timeout: 48 });
   } else {
-    setTimeout(work, 40);
+    setTimeout(work, 16);
   }
 }
 
@@ -1383,8 +1447,19 @@ function updateGame(dt) {
     const wheel = input.consumeWheel();
     if (wheel) selectHotbar(inventory.selected + Math.sign(wheel));
     const hit = player.raycast();
-    updateMining(dt, hit);
-    effects.setTarget(hit, miningProgress, placementIsValid(hit));
+    const blockChanged = updateMining(dt, hit);
+    const selectedStack = inventory.selectedSlot();
+    const placementPreviewEnabled = Boolean(
+      selectedStack.id
+      && selectedStack.count > 0
+      && getItem(selectedStack.id).placeable,
+    );
+    effects.setTarget(
+      blockChanged ? null : hit,
+      miningProgress,
+      placementIsValid(hit),
+      placementPreviewEnabled,
+    );
   } else {
     input.consumeWheel();
     resetMining();

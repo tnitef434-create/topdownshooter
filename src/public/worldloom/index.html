@@ -56,12 +56,13 @@
         </div>
         <div class="menu-layout">
           <header class="brand brand--hero">
+            <span class="brand__block-mark" aria-hidden="true"><i></i></span>
             <span class="brand__eyebrow">Gather · Shape · Illuminate</span>
             <h1 id="main-title" class="brand__name">Worldloom</h1>
             <p class="brand__tagline">Vaster peaks. Deeper caves. Wilder horizons.</p>
           </header>
 
-          <div class="menu-card surface-panel">
+          <div class="menu-card surface-panel" aria-label="World selection">
             <div class="menu-actions">
               <button id="continue-button" class="button button--primary button--wide" type="button">
                 <span class="button__label">Continue</span>
@@ -124,6 +125,7 @@
 
       <section id="pause-menu" class="screen overlay-screen hidden" role="dialog" aria-modal="true" aria-labelledby="pause-title">
         <div class="dialog-card surface-panel dialog-card--compact">
+          <span class="pause-block-mark" aria-hidden="true"></span>
           <p class="dialog-card__eyebrow">The world is resting</p>
           <h2 id="pause-title">Paused</h2>
           <div class="dialog-actions">

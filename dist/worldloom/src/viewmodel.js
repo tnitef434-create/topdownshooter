@@ -154,6 +154,19 @@ function makeToolModel(item) {
   return finishModel(group);
 }
 
+function makeActionHand() {
+  const group = new THREE.Group();
+  // A compact voxel forearm gives empty-hand and block-selected actions a
+  // readable first-person swing without restoring the permanent generic cube.
+  box(group, [0.19, 0.42, 0.2], [0.02, -0.12, 0], 0x445f79, [0, 0, -0.08], { roughness: 0.92 });
+  box(group, [0.205, 0.2, 0.215], [0.02, 0.18, 0], 0xb98465, [0, 0, -0.08], { roughness: 0.9 });
+  box(group, [0.16, 0.075, 0.17], [0.02, 0.295, 0.018], 0xc99572, [0, 0, -0.08], { roughness: 0.88 });
+  group.rotation.set(-0.08, -0.28, -0.24);
+  group.scale.setScalar(0.86);
+  group.visible = false;
+  return finishModel(group);
+}
+
 function disposeObject(root) {
   root?.traverse((node) => {
     if (!node.isMesh) return;
@@ -206,8 +219,12 @@ export class HeldItemView {
     this.root.rotation.set(-0.1, -0.12, -0.08);
     this.root.visible = false;
     camera.add(this.root);
+    this.actionHand = makeActionHand();
+    this.root.add(this.actionHand);
     this.itemId = null;
     this.model = null;
+    this.presentationVisible = false;
+    this.wasMining = false;
     this.time = 0;
     this.swingTime = 0;
     this.useImpulse = 0;
@@ -232,7 +249,8 @@ export class HeldItemView {
     // retain a proper first-person model.
     this.model = id && !block?.tiles ? makeToolModel(item) : null;
     if (this.model) this.root.add(this.model);
-    this.root.visible = Boolean(this.model);
+    this.actionHand.visible = false;
+    this.root.visible = Boolean(this.presentationVisible && this.model);
   }
 
   use(strength = 1) {
@@ -241,14 +259,20 @@ export class HeldItemView {
 
   update(dt, { mining = false, moving = 0, reducedMotion = false } = {}) {
     this.time += dt;
-    if (mining) this.swingTime += dt * (reducedMotion ? 6.5 : 10.5);
-    else this.swingTime += dt * 2.2;
+    if (mining && !this.wasMining) this.swingTime = 0;
+    if (mining) this.swingTime += dt * (reducedMotion ? 1.45 : 2.35);
+    else this.swingTime = 0;
+    this.wasMining = Boolean(mining);
     this.useImpulse = Math.max(0, this.useImpulse - dt * 4.8);
     const motionScale = reducedMotion ? 0.25 : 1;
     const walk = Math.min(1, Math.max(0, moving) / 5);
     const bobX = Math.sin(this.time * 8.6) * 0.012 * walk * motionScale;
     const bobY = Math.abs(Math.cos(this.time * 8.6)) * 0.014 * walk * motionScale;
-    const miningArc = mining ? Math.pow(Math.max(0, Math.sin(this.swingTime)), 1.35) : 0;
+    // Each mining cycle has a complete wind-up and return. The old clipped sine
+    // spent half of every cycle motionless, which looked like a frozen/broken
+    // animation and gave very slow blocks no useful rhythm.
+    const miningCycle = this.swingTime - Math.floor(this.swingTime);
+    const miningArc = mining ? Math.pow(Math.sin(miningCycle * Math.PI), 1.18) : 0;
     const useArc = Math.sin(this.useImpulse * Math.PI) * this.useImpulse;
     const arc = Math.max(miningArc, useArc) * motionScale;
     this.targetPosition.copy(this.restPosition).add(new THREE.Vector3(bobX - arc * 0.11, -bobY - arc * 0.13, arc * 0.08));
@@ -259,15 +283,20 @@ export class HeldItemView {
     if (this.model && this.itemId && getItem(this.itemId).category === 'relic') {
       this.model.rotation.y += dt * 1.4;
     }
+    this.actionHand.visible = Boolean(!this.model && (mining || this.useImpulse > 0.015));
+    this.root.visible = Boolean(this.presentationVisible && (this.model || this.actionHand.visible));
   }
 
   setVisible(visible) {
-    this.root.visible = Boolean(visible && this.model);
+    this.presentationVisible = Boolean(visible);
+    this.root.visible = Boolean(this.presentationVisible && (this.model || this.actionHand.visible));
   }
 
   dispose() {
     if (this.model) disposeObject(this.model);
+    disposeObject(this.actionHand);
     this.camera.remove(this.root);
     this.model = null;
+    this.actionHand = null;
   }
 }

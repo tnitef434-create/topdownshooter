@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "targets": {
+    "worldloom-main-menu": {
+      "targetKind": "existing-ui",
+      "projectId": "86792e70-d7be-4aa3-b546-be685ff448d4",
+      "baselineDraftId": "dc372ca8-727d-4458-9e6a-3334a601d7bc",
+      "activeDraftId": "dc372ca8-727d-4458-9e6a-3334a601d7bc",
+      "designSystemPath": ".superdesign/design-system.md",
+      "contextFiles": [
+        ".superdesign/design-system.md",
+        "src/public/worldloom/index.html",
+        "src/public/worldloom/styles.css:1:180",
+        "src/public/worldloom/styles.css:301:800",
+        "src/public/worldloom/styles.css:1874:2107",
+        "src/public/worldloom/styles.css:2110:2667",
+        ".superdesign/init/theme.md"
+      ],
+      "fingerprints": {
+        ".superdesign/design-system.md": "8f6dc5ddf3050180cef8d7c931662a84e79b50dc7e23c84c9bd89e5d7ff35864",
+        "src/public/worldloom/index.html": "267b8dbb12ba278e392ac5c80a2b28481cd4c9937a18f027511dcfb09afc704d",
+        "src/public/worldloom/styles.css": "9d24c6b106c5b12047083be8644df70b68ee5ad4e0424c69e335f7937abeaee8",
+        ".superdesign/init/theme.md": "af726eabf743b5db36bd47b9cf9ce7a3a254ad2903228d8f5fe0353654a46aff"
+      },
+      "drafts": {
+        "dc372ca8-727d-4458-9e6a-3334a601d7bc": {
+          "title": "Worldloom Block-Built Main Menu",
+          "visualDirection": "inventory-derived block-built survival interface",
+          "currentVersion": 2
+        }
+      },
+      "updatedAt": "2026-08-24T11:18:45.2955494Z"
+    }
+  }
+}

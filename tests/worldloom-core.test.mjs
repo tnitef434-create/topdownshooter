@@ -5,7 +5,11 @@ import { Inventory, SaveStore, DEFAULT_SETTINGS } from '../src/public/worldloom/
 import { SurvivalSystem } from '../src/public/worldloom/src/survival.js';
 import { BLOCK, BLOCKS } from '../src/public/worldloom/src/blocks.js';
 import { World } from '../src/public/worldloom/src/world.js';
-import { Environment } from '../src/public/worldloom/src/environment.js';
+import {
+  BlockEffects,
+  Environment,
+  skylightTransmission,
+} from '../src/public/worldloom/src/environment.js';
 import {
   PLAYER,
   PlayerController,
@@ -26,6 +30,7 @@ import {
   recipeRequirements,
   recipeStations,
 } from '../src/public/worldloom/src/data.js';
+import { HeldItemView } from '../src/public/worldloom/src/viewmodel.js';
 
 function validSnapshot() {
   return {
@@ -312,7 +317,7 @@ test('streamed generation and meshing advance progressively across frame-budgete
     generationSlices++;
   }
   assert.equal(firstChunk.generated, true);
-  assert.ok(generationSlices > 4, 'generation should be spread over several idle turns');
+  assert.ok(generationSlices > 1, 'generation should remain progressive across bounded idle turns');
 
   for (const [dx, dz] of [[-16, 0], [16, 0], [0, -16], [0, 16]]) {
     world.ensurePositionGenerated(dx, dz);
@@ -328,6 +333,63 @@ test('streamed generation and meshing advance progressively across frame-budgete
   assert.equal(rebuilt, 1);
   assert.ok(meshSlices > 4, 'meshing should be spread over several idle turns');
   assert.equal(firstChunk.meshDirty, false);
+  assert.equal(world.hasVisibleTerrainAt(0.5, 0.5), true);
+  firstChunk.meshDirty = true;
+  assert.equal(world.hasVisibleTerrainAt(0.5, 0.5), true, 'retained geometry stays visible during a rebuild');
+  assert.equal(world.isPositionRendered(0.5, 0.5), false, 'full render readiness still waits for the rebuild');
+  world.dispose();
+});
+
+test('generation finishing phases reuse the current idle budget instead of waiting four extra callbacks', () => {
+  const world = new World(64, null, null);
+  world._preloadChunksRemaining = 0;
+  world.updateStreaming({ x: 0.5, z: 0.5 }, 2);
+  const firstChunk = world.chunks.get(world.generationQueue[0]);
+
+  assert.equal(world.processQueue(1, 1_000), 0, 'the 128-column cap keeps the first pass bounded');
+  assert.equal(firstChunk.generationCursor, 128);
+  assert.equal(world.processQueue(1, 1_000), 1, 'decorations and finalize should consume the remaining second-pass budget');
+  assert.equal(firstChunk.generated, true);
+  assert.equal(firstChunk.generationPhase, 'complete');
+  world.dispose();
+});
+
+test('visible nearby mesh work outranks an older partial job at the far edge', () => {
+  const world = new World(8472, null, null);
+  world.updateStreaming({ x: 0.5, z: 0.5 }, 2);
+  for (let z = -2; z <= 2; z++) {
+    for (let x = -2; x <= 2; x++) world.ensurePositionGenerated(x * 16, z * 16);
+  }
+  const near = world.chunks.get('0,0');
+  const far = world.chunks.get('2,2');
+  let farAdvanced = false;
+  far.meshJob = {
+    step() { farAdvanced = true; return false; },
+    disposePartial() {},
+  };
+  far.meshJobRevision = far.revision;
+
+  world.rebuildDirty(1, 0.55);
+  assert.equal(farAdvanced, false, 'a retained far job must not hide nearby terrain for another turn');
+  assert.ok(near.meshJob, 'the center chunk should begin meshing first');
+  world.dispose();
+});
+
+test('recently unloaded chunks reuse their generated voxel data when revisited', () => {
+  const world = new World(9127, null, null);
+  const original = world.ensurePositionGenerated(0, 0);
+  const originalBlocks = original.blocks;
+  world.updateStreaming({ x: 0.5, z: 0.5 }, 2);
+  world.updateStreaming({ x: 16 * 10 + 0.5, z: 0.5 }, 2);
+
+  assert.equal(world.chunks.has('0,0'), false);
+  assert.equal(world.dormantChunks.get('0,0'), original);
+  world.updateStreaming({ x: 0.5, z: 0.5 }, 2);
+  const restored = world.chunks.get('0,0');
+  assert.equal(restored, original);
+  assert.equal(restored.blocks, originalBlocks);
+  assert.equal(restored.generated, true);
+  assert.equal(world.generationQueue.includes('0,0'), false, 'a revisit should skip terrain generation entirely');
   world.dispose();
 });
 
@@ -365,6 +427,64 @@ test('an opaque player-built roof removes ambient sky exposure at any depth', ()
   environment._updateSkyExposure(0.18, { x: 0.5, y: 2, z: 0.5 });
   assert.equal(environment.skyExposureTarget, 0);
   assert.ok(environment.skyExposure < 0.5, 'enclosure darkness should react quickly');
+});
+
+test('dense tree foliage provides shade without applying cave darkness', () => {
+  assert.ok(skylightTransmission(BLOCK.ASH_LEAVES) > skylightTransmission(BLOCK.PINE_NEEDLES));
+  assert.ok(skylightTransmission(BLOCK.PINE_NEEDLES) > 0.8);
+  const environment = Object.create(Environment.prototype);
+  Object.assign(environment, {
+    weatherWorld: {
+      worldHeight: 14,
+      getBlock: (_x, y) => (y >= 4 && y <= 11 ? BLOCK.PINE_NEEDLES : BLOCK.AIR),
+      terrainHeight: () => 2,
+    },
+    skyExposure: 1,
+    skyExposureTarget: 1,
+    skyExposureTimer: 0,
+  });
+  environment._updateSkyExposure(0.18, { x: 0.5, y: 2, z: 0.5 });
+  assert.ok(environment.skyExposureTarget >= 0.45, 'a natural canopy must retain readable diffuse skylight');
+  assert.ok(environment.skyExposureTarget < 0.7, 'dense pine boughs should still look visibly shaded');
+});
+
+test('selection effects never show the red placement cube without a placeable stack', () => {
+  const effects = Object.create(BlockEffects.prototype);
+  Object.assign(effects, {
+    outline: {
+      visible: false,
+      position: new THREE.Vector3(),
+      material: { opacity: 0 },
+    },
+    crack: {
+      visible: false,
+      position: new THREE.Vector3(),
+      material: { opacity: 0 },
+      scale: new THREE.Vector3(1, 1, 1),
+    },
+    preview: {
+      visible: false,
+      position: new THREE.Vector3(),
+      material: { color: new THREE.Color(), opacity: 0 },
+    },
+    crackTexture: { offset: { x: 0 }, updateMatrix() {} },
+    crackStage: -1,
+    crackTarget: '',
+    burst() {},
+  });
+  const hit = {
+    block: { x: 1, y: 2, z: 3, id: BLOCK.SAND },
+    adjacent: { x: 1, y: 3, z: 3 },
+  };
+  effects.setTarget(hit, 0, false, false);
+  assert.equal(effects.preview.visible, false);
+  assert.equal(effects.outline.visible, true, 'the normal target outline remains available');
+  effects.setTarget(hit, 0, false, true);
+  assert.equal(effects.preview.visible, false, 'invalid placement must not create a persistent red artifact');
+  effects.setTarget(hit, 0, true, true);
+  assert.equal(effects.preview.visible, true, 'an explicitly selected placeable stack may preview placement');
+  effects.setTarget(null);
+  assert.equal(effects.preview.visible, false);
 });
 
 test('a compact roof and four walls make a player-built shelter fully dark', () => {
@@ -558,6 +678,54 @@ test('combat profiles enforce weapon recovery and sensible reach', () => {
   assert.ok(sword.damage > hand.damage);
   assert.ok(sword.recovery > 0.25);
   assert.ok(sword.reach <= 4.25);
+});
+
+test('empty-hand mining has a visible complete swing instead of a frozen half-cycle', () => {
+  const camera = new THREE.Object3D();
+  const held = new HeldItemView(camera, null);
+  held.setItem(0);
+  held.setVisible(true);
+  held.update(0.08, { mining: true });
+  assert.equal(held.actionHand.visible, true);
+  assert.equal(held.root.visible, true);
+  const firstArc = held.root.rotation.x;
+  held.update(0.12, { mining: true });
+  assert.notEqual(held.root.rotation.x, firstArc, 'the mining swing must keep progressing while held');
+  held.update(0.05, { mining: false });
+  assert.equal(held.actionHand.visible, false, 'the fallback hand must not become another permanent held block');
+  held.dispose();
+});
+
+test('animals wait for visible ground and preserve their authored hit reaction', () => {
+  let terrainVisible = false;
+  const world = {
+    worldHeight: 32,
+    terrainHeight: () => 10,
+    getBlock: (_x, y) => (y === 10 ? BLOCK.TURF : BLOCK.AIR),
+    isPositionReady: () => true,
+    isPositionRendered: () => terrainVisible,
+  };
+  const system = new CreatureSystem(null, world);
+  assert.equal(system._validSpawn(0.5, 0.5, new THREE.Vector3(0.5, 11, 0.5)), null);
+  terrainVisible = true;
+  assert.equal(system._validSpawn(0.5, 0.5, new THREE.Vector3(0.5, 11, 0.5)), 11);
+
+  const dapple = system._makeDapple(0.5, 11, 0.5, 17);
+  dapple.state = 'hit';
+  dapple.hitTime = 0.2;
+  dapple.desiredSpeed = 1;
+  system._updateDappleIntent(dapple, new THREE.Vector3(1, 11, 0.5), 1);
+  assert.equal(dapple.state, 'hit');
+  assert.equal(dapple.desiredSpeed, 0);
+
+  const dunetail = system._makeDunetail(0.5, 11, 0.5, 21);
+  dunetail.state = 'hit';
+  dunetail.hitTime = 0.2;
+  dunetail.desiredSpeed = 1;
+  system._updateDunetailIntent(dunetail, new THREE.Vector3(1, 11, 0.5), 1);
+  assert.equal(dunetail.state, 'hit');
+  assert.equal(dunetail.desiredSpeed, 0);
+  system.dispose();
 });
 
 test('creature combat is telegraphed, threatening, and player swings recover even after misses', () => {

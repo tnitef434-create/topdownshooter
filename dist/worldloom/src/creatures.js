@@ -958,8 +958,18 @@ export class CreatureSystem {
     return base + 1;
   }
 
+  _hasVisibleTerrain(x, z) {
+    if (this.world?.hasVisibleTerrainAt) return this.world.hasVisibleTerrainAt(x, z);
+    if (this.world?.isPositionRendered) return this.world.isPositionRendered(x, z);
+    return true;
+  }
+
   _canOccupy(x, ground, z) {
     if (!this.world || !Number.isFinite(ground)) return true;
+    // Generated voxel data can precede its visible mesh by several streaming
+    // slices. Never let an animal walk onto that invisible ground and appear to
+    // float in open sky while the terrain catches up.
+    if (!this._hasVisibleTerrain(x, z)) return false;
     const blockX = Math.floor(x);
     const blockZ = Math.floor(z);
     const feet = Math.floor(ground + 0.05);
@@ -970,6 +980,7 @@ export class CreatureSystem {
 
   _validSpawn(x, z, playerPosition) {
     if (this.world?.isPositionReady && !this.world.isPositionReady(x, z)) return null;
+    if (!this._hasVisibleTerrain(x, z)) return null;
     const ground = this._groundHeight(x, z, playerPosition.y);
     const terrain = Number(this.world?.terrainHeight?.(x, z));
     if (Number.isFinite(terrain) && Math.abs(ground - (terrain + 1)) > 1.1) return null;
@@ -1111,15 +1122,18 @@ export class CreatureSystem {
     const dz = playerPosition.z - creature.root.position.z;
     const distanceSq = dx * dx + dz * dz;
 
+    // Preserve the authored hit clip for its short reaction window. The former
+    // proximity check immediately changed every struck animal to `flee`, so the
+    // mixer never got a frame in which to show the impact animation.
+    if (creature.state === 'hit' && creature.hitTime > 0) {
+      creature.desiredSpeed = 0;
+      return;
+    }
+
     if (distanceSq < 5.2 * 5.2 || daylight < 0.34) {
       creature.targetHeading = Math.atan2(-dx, -dz) + (nextRandom(creature) - 0.5) * 0.35;
       creature.desiredSpeed = daylight < 0.34 ? 2.05 : 2.65;
       setState(creature, 'flee', 1.5);
-      return;
-    }
-
-    if (creature.state === 'hit' && creature.hitTime > 0) {
-      creature.desiredSpeed = 0;
       return;
     }
 
@@ -1209,7 +1223,11 @@ export class CreatureSystem {
     const dx = playerPosition.x - creature.root.position.x;
     const dz = playerPosition.z - creature.root.position.z;
     const distanceSq = dx * dx + dz * dz;
-    if (distanceSq < 7.2 * 7.2 || daylight < 0.3 || creature.state === 'hit') {
+    if (creature.state === 'hit' && creature.hitTime > 0) {
+      creature.desiredSpeed = 0;
+      return;
+    }
+    if (distanceSq < 7.2 * 7.2 || daylight < 0.3) {
       creature.targetHeading = Math.atan2(-dx, -dz) + (nextRandom(creature) - 0.5) * 0.22;
       creature.desiredSpeed = 3.65;
       setState(creature, 'sprint', 1.7);
@@ -1526,6 +1544,16 @@ export class CreatureSystem {
       const dz = creature.root.position.z - playerPosition.z;
       const distanceSq = dx * dx + dz * dz;
 
+      const renderedGround = this._hasVisibleTerrain(creature.root.position.x, creature.root.position.z);
+      creature.root.visible = renderedGround;
+      if (!renderedGround) {
+        // Keep simulation and animation frozen rather than allowing an unseen
+        // actor to cross more pending chunks. It will resume seamlessly once
+        // its supporting mesh is published, or despawn if the player left it.
+        if (distanceSq > DESPAWN_DISTANCE_SQ) this._removeCreature(creature);
+        continue;
+      }
+
       if (creature.dead) {
         creature.deathTime += dt;
         this._animateDeath(creature, dt);
@@ -1605,7 +1633,7 @@ export class CreatureSystem {
     if (this._attackDirection.lengthSq() < 1e-8) return false;
     this._attackDirection.normalize();
     for (const creature of this.creatures) {
-      if (creature.dead) continue;
+      if (creature.dead || creature.root.visible === false) continue;
       const toX = creature.root.position.x - Number(origin.x || 0);
       const toY = creature.root.position.y + creature.centerHeight - Number(origin.y || 0);
       const toZ = creature.root.position.z - Number(origin.z || 0);
@@ -1647,7 +1675,7 @@ export class CreatureSystem {
     let nearest = null;
     let nearestDistance = maxReach + 1;
     for (const creature of this.creatures) {
-      if (creature.dead) continue;
+      if (creature.dead || creature.root.visible === false) continue;
       const centerX = creature.root.position.x;
       const centerY = creature.root.position.y + creature.centerHeight;
       const centerZ = creature.root.position.z;

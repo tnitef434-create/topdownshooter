@@ -439,12 +439,14 @@ export class UI {
 
   _beginInventoryPointer(event, index) {
     if (event.button !== 0 || !this.inventory?.slots[index]?.id || this.inventoryPointer) return;
+    const originElement = event.currentTarget;
     this.inventoryPointer = {
       pointerId: event.pointerId,
       index,
       startX: event.clientX,
       startY: event.clientY,
       dragging: false,
+      originElement,
     };
     const move = (moveEvent) => this._moveInventoryPointer(moveEvent);
     const finish = (upEvent) => this._finishInventoryPointer(upEvent, false);
@@ -457,6 +459,16 @@ export class UI {
     window.addEventListener('pointercancel', cancel, { passive: false });
   }
 
+  _showInventoryPointerSelection(index) {
+    this.inventorySelection = index;
+    for (const slot of this.elements.inventoryGrid?.children || []) {
+      const selected = Number(slot.dataset?.index) === index;
+      slot.classList.toggle('selected', selected);
+      slot.setAttribute('aria-pressed', selected ? 'true' : 'false');
+      slot.setAttribute('aria-grabbed', selected ? 'true' : 'false');
+    }
+  }
+
   _moveInventoryPointer(event) {
     const drag = this.inventoryPointer;
     if (!drag || event.pointerId !== drag.pointerId) return;
@@ -465,7 +477,13 @@ export class UI {
     event.preventDefault();
     if (!drag.dragging) {
       drag.dragging = true;
-      this.inventorySelection = drag.index;
+      try {
+        drag.originElement?.setPointerCapture?.(drag.pointerId);
+      } catch {
+        // Window-level listeners still complete the transaction on browsers
+        // that do not allow pointer capture for this input device.
+      }
+      this._showInventoryPointerSelection(drag.index);
       const stack = this.inventory.slots[drag.index];
       const ghost = document.createElement('div');
       ghost.className = 'inventory-slot inventory-drag-ghost';
@@ -489,7 +507,6 @@ export class UI {
       }
       document.body.append(ghost);
       this.inventoryDragGhost = ghost;
-      this.renderInventory();
     }
     if (this.inventoryDragGhost) {
       this.inventoryDragGhost.style.left = `${event.clientX}px`;
@@ -527,6 +544,14 @@ export class UI {
   _cancelInventoryPointer() {
     const drag = this.inventoryPointer;
     if (drag) {
+      try {
+        if (drag.originElement?.hasPointerCapture?.(drag.pointerId)) {
+          drag.originElement.releasePointerCapture(drag.pointerId);
+        }
+      } catch {
+        // The originating slot may already have left the document while a
+        // panel closes; the inventory snapshot remains untouched in that case.
+      }
       window.removeEventListener('pointermove', drag.move);
       window.removeEventListener('pointerup', drag.finish);
       window.removeEventListener('pointercancel', drag.cancel);

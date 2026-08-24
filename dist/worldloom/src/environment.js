@@ -4,6 +4,20 @@ import { CRACK_STAGES, createCrackAtlasTexture } from './crack-texture.js';
 import { GRAPHICS_PRESETS } from './save.js';
 
 const LIGHT_BLOCKS = new Set([BLOCK.TORCH, BLOCK.LUMEN_CRYSTAL, BLOCK.KILN, BLOCK.FURNACE]);
+const FOLIAGE_BLOCKS = new Set([BLOCK.ASH_LEAVES, BLOCK.PINE_NEEDLES]);
+
+export function skylightTransmission(blockId, definition = BLOCKS[blockId]) {
+  if (!definition?.solid || definition.liquid) return 1;
+  if (!definition.transparent) return 0;
+  // Foliage casts a proper directional shadow, but it must not globally switch
+  // off the sky/IBL as if the player had entered a stone room. Pine needles are
+  // a little denser than broad ash leaves; glass and other transparent solids
+  // retain their own stronger attenuation.
+  if (blockId === BLOCK.ASH_LEAVES) return 0.88;
+  if (blockId === BLOCK.PINE_NEEDLES) return 0.84;
+  if (blockId === BLOCK.GLASS) return 0.76;
+  return 0.7;
+}
 
 function makeAtmosphereMaterial() {
   return new THREE.ShaderMaterial({
@@ -1262,15 +1276,27 @@ export class Environment {
           const x = Math.floor(focus.x + offsetX);
           const z = Math.floor(focus.z + offsetZ);
           let transmission = 1;
+          let foliageOnly = true;
+          let sawFoliage = false;
           for (let y = startY; y <= maxY; y++) {
-            const definition = BLOCKS[world.getBlock(x, y, z)];
+            const blockId = world.getBlock(x, y, z);
+            const definition = BLOCKS[blockId];
             if (!definition?.solid || definition.liquid) continue;
-            if (definition.transparent) {
-              transmission *= 0.58;
-              if (transmission > 0.08) continue;
+            const blockTransmission = skylightTransmission(blockId, definition);
+            if (blockTransmission <= 0) {
+              transmission = 0;
+              foliageOnly = false;
+              break;
             }
-            transmission = 0;
-            break;
+            sawFoliage ||= FOLIAGE_BLOCKS.has(blockId);
+            foliageOnly &&= FOLIAGE_BLOCKS.has(blockId);
+            transmission *= blockTransmission;
+          }
+          // A generated crown can contain several overlapping leaf voxels.
+          // Preserve enough diffuse skylight to read the ground and nearby
+          // forms while the shadow map still supplies convincing canopy shade.
+          if (sawFoliage && foliageOnly) {
+            transmission = Math.max(0.46, transmission);
           }
           if (offsetX === 0 && offsetZ === 0) centerTransmission = transmission;
           exposure += transmission * weight;
@@ -1533,7 +1559,7 @@ export class BlockEffects {
     this.particleGeometry = new THREE.BoxGeometry(0.11, 0.11, 0.11);
   }
 
-  setTarget(hit, progress = 0, placementValid = false) {
+  setTarget(hit, progress = 0, placementValid = false, placementPreviewEnabled = false) {
     if (!hit) {
       this.outline.visible = false;
       this.crack.visible = false;
@@ -1566,10 +1592,15 @@ export class BlockEffects {
     this.crack.material.opacity = 0.66 + Math.max(0, nextStage) * 0.028;
     this.crack.scale.setScalar(1 + Math.max(0, nextStage) * 0.0007);
     this.outline.material.opacity = 0.9 - Math.min(0.3, progress * 0.3);
-    this.preview.visible = true;
-    this.preview.position.set(hit.adjacent.x + 0.5, hit.adjacent.y + 0.5, hit.adjacent.z + 0.5);
-    this.preview.material.color.set(placementValid ? 0x94edbf : 0xf08b73);
-    this.preview.material.opacity = placementValid ? 0.16 : 0.09;
+    // Invalid placement is already explained by the interaction toast. Keeping
+    // a red cube on every invalid target looked like a permanent world artifact,
+    // so the spatial preview exists only when it represents a real placement.
+    this.preview.visible = Boolean(placementPreviewEnabled && placementValid);
+    if (this.preview.visible) {
+      this.preview.position.set(hit.adjacent.x + 0.5, hit.adjacent.y + 0.5, hit.adjacent.z + 0.5);
+      this.preview.material.color.set(0x94edbf);
+      this.preview.material.opacity = 0.16;
+    }
   }
 
   burst(position, blockId, count = 12) {
