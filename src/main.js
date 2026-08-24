@@ -2114,6 +2114,15 @@ function setupUIListeners() {
 
   // Ranked matchmaking with 15-second rank expansion
   function startRankedMatchmaking(searchStyle) {
+    const banUntil = parseInt(localStorage.getItem('tacticstrike_mm_ban_until') || '0');
+    if (Date.now() < banUntil) {
+      const remainingMs = banUntil - Date.now();
+      const mins = Math.floor(remainingMs / 60000);
+      const secs = Math.floor((remainingMs % 60000) / 1000);
+      alert(`MATCHMAKING BAN ACTIVE: ${mins}:${String(secs).padStart(2, '0')} remaining.\n\nLeaving ranked matches results in a temporary ban.`);
+      return;
+    }
+
     const deployModal = document.getElementById('deploy-modal');
     if (deployModal) deployModal.classList.remove('active');
 
@@ -2206,7 +2215,7 @@ function setupUIListeners() {
     const mmExpandNotice = document.getElementById('mm-expand-notice');
     const mmDots = document.getElementById('mm-dots');
     const mmTimer = document.getElementById('mm-timer');
-    if (mmExpandNotice) mmExpandNotice.innerText = 'OPPONENT FOUND — DEPLOYING...';
+    if (mmExpandNotice) mmExpandNotice.innerText = 'GAME FOUND — DEPLOYING...';
     if (mmDots) mmDots.innerText = '';
     if (mmTimer) mmTimer.innerText = '';
 
@@ -2225,6 +2234,8 @@ function setupUIListeners() {
       if (gameEngine) {
         gameEngine.destroy();
       }
+
+      localStorage.setItem('tacticstrike_active_match', 'ranked');
 
       const playersList = [
         { id: 'player', name: myName, weapon: myWeapon, color: myColor }
@@ -2257,7 +2268,7 @@ function setupUIListeners() {
         onKillFeed: addKillFeedMessage
       });
 
-      addSystemChatMessage(`No operative found in time — deployed against ${fallbackBotName}.`);
+      addSystemChatMessage(`Game found! Playing against ${fallbackBotName}.`);
       showScreen('game');
     };
 
@@ -2368,17 +2379,28 @@ function setupUIListeners() {
   }
   if (gameLeaveBtn && gameMenuOverlay) {
     gameLeaveBtn.addEventListener('click', () => {
+      const matchInProgress = gameEngine && gameEngine.active && gameEngine.gameState !== 'match-over' && (gameEngine.mode === 'online' || gameEngine.isRanked);
+      if (matchInProgress) {
+        const leaveWarning = gameEngine.isRanked
+          ? 'WARNING: Leaving this ranked match will count it as a LOSS (-40 RP) and give you a 5-minute MATCHMAKING BAN.\n\nLeave anyway?'
+          : 'WARNING: Leaving this online match will count it as a LOSS.\n\nLeave anyway?';
+        if (!confirm(leaveWarning)) {
+          gameMenuOverlay.classList.remove('active');
+          return;
+        }
+      }
       console.log("LEAVE MATCH clicked. Cleaning up game session...");
       try {
         gameMenuOverlay.classList.remove('active');
         if (gameEngine) {
           try {
-            if (gameEngine.active && gameEngine.mode === 'online') {
+            if (gameEngine.active && (gameEngine.mode === 'online' || gameEngine.isRanked) && gameEngine.gameState !== 'match-over') {
               recordMatchResult(false);
               if (gameEngine.isRanked) {
                 const myRP = parseInt(localStorage.getItem('tacticstrike_rp') || '0');
                 const nextRP = Math.max(0, myRP - 40);
                 localStorage.setItem('tacticstrike_rp', String(nextRP));
+                localStorage.setItem('tacticstrike_mm_ban_until', String(Date.now() + 5 * 60 * 1000));
               }
             }
           } catch (e) {
@@ -2417,6 +2439,15 @@ function setupUIListeners() {
       }
     });
   }
+
+  // Warn before closing/refreshing during an active online or ranked match
+  window.addEventListener('beforeunload', (e) => {
+    if (gameEngine && gameEngine.active && gameEngine.gameState !== 'match-over' && (gameEngine.mode === 'online' || gameEngine.isRanked)) {
+      e.preventDefault();
+      e.returnValue = '';
+      return '';
+    }
+  });
 
 
   // Rematch request button
@@ -2814,9 +2845,12 @@ document.addEventListener('DOMContentLoaded', () => {
       const myRP = parseInt(localStorage.getItem('tacticstrike_rp') || '0');
       const nextRP = Math.max(0, myRP - 40);
       localStorage.setItem('tacticstrike_rp', String(nextRP));
+      localStorage.setItem('tacticstrike_mm_ban_until', String(Date.now() + 5 * 60 * 1000));
+      alert('GAME LOST\n\nYou left a ranked match. The result was recorded as a loss (-40 RP).\n\nMATCHMAKING BAN: 5 minutes.');
+    } else {
+      alert('GAME LOST\n\nYou disconnected from an active match. Recorded as a loss.');
     }
     localStorage.removeItem('tacticstrike_active_match');
-    alert('Forfeit detected: You disconnected from an active match. Recorded as a loss.');
   }
 
   initSettings();
@@ -3882,7 +3916,11 @@ const BOT_USERNAME_POOL = [
   'ToxicViper', 'CrimsonGhost', 'AlphaWolf', 'ReaperSix', 'Frostbite',
   'VenomStrike', 'LoneWolf', 'SilentHawk', 'RapidFire', 'SteelRaven',
   'VoidWalker', 'SnapAim', 'HeadshotHero', 'TacticalTurtle', 'QuickScope',
-  'MidnightFox', 'SavageOtter', 'WraithOne', 'BulletMagnet', 'ClutchMaster'
+  'MidnightFox', 'SavageOtter', 'WraithOne', 'BulletMagnet', 'ClutchMaster',
+  'DriftKing', 'ZeroFear', 'HavocWolf', 'PixelSniper', 'RushHourZ',
+  'CamperKing', 'NoScopeNate', 'EchoSquad', 'VexArcher', 'GrimReaperz',
+  'SmokeCheck', 'FragMovie', 'LagSwitch', 'SpawnCamper', 'OneTapWonder',
+  'SilentStep', 'HeadhunterPro', 'Warlord77', 'TacticalTed', 'ClutchGod'
 ];
 
 function generateBotUsername() {
