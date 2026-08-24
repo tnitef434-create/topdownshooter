@@ -5,6 +5,14 @@ import { ParticleEngine } from './Particle.js';
 import { Sound } from './Sound.js';
 import { Network } from './Network.js';
 import { CharacterRenderer } from './CharacterRenderer.js';
+import { getBotNavigation } from './BotNavigation.js';
+import {
+  assignBotTargets,
+  assignDistinctTeamSpawns,
+  createTeamBlackboards,
+  getTeamBlackboard,
+  projectDistinctSpawn
+} from './BotTactics.js';
 
 class FlashGrenade {
   constructor(x, y, vx, vy, throwerId) {
@@ -140,6 +148,8 @@ export class Engine {
         { x: 150, y: this.mapHeight - 150 },         // Team 1, Spawn B
         { x: this.mapWidth - 150, y: 150 }          // Team 2, Spawn B
       ];
+      // Compiled lazily after the first round layout is regenerated.
+      this.botNavigation = null;
       
       this.players = [];
       this.localPlayer = null;
@@ -179,6 +189,7 @@ export class Engine {
         }
         this.players.push(player);
       });
+      this.botBlackboards = createTeamBlackboards(this.players, performance.now());
 
       this.bullets = [];
       this.grenades = [];
@@ -968,6 +979,13 @@ export class Engine {
     this.countdownTimer = 3;
     this.countdownStart = performance.now();
 
+    // The complete round layout must exist before tasks, spawns, patrols or routes are chosen.
+    this.map.generateMap();
+    if (this.mode === 'offline') {
+      this.botNavigation = getBotNavigation(this.map, this.spawns);
+    }
+    this.botBlackboards = createTeamBlackboards(this.players, this.countdownStart);
+
     if (this.matchMode === 'sabotage') {
       // Vents initialization
       this.vents = [
@@ -1043,20 +1061,30 @@ export class Engine {
       return (hash >>> 0) / 4294967296;
     };
 
-    const team1Spawns = [this.spawns[0], this.spawns[2]];
-    const team2Spawns = [this.spawns[1], this.spawns[3]];
+    const teamSpawns = {
+      1: [this.spawns[0], this.spawns[2]],
+      2: [this.spawns[1], this.spawns[3]]
+    };
     
     const t1IdxStart = seededRandom() < 0.5 ? 0 : 1;
     const t2IdxStart = seededRandom() < 0.5 ? 0 : 1;
 
-    // Reset all operatives
-    this.players.forEach((p, idx) => {
-      let spawn;
-      if (p.team === 1) {
-        spawn = team1Spawns[(t1IdxStart + idx) % team1Spawns.length];
-      } else {
-        spawn = team2Spawns[(t2IdxStart + idx) % team2Spawns.length];
+    const spawnAssignments = assignDistinctTeamSpawns(this.players, teamSpawns, { 1: t1IdxStart, 2: t2IdxStart });
+    const occupiedSpawns = [];
+    const teamBotCounts = new Map();
+
+    // Reset all operatives. Nav projection keeps authored corners clear of furniture,
+    // while per-team counters prevent teammates from sharing a spawn in 2v2.
+    this.players.forEach((p) => {
+      const assigned = spawnAssignments.get(String(p.id)) || this.spawns[0];
+      let spawn = assigned;
+      if (this.botNavigation) {
+        spawn = projectDistinctSpawn(this.botNavigation, assigned, occupiedSpawns, p.radius || 18)
+          || this.botNavigation.choosePatrolPoint(assigned.x, assigned.y, seededRandom)
+          || this.botNavigation.projectPoint(assigned.x, assigned.y, p.radius || 18)
+          || assigned;
       }
+      occupiedSpawns.push({ x: spawn.x, y: spawn.y });
       p.x = spawn.x;
       p.y = spawn.y;
       p.vx = 0;
@@ -1071,8 +1099,11 @@ export class Engine {
       p.flashAlpha = 0;
 
       if (p.isBot) {
-        p.botState = 'patrol';
-        p.choosePatrolPoint(this.map);
+        const laneIndex = teamBotCounts.get(p.team) || 0;
+        teamBotCounts.set(p.team, laneIndex + 1);
+        p.botLaneIndex = laneIndex;
+        p.botLaneSign = laneIndex % 2 === 0 ? -1 : 1;
+        p.resetBotRound(this.map, this.botNavigation);
       }
     });
     
@@ -1080,7 +1111,6 @@ export class Engine {
     this.bullets = [];
     this.grenades = [];
     this.particles.clear();
-    this.map.generateMap(); // Regen crate positions
     
     // Sync HUD displays
     this.localPlayer.updateHUD();
@@ -1555,17 +1585,31 @@ export class Engine {
       }
       
       if (this.mode === 'offline') {
+        if (this.botNavigation && this.map.navigationRevision !== this.botNavigation.obstacleRevision) {
+          this.botNavigation.sync(this.spawns);
+        }
+        const assignments = new Map();
+        const botTeams = new Set(this.players.filter(player => player.isBot && player.health > 0).map(player => player.team));
+        for (const team of botTeams) {
+          const bots = this.players.filter(player => player.isBot && player.health > 0 && player.team === team);
+          const enemies = this.players.filter(player => player.health > 0 && player.team !== team);
+          const board = getTeamBlackboard(this.botBlackboards, team);
+          for (const [botId, target] of assignBotTargets(bots, enemies, board, currentTime)) {
+            assignments.set(botId, target);
+          }
+        }
+
         this.players.forEach(p => {
           if (p.isBot) {
-            const opposingTeam = p.team === 1 ? 2 : 1;
-            const targets = this.players.filter(t => t.health > 0 && t.team === opposingTeam);
-            
-            if (targets.length > 0) {
-              targets.sort((a, b) => Math.hypot(p.x - a.x, p.y - a.y) - Math.hypot(p.x - b.x, p.y - b.y));
-              p.update(null, null, this.map, this.sound, currentTime, targets[0], this.localPlayer);
-            } else {
-              p.update(null, null, this.map, this.sound, currentTime, null, this.localPlayer);
-            }
+            const target = assignments.get(String(p.id)) || null;
+            const teammates = this.players.filter(teammate => teammate !== p && teammate.health > 0 && teammate.team === p.team);
+            p.update(null, null, this.map, this.sound, currentTime, target, this.localPlayer, {
+              navigation: this.botNavigation,
+              blackboard: getTeamBlackboard(this.botBlackboards, p.team),
+              teammates,
+              laneIndex: p.botLaneIndex || 0,
+              combatEnabled: this.gameState === 'playing'
+            });
           }
         });
       } else {

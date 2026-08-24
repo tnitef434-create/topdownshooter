@@ -1,4 +1,20 @@
 import { CharacterRenderer } from './CharacterRenderer.js';
+import {
+  advanceBotRoute,
+  claimCoverPoint,
+  createBotRouteState,
+  getClaimedCoverPoints,
+  getBotRouteEndpointStatus,
+  getRecentSighting,
+  getTeammateSeparation,
+  invalidateBotRoute,
+  predictAimPoint,
+  recordTeamSighting,
+  releaseCoverClaim,
+  rotateAngleToward,
+  routeNeedsReplan,
+  setBotRoute
+} from './BotTactics.js';
 
 // ─── Rank System ──────────────────────────────────────────────────────────────
 export const RANKS = [
@@ -100,6 +116,14 @@ export class Player {
     this.botReactTime = 0;
     this.botLastDecisionTime = 0;
     this.botShootDelay = 0;
+    this.botRoute = createBotRouteState();
+    this.botTargetPurpose = 'patrol';
+    this.botAimReadyAt = 0;
+    this.botAimTargetId = null;
+    this.botHadLOS = false;
+    this.botLastSeenAt = -Infinity;
+    this.botCoverUntil = 0;
+    this.botLaneSign = 1;
 
     // Flashlight & strafing
     this.flashlightActive = true;
@@ -201,7 +225,7 @@ export class Player {
     }
   }
 
-  update(keys, mouse, map, soundEngine, currentTime, botTargetPlayer = null, localPlayerRef = null) {
+  update(keys, mouse, map, soundEngine, currentTime, botTargetPlayer = null, localPlayerRef = null, botContext = null) {
     if (this.health <= 0) return;
 
     const isSabotage = window.gameEngine && window.gameEngine.matchMode === 'sabotage';
@@ -326,8 +350,8 @@ export class Player {
       } else {
         if (this.health > 100) this.health = 100;
       }
-    } else if (this.isBot && botTargetPlayer) {
-      this.handleBotAI(map, soundEngine, currentTime, botTargetPlayer, localPlayerRef, dtFactor);
+    } else if (this.isBot) {
+      this.handleBotAI(map, soundEngine, currentTime, botTargetPlayer, localPlayerRef, dtFactor, botContext || {});
     }
 
     // Apply speed multiplier based on carrying weapon weight and sprint speed mult
@@ -370,9 +394,18 @@ export class Player {
     const nextX = this.x + this.vx * dtFactor;
     const nextY = this.y + this.vy * dtFactor;
     
-    const collisionResponse = map.checkCircleCollision(nextX, nextY, this.radius);
+    const collisionResponse = map.moveCircle
+      ? map.moveCircle(this.x, this.y, this.vx * dtFactor, this.vy * dtFactor, this.radius)
+      : map.checkCircleCollision(nextX, nextY, this.radius);
     this.x = collisionResponse.x;
     this.y = collisionResponse.y;
+    if (collisionResponse.collided) {
+      const intoWall = this.vx * collisionResponse.normalX + this.vy * collisionResponse.normalY;
+      if (intoWall < 0) {
+        this.vx -= intoWall * collisionResponse.normalX;
+        this.vy -= intoWall * collisionResponse.normalY;
+      }
+    }
 
     // Footstep Sound triggers
     if (Math.abs(this.vx) > 0.5 || Math.abs(this.vy) > 0.5) {
@@ -817,361 +850,272 @@ export class Player {
   }
 
   // --- 8. Bot AI Logic (Single Player Offline Mode) ---
-  handleBotAI(map, soundEngine, currentTime, player, localPlayer, dtFactor) {
-    // Check line of sight to player
-    const distToPlayer = Math.hypot(this.x - player.x, this.y - player.y);
-    const inVent = player.inVent;
-    const hasRawLOS = !inVent && distToPlayer < 700 && this.checkLineOfSight(map, this.x, this.y, player.x, player.y);
-
-    // Bot can see player in the dark if close, if player has flashlight on, or if player is in bot's flashlight beam
-    let angleToPlayer = Math.atan2(player.y - this.y, player.x - this.x);
-    let diff = angleToPlayer - this.angle;
-    while (diff < -Math.PI) diff += Math.PI * 2;
-    while (diff > Math.PI) diff -= Math.PI * 2;
-    const inCone = Math.abs(diff) <= (32.5 * Math.PI / 180); // 65-degree flashlight cone
-
-    const hasLOS = hasRawLOS && (
-      distToPlayer < 140 || // Peripheral hearing/sensing radius (stealth detection)
-      player.flashlightActive || 
-      (this.flashlightActive && inCone)
+  handleBotAI(map, soundEngine, currentTime, player, localPlayer, dtFactor, context = {}) {
+    const navigation = context.navigation || null;
+    const blackboard = context.blackboard || null;
+    const teammates = context.teammates || [];
+    const combatEnabled = context.combatEnabled !== false;
+    const hasEnemy = !!(player && player.health > 0);
+    const distToPlayer = hasEnemy ? Math.hypot(this.x - player.x, this.y - player.y) : Infinity;
+    const hasRawLOS = hasEnemy && !player.inVent && distToPlayer < 760 && (
+      navigation?.hasClearPath
+        ? navigation.hasClearPath(this.x, this.y, player.x, player.y, 1)
+        : this.checkLineOfSight(map, this.x, this.y, player.x, player.y)
     );
 
-    // Hear gunshot investigate behavior
-    const hearsGunshot = (currentTime - player.lastFiredTime < 60) && (distToPlayer < 900);
-    if (hearsGunshot && !hasLOS && this.botState !== 'chase') {
-      this.botState = 'search';
+    const angleToPlayer = hasEnemy ? Math.atan2(player.y - this.y, player.x - this.x) : this.angle;
+    let viewDiff = angleToPlayer - this.angle;
+    while (viewDiff < -Math.PI) viewDiff += Math.PI * 2;
+    while (viewDiff > Math.PI) viewDiff -= Math.PI * 2;
+    const inCone = Math.abs(viewDiff) <= (38 * Math.PI / 180);
+    const hasLOS = hasRawLOS && (
+      distToPlayer < 145 || player.flashlightActive || (this.flashlightActive && inCone)
+    );
+
+    if (hasLOS) {
+      recordTeamSighting(blackboard, this, player, currentTime);
       this.lastKnownPlayerPos = { x: player.x, y: player.y };
-      this.botTargetX = player.x;
-      this.botTargetY = player.y;
-      this.angle = Math.atan2(player.y - this.y, player.x - this.x); // turn towards shot
+      this.botLastSeenAt = currentTime;
+      if (!this.botHadLOS || this.botAimTargetId !== String(player.id)) {
+        this.botAimTargetId = String(player.id);
+        this.botAimReadyAt = currentTime + 105 + Math.random() * 120;
+      }
+      this.botHadLOS = true;
+    } else if (currentTime - this.botLastSeenAt > 420) {
+      this.botHadLOS = false;
+    }
+
+    const sharedSighting = hasEnemy ? getRecentSighting(blackboard, player.id, currentTime) : null;
+    const hearsGunshot = hasEnemy && currentTime - player.lastFiredTime < 520 && distToPlayer < 900;
+    if (hearsGunshot && !hasLOS) {
+      this.lastKnownPlayerPos = { x: player.x, y: player.y };
+      this.botState = 'search';
+      this.setBotTarget(map, navigation, player.x, player.y, 'gunshot', currentTime);
     }
 
     let alarmOverride = false;
-    // Investigate alarm behavior in sabotage mode — highest priority (overrides chase unless player is very close)
-    if (window.gameEngine && window.gameEngine.matchMode === 'sabotage') {
-      const activeAlarms = window.gameEngine.tasks ? window.gameEngine.tasks.filter(t => t.alarmActive) : [];
-      if (activeAlarms.length > 0) {
-        // Find closest active alarm
-        activeAlarms.sort((a, b) => Math.hypot(this.x - a.x, this.y - a.y) - Math.hypot(this.x - b.x, this.y - b.y));
-        const closestAlarm = activeAlarms[0];
-
-        // Only break alarm pursuit if player is practically right next to us (< 120px) AND visible
-        const playerTooClose = hasLOS && distToPlayer < 120;
-
-        if (!playerTooClose) {
-          // Redirect bot to alarm — override any current patrol/search/chase state
+    const gameEngine = typeof window !== 'undefined' ? window.gameEngine : null;
+    if (gameEngine?.matchMode === 'sabotage') {
+      const activeAlarms = (gameEngine.tasks || []).filter(task => task.alarmActive);
+      if (activeAlarms.length && !(hasLOS && distToPlayer < 120)) {
+        const closestAlarm = activeAlarms.reduce((best, alarm) => (
+          !best || Math.hypot(this.x - alarm.x, this.y - alarm.y) < Math.hypot(this.x - best.x, this.y - best.y)
+            ? alarm : best
+        ), null);
+        if (closestAlarm && this.setBotTarget(map, navigation, closestAlarm.x, closestAlarm.y, 'alarm', currentTime)) {
           this.botState = 'search';
-          this.botTargetX = closestAlarm.x;
-          this.botTargetY = closestAlarm.y;
-          this.angle = Math.atan2(closestAlarm.y - this.y, closestAlarm.x - this.x);
-          // Show urgency — speed up artificially by pretending we just made a decision
-          this.botLastDecisionTime = currentTime;
           alarmOverride = true;
         }
       }
     }
 
-    const timeDiff = currentTime - this.botLastDecisionTime;
- 
-    // AI State Machine decisions every 250ms
-    if (!alarmOverride && timeDiff > 250) {
+    const decisionDue = currentTime - this.botLastDecisionTime > 230;
+    if (!alarmOverride && decisionDue) {
       this.botLastDecisionTime = currentTime;
-
-      // Strafe toggles every 800-1500ms
-      if (currentTime - this.botLastStrafeToggle > 1000) {
-        this.botStrafeDir = Math.random() > 0.5 ? 1 : -1;
+      if (currentTime - this.botLastStrafeToggle > 1100) {
+        this.botStrafeDir *= -1;
         this.botLastStrafeToggle = currentTime;
       }
+      if (this.ammoInMag === 0 && !this.isReloading && this.reserveAmmo > 0) {
+        this.startReload(soundEngine, currentTime);
+      }
 
-      // Dynamic cover/health seeking
-      if (this.health < 35 && Math.random() < 0.3) {
-        const healthItems = map.items.filter(i => i.active && i.type === 'health');
-        if (healthItems.length > 0) {
-          healthItems.sort((a,b) => Math.hypot(this.x-a.x, this.y-a.y) - Math.hypot(this.x-b.x, this.y-b.y));
-          this.botTargetX = healthItems[0].x;
-          this.botTargetY = healthItems[0].y;
-          this.botState = 'patrol';
+      let choseCover = false;
+      const coverThreat = hasLOS ? player : sharedSighting;
+      const shouldUseCover = coverThreat && (this.health < 46 || this.isReloading);
+      if (shouldUseCover && navigation?.findCoverPoint) {
+        const claimed = getClaimedCoverPoints(blackboard, currentTime, this.id);
+        const cover = navigation.findCoverPoint(this.x, this.y, coverThreat.x, coverThreat.y, {
+          radius: this.radius,
+          claimed
+        });
+        if (cover && this.setBotTarget(map, navigation, cover.x, cover.y, 'cover', currentTime)) {
+          claimCoverPoint(blackboard, this.id, cover, currentTime);
+          this.botState = 'cover';
+          this.botCoverUntil = currentTime + 1250;
+          choseCover = true;
         }
       }
 
-      if (hasLOS) {
-        this.botState = 'chase';
-        this.lastKnownPlayerPos = { x: player.x, y: player.y };
-        
-        // Face player
-        this.angle = Math.atan2(player.y - this.y, player.x - this.x);
+      if (!choseCover && this.health < 38 && !hasLOS) {
+        const healthItems = (map.items || [])
+          .filter(item => item.active && item.type === 'health')
+          .sort((a, b) => Math.hypot(this.x - a.x, this.y - a.y) - Math.hypot(this.x - b.x, this.y - b.y));
+        const health = healthItems.find(item => !navigation || navigation.projectPoint(item.x, item.y, this.radius));
+        if (health && this.setBotTarget(map, navigation, health.x, health.y, 'health', currentTime)) {
+          this.botState = 'health';
+          choseCover = true;
+        }
+      }
 
-        // 200 IQ Flashbang throwing
-        if (this.flashGrenades > 0 && distToPlayer > 220 && distToPlayer < 500 && Math.random() < 0.05) {
+      if (!choseCover && hasLOS) {
+        releaseCoverClaim(blackboard, this.id);
+        this.botState = 'chase';
+        if (combatEnabled && this.flashGrenades > 0 && distToPlayer > 240 && distToPlayer < 500 && Math.random() < 0.035) {
           this.throwFlashbangRequest = true;
         }
 
-        // 200 IQ Tactical Dashing
-        const canDash = !this.lastDashTime || (currentTime - this.lastDashTime > 3000);
-        if (canDash && Math.random() < 0.04) {
-          this.lastDashTime = currentTime;
-          this.networkJustDashed = true;
-          // Dash in facing direction or strafe direction
-          const dashAngle = this.angle + (Math.random() < 0.3 ? 0 : (Math.PI / 2) * (Math.random() > 0.5 ? 1 : -1));
-          this.vx = Math.cos(dashAngle) * 20;
-          this.vy = Math.sin(dashAngle) * 20;
-          if (soundEngine) {
-            try { this.sound.playFrictionalScrape(0, 0.4, 0.5); } catch(ex) {}
-          }
-        }
-
-        if (this.isReloading) {
-          // Tactical retreat while reloading
-          this.botTargetX = this.x - Math.cos(this.angle) * 220;
-          this.botTargetY = this.y - Math.sin(this.angle) * 220;
-        } else if (this.weaponKey === 'sniper') {
-          if (distToPlayer < 400) {
-            this.botTargetX = this.x - Math.cos(this.angle) * 200;
-            this.botTargetY = this.y - Math.sin(this.angle) * 200;
-          } else {
-            this.botTargetX = this.x;
-            this.botTargetY = this.y;
-          }
+        const dx = player.x - this.x;
+        const dy = player.y - this.y;
+        const invDist = distToPlayer > 1 ? 1 / distToPlayer : 0;
+        let targetX;
+        let targetY;
+        if (this.weaponKey === 'sniper' && distToPlayer < 430) {
+          targetX = this.x - dx * invDist * 210;
+          targetY = this.y - dy * invDist * 210;
         } else if (this.weaponKey === 'shotgun') {
-          // Charge player
-          this.botTargetX = player.x;
-          this.botTargetY = player.y;
+          targetX = player.x - dx * invDist * 62;
+          targetY = player.y - dy * invDist * 62;
         } else {
-          // Tactical strafe dodging
-          const strafeAngle = this.angle + (Math.PI / 2) * this.botStrafeDir;
-          this.botTargetX = player.x + Math.cos(strafeAngle) * 180 + (Math.random() - 0.5) * 60;
-          this.botTargetY = player.y + Math.sin(strafeAngle) * 180 + (Math.random() - 0.5) * 60;
+          const laneSign = this.botLaneSign || this.botStrafeDir || 1;
+          const laneDistance = 145 + ((context.laneIndex || 0) % 2) * 40;
+          targetX = player.x + (-dy * invDist) * laneDistance * laneSign;
+          targetY = player.y + (dx * invDist) * laneDistance * laneSign;
         }
-        
-        // Auto-reloading for bot
-        if (this.ammoInMag === 0 && !this.isReloading && this.reserveAmmo > 0) {
-          this.startReload(soundEngine, currentTime);
+        this.setBotTarget(map, navigation, targetX, targetY, 'chase', currentTime);
+      } else if (!choseCover && !hasLOS) {
+        const remembered = sharedSighting || this.lastKnownPlayerPos;
+        let distanceToGoal = Math.hypot(this.x - this.botTargetX, this.y - this.botTargetY);
+        if ((this.botState === 'cover' && (currentTime >= this.botCoverUntil || (!this.isReloading && this.health >= 46))) ||
+            (this.botState === 'health' && (this.health >= 55 || distanceToGoal < 42))) {
+          this.botState = remembered ? 'search' : 'patrol';
         }
-      } else {
-        // Lost LOS
-        if (this.botState === 'chase' && this.lastKnownPlayerPos) {
+        if (remembered && (this.botState === 'chase' || this.botState === 'search' || sharedSighting)) {
           this.botState = 'search';
-          this.botTargetX = this.lastKnownPlayerPos.x;
-          this.botTargetY = this.lastKnownPlayerPos.y;
-        } else if (this.botState === 'search') {
-          const distToTarget = Math.hypot(this.x - this.botTargetX, this.y - this.botTargetY);
-          if (distToTarget < 50) {
-            this.botState = 'patrol';
-            this.choosePatrolPoint(map);
-          }
-        } else {
-          // Patrol state (actual roaming)
-          const distToTarget = Math.hypot(this.x - this.botTargetX, this.y - this.botTargetY);
-          if (distToTarget < 50 || Math.random() < 0.02) {
-            this.choosePatrolPoint(map);
-          }
+          this.setBotTarget(map, navigation, remembered.x, remembered.y, sharedSighting ? 'shared-sighting' : 'search', currentTime);
+        }
+
+        distanceToGoal = Math.hypot(this.x - this.botTargetX, this.y - this.botTargetY);
+        if ((this.botState === 'search' && distanceToGoal < 42) ||
+            (this.botState === 'patrol' && distanceToGoal < 42) ||
+            !Number.isFinite(this.botTargetX) || !Number.isFinite(this.botTargetY)) {
+          this.botState = 'patrol';
+          this.choosePatrolPoint(map, navigation);
         }
       }
     }
 
-    let wpX = this.botTargetX;
-    let wpY = this.botTargetY;
-
-    // BFS Pathfinding between rooms if no direct line of sight
-    const hasDirectLOS = this.checkLineOfSight(map, this.x, this.y, this.botTargetX, this.botTargetY);
-    if (!hasDirectLOS) {
-      const currentRoom = this.getClosestRoomIndex(map, this.x, this.y);
-      const targetRoom = this.getClosestRoomIndex(map, this.botTargetX, this.botTargetY);
-      if (currentRoom !== -1 && targetRoom !== -1 && currentRoom !== targetRoom) {
-        const path = this.findRoomPath(currentRoom, targetRoom);
-        if (path.length > 1) {
-          const nextRoom = path[1];
-          const doorway = this.getDoorway(map, currentRoom, nextRoom);
-          const distToDoor = Math.hypot(this.x - doorway.x, this.y - doorway.y);
-          
-          if (distToDoor < 35) {
-            // Close to the door: steer to the next door or final target in next room
-            if (path.length > 2) {
-              const nextNextRoom = path[2];
-              const nextDoorway = this.getDoorway(map, nextRoom, nextNextRoom);
-              wpX = nextDoorway.x;
-              wpY = nextDoorway.y;
-            } else {
-              wpX = this.botTargetX;
-              wpY = this.botTargetY;
-            }
-          } else {
-            wpX = doorway.x;
-            wpY = doorway.y;
-          }
-        }
-      }
+    // Aim prediction is fast, but acquisition and turning are deliberately human rather than instantaneous.
+    let aimError = Infinity;
+    if (hasLOS) {
+      const predicted = predictAimPoint(this, player, this.weapon.bulletSpeed || 15, 30);
+      const acquisition = Math.max(0, Math.min(1, (currentTime - (this.botAimReadyAt - 160)) / 420));
+      const phase = currentTime * 0.006 + String(this.id).length * 1.7;
+      const aimNoise = Math.sin(phase) * (0.045 - acquisition * 0.026);
+      const desiredAim = Math.atan2(predicted.y - this.y, predicted.x - this.x) + aimNoise;
+      this.angle = rotateAngleToward(this.angle, desiredAim, 0.095 * Math.max(0.55, dtFactor));
+      let delta = desiredAim - this.angle;
+      while (delta < -Math.PI) delta += Math.PI * 2;
+      while (delta > Math.PI) delta -= Math.PI * 2;
+      aimError = Math.abs(delta);
     }
 
-    // Stuck detection & sliding navigation: check if bot is trying to roam but position hasn't updated much
-    const targetDist = Math.hypot(this.x - wpX, this.y - wpY);
-    if (targetDist > 30) {
+    const finalTarget = this.validateBotTarget(map, navigation, this.botTargetX, this.botTargetY);
+    if (finalTarget) {
+      this.botTargetX = finalTarget.x;
+      this.botTargetY = finalTarget.y;
+    } else {
+      this.choosePatrolPoint(map, navigation);
+    }
+
+    const target = { x: this.botTargetX, y: this.botTargetY };
+    // Public scalar revision is intentionally used here; snapshot() is a heavy debug export.
+    const navRevision = navigation?.obstacleRevision ?? null;
+    const routeAge = this.botState === 'chase' ? 620 : 1250;
+    const avoidPoints = teammates
+      .filter(teammate => teammate && teammate !== this && teammate.health > 0)
+      .map(teammate => ({ x: teammate.x, y: teammate.y, radius: teammate.radius || 18 }));
+    if (navigation && routeNeedsReplan(this.botRoute, target, currentTime, {
+      maxAge: routeAge,
+      targetTolerance: this.botState === 'chase' ? 34 : 18,
+      navRevision,
+      stuck: (this.stuckDuration || 0) > 430
+    })) {
+      // findPath also performs the direct-path fast path, but respects teammate
+      // avoidance when that straight lane would cause squad stacking.
+      const path = navigation.findPath(this.x, this.y, target.x, target.y, {
+        radius: this.radius,
+        avoidPoints
+      });
+      const safePath = path?.length ? path : [{ x: this.x, y: this.y }];
+      const pathEnd = safePath.at(-1);
+      const routeComplete = !!pathEnd && Math.hypot(pathEnd.x - target.x, pathEnd.y - target.y) <= this.radius + 4;
+      setBotRoute(this.botRoute, safePath, target, currentTime, navRevision, this.botTargetPurpose, routeComplete);
+    }
+
+    const waypoint = navigation
+      ? advanceBotRoute(this.botRoute, this.x, this.y, this.radius + 7)
+      : target;
+    const wpX = waypoint?.x ?? target.x;
+    const wpY = waypoint?.y ?? target.y;
+    const waypointDistance = Math.hypot(this.x - wpX, this.y - wpY);
+    const endpointStatus = getBotRouteEndpointStatus(this.botRoute, this.x, this.y, currentTime, this.radius + 8);
+
+    if (waypointDistance > 28) {
       if (!this.lastStuckCheckTime) {
         this.lastStuckCheckTime = currentTime;
         this.lastStuckPosX = this.x;
         this.lastStuckPosY = this.y;
         this.stuckDuration = 0;
       } else if (currentTime - this.lastStuckCheckTime > 300) {
-        const distMoved = Math.hypot(this.x - this.lastStuckPosX, this.y - this.lastStuckPosY);
-        if (distMoved < 12) {
-          this.stuckDuration += (currentTime - this.lastStuckCheckTime);
-        } else {
-          this.stuckDuration = 0;
-        }
+        const moved = Math.hypot(this.x - this.lastStuckPosX, this.y - this.lastStuckPosY);
+        this.stuckDuration = moved < 10 ? (this.stuckDuration || 0) + currentTime - this.lastStuckCheckTime : 0;
         this.lastStuckCheckTime = currentTime;
         this.lastStuckPosX = this.x;
         this.lastStuckPosY = this.y;
+        if (this.stuckDuration > 430) invalidateBotRoute(this.botRoute);
       }
     } else {
       this.stuckDuration = 0;
     }
+    if (endpointStatus.atEndpoint && endpointStatus.blockedFor > 350) invalidateBotRoute(this.botRoute);
 
-    if (this.stuckDuration > 800 && (this.botState === 'patrol' || this.botState === 'search')) {
-      // Pick a brand new target point if we've been stuck for a very long time during patrolling/searching
-      this.choosePatrolPoint(map);
-      this.stuckDuration = 0;
-    }
-
-    // Crate clearing behavior
-    if (this.stuckDuration > 300) {
-      const lookAheadX = this.x + Math.cos(this.angle) * 45;
-      const lookAheadY = this.y + Math.sin(this.angle) * 45;
-      const blockingCrate = map.walls.find(w => 
-        w.type === 'crate' &&
-        lookAheadX >= w.x && lookAheadX <= w.x + w.w &&
-        lookAheadY >= w.y && lookAheadY <= w.y + w.h
+    // A dynamically placed crate can still close a lane; clear only the crate actually ahead.
+    const obstructionDuration = Math.max(this.stuckDuration || 0, endpointStatus.blockedFor);
+    if (obstructionDuration > 650) {
+      const moveAngle = endpointStatus.incomplete
+        ? Math.atan2(target.y - this.y, target.x - this.x)
+        : Math.atan2(wpY - this.y, wpX - this.x);
+      const lookAheadX = this.x + Math.cos(moveAngle) * 45;
+      const lookAheadY = this.y + Math.sin(moveAngle) * 45;
+      const blockingCrate = (map.walls || []).find(wall =>
+        wall.type === 'crate' && lookAheadX >= wall.x && lookAheadX <= wall.x + wall.w &&
+        lookAheadY >= wall.y && lookAheadY <= wall.y + wall.h
       );
-      if (blockingCrate) {
-        this.angle = Math.atan2(blockingCrate.y + blockingCrate.h/2 - this.y, blockingCrate.x + blockingCrate.w/2 - this.x);
-        if (!this.isReloading && this.ammoInMag > 0) {
-          const timeSinceLast = currentTime - this.lastFiredTime;
-          if (timeSinceLast >= (this.weapon.fireRate || 300)) {
-            const shootResult = this.shoot(currentTime, soundEngine, 50);
-            if (shootResult && window.OnBotShootCallback) {
-              window.OnBotShootCallback(shootResult);
-            }
-          }
+      if (combatEnabled && blockingCrate) {
+        this.angle = Math.atan2(blockingCrate.y + blockingCrate.h / 2 - this.y, blockingCrate.x + blockingCrate.w / 2 - this.x);
+        if (this.ammoInMag === 0 && !this.isReloading && this.reserveAmmo > 0) {
+          this.startReload(soundEngine, currentTime);
+        } else if (!this.isReloading && this.ammoInMag > 0 && currentTime - this.lastFiredTime >= (this.weapon.fireRate || 300)) {
+          const shot = this.shoot(currentTime, soundEngine, 50);
+          if (shot && typeof window !== 'undefined' && window.OnBotShootCallback) window.OnBotShootCallback(shot);
         }
+      } else if (obstructionDuration > 1800 && this.botTargetPurpose !== 'alarm') {
+        this.botState = 'patrol';
+        this.choosePatrolPoint(map, navigation);
+        this.stuckDuration = 0;
       }
     }
 
-    // Steering movement towards target
-    const isRanked = window.gameEngine && window.gameEngine.isRanked;
-    let modeAccelMult = isRanked ? 1.25 : 1.0;
-    if (this.adrenalineActive) {
-      modeAccelMult *= 1.35;
-    }
-    const currentAccel = this.accel * modeAccelMult;
-
-    const distToTarget = Math.hypot(this.x - wpX, this.y - wpY);
-    if (distToTarget > 10) {
+    const isRanked = gameEngine?.isRanked;
+    const currentAccel = this.accel * (isRanked ? 1.25 : 1) * (this.adrenalineActive ? 1.35 : 1);
+    if (waypointDistance > 10) {
       const moveAngle = Math.atan2(wpY - this.y, wpX - this.x);
-      
-      let steerAngle = moveAngle;
-      if (this.stuckDuration > 350) {
-        if (!this.stuckSteerDir) {
-          this.stuckSteerDir = Math.random() < 0.5 ? 1 : -1;
-        }
-        steerAngle += (Math.PI / 2) * this.stuckSteerDir;
-      } else {
-        this.stuckSteerDir = 0;
-        
-        // Predictive Ray-cast Obstacle Avoidance
-        const avoidLengthCenter = 85;
-        const avoidLengthSide = 60;
-        const sideAngleDiff = 0.45; // ~25 degrees
-        
-        const centerRayEnd = {
-          x: this.x + Math.cos(moveAngle) * avoidLengthCenter,
-          y: this.y + Math.sin(moveAngle) * avoidLengthCenter
-        };
-        const leftRayEnd = {
-          x: this.x + Math.cos(moveAngle - sideAngleDiff) * avoidLengthSide,
-          y: this.y + Math.sin(moveAngle - sideAngleDiff) * avoidLengthSide
-        };
-        const rightRayEnd = {
-          x: this.x + Math.cos(moveAngle + sideAngleDiff) * avoidLengthSide,
-          y: this.y + Math.sin(moveAngle + sideAngleDiff) * avoidLengthSide
-        };
-        
-        const centerHit = map.getLineIntersection({ x: this.x, y: this.y }, centerRayEnd);
-        const leftHit = map.getLineIntersection({ x: this.x, y: this.y }, leftRayEnd);
-        const rightHit = map.getLineIntersection({ x: this.x, y: this.y }, rightRayEnd);
-        
-        let localAvoidY = 0;
-        let hasHit = false;
-        
-        const distC = centerHit ? centerHit.dist : avoidLengthCenter;
-        const distL = leftHit ? leftHit.dist : avoidLengthSide;
-        const distR = rightHit ? rightHit.dist : avoidLengthSide;
-        
-        if (centerHit) {
-          hasHit = true;
-          const centerForce = (1 - distC / avoidLengthCenter);
-          if (distL > distR) {
-            localAvoidY -= centerForce * 1.0; // Steer left
-          } else if (distR > distL) {
-            localAvoidY += centerForce * 1.0; // Steer right
-          } else {
-            localAvoidY -= centerForce * 1.0; // Default steer left
-          }
-        }
-        
-        if (leftHit) {
-          hasHit = true;
-          localAvoidY += (1 - distL / avoidLengthSide) * 0.8; // Steer right
-        }
-        
-        if (rightHit) {
-          hasHit = true;
-          localAvoidY -= (1 - distR / avoidLengthSide) * 0.8; // Steer left
-        }
-        
-        if (hasHit) {
-          // Clamp localAvoidY to [-1, 1] range to avoid over-steering
-          localAvoidY = Math.max(-1, Math.min(1, localAvoidY));
-          // Max avoidance offset of 80 degrees (~1.4 radians)
-          steerAngle = moveAngle + localAvoidY * 1.4;
-        }
-      }
-
-      if (this.botState !== 'chase') {
-        this.angle = moveAngle;
-      }
-      
-      this.vx += Math.cos(steerAngle) * currentAccel * dtFactor;
-      this.vy += Math.sin(steerAngle) * currentAccel * dtFactor;
+      if (!hasLOS) this.angle = rotateAngleToward(this.angle, moveAngle, 0.14 * Math.max(0.7, dtFactor));
+      this.vx += Math.cos(moveAngle) * currentAccel * dtFactor;
+      this.vy += Math.sin(moveAngle) * currentAccel * dtFactor;
     }
 
-    // Proximity wall avoidance force to prevent sliding sticking
-    let avoidForceX = 0;
-    let avoidForceY = 0;
-    for (const wall of map.walls) {
-      const clX = Math.max(wall.x, Math.min(this.x, wall.x + wall.w));
-      const clY = Math.max(wall.y, Math.min(this.y, wall.y + wall.h));
-      const dX = this.x - clX;
-      const dY = this.y - clY;
-      const d = Math.hypot(dX, dY);
-      if (d < this.radius + 20 && d > 0) {
-        const force = (this.radius + 20 - d) / 20;
-        avoidForceX += (dX / d) * force * 0.45;
-        avoidForceY += (dY / d) * force * 0.45;
-      }
-    }
-    this.vx += avoidForceX * dtFactor;
-    this.vy += avoidForceY * dtFactor;
+    const separation = getTeammateSeparation(this, teammates);
+    this.vx += separation.x * currentAccel * 1.15 * dtFactor;
+    this.vy += separation.y * currentAccel * 1.15 * dtFactor;
 
-    // Shooting behavior — fires instantly on sight, respects weapon fire-rate only
-    if (hasLOS && !this.isReloading && this.ammoInMag > 0) {
-      const timeSinceLast = currentTime - this.lastFiredTime;
+    if (combatEnabled && hasLOS && currentTime >= this.botAimReadyAt && aimError < 0.105 && !this.isReloading && this.ammoInMag > 0 &&
+        distToPlayer <= (this.weapon.range || 400) * 1.08) {
       const weaponFireRate = this.weapon.fireRate || 300;
-
-      if (timeSinceLast >= weaponFireRate) {
-        const dist = localPlayer ? Math.hypot(this.x - localPlayer.x, this.y - localPlayer.y) : 0;
-        const shootResult = this.shoot(currentTime, soundEngine, dist);
-        if (shootResult && window.OnBotShootCallback) {
-          window.OnBotShootCallback(shootResult);
-        }
+      if (currentTime - this.lastFiredTime >= weaponFireRate) {
+        const shot = this.shoot(currentTime, soundEngine, distToPlayer);
+        if (shot && typeof window !== 'undefined' && window.OnBotShootCallback) window.OnBotShootCallback(shot);
       }
     }
   }
@@ -1181,78 +1125,60 @@ export class Player {
     return !hit; // If no intersection with walls, we have Line of Sight
   }
 
-  choosePatrolPoint(map) {
-    if (!map || !map.rooms || map.rooms.length === 0) {
-      this.botTargetX = Math.random() * (map.width - 160) + 80;
-      this.botTargetY = Math.random() * (map.height - 160) + 80;
-      return;
+  validateBotTarget(map, navigation, x, y) {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    if (navigation?.isPointClear?.(x, y, this.radius)) return { x, y };
+    const projected = navigation?.projectPoint?.(x, y, this.radius);
+    if (projected && Number.isFinite(projected.x) && Number.isFinite(projected.y)) return projected;
+    if (!map?.checkCircleCollision) return null;
+    const fallback = map.checkCircleCollision(x, y, this.radius);
+    return Number.isFinite(fallback?.x) && Number.isFinite(fallback?.y) ? fallback : null;
+  }
+
+  setBotTarget(map, navigation, x, y, purpose = 'move', currentTime = 0, forceReplan = false) {
+    const point = this.validateBotTarget(map, navigation, x, y);
+    if (!point) return false;
+    const changed = Math.hypot(point.x - this.botTargetX, point.y - this.botTargetY) > 12 || this.botTargetPurpose !== purpose;
+    this.botTargetX = point.x;
+    this.botTargetY = point.y;
+    this.botTargetPurpose = purpose;
+    if (changed || forceReplan) invalidateBotRoute(this.botRoute);
+    return true;
+  }
+
+  resetBotRound(map, navigation) {
+    this.botRoute = createBotRouteState();
+    this.botState = 'patrol';
+    this.botTargetPurpose = 'patrol';
+    this.botAimReadyAt = 0;
+    this.botAimTargetId = null;
+    this.botHadLOS = false;
+    this.botLastSeenAt = -Infinity;
+    this.botCoverUntil = 0;
+    this.lastKnownPlayerPos = null;
+    this.lastStuckCheckTime = 0;
+    this.stuckDuration = 0;
+    return this.choosePatrolPoint(map, navigation);
+  }
+
+  choosePatrolPoint(map, navigation = null, random = Math.random) {
+    const navPoint = navigation?.choosePatrolPoint?.(this.x, this.y, random);
+    if (navPoint && this.setBotTarget(map, navigation, navPoint.x, navPoint.y, 'patrol', 0, true)) return navPoint;
+
+    const rooms = map?.rooms || [];
+    for (let attempt = 0; attempt < 30; attempt++) {
+      const room = rooms.length ? rooms[Math.floor(random() * rooms.length)] : {
+        x: 60, y: 60, w: Math.max(1, (map?.width || 200) - 120), h: Math.max(1, (map?.height || 200) - 120)
+      };
+      const padding = 42;
+      const x = room.x + padding + random() * Math.max(1, room.w - padding * 2);
+      const y = room.y + padding + random() * Math.max(1, room.h - padding * 2);
+      const point = this.validateBotTarget(map, navigation, x, y);
+      if (point && this.setBotTarget(map, navigation, point.x, point.y, 'patrol', 0, true)) return point;
     }
-
-    // 1. Find the current room index (0-8)
-    const currentRoomIdx = map.rooms.findIndex(r => 
-      this.x >= r.x && this.x <= r.x + r.w &&
-      this.y >= r.y && this.y <= r.y + r.h
-    );
-
-    let targetRoom = null;
-
-    if (currentRoomIdx !== -1 && Math.random() < 0.75) {
-      // 75% chance: Pick current room or adjacent room
-      const col = currentRoomIdx % 3;
-      const row = Math.floor(currentRoomIdx / 3);
-
-      const adjacentIndices = [];
-      for (let dRow = -1; dRow <= 1; dRow++) {
-        for (let dCol = -1; dCol <= 1; dCol++) {
-          const nRow = row + dRow;
-          const nCol = col + dCol;
-          if (nRow >= 0 && nRow < 3 && nCol >= 0 && nCol < 3) {
-            adjacentIndices.push(nRow * 3 + nCol);
-          }
-        }
-      }
-
-      // Pick one random adjacent index
-      const targetIdx = adjacentIndices[Math.floor(Math.random() * adjacentIndices.length)];
-      targetRoom = map.rooms[targetIdx];
-    } else {
-      // 25% chance or if not inside any room: Pick any room completely randomly
-      targetRoom = map.rooms[Math.floor(Math.random() * map.rooms.length)];
-    }
-
-    if (!targetRoom) {
-      targetRoom = map.rooms[0];
-    }
-
-    // 2. Select a random coordinate inside the target room (keeping distance from outer walls)
-    let attempts = 0;
-    const padding = 38; // Keep 38px padding from room walls
-
-    while (attempts < 100) {
-      attempts++;
-      const rx = targetRoom.x + padding + Math.random() * (targetRoom.w - padding * 2);
-      const ry = targetRoom.y + padding + Math.random() * (targetRoom.h - padding * 2);
-
-      // Verify not overlapping with furniture walls/crates
-      let overlaps = false;
-      for (const wall of map.walls) {
-        if (rx + 25 > wall.x && rx - 25 < wall.x + wall.w &&
-            ry + 25 > wall.y && ry - 25 < wall.y + wall.h) {
-          overlaps = true;
-          break;
-        }
-      }
-
-      if (!overlaps) {
-        this.botTargetX = rx;
-        this.botTargetY = ry;
-        return;
-      }
-    }
-
-    // Fallback: If room target selection failed to avoid overlap after 100 attempts, pick the room center
-    this.botTargetX = targetRoom.x + targetRoom.w / 2;
-    this.botTargetY = targetRoom.y + targetRoom.h / 2;
+    return this.setBotTarget(map, navigation, this.x, this.y, 'patrol', 0, true)
+      ? { x: this.botTargetX, y: this.botTargetY }
+      : null;
   }
 
   // Draw player operative on canvas
@@ -1571,114 +1497,4 @@ export class Player {
     buffsContainer.innerHTML = html;
   }
 
-  // --- 200 IQ Pathfinding Helpers ---
-  getRoomIndexAt(map, x, y) {
-    if (!map || !map.rooms) return -1;
-    return map.rooms.findIndex(r => 
-      x >= r.x && x <= r.x + r.w &&
-      y >= r.y && y <= r.y + r.h
-    );
-  }
-
-  getClosestRoomIndex(map, x, y) {
-    const idx = this.getRoomIndexAt(map, x, y);
-    if (idx !== -1) return idx;
-    if (!map || !map.rooms || map.rooms.length === 0) return -1;
-    
-    let minD = Infinity;
-    let closest = 0;
-    map.rooms.forEach((r, i) => {
-      const cx = r.x + r.w / 2;
-      const cy = r.y + r.h / 2;
-      const d = Math.hypot(x - cx, y - cy);
-      if (d < minD) {
-        minD = d;
-        closest = i;
-      }
-    });
-    return closest;
-  }
-
-  findRoomPath(startRoom, endRoom) {
-    if (startRoom === endRoom) return [startRoom];
-    
-    const queue = [[startRoom]];
-    const visited = new Set([startRoom]);
-    
-    while (queue.length > 0) {
-      const path = queue.shift();
-      const current = path[path.length - 1];
-      
-      if (current === endRoom) {
-        return path;
-      }
-      
-      const row = Math.floor(current / 3);
-      const col = current % 3;
-      const neighbors = [];
-      
-      if (row > 0) neighbors.push(current - 3);
-      if (row < 2) neighbors.push(current + 3);
-      if (col > 0) neighbors.push(current - 1);
-      if (col < 2) neighbors.push(current + 1);
-      
-      for (const neighbor of neighbors) {
-        if (!visited.has(neighbor)) {
-          visited.add(neighbor);
-          queue.push([...path, neighbor]);
-        }
-      }
-    }
-    return [startRoom];
-  }
-
-  getDoorway(map, r1, r2) {
-    const room1 = map.rooms[r1];
-    const room2 = map.rooms[r2];
-    
-    const row1 = Math.floor(r1 / 3);
-    const col1 = r1 % 3;
-    const row2 = Math.floor(r2 / 3);
-    const col2 = r2 % 3;
-    
-    const W = room1.x < room2.x ? (room2.x - (room1.x + room1.w)) : (room1.x - (room2.x + room2.w));
-    
-    if (row1 === row2) {
-      // Vertical divider (horizontal door)
-      const leftRoomIdx = col1 < col2 ? r1 : r2;
-      const leftRoom = map.rooms[leftRoomIdx];
-      const vx = leftRoom.x + leftRoom.w;
-      
-      const roomWalls = map.walls.filter(w => 
-        Math.abs(w.x - vx) < 2 && 
-        w.y >= leftRoom.y - 5 && 
-        w.y + w.h <= leftRoom.y + leftRoom.h + 5
-      );
-      
-      if (roomWalls.length >= 2) {
-        roomWalls.sort((a, b) => a.y - b.y);
-        const doorY = (roomWalls[0].y + roomWalls[0].h + roomWalls[1].y) / 2;
-        return { x: vx + W/2, y: doorY };
-      }
-      return { x: vx + W/2, y: leftRoom.y + leftRoom.h / 2 };
-    } else {
-      // Horizontal divider (vertical door)
-      const topRoomIdx = row1 < row2 ? r1 : r2;
-      const topRoom = map.rooms[topRoomIdx];
-      const hy = topRoom.y + topRoom.h;
-      
-      const roomWalls = map.walls.filter(w => 
-        Math.abs(w.y - hy) < 2 && 
-        w.x >= topRoom.x - 5 && 
-        w.x + w.w <= topRoom.x + topRoom.w + 5
-      );
-      
-      if (roomWalls.length >= 2) {
-        roomWalls.sort((a, b) => a.x - b.x);
-        const doorX = (roomWalls[0].x + roomWalls[0].w + roomWalls[1].x) / 2;
-        return { x: doorX, y: hy + W/2 };
-      }
-      return { x: topRoom.x + topRoom.w / 2, y: hy + W/2 };
-    }
-  }
 }

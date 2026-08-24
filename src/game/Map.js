@@ -5,12 +5,25 @@ class SeededRandom {
   range(min, max) { return min + this.next() * (max - min); }
 }
 
+function mixedSeed(seed, channel) {
+  let hash = 2166136261;
+  const source = `${String(seed)}:${channel}`;
+  for (let index = 0; index < source.length; index++) {
+    hash ^= source.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0) || 1;
+}
+
 export class Map {
   constructor(width, height, seed, mapId = 'manor') {
     this.width  = width;
     this.height = height;
     this.seed   = seed;
-    this.rng    = new SeededRandom(seed);
+    this.roundIndex = -1;
+    this.navigationRevision = 0;
+    this.gameplayRng = new SeededRandom(mixedSeed(seed, 'gameplay'));
+    this.rng = this.gameplayRng;
     this.mapId  = mapId;
 
     this.walls    = [];   // { x, y, w, h, type:'wall'|'crate', material, health, ... }
@@ -27,23 +40,39 @@ export class Map {
   // ─────────────────────────────────────────────────────────────────
   //  MAP GENERATION
   // ─────────────────────────────────────────────────────────────────
-  generateMap() {
-    this.walls  = [];
-    this.items  = [];
-    this.zones  = [];
-    this.rooms  = [];
-    this.decorations = [];
+  generateMap(roundIndex = null) {
+    const requestedRound = Number.isInteger(roundIndex) && roundIndex >= 0
+      ? roundIndex
+      : this.roundIndex + 1;
+    this.roundIndex = requestedRound;
+    // Round layouts are reproducible in isolation. Keep round zero compatible
+    // with the original seed while separating later layout rolls from crate
+    // drops and other gameplay randomness.
+    const layoutSeed = requestedRound === 0
+      ? this.seed
+      : mixedSeed(this.seed, `layout:${requestedRound}`);
+    this.rng = new SeededRandom(layoutSeed);
 
-    if (this.mapId === 'cyberlab') {
-      this.generateCyberLabMap();
-    } else if (this.mapId === 'arena') {
-      this.generateArenaMap();
-    } else {
-      this.generateManorMap();
+    try {
+      this.walls  = [];
+      this.items  = [];
+      this.zones  = [];
+      this.rooms  = [];
+      this.decorations = [];
+
+      if (this.mapId === 'cyberlab') {
+        this.generateCyberLabMap();
+      } else if (this.mapId === 'arena') {
+        this.generateArenaMap();
+      } else {
+        this.generateManorMap();
+      }
+
+      this.initTerminals();
+      this.rebuildSegments();
+    } finally {
+      this.rng = this.gameplayRng;
     }
-
-    this.initTerminals();
-    this.rebuildSegments();
   }
 
   generateManorMap() {
@@ -604,47 +633,200 @@ export class Map {
   rebuildSegments() {
     this.segments = [];
     this.walls.forEach(w => {
-      this.segments.push({ p1:{x:w.x,    y:w.y},    p2:{x:w.x+w.w, y:w.y}    });
-      this.segments.push({ p1:{x:w.x+w.w,y:w.y},    p2:{x:w.x+w.w, y:w.y+w.h}});
-      this.segments.push({ p1:{x:w.x+w.w,y:w.y+w.h},p2:{x:w.x,     y:w.y+w.h}});
-      this.segments.push({ p1:{x:w.x,    y:w.y+w.h},p2:{x:w.x,     y:w.y}    });
+      this.segments.push({ p1:{x:w.x,    y:w.y},    p2:{x:w.x+w.w, y:w.y},     wall:w });
+      this.segments.push({ p1:{x:w.x+w.w,y:w.y},    p2:{x:w.x+w.w, y:w.y+w.h}, wall:w });
+      this.segments.push({ p1:{x:w.x+w.w,y:w.y+w.h},p2:{x:w.x,     y:w.y+w.h}, wall:w });
+      this.segments.push({ p1:{x:w.x,    y:w.y+w.h},p2:{x:w.x,     y:w.y},     wall:w });
     });
+    this.navigationRevision = (Number(this.navigationRevision) || 0) + 1;
   }
 
   checkCircleCollision(cx, cy, r) {
-    let x = cx, y = cy;
-    for (const w of this.walls) {
-      const clX = Math.max(w.x, Math.min(x, w.x+w.w));
-      const clY = Math.max(w.y, Math.min(y, w.y+w.h));
-      const dX = x - clX, dY = y - clY;
-      const d2 = dX*dX + dY*dY;
-      if (d2 < r*r) {
-        const d = Math.sqrt(d2);
-        if (d === 0) continue;
-        const ov = r - d;
-        x += (dX/d)*ov;
-        y += (dY/d)*ov;
+    const result = this._depenetrateCircle(cx, cy, r);
+    return { x: result.x, y: result.y };
+  }
+
+  /**
+   * Moves a circle through the map in bounded substeps. This is the canonical
+   * integration point for players and fast movers: unlike an endpoint query it
+   * cannot skip a thin divider during a long frame or dash.
+   */
+  moveCircle(startX, startY, deltaX, deltaY, radius) {
+    const r = Math.max(0.01, Number(radius) || 0.01);
+    const initial = this._depenetrateCircle(startX, startY, r);
+    let x = initial.x;
+    let y = initial.y;
+    let collided = initial.collided;
+    let normalX = initial.normalX;
+    let normalY = initial.normalY;
+    const dx = Number.isFinite(Number(deltaX)) ? Number(deltaX) : 0;
+    const dy = Number.isFinite(Number(deltaY)) ? Number(deltaY) : 0;
+    const distance = Math.hypot(dx, dy);
+    const maximumStep = Math.max(2, Math.min(8, r * 0.45));
+    const steps = Math.max(1, Math.ceil(distance / maximumStep));
+    const stepX = dx / steps;
+    const stepY = dy / steps;
+
+    for (let step = 0; step < steps; step++) {
+      if (stepX !== 0) {
+        const requestedX = x + stepX;
+        const resolvedX = this._depenetrateCircle(requestedX, y, r);
+        if (Math.abs(resolvedX.x - requestedX) > 1e-6 || Math.abs(resolvedX.y - y) > 1e-6) {
+          collided = true;
+          normalX += resolvedX.normalX;
+          normalY += resolvedX.normalY;
+        }
+        x = resolvedX.x;
+        y = resolvedX.y;
+      }
+      if (stepY !== 0) {
+        const requestedY = y + stepY;
+        const resolvedY = this._depenetrateCircle(x, requestedY, r);
+        if (Math.abs(resolvedY.x - x) > 1e-6 || Math.abs(resolvedY.y - requestedY) > 1e-6) {
+          collided = true;
+          normalX += resolvedY.normalX;
+          normalY += resolvedY.normalY;
+        }
+        x = resolvedY.x;
+        y = resolvedY.y;
       }
     }
-    return { x, y };
+
+    const normalLength = Math.hypot(normalX, normalY);
+    return {
+      x,
+      y,
+      collided,
+      normalX: normalLength > 1e-6 ? normalX / normalLength : 0,
+      normalY: normalLength > 1e-6 ? normalY / normalLength : 0,
+    };
+  }
+
+  _depenetrateCircle(cx, cy, radius) {
+    const r = Math.max(0.01, Number(radius) || 0.01);
+    let x = Number.isFinite(Number(cx)) ? Number(cx) : r;
+    let y = Number.isFinite(Number(cy)) ? Number(cy) : r;
+    let collided = false;
+    let normalX = 0;
+    let normalY = 0;
+    x = Math.max(r, Math.min(this.width - r, x));
+    y = Math.max(r, Math.min(this.height - r, y));
+    const requestedX = x;
+    const requestedY = y;
+
+    // Multiple passes handle corners and overlapping expanded rectangles. The
+    // ordering is deterministic, matching the authored wall list.
+    for (let pass = 0; pass < 16; pass++) {
+      let changed = false;
+      for (const wall of this.walls) {
+        const closestX = Math.max(wall.x, Math.min(x, wall.x + wall.w));
+        const closestY = Math.max(wall.y, Math.min(y, wall.y + wall.h));
+        const deltaX = x - closestX;
+        const deltaY = y - closestY;
+        const distanceSquared = deltaX * deltaX + deltaY * deltaY;
+        if (distanceSquared >= r * r - 1e-9) continue;
+
+        collided = true;
+        changed = true;
+        if (distanceSquared > 1e-12) {
+          const distance = Math.sqrt(distanceSquared);
+          const push = r - distance + 1e-6;
+          const nx = deltaX / distance;
+          const ny = deltaY / distance;
+          x += nx * push;
+          y += ny * push;
+          normalX += nx;
+          normalY += ny;
+        } else {
+          // The centre is inside the AABB, so the closest-point vector has no
+          // direction. Select the shortest exit from the radius-expanded box.
+          const exits = [
+            { amount: wall.x - r - x, nx: -1, ny: 0, targetX: wall.x - r, targetY: y },
+            { amount: wall.x + wall.w + r - x, nx: 1, ny: 0, targetX: wall.x + wall.w + r, targetY: y },
+            { amount: wall.y - r - y, nx: 0, ny: -1, targetX: x, targetY: wall.y - r },
+            { amount: wall.y + wall.h + r - y, nx: 0, ny: 1, targetX: x, targetY: wall.y + wall.h + r },
+          ];
+          const validExits = exits.filter((candidate) => (
+            candidate.targetX >= r - 1e-6
+            && candidate.targetX <= this.width - r + 1e-6
+            && candidate.targetY >= r - 1e-6
+            && candidate.targetY <= this.height - r + 1e-6
+          ));
+          const choices = validExits.length > 0 ? validExits : exits;
+          choices.sort((left, right) => Math.abs(left.amount) - Math.abs(right.amount));
+          const exit = choices[0];
+          if (exit.nx !== 0) x = exit.targetX + exit.nx * 1e-6;
+          else y = exit.targetY + exit.ny * 1e-6;
+          normalX += exit.nx;
+          normalY += exit.ny;
+        }
+        x = Math.max(r, Math.min(this.width - r, x));
+        y = Math.max(r, Math.min(this.height - r, y));
+      }
+      if (!changed) break;
+    }
+
+    // Sequential resolution can oscillate inside an authored gap narrower
+    // than the circle diameter. Never return an embedded position: on that
+    // rare path, search deterministic expanding rings for the nearest fully
+    // clear location instead of leaving the mover trapped forever.
+    if (!this._circlePositionClear(x, y, r)) {
+      const fallback = this._nearestClearCirclePosition(requestedX, requestedY, r);
+      if (fallback) {
+        const fallbackX = fallback.x - requestedX;
+        const fallbackY = fallback.y - requestedY;
+        const fallbackLength = Math.hypot(fallbackX, fallbackY);
+        x = fallback.x;
+        y = fallback.y;
+        collided = true;
+        if (fallbackLength > 1e-6) {
+          normalX += fallbackX / fallbackLength;
+          normalY += fallbackY / fallbackLength;
+        }
+      }
+    }
+
+    return { x, y, collided, normalX, normalY };
+  }
+
+  _circlePositionClear(x, y, radius) {
+    if (x < radius || y < radius || x > this.width - radius || y > this.height - radius) return false;
+    for (const wall of this.walls) {
+      const closestX = Math.max(wall.x, Math.min(x, wall.x + wall.w));
+      const closestY = Math.max(wall.y, Math.min(y, wall.y + wall.h));
+      const deltaX = x - closestX;
+      const deltaY = y - closestY;
+      if (deltaX * deltaX + deltaY * deltaY < radius * radius - 1e-9) return false;
+    }
+    return true;
+  }
+
+  _nearestClearCirclePosition(originX, originY, radius) {
+    if (this._circlePositionClear(originX, originY, radius)) return { x: originX, y: originY };
+    const radialStep = Math.max(4, Math.min(8, radius * 0.35));
+    const maximumDistance = Math.max(192, radius * 12);
+    for (let distance = radialStep; distance <= maximumDistance; distance += radialStep) {
+      const samples = Math.max(16, Math.ceil(Math.PI * 2 * distance / radialStep));
+      for (let sample = 0; sample < samples; sample++) {
+        const angle = sample / samples * Math.PI * 2;
+        const x = Math.max(radius, Math.min(this.width - radius, originX + Math.cos(angle) * distance));
+        const y = Math.max(radius, Math.min(this.height - radius, originY + Math.sin(angle) * distance));
+        if (this._circlePositionClear(x, y, radius)) return { x, y };
+      }
+    }
+    return null;
   }
 
   getLineIntersection(p1, p2) {
     let closest = null;
-    for (const w of this.walls) {
-      const edges = [
-        {p1:{x:w.x,y:w.y},          p2:{x:w.x+w.w,y:w.y}    },
-        {p1:{x:w.x+w.w,y:w.y},      p2:{x:w.x+w.w,y:w.y+w.h}},
-        {p1:{x:w.x+w.w,y:w.y+w.h},  p2:{x:w.x,y:w.y+w.h}    },
-        {p1:{x:w.x,y:w.y+w.h},      p2:{x:w.x,y:w.y}         }
-      ];
-      for (const e of edges) {
-        const pt = this.getLineSegmentIntersection(p1, p2, e.p1, e.p2);
-        if (pt) {
-          const dx = pt.x-p1.x, dy = pt.y-p1.y;
-          const dist = Math.sqrt(dx*dx+dy*dy);
-          if (!closest || dist < closest.dist)
-            closest = { x:pt.x, y:pt.y, dist, wall:w };
+    for (const segment of this.segments) {
+      const point = this.getLineSegmentIntersection(p1, p2, segment.p1, segment.p2);
+      if (point) {
+        const dx = point.x - p1.x;
+        const dy = point.y - p1.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (!closest || dist < closest.dist) {
+          closest = { x: point.x, y: point.y, dist, wall: segment.wall };
         }
       }
     }
