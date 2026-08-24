@@ -649,6 +649,10 @@ const srcPath = path.join(__dirname, 'src');
 app.use(express.static(distPath));
 app.use('/src', express.static(srcPath));
 
+app.get('/api/player-counts', (req, res) => {
+  res.json(collectPlayerCounts());
+});
+
 // Fallback to index.html for single page routing
 app.get('*', (req, res) => {
   res.sendFile(path.join(distPath, 'index.html'), (err) => {
@@ -717,7 +721,7 @@ setInterval(() => {
   broadcastPlayerCounts();
 }, 9000);
 
-function broadcastPlayerCounts() {
+function collectPlayerCounts() {
   let quickplay = 0;
   let ranked_realistic = 0;
   let ranked_competitive = 0;
@@ -739,14 +743,18 @@ function broadcastPlayerCounts() {
 
   const totalOnline = io.engine.clientsCount + simTotalCount();
 
-  io.emit('player-counts', {
+  return {
     total: totalOnline,
     quickplay: quickplay + simulatedPlayers.casual,
     ranked_realistic: ranked_realistic + simulatedPlayers.ranked_realistic,
     ranked_competitive: ranked_competitive + simulatedPlayers.ranked_competitive,
     sabotage: simulatedPlayers.sabotage,
     worldloom: simulatedPlayers.worldloom
-  });
+  };
+}
+
+function broadcastPlayerCounts() {
+  io.emit('player-counts', collectPlayerCounts());
 }
 
 // Helper to generate a room ID

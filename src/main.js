@@ -1265,11 +1265,11 @@ function connectSocket() {
   socket.on('connect_error', () => {
     // Fail silently or fallback for auto-login without annoying alerts
     console.warn('Failed to connect to multiplayer server.');
-    updatePlayerCountsUI({ total: 1, quickplay: 0, ranked_realistic: 0, ranked_competitive: 0 });
+    refreshPlayerCountsViaHttp();
   });
 
   socket.on('disconnect', () => {
-    updatePlayerCountsUI({ total: 1, quickplay: 0, ranked_realistic: 0, ranked_competitive: 0 });
+    refreshPlayerCountsViaHttp();
   });
 
   socket.on('player-counts', (data) => {
@@ -2379,11 +2379,16 @@ function setupUIListeners() {
   }
   if (gameLeaveBtn && gameMenuOverlay) {
     gameLeaveBtn.addEventListener('click', () => {
-      const matchInProgress = gameEngine && gameEngine.active && gameEngine.gameState !== 'match-over' && (gameEngine.mode === 'online' || gameEngine.isRanked);
-      if (matchInProgress) {
-        const leaveWarning = gameEngine.isRanked
-          ? 'WARNING: Leaving this ranked match will count it as a LOSS (-40 RP) and give you a 5-minute MATCHMAKING BAN.\n\nLeave anyway?'
-          : 'WARNING: Leaving this online match will count it as a LOSS.\n\nLeave anyway?';
+      const matchActive = gameEngine && gameEngine.active && gameEngine.gameState !== 'match-over';
+      if (matchActive) {
+        let leaveWarning;
+        if (gameEngine.isRanked) {
+          leaveWarning = 'WARNING: Leaving this ranked match will count it as a LOSS (-40 RP) and give you a 5-minute MATCHMAKING BAN.\n\nLeave anyway?';
+        } else if (gameEngine.mode === 'online') {
+          leaveWarning = 'WARNING: Leaving this online match will count it as a LOSS.\n\nLeave anyway?';
+        } else {
+          leaveWarning = 'Leave this match? Your current match progress will be lost.';
+        }
         if (!confirm(leaveWarning)) {
           gameMenuOverlay.classList.remove('active');
           return;
@@ -2440,9 +2445,9 @@ function setupUIListeners() {
     });
   }
 
-  // Warn before closing/refreshing during an active online or ranked match
+  // Warn before closing/refreshing during any active match (Worldloom excluded)
   window.addEventListener('beforeunload', (e) => {
-    if (gameEngine && gameEngine.active && gameEngine.gameState !== 'match-over' && (gameEngine.mode === 'online' || gameEngine.isRanked)) {
+    if (gameEngine && gameEngine.active && gameEngine.gameState !== 'match-over') {
       e.preventDefault();
       e.returnValue = '';
       return '';
@@ -2884,6 +2889,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
   connectSocket();
   showScreen('menu');
+
+  // Keep the menu player counts alive even when the socket is disconnected
+  refreshPlayerCountsViaHttp();
+  setInterval(() => {
+    const activeScreen = document.querySelector('.screen.active');
+    if ((!socket || !socket.connected) && activeScreen && activeScreen.id === 'menu-screen') {
+      refreshPlayerCountsViaHttp();
+    }
+  }, 15000);
 
   // Load career stats and rank
   renderCareerStats();
@@ -3892,6 +3906,17 @@ function buyWeapon(weaponKey) {
   
   renderShopItems();
   updateWeaponLocksUI();
+}
+
+async function refreshPlayerCountsViaHttp() {
+  try {
+    const response = await fetch(`${getBackendUrl()}/api/player-counts`);
+    if (!response.ok) return;
+    const data = await response.json();
+    updatePlayerCountsUI(data);
+  } catch (e) {
+    // Server unreachable — keep last known counts
+  }
 }
 
 function updatePlayerCountsUI(data) {
