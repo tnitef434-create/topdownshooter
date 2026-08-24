@@ -3577,6 +3577,25 @@ footer {
   box-shadow: 0 1px 0 #73510c, 0 3px 8px rgba(0, 0, 0, 0.4);
 }
 
+.match-deploy-btn.match-worldloom-btn {
+  margin-top: 10px;
+  border-color: #2f9e63;
+  background: linear-gradient(180deg, #4add90, #2f9e63);
+  color: #052312;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.3);
+  box-shadow: 0 3px 0 #1d6b41, 0 7px 16px rgba(0, 0, 0, 0.35);
+}
+
+.match-deploy-btn.match-worldloom-btn:hover,
+.match-deploy-btn.match-worldloom-btn:focus-visible {
+  background: linear-gradient(180deg, #5ce9a4, #3bb374);
+  outline: none;
+}
+
+.match-deploy-btn.match-worldloom-btn:active {
+  box-shadow: 0 1px 0 #1d6b41, 0 3px 8px rgba(0, 0, 0, 0.4);
+}
+
 /* Modal Cards */
 #deploy-modal {
   position: fixed;

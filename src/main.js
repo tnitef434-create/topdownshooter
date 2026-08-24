@@ -1944,6 +1944,22 @@ function setupUIListeners() {
     });
   }
 
+  const btnWorldloomMain = document.getElementById('btn-worldloom-main');
+  if (btnWorldloomMain) {
+    btnWorldloomMain.addEventListener('click', () => {
+      playMenuClick();
+      window.stopAllMusic();
+      if (worldloomSiteScreen) {
+        worldloomSiteScreen.classList.add('active');
+        worldloomSiteScreen.setAttribute('aria-hidden', 'false');
+      }
+      document.body.classList.add('is-worldloom-open');
+      setWorldloomBackgroundInert(true);
+      beginWorldloomLoad(false);
+      btnCloseWorldloom?.focus();
+    });
+  }
+
   if (worldloomFrame) {
     worldloomFrame.addEventListener('load', () => {
       // A generic iframe load (including about:blank) is not proof that the
