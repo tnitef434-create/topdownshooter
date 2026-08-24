@@ -2631,6 +2631,7 @@ function initCustomDropdown(select) {
 
   const valueDesc = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value');
   const rawGetValue = () => valueDesc.get.call(select);
+  const rawSetValue = (v) => valueDesc.set.call(select, v);
   const disabledDesc = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'disabled');
 
   function syncDropdownUI() {
