@@ -6,7 +6,25 @@ const DEFAULT_ATLAS_COLUMNS = 4;
 const WATER_SURFACE_HEIGHT = 0.92;
 const WATER_LEVEL_DROP = 0.085;
 const AO_DARKENING = 0.14;
-const CAVE_DARKENING = 0.92;
+
+/**
+ * Baked skylight falloff for terrain faces below the local skyline. The curve
+ * stays readable around a mouth, then approaches black over a full tunnel run
+ * instead of dropping from 100% to 34% at the first covered voxel.
+ */
+export function coverDepthSkylight(coverDepth) {
+  const depth = Math.max(0, Number(coverDepth) || 0);
+  // Exponential attenuation approximates repeated diffuse bounces: roughly
+  // 88% at one covered block, 61% at four, 30% at ten, and 8% at twenty-eight.
+  return THREE.MathUtils.clamp(0.055 + 0.945 * Math.exp(-depth / 7.5), 0.055, 1);
+}
+
+// Crossed vegetation shares the terrain falloff. Keeping this as an explicit
+// geometry-path helper prevents plants from reintroducing the old one-block
+// darkness jump while surrounding cube faces remain readable.
+export function plantCoverSkylight(coverDepth) {
+  return coverDepthSkylight(coverDepth);
+}
 
 // The corner order for every face is counter-clockwise when viewed from outside.
 const FACES = Object.freeze([
@@ -235,9 +253,7 @@ function cornerLight(world, worldX, y, worldZ, face, corner, skyline) {
   const coverZ = worldZ + (normal[2] === 0 ? corner[2] * 0.999 : normal[2]);
   const coverY = skyline(coverX, coverZ);
   const coverDepth = Math.max(0, coverY - surfaceY);
-  const enclosedShade = coverDepth > 0.1 ? 0.34 : 1;
-  const caveShade = enclosedShade
-    * (1 - THREE.MathUtils.smoothstep(coverDepth, 0.2, 13) * CAVE_DARKENING);
+  const caveShade = coverDepthSkylight(coverDepth);
   const skyFacing = normal[1] > 0 ? 1.025 : normal[1] < 0 ? 0.92 : 1;
   return THREE.MathUtils.clamp(ambientOcclusion * caveShade * skyFacing, 0.045, 1.025);
 }
@@ -433,9 +449,7 @@ export class ChunkGeometryJob {
     if (['cross', 'cross-short', 'grass-tuft'].includes(definition?.shape)) {
       const uv = tileCoordinates(readTile(definition, FACES[4]), this.atlasMeta);
       const coverDepth = Math.max(0, skyline(worldX, worldZ) - y);
-      const plantLight = coverDepth > 0
-        ? 0.36 * (1 - THREE.MathUtils.smoothstep(coverDepth, 1, 10) * 0.78)
-        : 1;
+      const plantLight = plantCoverSkylight(coverDepth);
       const color = colorFor(definition, 0.92 * plantLight, y, this.height, worldX, worldZ, block);
       const plantHeight = definition.shape === 'grass-tuft' ? 0.3 : definition.shape === 'cross-short' ? 0.54 : 1;
       const plantSpread = definition.shape === 'grass-tuft' ? 0.9 : definition.shape === 'cross-short' ? 0.62 : 0.76;

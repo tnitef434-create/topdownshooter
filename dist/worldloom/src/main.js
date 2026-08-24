@@ -26,7 +26,7 @@ import { UI } from './ui.js';
 import { CreatureSystem } from './creatures.js';
 import { HeldItemView, createDroppedItemModel, disposeItemModel } from './viewmodel.js';
 import { PlayerAvatar, WORLD_AVATAR_LAYER } from './player-avatar.js';
-import { GraphicsPipeline } from './graphics.js';
+import { GraphicsPipeline, caveLightingDepth, cavePostProcessAmount } from './graphics.js';
 import { SurvivalSystem } from './survival.js';
 import { clampFogToMeshedTerrain } from './fog.js';
 
@@ -1728,6 +1728,7 @@ function animate(now) {
   const surface = world && player ? world.terrainHeight(player.position.x, player.position.z) : 0;
   const biome = world && player ? world.biomeAt(player.position.x, player.position.z) : 'plains';
   const caveDepth = world && player ? Math.max(0, Math.min(1, (surface + 1 - player.position.y) / 16)) : 0;
+  const visualCaveDepth = world && player ? caveLightingDepth(surface, player.position.y) : 0;
   audio.setEnvironment({
     dayAmount: environment.dayAmount,
     biome,
@@ -1742,7 +1743,10 @@ function animate(now) {
   graphicsPipeline?.setEnvironment({
     dayAmount: environment.dayAmount,
     rainAmount: weather.intensity,
-    caveAmount: caveDepth,
+    caveAmount: cavePostProcessAmount(visualCaveDepth, environment.skyExposure),
+    skyExposure: environment.skyExposure,
+    sunVisibility: environment.sun?.material?.opacity || 0,
+    sunWorldPosition: environment.sun?.position || null,
   });
   hudTimer += dt;
   if (hudTimer >= 0.08) {
