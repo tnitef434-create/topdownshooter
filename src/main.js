@@ -2529,13 +2529,25 @@ function setupUIListeners() {
     });
   }
 
-  // Map select change listeners
+  // Custom map card selection
   if (inputs.qpMapSelect) {
-    inputs.qpMapSelect.value = selectedMapId;
-    inputs.qpMapSelect.addEventListener('change', (e) => {
-      selectedMapId = e.target.value;
-      safeStorage.setItem('tacticstrike_selected_map', selectedMapId);
-      playMenuClick();
+    const mapOptions = inputs.qpMapSelect.querySelectorAll('.qp-map-option');
+    const syncQpMapUI = () => {
+      mapOptions.forEach(opt => {
+        const isActive = opt.dataset.map === selectedMapId;
+        opt.classList.toggle('active', isActive);
+        opt.setAttribute('aria-selected', isActive ? 'true' : 'false');
+      });
+    };
+    syncQpMapUI();
+    mapOptions.forEach(opt => {
+      opt.addEventListener('click', () => {
+        if (selectedMapId === opt.dataset.map) return;
+        selectedMapId = opt.dataset.map;
+        safeStorage.setItem('tacticstrike_selected_map', selectedMapId);
+        syncQpMapUI();
+        playMenuClick();
+      });
     });
   }
 

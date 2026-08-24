@@ -982,12 +982,20 @@
           <div style="background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.04); padding: 12px; border-radius: 6px; display: flex; flex-direction: column; gap: 8px;">
             <div style="display: flex; gap: 10px; justify-content: space-between; align-items: center;">
               <!-- Map Selection -->
-              <div style="flex: 1; display: flex; flex-direction: column; gap: 4px;">
+              <div style="flex: 1.35; display: flex; flex-direction: column; gap: 4px;">
                 <label style="font-family: var(--font-title); font-size: 8px; letter-spacing: 1px; color: var(--text-muted); font-weight: bold;">MISSION AREA</label>
-                <select id="qp-map-select" class="cyber-select" style="font-size: 10px; padding: 6px; background: rgba(0,0,0,0.6); color: white; border: 1px solid rgba(255,255,255,0.08); border-radius: 4px; cursor: pointer; outline: none; width: 100%;">
-                  <option value="manor" selected>RESIDENTIAL MANOR (CLASSIC)</option>
-                  <option value="cyberlab">NEON CYBER-LAB (FLAGSHIP 🌟)</option>
-                </select>
+                <div id="qp-map-select" role="listbox" aria-label="Mission Area" style="display: flex; gap: 6px;">
+                  <button type="button" class="qp-map-option active" data-map="manor" role="option" aria-selected="true">
+                    <span class="qp-map-icon">🏠</span>
+                    <span class="qp-map-name">RESIDENTIAL MANOR</span>
+                    <span class="qp-map-sub">CLASSIC TACTICAL</span>
+                  </button>
+                  <button type="button" class="qp-map-option" data-map="cyberlab" role="option" aria-selected="false">
+                    <span class="qp-map-icon">🌆</span>
+                    <span class="qp-map-name">NEON CYBER-LAB</span>
+                    <span class="qp-map-sub" style="color: rgba(102,252,241,0.65);">FLAGSHIP 🌟</span>
+                  </button>
+                </div>
               </div>
               <!-- Style Toggle -->
               <div style="flex: 1; display: flex; flex-direction: column; gap: 4px;">
