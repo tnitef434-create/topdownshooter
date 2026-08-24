@@ -16,6 +16,11 @@ import {
   PondEcologyField,
   pondFlyOffset,
 } from '../src/public/worldloom/src/pond-ecology.js';
+import {
+  HangingLeavesField,
+  hangingLeafCollisionPush,
+  timeCorrectedDamping,
+} from '../src/public/worldloom/src/hanging-leaves.js';
 
 function meshSummary(root) {
   const meshes = [];
@@ -32,6 +37,18 @@ const POND_ATLAS_URL = new URL(
   import.meta.url,
 );
 const POND_GENERATOR_URL = new URL('../tools/generate_pond_assets.py', import.meta.url);
+const HANGING_LEAVES_URL = new URL(
+  '../src/public/worldloom/assets/environment/hanging-tree-leaves.glb',
+  import.meta.url,
+);
+const HANGING_LEAVES_ATLAS_URL = new URL(
+  '../src/public/worldloom/assets/environment/hanging-tree-leaves-atlas.png',
+  import.meta.url,
+);
+const HANGING_LEAVES_GENERATOR_URL = new URL(
+  '../tools/generate_hanging_leaves.py',
+  import.meta.url,
+);
 const GLB_MAGIC = 0x46546c67;
 const GLB_JSON_CHUNK = 0x4e4f534a;
 const GLB_BINARY_CHUNK = 0x004e4942;
@@ -114,6 +131,37 @@ function createTestPondGltf(packScale = 1) {
     root.add(mesh);
     pack.add(root);
   });
+  scene.updateMatrixWorld(true);
+  return { scene, animations: [], atlasTexture };
+}
+
+function createTestHangingLeafGltf(packScale = 1) {
+  const scene = new THREE.Scene();
+  const pack = new THREE.Group();
+  pack.name = 'Hanging_Leaf_Asset_Pack';
+  pack.scale.setScalar(packScale);
+  scene.add(pack);
+  const root = new THREE.Group();
+  root.name = 'Hanging_Leaf_Asset';
+  pack.add(root);
+  const atlasTexture = new THREE.DataTexture(
+    new Uint8Array([38, 122, 55, 255]),
+    1,
+    1,
+    THREE.RGBAFormat,
+  );
+  atlasTexture.name = 'Fake embedded hanging-leaf atlas';
+  atlasTexture.colorSpace = THREE.SRGBColorSpace;
+  atlasTexture.needsUpdate = true;
+  const material = new THREE.MeshStandardMaterial({
+    map: atlasTexture,
+    side: THREE.DoubleSide,
+  });
+  const geometry = new THREE.BoxGeometry(0.42, 0.5, 0.08);
+  geometry.translate(0, -0.25, 0);
+  const segment = new THREE.Mesh(geometry, material);
+  segment.name = 'Hanging_Leaf_Segment';
+  root.add(segment);
   scene.updateMatrixWorld(true);
   return { scene, animations: [], atlasTexture };
 }
@@ -447,6 +495,254 @@ test('pond flies are tiny unlit dots with deterministic fast short-loop motion',
 
   field.dispose();
   assert.equal(scene.children.length, 0);
+});
+
+test('Blender hanging-leaf GLB is self-contained, pixel-authored and compact', () => {
+  const glb = readFileSync(HANGING_LEAVES_URL);
+  assert.ok(glb.length >= 4 * 1024, 'hanging-leaf GLB is suspiciously small or empty');
+  assert.ok(glb.length <= 128 * 1024, `hanging-leaf GLB exceeds 128KB (${glb.length} bytes)`);
+  const document = parseGlb(glb);
+  assert.match(document.asset?.generator || '', /Blender I\/O/i,
+    'hanging-leaf asset must identify Blender glTF export');
+  assert.ok(!(document.extensionsUsed || []).includes('KHR_draco_mesh_compression'),
+    'hanging leaves must load without a Draco decoder');
+  assert.equal(document.buffers?.length, 1);
+  assert.equal(document.buffers?.[0]?.uri, undefined,
+    'hanging-leaf GLB cannot depend on an external binary file');
+
+  const nodeNames = new Set((document.nodes || []).map((node) => node.name));
+  assert.ok(nodeNames.has('Hanging_Leaf_Asset'),
+    'generated GLB is missing its stable top-pivot Hanging_Leaf_Asset root');
+  const leafNodes = descendantNodeIndices(document, 'Hanging_Leaf_Asset')
+    .map((index) => document.nodes[index]);
+  const primitives = leafNodes
+    .filter((node) => Number.isInteger(node.mesh))
+    .flatMap((node) => document.meshes[node.mesh]?.primitives || []);
+  assert.equal(primitives.length, 1,
+    'the authored segment must stay one primitive for one-draw instancing');
+  assert.ok(Number.isInteger(primitives[0].attributes?.TEXCOORD_0),
+    'the authored segment must preserve its GPT-image atlas UVs');
+  const triangleAccessor = document.accessors?.[primitives[0].indices]
+    || document.accessors?.[primitives[0].attributes?.POSITION];
+  assert.ok((triangleAccessor?.count || 0) / 3 <= 64,
+    'one hanging-leaf segment exceeded its 64-triangle authored budget');
+
+  const sourceAtlas = pngMetadata(readFileSync(HANGING_LEAVES_ATLAS_URL));
+  assert.deepEqual(sourceAtlas, { width: 64, height: 64, bitDepth: 8, colorType: 6 },
+    'hanging-leaf atlas must remain an exact 64x64 RGBA PNG');
+  assert.equal(document.images?.length, 1, 'exactly one atlas should be embedded');
+  const embeddedImage = document.images[0];
+  assert.equal(embeddedImage.uri, undefined, 'atlas must be embedded in the GLB');
+  assert.equal(embeddedImage.mimeType, 'image/png');
+  assert.deepEqual(
+    pngMetadata(embeddedBufferView(glb, document, embeddedImage.bufferView)),
+    sourceAtlas,
+    'embedded foliage atlas metadata must match its reproducible source PNG',
+  );
+  const material = document.materials?.[primitives[0].material];
+  assert.equal(material?.doubleSided, true);
+  const texture = document.textures?.[material?.pbrMetallicRoughness?.baseColorTexture?.index];
+  const sampler = document.samplers?.[texture?.sampler];
+  assert.equal(sampler?.magFilter, 9728, 'authored foliage atlas must use nearest magnification');
+  assert.ok([9728, 9984].includes(sampler?.minFilter),
+    'authored foliage atlas must use nearest-only minification');
+});
+
+test('Blender hanging-leaf generator preserves the reproducible GPT texture pipeline', () => {
+  const source = readFileSync(HANGING_LEAVES_GENERATOR_URL, 'utf8');
+  assert.match(source, /Hanging_Leaf_Asset/);
+  assert.match(source, /gpt-hanging-leaves-source\.png/,
+    'generator must retain the project-local GPT-image source');
+  assert.match(source, /64/,
+    'generator must explicitly build the compact pixel atlas');
+  assert.match(source, /["']export_draco_mesh_compression_enable["']\s*:\s*False/,
+    'generator must explicitly disable Draco compression');
+  assert.match(source, /texture\.interpolation\s*=\s*["']Closest["']/,
+    'Blender material must preserve hard pixel filtering');
+});
+
+test('hanging-leaf spring chains use one draw and react safely to the moving player', async () => {
+  const scene = new THREE.Scene();
+  const gltf = createTestHangingLeafGltf();
+  const field = new HangingLeavesField(scene, null, {
+    loaderFactory: () => ({ loadAsync: () => Promise.resolve(gltf) }),
+  });
+  await field.prepare();
+  assert.equal(field.ready, true);
+  assert.equal(field.mesh?.isInstancedMesh, true);
+  assert.ok(field.mesh.geometry.getAttribute('uv'));
+  assert.equal(field.mesh.material.map.magFilter, THREE.NearestFilter);
+  assert.equal(field.mesh.material.map.minFilter, THREE.NearestFilter);
+  assert.equal(field.mesh.material.map.generateMipmaps, false);
+  assert.equal(field.mesh.material.side, THREE.DoubleSide);
+  assert.equal(field.group.children.filter((child) => child === field.mesh).length, 1);
+
+  const tree = Object.freeze({
+    id: '0,0',
+    rootX: 0,
+    rootY: 4,
+    rootZ: 0,
+    crownY: 7,
+    trunkHeight: 4,
+    trunkBlock: 5,
+    leafBlock: 6,
+    isPine: false,
+    hasHangingLeaves: true,
+  });
+  field.setWorld({
+    getTreesNear: () => [tree],
+    isPositionReady: () => true,
+    getBlock: (x, y, z) => {
+      if (x === tree.rootX && y === tree.rootY + tree.trunkHeight - 1 && z === tree.rootZ) {
+        return tree.trunkBlock;
+      }
+      return y >= tree.crownY - 2 && y <= tree.crownY ? tree.leafBlock : 0;
+    },
+  });
+  field.setQuality({
+    shadows: true,
+    hangingLeafRadius: 24,
+    hangingLeafTreeCap: 1,
+    hangingLeafStrandsPerTree: 1,
+    hangingLeafSegmentCap: 8,
+    hangingLeafPhysicsRadius: 8,
+  }, false);
+  field.update(0, new THREE.Vector3(0.5, 4.2, 0.5), {
+    playerVelocity: new THREE.Vector3(),
+  });
+  const initial = field.getStats();
+  assert.equal(initial.trees, 1);
+  assert.equal(initial.strands, 1);
+  assert.ok(initial.segments >= 3 && initial.segments <= 4);
+  assert.equal(initial.draws, 1);
+  assert.ok(initial.triangles > 0);
+  const strand = field.strands[0];
+  const initialTip = strand.points.at(-1).clone();
+  const player = new THREE.Vector3(initialTip.x - 0.12, initialTip.y - 0.45, initialTip.z);
+  let maximumInteractions = 0;
+  for (let frame = 0; frame < 12; frame++) {
+    field.update(1 / 60, player, { playerVelocity: new THREE.Vector3(4.5, 0, 0) });
+    maximumInteractions = Math.max(maximumInteractions, field.getStats().interactions);
+  }
+  const movedTip = strand.points.at(-1);
+  assert.ok(Math.hypot(movedTip.x - initialTip.x, movedTip.z - initialTip.z) > 0.025,
+    'walking into the strand must produce visible persistent lateral motion');
+  assert.ok(maximumInteractions > 0, 'player contact never reached the spring chain');
+  for (let index = 1; index < strand.points.length; index++) {
+    assert.ok(Math.abs(strand.points[index].distanceTo(strand.points[index - 1]) - strand.segmentLength) < 1e-5,
+      'physics constraints allowed the authored segment chain to separate');
+  }
+  assert.ok([...field.mesh.instanceMatrix.array].every(Number.isFinite),
+    'contact physics produced a non-finite instance transform');
+  assert.equal(field.mesh.userData.drawBudget, 1);
+
+  const directPush = hangingLeafCollisionPush(
+    new THREE.Vector3(0.2, 1, 0),
+    new THREE.Vector3(0, 0, 0),
+    new THREE.Vector3(4, 0, 0),
+  );
+  assert.ok(directPush.x > 0 && directPush.length() <= 0.280001,
+    'collision impulse must follow travel direction and remain bounded');
+  field.dispose();
+  assert.equal(scene.children.length, 0);
+});
+
+test('hanging-leaf damping and attachment lifecycle stay stable across gameplay conditions', async () => {
+  const baselineDecay = 0.88 ** 60;
+  for (const refreshRate of [30, 60, 144]) {
+    const perFrame = timeCorrectedDamping(0.88, 1 / refreshRate);
+    assert.ok(Math.abs(perFrame ** refreshRate - baselineDecay) < 1e-12,
+      `spring decay drifted at ${refreshRate} Hz`);
+  }
+
+  const scene = new THREE.Scene();
+  const field = new HangingLeavesField(scene, null, {
+    loaderFactory: () => ({ loadAsync: () => Promise.resolve(createTestHangingLeafGltf()) }),
+  });
+  await field.prepare();
+  const tree = Object.freeze({
+    id: 'attachment-tree',
+    rootX: 0,
+    rootY: 4,
+    rootZ: 0,
+    crownY: 7,
+    trunkHeight: 4,
+    trunkBlock: 5,
+    leafBlock: 6,
+    isPine: false,
+    hasHangingLeaves: true,
+  });
+  let ready = true;
+  let trunkPresent = true;
+  let leavesPresent = true;
+  const world = {
+    getTreesNear: () => [tree],
+    isPositionReady: () => ready,
+    getBlock: (x, y, z) => {
+      if (x === tree.rootX && y === tree.rootY + tree.trunkHeight - 1 && z === tree.rootZ) {
+        return trunkPresent ? tree.trunkBlock : 0;
+      }
+      return leavesPresent && y >= tree.crownY - 2 && y <= tree.crownY ? tree.leafBlock : 0;
+    },
+  };
+  field.setWorld(world);
+  field.setQuality({
+    hangingLeafRadius: 24,
+    hangingLeafTreeCap: 1,
+    hangingLeafStrandsPerTree: 1,
+    hangingLeafSegmentCap: 8,
+  });
+  const focus = new THREE.Vector3(0.5, 4.2, 0.5);
+  field.update(0, focus);
+  assert.equal(field.getStats().strands, 1);
+
+  leavesPresent = false;
+  field.update(0, focus);
+  assert.equal(field.getStats().strands, 0, 'breaking an anchor leaf must remove its strand immediately');
+  assert.equal(field.mesh.count, 0);
+
+  leavesPresent = true;
+  field.setQuality({});
+  field.update(0, focus);
+  assert.equal(field.getStats().strands, 1);
+  trunkPresent = false;
+  field.update(0, focus);
+  assert.equal(field.getStats().strands, 0, 'breaking the supporting trunk must remove its strands immediately');
+
+  trunkPresent = true;
+  field.setQuality({});
+  field.update(0, focus);
+  assert.equal(field.getStats().strands, 1);
+  ready = false;
+  field.update(0, focus);
+  assert.equal(field.getStats().strands, 0, 'unloading the source chunk must hide its strands immediately');
+
+  ready = true;
+  field.setQuality({});
+  field.update(0, focus);
+  assert.equal(field.getStats().strands, 1);
+  field.setWorld({
+    getTreesNear: () => [],
+    isPositionReady: () => true,
+    getBlock: () => 0,
+  });
+  assert.equal(field.getStats().strands, 0, 'switching worlds must never retain old foliage');
+  assert.equal(field.mesh.count, 0);
+  field.dispose();
+});
+
+test('hanging-leaf asset failures remain bounded cosmetic failures', async () => {
+  const field = new HangingLeavesField(new THREE.Scene(), null, {
+    assetUrl: '/missing-hanging-leaves.glb',
+    loadTimeoutMs: 100,
+    loaderFactory: () => ({ loadAsync: () => Promise.reject(new Error('404 hanging leaves')) }),
+  });
+  await assert.doesNotReject(() => field.prepare());
+  assert.equal(field.ready, false);
+  assert.equal(field.getStats().failed, true);
+  assert.match(field.getStats().error, /404 hanging leaves/);
+  assert.equal(field.getStats().loading, false);
+  field.dispose();
 });
 
 test('raw and roasted meat preserve authored voxel detail in one draw mesh', () => {

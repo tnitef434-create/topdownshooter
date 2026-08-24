@@ -32,6 +32,7 @@ export const SEA_LEVEL = 32;
 const CHUNK_VOLUME = CHUNK_SIZE * CHUNK_SIZE * WORLD_HEIGHT;
 const COLUMN_CACHE_LIMIT = 32_768;
 const TREE_CELL_SIZE = 5;
+const TREE_HANGING_LEAVES_SALT = 0xd3a2646c;
 const PLANT_CELL_SIZE = 3;
 const CACTUS_CELL_SIZE = 7;
 const POND_CELL_SIZE = 56;
@@ -1576,6 +1577,105 @@ export class World {
     chunk.blocks[index] = id;
   }
 
+  _treeDescriptorForCell(cellX, cellZ) {
+    cellX = Math.floor(Number.isFinite(Number(cellX)) ? Number(cellX) : 0);
+    cellZ = Math.floor(Number.isFinite(Number(cellZ)) ? Number(cellZ) : 0);
+    const offsetX = Math.floor(hashUnit(hash2D(cellX, cellZ, this._noiseSeeds.trees)) * TREE_CELL_SIZE);
+    const offsetZ = Math.floor(
+      hashUnit(hash2D(cellX, cellZ, this._noiseSeeds.trees ^ 0x4f1bbcdc)) * TREE_CELL_SIZE,
+    );
+    const rootX = cellX * TREE_CELL_SIZE + offsetX;
+    const rootZ = cellZ * TREE_CELL_SIZE + offsetZ;
+    // Column information already owns the bounded terrain/cave/pond cache. Keep
+    // tree descriptors as pure derived values so visual queries and voxel
+    // decoration share one decision path without a second invalidation layer.
+    const info = this._columnInfo(rootX, rootZ);
+    if (
+      info.height <= SEA_LEVEL + 1
+      || info.pondId
+      || info.desertWeight > 0.58
+      || info.riverStrength > 0.42
+      || info.rockiness > 0.56
+      || info.caveMouth
+    ) return null;
+    // Climate weights create gradual woodland edges rather than an abrupt
+    // density jump at the public plains/forest biome label.
+    const chance = THREE.MathUtils.clamp(0.1 + info.forestWeight * 0.74, 0.08, 0.82);
+    if (hashUnit(hash2D(cellX, cellZ, this._noiseSeeds.trees ^ 0xc2b2ae35)) > chance) return null;
+    const slope = Math.max(
+      Math.abs(info.height - this.terrainHeight(rootX + 1, rootZ)),
+      Math.abs(info.height - this.terrainHeight(rootX - 1, rootZ)),
+      Math.abs(info.height - this.terrainHeight(rootX, rootZ + 1)),
+      Math.abs(info.height - this.terrainHeight(rootX, rootZ - 1)),
+    );
+    if (slope > 2) return null;
+
+    const speciesRoll = hashUnit(hash2D(rootX, rootZ, this._noiseSeeds.trees ^ 0x6a09e667));
+    const pineClimate = THREE.MathUtils.clamp(
+      (0.54 - info.temperature) * 1.6 + Math.max(0, info.height - SEA_LEVEL - 18) / 36,
+      0,
+      0.82,
+    );
+    const isPine = PINE_LOG !== AIR && PINE_NEEDLES !== AIR
+      && speciesRoll < 0.2 + pineClimate * 0.72;
+    const baseTrunkBlock = isPine ? PINE_LOG : LOG;
+    const overgrownRoll = hashUnit(hash2D(rootX, rootZ, this._noiseSeeds.trees ^ 0x3c6ef372));
+    const overgrownChance = isPine ? 0.18 : 0.38;
+    const isOvergrown = overgrownRoll < overgrownChance;
+    const trunkBlock = isOvergrown
+      ? (isPine ? OVERGROWN_PINE_LOG : OVERGROWN_ASH_LOG)
+      : baseTrunkBlock;
+    const leafBlock = isPine ? PINE_NEEDLES : LEAVES;
+    const trunkHeight = (isPine ? 7 : 4) + Math.floor(
+      hashUnit(hash2D(rootX, rootZ, this._noiseSeeds.trees ^ 0x27d4eb2d)) * 4,
+    );
+    return Object.freeze({
+      id: `${cellX},${cellZ}`,
+      cellX,
+      cellZ,
+      rootX,
+      rootY: info.height + 1,
+      rootZ,
+      species: isPine ? 'pine' : 'ash',
+      isPine,
+      isOvergrown,
+      baseTrunkBlock,
+      trunkBlock,
+      leafBlock,
+      trunkHeight,
+      crownY: info.height + trunkHeight,
+      hasHangingLeaves: hashUnit(hash2D(
+        cellX,
+        cellZ,
+        this._noiseSeeds.trees ^ TREE_HANGING_LEAVES_SALT,
+      )) < 0.25,
+    });
+  }
+
+  getTreesNear(x, z, radius = 72) {
+    const centerX = Number.isFinite(Number(x)) ? Number(x) : 0;
+    const centerZ = Number.isFinite(Number(z)) ? Number(z) : 0;
+    const safeRadius = THREE.MathUtils.clamp(Number(radius) || 0, 0, 256);
+    const minCellX = floorDiv(Math.floor(centerX - safeRadius), TREE_CELL_SIZE);
+    const minCellZ = floorDiv(Math.floor(centerZ - safeRadius), TREE_CELL_SIZE);
+    const maxCellX = floorDiv(Math.floor(centerX + safeRadius), TREE_CELL_SIZE);
+    const maxCellZ = floorDiv(Math.floor(centerZ + safeRadius), TREE_CELL_SIZE);
+    const trees = [];
+    for (let cellZ = minCellZ; cellZ <= maxCellZ; cellZ++) {
+      for (let cellX = minCellX; cellX <= maxCellX; cellX++) {
+        const descriptor = this._treeDescriptorForCell(cellX, cellZ);
+        if (!descriptor || Math.hypot(descriptor.rootX - centerX, descriptor.rootZ - centerZ) > safeRadius) continue;
+        trees.push(descriptor);
+      }
+    }
+    trees.sort((a, b) => (
+      Math.hypot(a.rootX - centerX, a.rootZ - centerZ)
+        - Math.hypot(b.rootX - centerX, b.rootZ - centerZ)
+      || a.id.localeCompare(b.id)
+    ));
+    return trees;
+  }
+
   _decorateTrees(chunk) {
     if (LOG === AIR || LEAVES === AIR) return;
     const minX = chunk.cx * CHUNK_SIZE - 2;
@@ -1589,54 +1689,20 @@ export class World {
 
     for (let cellZ = minCellZ; cellZ <= maxCellZ; cellZ++) {
       for (let cellX = minCellX; cellX <= maxCellX; cellX++) {
-        const offsetX = Math.floor(hashUnit(hash2D(cellX, cellZ, this._noiseSeeds.trees)) * TREE_CELL_SIZE);
-        const offsetZ = Math.floor(hashUnit(hash2D(cellX, cellZ, this._noiseSeeds.trees ^ 0x4f1bbcdc)) * TREE_CELL_SIZE);
-        const rootX = cellX * TREE_CELL_SIZE + offsetX;
-        const rootZ = cellZ * TREE_CELL_SIZE + offsetZ;
-        const info = this._columnInfo(rootX, rootZ);
-        if (
-          info.height <= SEA_LEVEL + 1
-          || info.pondId
-          || info.desertWeight > 0.58
-          || info.riverStrength > 0.42
-          || info.rockiness > 0.56
-          || info.caveMouth
-        ) continue;
-        // Climate weights create gradual woodland edges rather than an abrupt
-        // density jump at the public plains/forest biome label.
-        const chance = THREE.MathUtils.clamp(0.1 + info.forestWeight * 0.74, 0.08, 0.82);
-        if (hashUnit(hash2D(cellX, cellZ, this._noiseSeeds.trees ^ 0xc2b2ae35)) > chance) continue;
-        const slope = Math.max(
-          Math.abs(info.height - this.terrainHeight(rootX + 1, rootZ)),
-          Math.abs(info.height - this.terrainHeight(rootX - 1, rootZ)),
-          Math.abs(info.height - this.terrainHeight(rootX, rootZ + 1)),
-          Math.abs(info.height - this.terrainHeight(rootX, rootZ - 1)),
-        );
-        if (slope > 2) continue;
-
-        const speciesRoll = hashUnit(hash2D(rootX, rootZ, this._noiseSeeds.trees ^ 0x6a09e667));
-        const pineClimate = THREE.MathUtils.clamp(
-          (0.54 - info.temperature) * 1.6 + Math.max(0, info.height - SEA_LEVEL - 18) / 36,
-          0,
-          0.82,
-        );
-        const isPine = PINE_LOG !== AIR && PINE_NEEDLES !== AIR
-          && speciesRoll < 0.2 + pineClimate * 0.72;
-        const baseTrunkBlock = isPine ? PINE_LOG : LOG;
-        const overgrownRoll = hashUnit(hash2D(rootX, rootZ, this._noiseSeeds.trees ^ 0x3c6ef372));
-        const overgrownChance = isPine ? 0.18 : 0.38;
-        const isOvergrown = overgrownRoll < overgrownChance;
+        const tree = this._treeDescriptorForCell(cellX, cellZ);
+        if (!tree) continue;
+        const {
+          rootX,
+          rootY,
+          rootZ,
+          isPine,
+          trunkBlock,
+          leafBlock,
+          trunkHeight,
+        } = tree;
         // Overgrowth is a bark texture variant, never a ring of protruding leaf
         // cubes. Selected trees keep one clean trunk silhouette while ivy or
         // moss pixels wrap every exposed side of the mature wood.
-        const trunkBlock = isOvergrown
-          ? (isPine ? OVERGROWN_PINE_LOG : OVERGROWN_ASH_LOG)
-          : baseTrunkBlock;
-        const leafBlock = isPine ? PINE_NEEDLES : LEAVES;
-        const trunkHeight = (isPine ? 7 : 4) + Math.floor(
-          hashUnit(hash2D(rootX, rootZ, this._noiseSeeds.trees ^ 0x27d4eb2d)) * (isPine ? 4 : 4),
-        );
-        const rootY = info.height + 1;
         for (let dy = 0; dy < trunkHeight; dy++) {
           this._writeGenerated(chunk, rootX, rootY + dy, rootZ, trunkBlock, (id) => (
             id === AIR || id === LEAVES || id === PINE_NEEDLES

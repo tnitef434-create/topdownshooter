@@ -169,6 +169,7 @@ function initRenderer() {
   }
   environment = new Environment(scene, renderer);
   window.__worldloomPonds = environment.pondEcology;
+  window.__worldloomHangingLeaves = environment.hangingLeaves;
   // World-avatar geometry is structurally absent from the gameplay and GTAO
   // camera, but remains part of the sun's shadow pass.
   environment.sunLight?.shadow?.camera?.layers.enable(WORLD_AVATAR_LAYER);
@@ -406,8 +407,11 @@ async function startWorld({ seed, mode: selectedMode, saveData = null }) {
   streamingFogFar = null;
   environment.enhanceWorldMaterials(world);
   environment.setWeatherContext(world);
-  ui.setLoading(0.075, 'Growing lily ponds and waterside life…');
-  await environment.preparePondEcology();
+  ui.setLoading(0.075, 'Growing lily ponds and hanging forest leaves…');
+  await Promise.all([
+    environment.preparePondEcology(),
+    environment.prepareHangingLeaves(),
+  ]);
   mode = selectedMode === 'builder' ? 'builder' : 'survival';
   worldCreatedAt = saveData?.createdAt || new Date().toISOString();
   flags = { ...(saveData?.flags || {}) };
@@ -1705,6 +1709,7 @@ function animate(now) {
   const environmentDt = state === 'playing' || state === 'inventory' ? dt : state === 'menu' ? dt * 0.12 : 0;
   environment.update(environmentDt, focus, settings.viewDistance, {
     submerged: Boolean(player?.headUnderwater),
+    playerVelocity: player?.velocity,
   });
   if (scene?.fog && world && player) {
     const clampedFog = clampFogToMeshedTerrain({

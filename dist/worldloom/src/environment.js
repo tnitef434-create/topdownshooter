@@ -3,6 +3,7 @@ import { BLOCK, BLOCKS, blockShapeHeight } from './blocks.js';
 import { CRACK_STAGES, createCrackAtlasTexture } from './crack-texture.js';
 import { GRAPHICS_PRESETS } from './save.js';
 import { PondEcologyField } from './pond-ecology.js';
+import { HangingLeavesField } from './hanging-leaves.js';
 import { atmosphericFogRange } from './fog.js';
 
 const LIGHT_BLOCKS = new Set([BLOCK.TORCH, BLOCK.LUMEN_CRYSTAL, BLOCK.KILN, BLOCK.FURNACE]);
@@ -995,6 +996,7 @@ export class Environment {
     this.fallingLeaves = new FallingLeaves(scene);
     this.lightning = new LightningField(scene);
     this.pondEcology = new PondEcologyField(scene, this.graphicsUniforms);
+    this.hangingLeaves = new HangingLeavesField(scene, this.graphicsUniforms);
     this.localLights = Array.from({ length: 8 }, (_, index) => {
       const light = new THREE.PointLight(0xffb45f, 0, 10, 2);
       light.name = `Nearby voxel light ${index + 1}`;
@@ -1016,10 +1018,15 @@ export class Environment {
     this.fallingLeaves.setWorld(this.weatherWorld);
     this.lightning.setWorld(this.weatherWorld);
     this.pondEcology.setWorld(this.weatherWorld);
+    this.hangingLeaves.setWorld(this.weatherWorld);
   }
 
   preparePondEcology() {
     return this.pondEcology.prepare();
+  }
+
+  prepareHangingLeaves() {
+    return this.hangingLeaves.prepare();
   }
 
   forceWeather(kind = 'rain', intensity = 0.78, duration = 120) {
@@ -1068,6 +1075,7 @@ export class Environment {
     this.fallingLeaves.setQuality(profile, true, settings.reducedMotion);
     this.lightning.setQuality(this.weatherEnabled && profile.atmosphereDetail >= 0.6, settings.reducedMotion);
     this.pondEcology.setQuality(profile, settings.reducedMotion);
+    this.hangingLeaves.setQuality(profile, settings.reducedMotion);
     this.graphicsUniforms.windStrength.value = settings.reducedMotion ? 0.22 : 1;
 
     if (this.renderer?.shadowMap) {
@@ -1592,6 +1600,7 @@ export class Environment {
       dayAmount: this.dayAmount,
       skyExposure: this.skyExposure,
     });
+    this.hangingLeaves.update(dt, focus, context);
     const lightningEvent = this.lightning.update(
       dt,
       focus,

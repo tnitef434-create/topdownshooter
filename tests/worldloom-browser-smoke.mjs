@@ -473,6 +473,96 @@ try {
   assert(pondState.heavyRain.pads > 0, 'Heavy rain incorrectly removes solid lily pads');
   assert(pondState.heavyRain.draws <= 1, 'Hidden rain ambience still consumes pond draw calls');
 
+  await frame.waitForFunction(() => {
+    const stats = window.__worldloomHangingLeaves?.getStats?.();
+    return stats?.ready && !stats.failed && stats.segments > 0;
+  }, { timeout: 10_000 });
+  const hangingLeafState = await frame.evaluate(() => {
+    const environment = window.__worldloomEnvironment;
+    const leaves = window.__worldloomHangingLeaves;
+    const focus = environment.atmosphere.position.clone();
+    environment.applyGraphicsSettings({
+      graphicsQuality: 'balanced',
+      weatherEffects: true,
+      reducedMotion: false,
+    });
+    leaves._syncTimer = 0;
+    leaves.update(0, focus, { playerVelocity: focus.clone().set(0, 0, 0) });
+    const initial = leaves.getStats();
+    const strand = leaves.strands[0];
+    const anchorBefore = strand.anchor.clone();
+    const tipBefore = strand.points.at(-1).clone();
+    const player = tipBefore.clone();
+    player.x -= 0.12;
+    player.y -= 0.45;
+    const velocity = player.clone().set(4.5, 0, 0);
+    let interactions = 0;
+    for (let frameIndex = 0; frameIndex < 12; frameIndex++) {
+      leaves.update(1 / 60, player, { playerVelocity: velocity });
+      interactions = Math.max(interactions, leaves.getStats().interactions);
+    }
+    const tipAfter = leaves.strands.find((entry) => entry.key === strand.key)?.points.at(-1);
+    const anchorAfter = leaves.strands.find((entry) => entry.key === strand.key)?.anchor;
+    const finiteMatrices = [...leaves.mesh.instanceMatrix.array].every(Number.isFinite);
+
+    environment.applyGraphicsSettings({
+      graphicsQuality: 'low',
+      weatherEffects: true,
+      reducedMotion: false,
+    });
+    leaves._syncTimer = 0;
+    leaves.update(0, focus, { playerVelocity: velocity.set(0, 0, 0) });
+    const low = leaves.getStats();
+    environment.applyGraphicsSettings({
+      graphicsQuality: 'balanced',
+      weatherEffects: true,
+      reducedMotion: false,
+    });
+    leaves._syncTimer = 0;
+    leaves.update(0, focus, { playerVelocity: velocity });
+
+    return {
+      initial,
+      low,
+      ready: leaves.ready,
+      failed: leaves.failed,
+      error: leaves.error ? String(leaves.error.message || leaves.error) : '',
+      assetUrl: leaves.assetUrl,
+      oneMesh: leaves.group.children.length === 1 && leaves.mesh?.isInstancedMesh,
+      pixelAtlas: Boolean(
+        leaves.mesh?.material?.map?.isTexture
+        && leaves.mesh.material.map.magFilter === 1003
+        && leaves.mesh.material.map.minFilter === 1003
+        && leaves.mesh.material.map.generateMipmaps === false
+      ),
+      drawBudget: leaves.mesh?.userData?.drawBudget,
+      interactions,
+      tipDisplacement: tipAfter ? Math.hypot(tipAfter.x - tipBefore.x, tipAfter.z - tipBefore.z) : 0,
+      anchorDrift: anchorAfter ? anchorAfter.distanceTo(anchorBefore) : Number.POSITIVE_INFINITY,
+      finiteMatrices,
+    };
+  });
+  assert.equal(hangingLeafState.ready, true, 'Blender hanging leaves did not finish loading');
+  assert.equal(hangingLeafState.failed, false, `Blender hanging leaves failed: ${hangingLeafState.error}`);
+  assert.match(hangingLeafState.assetUrl, /hanging-tree-leaves\.glb(?:$|[?#])/i);
+  assert.equal(hangingLeafState.oneMesh, true, 'hanging foliage exceeded its one-mesh render design');
+  assert.equal(hangingLeafState.pixelAtlas, true, 'hanging foliage lost its nearest-filtered GPT-image atlas');
+  assert.equal(hangingLeafState.drawBudget, 1);
+  assert(hangingLeafState.initial.trees > 0 && hangingLeafState.initial.strands > 0,
+    `seed 64 produced no selected hanging-leaf trees: ${JSON.stringify(hangingLeafState.initial)}`);
+  assert(hangingLeafState.initial.segments > 0 && hangingLeafState.initial.segments <= 240,
+    `balanced hanging foliage exceeded its segment cap: ${JSON.stringify(hangingLeafState.initial)}`);
+  assert.equal(hangingLeafState.initial.draws, 1);
+  assert(hangingLeafState.interactions > 0, 'walking into hanging leaves did not reach their spring physics');
+  assert(hangingLeafState.tipDisplacement > 0.025,
+    `player contact did not visibly bend the foliage (${hangingLeafState.tipDisplacement})`);
+  assert(hangingLeafState.anchorDrift <= 1e-6,
+    `tree attachment followed the simulated player by ${hangingLeafState.anchorDrift}`);
+  assert.equal(hangingLeafState.finiteMatrices, true, 'leaf physics produced a non-finite GPU transform');
+  assert(hangingLeafState.low.segments <= 40,
+    `Low graphics exceeded its 40-segment hanging-leaf cap: ${JSON.stringify(hangingLeafState.low)}`);
+  assert(hangingLeafState.low.draws <= 1, 'Low graphics used more than one hanging-leaf draw');
+
   const clearState = await frame.evaluate(() => {
     const environment = window.__worldloomEnvironment;
     const focus = environment.atmosphere.position.clone();
@@ -509,22 +599,39 @@ try {
     await frame.evaluate(() => {
       const graphics = window.__worldloomGraphics;
       const ponds = window.__worldloomPonds;
+      const hangingLeaves = window.__worldloomHangingLeaves;
       const focus = window.__worldloomEnvironment.atmosphere.position;
-      const target = ponds.mistAnchors.reduce((nearest, anchor) => (
+      const ashStrands = hangingLeaves?.strands?.filter((strand) => !strand.isPine) || [];
+      const visibleStrands = ashStrands.length ? ashStrands : hangingLeaves?.strands || [];
+      const nearestStrand = visibleStrands.reduce((nearest, strand) => (
+        !nearest
+          || Math.hypot(strand.anchor.x - focus.x, strand.anchor.z - focus.z)
+            < Math.hypot(nearest.anchor.x - focus.x, nearest.anchor.z - focus.z)
+          ? strand
+          : nearest
+      ), null);
+      const nearestPond = ponds.mistAnchors.reduce((nearest, anchor) => (
         !nearest
           || Math.hypot(anchor.x - focus.x, anchor.z - focus.z)
             < Math.hypot(nearest.x - focus.x, nearest.z - focus.z)
           ? anchor
           : nearest
       ), null);
+      const target = nearestStrand
+        ? nearestStrand.anchor.clone().lerp(nearestStrand.points.at(-1), 0.72)
+        : nearestPond;
       if (!graphics?.camera || !target) throw new Error('No deterministic pond view is available');
+
+      const world = hangingLeaves?.world || ponds.world;
+      const cameraDistance = nearestStrand ? 4.6 : 9;
+      const cameraHeight = nearestStrand ? 0.7 : 6.5;
 
       const candidates = Array.from({ length: 12 }, (_, index) => {
         const angle = index * Math.PI * 2 / 12;
         const position = {
-          x: target.x + Math.cos(angle) * 9,
-          y: target.y + 6.5,
-          z: target.z + Math.sin(angle) * 9,
+          x: target.x + Math.cos(angle) * cameraDistance,
+          y: target.y + cameraHeight,
+          z: target.z + Math.sin(angle) * cameraDistance,
         };
         let obstructions = 0;
         for (let step = 0; step <= 14; step++) {
@@ -532,7 +639,7 @@ try {
           const x = position.x + (target.x - position.x) * blend;
           const y = position.y + (target.y + 0.2 - position.y) * blend;
           const z = position.z + (target.z - position.z) * blend;
-          if (ponds.world.getBlock(Math.floor(x), Math.floor(y), Math.floor(z)) !== 0) {
+          if (world.getBlock(Math.floor(x), Math.floor(y), Math.floor(z)) !== 0) {
             obstructions += step < 3 ? 10 : 1;
           }
         }
@@ -551,7 +658,7 @@ try {
         candidates[0].position.y,
         candidates[0].position.z,
       );
-      camera.lookAt(target.x, target.y + 0.2, target.z);
+      camera.lookAt(target.x, target.y + (nearestStrand ? -0.2 : 0.2), target.z);
       camera.updateMatrixWorld(true);
       camera.position.set = function holdPondView() { return this; };
       camera.quaternion.setFromEuler = function holdPondView() { return this; };
@@ -895,6 +1002,7 @@ try {
     ok: true,
     gameState,
     pondState,
+    hangingLeafState,
     clearState,
     stormState,
     deployPresentation,

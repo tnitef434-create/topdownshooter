@@ -1,5 +1,18 @@
 node_modules/
-dist/
+# The site is deployed directly from dist. Keep most generated output ignored,
+# but surface Worldloom runtime additions that tracked dist modules import.
+dist/*
+!dist/worldloom/
+dist/worldloom/*
+!dist/worldloom/src/
+dist/worldloom/src/*
+!dist/worldloom/src/hanging-leaves.js
+!dist/worldloom/assets/
+dist/worldloom/assets/*
+!dist/worldloom/assets/environment/
+dist/worldloom/assets/environment/*
+!dist/worldloom/assets/environment/hanging-tree-leaves-atlas.png
+!dist/worldloom/assets/environment/hanging-tree-leaves.glb
 .DS_Store
 .env
 .env.*
