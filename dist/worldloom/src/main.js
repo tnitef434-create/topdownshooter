@@ -411,6 +411,7 @@ async function startWorld({ seed, mode: selectedMode, saveData = null }) {
   await Promise.all([
     environment.preparePondEcology(),
     environment.prepareHangingLeaves(),
+    environment.prepareRedFlowers(),
   ]);
   mode = selectedMode === 'builder' ? 'builder' : 'survival';
   worldCreatedAt = saveData?.createdAt || new Date().toISOString();

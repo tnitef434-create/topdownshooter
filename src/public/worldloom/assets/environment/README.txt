@@ -24,3 +24,16 @@ one top-pivot mesh, one embedded nearest-sampled 64x64 RGBA atlas, and at most
 Regenerate from the repository root with:
 
   "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe" --background --factory-startup --python tools/generate_hanging_leaves.py -- --source tools/assets/hanging-leaves-textures/gpt-hanging-leaves-source.png --atlas src/public/worldloom/assets/environment/hanging-tree-leaves-atlas.png --output src/public/worldloom/assets/environment/hanging-tree-leaves.glb --preview outputs/hanging-tree-leaves-qa.png --seed 240824
+
+Red meadow flower
+=================
+
+red-flower.glb is an original voxel-relief flower generated locally with
+Blender 5.2 from tools/generate_red_flower.py. Its Red_Flower_Asset root is a
+16x16 voxel relief (688 triangles) with per-face vertex colors, origin at the
+stem base. RedFlowerField in src/red-flowers.js instances it across meadow
+turf.
+
+Regenerate from the repository root with:
+
+  "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe" --background --factory-startup --python tools/generate_red_flower.py -- --output src/public/worldloom/assets/environment/red-flower.glb --preview outputs/red-flower-qa.png

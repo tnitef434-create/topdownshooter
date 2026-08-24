@@ -4,6 +4,7 @@ import { CRACK_STAGES, createCrackAtlasTexture } from './crack-texture.js';
 import { GRAPHICS_PRESETS } from './save.js';
 import { PondEcologyField } from './pond-ecology.js';
 import { HangingLeavesField } from './hanging-leaves.js';
+import { RedFlowerField } from './red-flowers.js';
 import { atmosphericFogRange } from './fog.js';
 
 const LIGHT_BLOCKS = new Set([BLOCK.TORCH, BLOCK.LUMEN_CRYSTAL, BLOCK.KILN, BLOCK.FURNACE]);
@@ -997,6 +998,7 @@ export class Environment {
     this.lightning = new LightningField(scene);
     this.pondEcology = new PondEcologyField(scene, this.graphicsUniforms);
     this.hangingLeaves = new HangingLeavesField(scene, this.graphicsUniforms);
+    this.redFlowers = new RedFlowerField(scene);
     this.localLights = Array.from({ length: 8 }, (_, index) => {
       const light = new THREE.PointLight(0xffb45f, 0, 10, 2);
       light.name = `Nearby voxel light ${index + 1}`;
@@ -1019,6 +1021,7 @@ export class Environment {
     this.lightning.setWorld(this.weatherWorld);
     this.pondEcology.setWorld(this.weatherWorld);
     this.hangingLeaves.setWorld(this.weatherWorld);
+    this.redFlowers.setWorld(this.weatherWorld);
   }
 
   preparePondEcology() {
@@ -1027,6 +1030,10 @@ export class Environment {
 
   prepareHangingLeaves() {
     return this.hangingLeaves.prepare();
+  }
+
+  prepareRedFlowers() {
+    return this.redFlowers.prepare();
   }
 
   forceWeather(kind = 'rain', intensity = 0.78, duration = 120) {
@@ -1601,6 +1608,7 @@ export class Environment {
       skyExposure: this.skyExposure,
     });
     this.hangingLeaves.update(dt, focus, context);
+    this.redFlowers.update(dt, focus);
     const lightningEvent = this.lightning.update(
       dt,
       focus,
