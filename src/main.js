@@ -1985,13 +1985,12 @@ function setupUIListeners() {
     resetWorldloomWarnings();
     worldloomFrameLoading?.classList.remove('is-hidden');
     worldloomFrameLoading?.setAttribute('aria-busy', 'false');
-    if (deployModal) deployModal.classList.add('active');
+    if (deployModal) deployModal.classList.remove('active');
+    showScreen('menu');
     if (!isMusicMuted) {
-      deployMusic.volume = 0.15;
-      deployMusic.currentTime = 0;
-      deployMusic.play().catch(() => {});
+      playMenuMusic();
     }
-    btnPlayWorldloom?.focus();
+    btnDeployMain?.focus();
     if (btnCloseWorldloom) btnCloseWorldloom.disabled = false;
     worldloomClosing = false;
   };
