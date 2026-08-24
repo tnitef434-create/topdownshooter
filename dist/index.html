@@ -11,8 +11,8 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=Orbitron:wght@500;700;900&display=swap" rel="stylesheet">
   <!-- Style sheet -->
   <!-- Socket.io client (loaded dynamically via bundler or server, or we can just import from socket.io-client) -->
-  <script type="module" crossorigin src="/assets/index-DbNfH-m7.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-CPRos8lB.css">
+  <script type="module" crossorigin src="/assets/index-drQYmTza.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-CCbEg6K0.css">
 </head>
 <body class="is-starting">
 
@@ -210,9 +210,9 @@
             </div>
           </div>
 
-          <!-- Right side: Weapon Selection -->
+          <!-- Right side: Loadout & Mission Setup -->
           <div class="weapon-panel">
-            <h3>SELECT LOADOUT</h3>
+            <h3 class="lobby-section-title">SELECT LOADOUT</h3>
             <div class="weapon-selector">
               <div class="weapon-option active" data-weapon="pistol">
                 <div class="weapon-info">
@@ -282,47 +282,8 @@
               </div>
             </div>
 
-            <!-- Color Selection Panel -->
-            <h3 style="margin-top: 15px; font-family: var(--font-title); font-size: 14px; color: var(--neon-teal); letter-spacing: 1.5px; border-left: 3px solid var(--neon-cyan); padding-left: 10px;">OPERATIVE COLOR</h3>
-            <div id="lobby-color-selector" class="color-selector" style="display: flex; gap: 10px; margin-top: 10px; margin-bottom: 5px;">
-              <div class="color-option active" data-color="cyan" style="border: 2px solid #66fcf1; width: 30px; height: 30px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; background: rgba(102, 252, 241, 0.2);"><span style="display: block; width: 14px; height: 14px; border-radius: 50%; background: #66fcf1;"></span></div>
-              <div class="color-option" data-color="green" style="border: 2px solid transparent; width: 30px; height: 30px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; background: rgba(57, 219, 20, 0.2);"><span style="display: block; width: 14px; height: 14px; border-radius: 50%; background: #39db14;"></span></div>
-              <div class="color-option" data-color="purple" style="border: 2px solid transparent; width: 30px; height: 30px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; background: rgba(157, 59, 255, 0.2);"><span style="display: block; width: 14px; height: 14px; border-radius: 50%; background: #9d3bff;"></span></div>
-              <div class="color-option" data-color="orange" style="border: 2px solid transparent; width: 30px; height: 30px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; background: rgba(255, 127, 59, 0.2);"><span style="display: block; width: 14px; height: 14px; border-radius: 50%; background: #ff7f3b;"></span></div>
-              <div class="color-option" data-color="yellow" style="border: 2px solid transparent; width: 30px; height: 30px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; background: rgba(255, 215, 0, 0.2);"><span style="display: block; width: 14px; height: 14px; border-radius: 50%; background: #ffd700;"></span></div>
-              <div class="color-option" data-color="red" style="border: 2px solid transparent; width: 30px; height: 30px; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; background: rgba(255, 60, 60, 0.2);"><span style="display: block; width: 14px; height: 14px; border-radius: 50%; background: #ff3c3c;"></span></div>
-            </div>
-
-            <!-- Lobby Game Mode Selector -->
-            <div id="lobby-mode-selector-container" style="margin-top: 15px; border-left: 3px solid var(--neon-teal); padding-left: 10px;">
-              <h3 style="font-family: var(--font-title); font-size: 14px; color: var(--neon-teal); letter-spacing: 1.5px; margin-bottom: 8px;">GAME MODE</h3>
-              <select id="lobby-mode-select" class="cyber-select" style="width: 100%; font-size: 11px; padding: 8px; font-family: var(--font-title); background: rgba(0,0,0,0.6); color: white; border: 1px solid var(--neon-teal); border-radius: 4px; cursor: pointer; outline: none; text-transform: uppercase;">
-                <option value="1v1">DUEL 1V1 (CLASSIC)</option>
-                <option value="sabotage">SABOTAGE (TASK SURVIVAL)</option>
-              </select>
-            </div>
-
-            <!-- Lobby Map Selector -->
-            <div id="lobby-map-selector-container" style="margin-top: 15px; border-left: 3px solid var(--neon-teal); padding-left: 10px;">
-              <h3 style="font-family: var(--font-title); font-size: 14px; color: var(--neon-teal); letter-spacing: 1.5px; margin-bottom: 8px;">MISSION MAP</h3>
-              <select id="lobby-map-select" class="cyber-select" style="width: 100%; font-size: 11px; padding: 8px; font-family: var(--font-title); background: rgba(0,0,0,0.6); color: white; border: 1px solid var(--neon-teal); border-radius: 4px; cursor: pointer; outline: none; text-transform: uppercase;">
-                <option value="manor">RESIDENTIAL MANOR (CLASSIC)</option>
-                <option value="cyberlab">NEON CYBER-LAB (FLAGSHIP 🌟)</option>
-                <option value="arena">NEON ARENA (1V1 COMPETITIVE 🌟)</option>
-              </select>
-            </div>
-
-            <!-- Lobby Render Style Selector -->
-            <div id="lobby-style-selector-container" style="margin-top: 15px; border-left: 3px solid var(--neon-teal); padding-left: 10px;">
-              <h3 style="font-family: var(--font-title); font-size: 14px; color: var(--neon-teal); letter-spacing: 1.5px; margin-bottom: 8px;">RENDER STYLE</h3>
-              <select id="lobby-style-select" class="cyber-select" style="width: 100%; font-size: 11px; padding: 8px; font-family: var(--font-title); background: rgba(0,0,0,0.6); color: white; border: 1px solid var(--neon-teal); border-radius: 4px; cursor: pointer; outline: none; text-transform: uppercase;">
-                <option value="realistic">REALISTIC (CLASSIC GRAPHICS)</option>
-                <option value="competitive">COMPETITIVE (HIGH VISIBILITY)</option>
-              </select>
-            </div>
-
             <!-- Weapon Details / Stats -->
-            <div id="weapon-stats-display" class="weapon-stats">
+            <div id="weapon-stats-display" class="weapon-stats lobby-weapon-stats">
               <div class="stat-row">
                 <span>DAMAGE:</span>
                 <div class="stat-bar"><div class="bar-fill" style="width: 25%"></div></div>
@@ -338,6 +299,42 @@
               <div class="stat-row">
                 <span>MAG CAPACITY:</span>
                 <span class="stat-val">12 rounds</span>
+              </div>
+            </div>
+
+            <h3 class="lobby-section-title">OPERATIVE COLOR</h3>
+            <div id="lobby-color-selector" class="color-selector lobby-color-row">
+              <div class="color-option active" data-color="cyan"><span style="background: #66fcf1;"></span></div>
+              <div class="color-option" data-color="green"><span style="background: #39db14;"></span></div>
+              <div class="color-option" data-color="purple"><span style="background: #9d3bff;"></span></div>
+              <div class="color-option" data-color="orange"><span style="background: #ff7f3b;"></span></div>
+              <div class="color-option" data-color="yellow"><span style="background: #ffd700;"></span></div>
+              <div class="color-option" data-color="red"><span style="background: #ff3c3c;"></span></div>
+            </div>
+
+            <h3 class="lobby-section-title">MISSION SETUP</h3>
+            <div class="lobby-setup-grid">
+              <div class="lobby-field" id="lobby-mode-selector-container">
+                <label for="lobby-mode-select">GAME MODE</label>
+                <select id="lobby-mode-select" class="cyber-select lobby-select">
+                  <option value="1v1">DUEL 1V1 (CLASSIC)</option>
+                  <option value="sabotage">SABOTAGE (TASK SURVIVAL)</option>
+                </select>
+              </div>
+              <div class="lobby-field" id="lobby-map-selector-container">
+                <label for="lobby-map-select">MISSION MAP</label>
+                <select id="lobby-map-select" class="cyber-select lobby-select">
+                  <option value="manor">RESIDENTIAL MANOR (CLASSIC)</option>
+                  <option value="cyberlab">NEON CYBER-LAB (FLAGSHIP 🌟)</option>
+                  <option value="arena">NEON ARENA (1V1 COMPETITIVE 🌟)</option>
+                </select>
+              </div>
+              <div class="lobby-field" id="lobby-style-selector-container">
+                <label for="lobby-style-select">RENDER STYLE</label>
+                <select id="lobby-style-select" class="cyber-select lobby-select">
+                  <option value="realistic">REALISTIC (CLASSIC GRAPHICS)</option>
+                  <option value="competitive">COMPETITIVE (HIGH VISIBILITY)</option>
+                </select>
               </div>
             </div>
           </div>
@@ -658,6 +655,7 @@
          <div style="font-family: var(--font-title); font-size: 10px; color: var(--neon-yellow); letter-spacing: 2px; font-weight: 700; margin-bottom: 6px;">TACTICSTRIKE V2 CHANGELOG</div>
          <h2 style="font-family: var(--font-title); font-size: 26px; color: #fff; margin-bottom: 15px; letter-spacing: 1.5px; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 12px; font-weight: 900;">WHAT'S NEW — V2</h2>
          <div class="whats-new-feed">
+             <p style="margin-bottom: 14px;">🎮 <strong style="color: #66fcf1;">OPERATION LOBBY REDESIGN:</strong> <span style="background: rgba(102,252,241,0.15); color: #66fcf1; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; margin-left: 4px; border: 1px solid rgba(102,252,241,0.3);">REDESIGNED</span><br>The create-lobby screen got a full overhaul — a compact scrolling loadout column with integrated weapon stats, a cleaner operative color picker, and a tidy MISSION SETUP panel for game mode, map, and render style. No more overlapping panels or cut-off weapon cards.</p>
              <p style="margin-bottom: 14px;">🧠 <strong style="color: #ffd45c;">TACTICAL AI — NAVIGATION MEMORY:</strong> <span style="background: rgba(255,212,92,0.14); color: #ffe28b; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; margin-left: 4px; border: 1px solid rgba(255,212,92,0.36);">LIVE</span><br>Training bots now remember rooms, doorways, cover, obstacles, dead ends, and spawn lanes. In 1v1 and 2v2 they route around walls, share sightings, coordinate targets, predict movement, and reposition instead of getting trapped.</p>
              <p style="margin-bottom: 14px;">🧱 <strong style="color: #82f3b7;">WORLDLOOM — LIVING PONDS UPDATE:</strong> <span style="background: rgba(74,221,144,0.14); color: #82f3b7; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; margin-left: 4px; border: 1px solid rgba(90,235,164,0.36);">LIVE</span><br>Discover naturally carved inland ponds with original Blender-built lily flowers, water mist, and tiny daytime flies. The rebuilt block interface and faster terrain streaming still keep a complete buffered horizon in view, while storms retain their full grey cloud deck.</p>
              <p style="margin-bottom: 14px;">🚀 <strong style="color: #66fcf1;">TACTICSTRIKE V2 IS LIVE:</strong> <span style="background: rgba(102,252,241,0.15); color: #66fcf1; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: bold; margin-left: 4px; border: 1px solid rgba(102,252,241,0.3);">V2</span><br>A fresh account system, upgraded shops, new credit visuals, and cleaner navigation are now live.</p>
