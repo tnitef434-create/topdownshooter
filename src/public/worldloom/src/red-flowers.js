@@ -13,7 +13,7 @@ const PATCH_CHANCE = 0.14;
 const FLOWER_CHANCE = 0.18;
 const MIN_SPACING_SQ = 16;
 const RESYNC_INTERVAL = 0.5;
-const TARGET_HEIGHT = 0.78;
+const TARGET_HEIGHT = 0.6;
 
 function clamp(value, minimum, maximum) {
   return Math.max(minimum, Math.min(maximum, Number(value) || 0));
@@ -140,6 +140,9 @@ export class RedFlowerField {
     this.error = null;
     this.mesh = null;
     this.flowers = [];
+    this.mined = new Set();
+    this.playerPlaced = new Map();
+    this._patchedWorld = null;
     this._loadPromise = null;
     this._loadGeneration = 0;
     this._syncTimer = 0;
@@ -199,14 +202,79 @@ export class RedFlowerField {
 
   setWorld(world) {
     const nextWorld = world || null;
+    if (this._patchedWorld && this._patchedWorld !== nextWorld) {
+      this._unpatchWorld(this._patchedWorld);
+    }
     if (this.world !== nextWorld) this._clear();
     this.world = nextWorld;
     this._syncTimer = 0;
-    if (!this.world) this._clear();
+    if (nextWorld) {
+      this._patchWorld(nextWorld);
+    } else {
+      this._clear();
+    }
+  }
+
+  _patchWorld(world) {
+    if (this._patchedWorld === world || world.__redFlowersPatched) return;
+    const original = world.setBlock.bind(world);
+    const field = this;
+    world.setBlock = function patchedSetBlock(x, y, z, id, options) {
+      const result = original(x, y, z, id, options);
+      if (id === BLOCK.RED_FLOWER) {
+        field._onExternalFlower(x, y, z);
+      } else if (id === BLOCK.AIR) {
+        field._onExternalBreak(x, y, z);
+      }
+      return result;
+    };
+    world.__redFlowersPatched = true;
+    this._patchedWorld = world;
+  }
+
+  _unpatchWorld(world) {
+    if (world.__redFlowersPatched && this._patchedWorld === world) {
+      delete world.__redFlowersPatched;
+    }
+    this._patchedWorld = null;
+  }
+
+  _blockKey(x, y, z) {
+    return `${x}:${y}:${z}`;
+  }
+
+  _onExternalFlower(x, y, z) {
+    const key = this._blockKey(x, y, z);
+    this.mined.delete(key);
+    if (this.flowers.some(f => f.key === key)) return;
+    if (!this.playerPlaced.has(key)) {
+      this.playerPlaced.set(key, {
+        key,
+        x,
+        y,
+        z,
+        rotation: unitHash(x, z, 0xa511e9) * Math.PI * 2,
+        scale: 0.9 + unitHash(x, z, 0x7f4ac3) * 0.32,
+        tilt: (unitHash(x, z, 0x9e37) - 0.5) * 0.12,
+      });
+    }
+  }
+
+  _onExternalBreak(x, y, z) {
+    const key = this._blockKey(x, y, z);
+    if (this.playerPlaced.has(key)) {
+      this.playerPlaced.delete(key);
+      this.mined.add(key);
+      return;
+    }
+    if (this.flowers.some(f => f.key === key)) {
+      this.mined.add(key);
+    }
   }
 
   _clear() {
     this.flowers.length = 0;
+    this.playerPlaced.clear();
     if (this.mesh) {
       this.mesh.count = 0;
       this.mesh.visible = false;
@@ -214,8 +282,16 @@ export class RedFlowerField {
     }
   }
 
+  _playerPlacedValid(entry) {
+    if (!this.world?.isPositionReady?.(entry.x, entry.z)) return true;
+    return this.world.getBlock?.(entry.x, entry.y, entry.z) === BLOCK.RED_FLOWER
+      && this.world.getBlock?.(entry.x, entry.y - 1, entry.z) === BLOCK.TURF;
+  }
+
   _flowerStillValid(flower) {
     if (!this.world?.isPositionReady?.(flower.x, flower.z)) return false;
+    const key = flower.key;
+    if (this.mined.has(key)) return false;
     const at = this.world.getBlock?.(flower.x, flower.y, flower.z);
     const below = this.world.getBlock?.(flower.x, flower.y - 1, flower.z);
     if (at === BLOCK.RED_FLOWER) {
@@ -223,10 +299,16 @@ export class RedFlowerField {
         this.world.setBlock?.(flower.x, flower.y, flower.z, BLOCK.AIR, { skipStats: true });
         return false;
       }
+      flower.wasPlaced = true;
       return true;
     }
     if (at === BLOCK.AIR && below === BLOCK.TURF) {
+      if (flower.wasPlaced) {
+        this.mined.add(key);
+        return false;
+      }
       this.world.setBlock?.(flower.x, flower.y, flower.z, BLOCK.RED_FLOWER, { skipStats: true });
+      flower.wasPlaced = true;
       return true;
     }
     return false;
@@ -258,7 +340,7 @@ export class RedFlowerField {
         if (!this.world.isPositionReady?.(x, z)) continue;
         const surface = this.world.terrainHeight?.(x, z);
         if (!Number.isFinite(surface)) continue;
-        const key = `${x}:${surface}:${z}`;
+        const key = this._blockKey(x, surface + 1, z);
         const cached = previousByKey.get(key);
         if (cached) {
           next.push(cached);
@@ -287,7 +369,11 @@ export class RedFlowerField {
     if (!this.mesh) return;
     const scaleBase = TARGET_HEIGHT / Math.max(0.1, this.mesh.userData.authoredHeight || 1);
     let instance = 0;
-    for (const flower of this.flowers) {
+    const written = new Set();
+    const emit = (flower) => {
+      if (instance >= MAX_FLOWERS) return;
+      if (written.has(flower.key)) return;
+      written.add(flower.key);
       this._dummy.position.set(flower.x + 0.5, flower.y, flower.z + 0.5);
       this._dummy.rotation.set(flower.tilt, flower.rotation, 0);
       this._spin.setFromAxisAngle(this._up, 0);
@@ -297,7 +383,9 @@ export class RedFlowerField {
       this._dummy.updateMatrix();
       this.mesh.setMatrixAt(instance, this._dummy.matrix);
       instance++;
-    }
+    };
+    this.flowers.forEach(emit);
+    this.playerPlaced.forEach(emit);
     this.mesh.count = instance;
     this.mesh.visible = instance > 0;
     this.mesh.instanceMatrix.needsUpdate = true;
@@ -308,6 +396,9 @@ export class RedFlowerField {
     const elapsed = Math.max(0, Number(dt) || 0);
     const stillPlaced = this.flowers.length
       && this.flowers.every((flower) => this._flowerStillValid(flower));
+    this.playerPlaced.forEach((entry, key) => {
+      if (!this._playerPlacedValid(entry)) this.playerPlaced.delete(key);
+    });
     this._syncTimer -= elapsed;
     if (this._syncTimer <= 0 || !stillPlaced) {
       this._syncTimer = RESYNC_INTERVAL;
@@ -323,6 +414,8 @@ export class RedFlowerField {
       loading: Boolean(this._loadPromise),
       error: this.error ? String(this.error.message || this.error) : '',
       flowers: this.mesh?.count || 0,
+      scattered: this.flowers.length,
+      playerPlaced: this.playerPlaced.size,
       draws: this.mesh?.visible && this.mesh.count > 0 ? 1 : 0,
       assetUrl: this.assetUrl,
     };

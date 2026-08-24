@@ -431,6 +431,7 @@ async function startWorld({ seed, mode: selectedMode, saveData = null }) {
 
   player = new PlayerController(camera, world);
   playerAvatar = new PlayerAvatar(scene);
+  window.__worldloomPlayer = player;
   window.__worldloomPlayerAvatar = playerAvatar;
   const defaultSpawn = world.findSpawn();
   spawnPoint.copy(defaultSpawn);
@@ -542,6 +543,7 @@ async function startWorld({ seed, mode: selectedMode, saveData = null }) {
     playerAvatar?.dispose();
     playerAvatar = null;
     window.__worldloomPlayerAvatar = null;
+  window.__worldloomPlayer = null;
     clearDroppedItems();
     world?.dispose();
     world = null;
@@ -982,6 +984,7 @@ function leaveToTitle() {
   playerAvatar?.dispose();
   playerAvatar = null;
   window.__worldloomPlayerAvatar = null;
+  window.__worldloomPlayer = null;
   clearDroppedItems();
   environment.updateLocalLights(null, null);
   environment.setWeatherContext(null);

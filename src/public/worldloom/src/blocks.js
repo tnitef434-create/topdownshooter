@@ -577,7 +577,7 @@ export const BLOCKS = Object.freeze([
     hardness: 0.06,
     color: 0xd72626,
     tiles: { top: TILE.RED_FLOWER, side: TILE.RED_FLOWER, bottom: TILE.RED_FLOWER },
-    drop: null,
+    drop: BLOCK.RED_FLOWER,
     tool: 'hand',
     opaque: false,
     transparent: true,
@@ -628,7 +628,7 @@ export function blockShapeHeight(blockId) {
   if (shape === 'slab-high') return 0.78;
   if (shape === 'cross-short') return 0.54;
   if (shape === 'grass-tuft') return 0.3;
-  if (shape === 'prop') return 0.05;
+  if (shape === 'prop') return 1;
   return 1;
 }
 
