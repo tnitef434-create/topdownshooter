@@ -8,8 +8,10 @@ import { World } from '../src/public/worldloom/src/world.js';
 import {
   BlockEffects,
   Environment,
+  nearestPeriodicCloudCoordinate,
   outdoorBounceIntensity,
   skylightTransmission,
+  weatherLightingState,
 } from '../src/public/worldloom/src/environment.js';
 import {
   PLAYER,
@@ -27,9 +29,11 @@ import {
   OBJECTIVES,
   RECIPES,
   combatProfile,
+  canHarvest,
   getItem,
   recipeRequirements,
   recipeStations,
+  treeLogSpecies,
 } from '../src/public/worldloom/src/data.js';
 import { HeldItemView } from '../src/public/worldloom/src/viewmodel.js';
 
@@ -376,6 +380,87 @@ test('visible nearby mesh work outranks an older partial job at the far edge', (
   world.dispose();
 });
 
+test('player edits publish ahead of background meshes and prioritize boundary neighbors', () => {
+  const world = new World(8472, null, null);
+  const edited = world.ensurePositionGenerated(0, 0);
+  const west = world.ensurePositionGenerated(-1, 8);
+  const background = world.ensurePositionGenerated(48, 48);
+
+  const oldGeometry = new THREE.BufferGeometry();
+  oldGeometry.setAttribute('position', new THREE.Float32BufferAttribute([
+    0, 0, 0,
+    1, 0, 0,
+    0, 1, 0,
+  ], 3));
+  world._replaceMesh(edited, 'opaqueMesh', oldGeometry, world.opaqueMaterial, 'Test terrain');
+  edited.dirty = false;
+  edited.meshDirty = false;
+  edited.streamPriority = 100_000;
+
+  let backgroundAdvanced = false;
+  background.dirty = true;
+  background.meshDirty = true;
+  background.streamPriority = -100_000;
+  background.meshJob = {
+    step() { backgroundAdvanced = true; return false; },
+    disposePartial() {},
+  };
+  background.meshJobRevision = background.revision;
+
+  const editX = 8;
+  const editZ = 8;
+  const editY = world.terrainHeight(editX, editZ);
+  assert.notEqual(world.getBlock(editX, editY, editZ), BLOCK.AIR);
+  assert.equal(world.setBlock(editX, editY, editZ, BLOCK.AIR), true);
+  assert.ok(edited.editMeshPriority > 0, 'a direct block edit must receive foreground mesh priority');
+
+  const replacementGeometry = new THREE.BufferGeometry();
+  replacementGeometry.setAttribute('position', new THREE.Float32BufferAttribute([
+    0, 0, 0,
+    0, 0, 1,
+    0, 1, 0,
+    0, 0, 1,
+    1, 1, 0,
+    0, 1, 0,
+  ], 3));
+  let editedSteps = 0;
+  edited.meshJob = {
+    result: {
+      opaque: replacementGeometry,
+      glass: null,
+      water: null,
+      glow: null,
+      faces: 1,
+      triangles: 2,
+    },
+    step() { editedSteps++; return true; },
+    disposePartial() {},
+  };
+  edited.meshJobRevision = edited.revision;
+
+  assert.equal(world.rebuildEdited(0.5), 1, 'the pointer-turn rebuild should publish one ready edit');
+  assert.equal(editedSteps, 1);
+  assert.equal(backgroundAdvanced, false, 'even a nearer-sorted background job must not run before the edit');
+  assert.notEqual(edited.opaqueMesh.geometry, oldGeometry, 'visible terrain geometry must be replaced immediately');
+  assert.equal(edited.opaqueMesh.geometry.getAttribute('position').count, 6);
+  assert.equal(edited.editMeshPriority, 0, 'published edits leave the foreground queue');
+
+  // x=0 is the west edge of chunk 0,0. Both owners need an urgent rebuild,
+  // while the directly edited chunk must retain the first queue position.
+  const boundaryX = 0;
+  const boundaryZ = 8;
+  const boundaryY = world.terrainHeight(boundaryX, boundaryZ);
+  assert.notEqual(world.getBlock(boundaryX, boundaryY, boundaryZ), BLOCK.AIR);
+  assert.equal(world.setBlock(boundaryX, boundaryY, boundaryZ, BLOCK.AIR), true);
+  assert.ok(edited.editMeshPriority > 0);
+  assert.ok(west.editMeshPriority > 0, 'the adjoining boundary mesh must inherit edit priority');
+  assert.ok(
+    edited.editMeshPriority < west.editMeshPriority,
+    'the directly edited chunk should publish before its seam neighbor',
+  );
+  world.dispose();
+});
+
 test('recently unloaded chunks reuse their generated voxel data when revisited', () => {
   const world = new World(9127, null, null);
   const original = world.ensurePositionGenerated(0, 0);
@@ -412,26 +497,46 @@ test('streaming prepares hidden horizon rings and favors the direction of travel
   world.dispose();
 });
 
-test('mature trees deterministically grow sparse leaf patches down their trunks', () => {
+test('mature overgrown trees use ivy bark textures without protruding lower-trunk leaf blocks', () => {
   const world = new World(64, null, null);
   for (let cz = -2; cz <= 2; cz++) {
     for (let cx = -2; cx <= 2; cx++) world.ensurePositionGenerated(cx * 16, cz * 16);
   }
-  let lowerTrunkPatches = 0;
+  const overgrownColumns = new Map();
   for (let z = -32; z < 48; z++) {
     for (let x = -32; x < 48; x++) {
       for (let y = 2; y < world.worldHeight - 3; y++) {
         const log = world.getBlock(x, y, z);
-        if (log !== BLOCK.ASH_LOG && log !== BLOCK.PINE_LOG) continue;
-        if (world.getBlock(x, y + 2, z) !== log) continue;
-        const leaf = log === BLOCK.ASH_LOG ? BLOCK.ASH_LEAVES : BLOCK.PINE_NEEDLES;
-        const touchesPatch = [[1, 0], [-1, 0], [0, 1], [0, -1]]
-          .some(([dx, dz]) => world.getBlock(x + dx, y, z + dz) === leaf);
-        lowerTrunkPatches += Number(touchesPatch);
+        if (log !== BLOCK.OVERGROWN_ASH_LOG && log !== BLOCK.OVERGROWN_PINE_LOG) continue;
+        const key = `${x},${z}`;
+        const previous = overgrownColumns.get(key);
+        if (!previous || y < previous.y) overgrownColumns.set(key, { x, y, z, log });
       }
     }
   }
-  assert.ok(lowerTrunkPatches >= 12, 'overgrown trees should be obvious but deterministic in a woodland sample');
+  assert.ok(overgrownColumns.size >= 4, 'textured overgrown trees should be obvious but deterministic');
+  let lowerLeafContacts = 0;
+  for (const { x, y, z, log } of overgrownColumns.values()) {
+    const leaf = log === BLOCK.OVERGROWN_ASH_LOG ? BLOCK.ASH_LEAVES : BLOCK.PINE_NEEDLES;
+    for (const lowerY of [y, y + 1]) {
+      lowerLeafContacts += Number(
+        [[1, 0], [-1, 0], [0, 1], [0, -1]]
+          .some(([dx, dz]) => world.getBlock(x + dx, lowerY, z + dz) === leaf),
+      );
+    }
+  }
+  // A rare neighbouring canopy can naturally touch a sloped lower trunk, but
+  // the old dedicated patch generator touched most selected trunks. Keep that
+  // contact exceptional while the overgrowth itself lives in the bark atlas.
+  assert.ok(lowerLeafContacts <= Math.floor(overgrownColumns.size * 0.25));
+  assert.equal(BLOCKS[BLOCK.OVERGROWN_ASH_LOG].drop, BLOCK.ASH_LOG);
+  assert.equal(BLOCKS[BLOCK.OVERGROWN_PINE_LOG].drop, BLOCK.PINE_LOG);
+  assert.equal(treeLogSpecies(BLOCK.OVERGROWN_ASH_LOG), 'ash');
+  assert.equal(treeLogSpecies(BLOCK.OVERGROWN_PINE_LOG), 'pine');
+  assert.equal(canHarvest(0, BLOCK.OVERGROWN_ASH_LOG), true);
+  assert.equal(canHarvest(0, BLOCK.OVERGROWN_PINE_LOG), true);
+  assert.notEqual(BLOCKS[BLOCK.OVERGROWN_ASH_LOG].tiles.side, BLOCKS[BLOCK.ASH_LOG].tiles.side);
+  assert.notEqual(BLOCKS[BLOCK.OVERGROWN_PINE_LOG].tiles.side, BLOCKS[BLOCK.PINE_LOG].tiles.side);
   world.dispose();
 });
 
@@ -454,10 +559,9 @@ test('rain intensity is clamped to zero whenever the local sky has no storm clou
   assert.equal(environment.rainIntensity, 0);
 });
 
-test('clearing rain fades over several updates while the overcast deck stays locked', () => {
-  const environment = Object.create(Environment.prototype);
-  Object.assign(environment, {
-    weatherPhase: 'clearing',
+function weatherHarness(phase, overrides = {}) {
+  return Object.assign(Object.create(Environment.prototype), {
+    weatherPhase: phase,
     weatherBuildAge: 20,
     weatherWorld: {},
     weatherEnabled: true,
@@ -466,6 +570,61 @@ test('clearing rain fades over several updates while the overcast deck stays loc
     cloudCoverTarget: 1,
     localCloudCount: 3,
     localCloudCoverage: 1,
+    rainTarget: 0,
+    rainIntensity: 0,
+    overcastAmount: 0,
+    stormIntensity: 0.8,
+    pendingStormDuration: 90,
+  }, overrides);
+}
+
+test('clear weather stays bright and blue even when ordinary clouds are numerous', () => {
+  const environment = weatherHarness('clear');
+  environment._updateWeather(0.25);
+  const lighting = weatherLightingState(
+    environment.weatherPhase,
+    environment.overcastAmount,
+    environment.rainIntensity,
+  );
+  assert.equal(environment.weatherPhase, 'clear');
+  assert.equal(environment.rainIntensity, 0);
+  assert.equal(environment.overcastAmount, 0);
+  assert.equal(lighting.stormAmount, 0);
+  assert.equal(lighting.sunVisibility, 1);
+});
+
+test('building cloud banks do not grey the sky or hide the sun before rain', () => {
+  const environment = weatherHarness('building');
+  environment._updateWeather(0.25);
+  const lighting = weatherLightingState(
+    environment.weatherPhase,
+    environment.overcastAmount,
+    environment.rainIntensity,
+  );
+  assert.equal(environment.weatherPhase, 'building');
+  assert.equal(environment.rainIntensity, 0);
+  assert.equal(environment.overcastAmount, 0);
+  assert.equal(lighting.overcastTarget, 0);
+  assert.equal(lighting.sunVisibility, 1);
+});
+
+test('rain starts the full grey deck and hides the sun in the same update', () => {
+  const environment = weatherHarness('building', { weatherTimer: 0 });
+  environment._updateWeather(0.1);
+  const lighting = weatherLightingState(
+    environment.weatherPhase,
+    environment.overcastAmount,
+    environment.rainIntensity,
+  );
+  assert.equal(environment.weatherPhase, 'rain');
+  assert.ok(environment.rainIntensity > 0);
+  assert.equal(environment.overcastAmount, 1);
+  assert.equal(lighting.stormLocked, true);
+  assert.equal(lighting.sunVisibility, 0);
+});
+
+test('clearing rain fades over several updates while the overcast deck stays locked', () => {
+  const environment = weatherHarness('clearing', {
     rainTarget: 0,
     rainIntensity: 0.8,
     overcastAmount: 1,
@@ -478,14 +637,64 @@ test('clearing rain fades over several updates while the overcast deck stays loc
   assert.ok(environment.cloudCoverTarget >= 0.9);
 
   let elapsed = 0.25;
-  while (environment.weatherPhase === 'clearing' && elapsed < 8) {
+  while (environment.rainIntensity > 0 && elapsed < 8) {
+    environment._updateWeather(0.25);
+    elapsed += 0.25;
+  }
+  assert.equal(environment.rainIntensity, 0);
+  assert.equal(environment.weatherPhase, 'clearing', 'the sky should clear before another weather cycle begins');
+  assert.ok(environment.overcastAmount > 0 && environment.overcastAmount < 1,
+    'the grey deck should begin a smooth fade only after the rain tail ends');
+  assert.ok(elapsed >= 3.5 && elapsed <= 8, `rain fade completed at an implausible ${elapsed}s`);
+
+  while (environment.weatherPhase === 'clearing' && elapsed < 25) {
     environment._updateWeather(0.25);
     elapsed += 0.25;
   }
   assert.equal(environment.weatherPhase, 'clear');
   assert.equal(environment.rainIntensity, 0);
-  assert.ok(elapsed >= 3.5 && elapsed <= 8, `rain fade completed at an implausible ${elapsed}s`);
+  assert.equal(environment.overcastAmount, 0);
+  assert.equal(weatherLightingState('clear', environment.overcastAmount, 0).sunVisibility, 1);
   assert.ok(environment.cloudCoverTarget <= 0.5, 'clouds may disperse only after the rain tail has ended');
+});
+
+test('cloud banks retain canonical world positions when the player moves', () => {
+  const cloud = new THREE.Group();
+  cloud.position.set(42, 82, -37);
+  Object.assign(cloud.userData, {
+    speed: 2,
+    worldX: 42,
+    worldZ: -37,
+    centerOffsetX: 0,
+    coverageRadius: 25,
+    appearance: 1,
+    targetVisible: true,
+  });
+  const environment = Object.assign(Object.create(Environment.prototype), {
+    clouds: { children: [cloud] },
+    cloudCover: 1,
+    graphicsProfile: { cloudAmount: 1 },
+    weatherPhase: 'clear',
+    overcastAmount: 0,
+  });
+
+  environment._updateCloudField(2, { x: 0, z: 0 });
+  assert.equal(cloud.userData.worldX, 46, 'wind should advance the canonical world coordinate');
+  assert.equal(cloud.userData.worldZ, -37);
+  const renderedAtOrigin = cloud.position.clone();
+
+  environment._updateCloudField(0, { x: 20, z: 20 });
+  assert.deepEqual(cloud.position.toArray(), renderedAtOrigin.toArray(),
+    'ordinary player movement must not translate a cloud bank');
+  assert.equal(cloud.userData.worldX, 46);
+  assert.equal(cloud.userData.worldZ, -37);
+
+  environment._updateCloudField(0, { x: 400, z: -400 });
+  assert.equal(cloud.userData.worldX, 46, 'horizon tiling must not rewrite canonical X');
+  assert.equal(cloud.userData.worldZ, -37, 'horizon tiling must not rewrite canonical Z');
+  assert.ok(Math.abs(cloud.position.x - 400) <= 155);
+  assert.ok(Math.abs(cloud.position.z + 400) <= 155);
+  assert.equal(nearestPeriodicCloudCoordinate(46, 400, 310), cloud.position.x);
 });
 
 test('an opaque player-built roof removes ambient sky exposure at any depth', () => {

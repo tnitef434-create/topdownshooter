@@ -262,6 +262,24 @@ try {
         window.__worldloomPlayerAvatar?.root?.traverse?.((node) => { if (node.userData?.playerAvatarPart) count++; });
         return count;
       })(),
+      avatarSelfDrawables: (() => {
+        let count = 0;
+        window.__worldloomPlayerAvatar?.root?.traverse?.((node) => {
+          if (node.isMesh && camera?.layers?.test(node.layers)) count++;
+        });
+        return count;
+      })(),
+      avatarShadowCoverage: (() => {
+        let casters = 0;
+        let shadowVisible = 0;
+        const shadowCamera = window.__worldloomEnvironment?.sunLight?.shadow?.camera;
+        window.__worldloomPlayerAvatar?.root?.traverse?.((node) => {
+          if (!node.isMesh || !node.castShadow) return;
+          casters++;
+          if (shadowCamera?.layers?.test(node.layers)) shadowVisible++;
+        });
+        return { casters, shadowVisible };
+      })(),
       camera: camera?.position?.toArray() || null,
       cameraForward: forward?.toArray() || null,
       terrain,
@@ -280,12 +298,53 @@ try {
   assert.equal(gameState.environment, true);
   assert.equal(gameState.avatar, true, 'The Wayfarer player avatar is not active');
   assert(gameState.avatarParts >= 25, 'The Wayfarer player avatar lost authored body parts');
+  assert.equal(gameState.avatarSelfDrawables, 0,
+    'The local avatar body/head still intersects the gameplay/GTAO camera layer');
+  assert(gameState.avatarShadowCoverage.casters > 0);
+  assert.equal(gameState.avatarShadowCoverage.shadowVisible, gameState.avatarShadowCoverage.casters,
+    'The layer fix removed the local avatar from sunlight shadows');
   assert(gameState.terrain.some((mesh) => mesh.visible && mesh.vertices > 0),
     `No visible terrain geometry reached the first playable frame: ${JSON.stringify(gameState.terrain)}`);
   assert(gameState.completeTerrainRadius >= 3,
     `The playable frame opened before its safe seven-by-seven terrain core was ready: ${JSON.stringify(gameState.terrain)}`);
   assert(Number.isFinite(gameState.fogFar) && gameState.fogFar <= gameState.safeTerrainFar + 1.5,
     `Fog exposed unmeshed horizon space (fog ${gameState.fogFar}, safe ${gameState.safeTerrainFar})`);
+
+  const clearState = await frame.evaluate(() => {
+    const environment = window.__worldloomEnvironment;
+    const focus = environment.atmosphere.position.clone();
+    environment.time = 0.5;
+    environment.weatherPhase = 'clear';
+    environment.weatherTimer = 60;
+    environment.rainTarget = 0;
+    environment.rainIntensity = 0;
+    environment.overcastAmount = 0;
+    environment.cloudCover = 0.72;
+    environment.cloudCoverTarget = 0.72;
+    environment.localCloudCoverage = 0.72;
+    environment.localCloudCount = 5;
+    environment.update(0.25, focus, 4);
+    return {
+      overcast: environment.overcastAmount,
+      rain: environment.rainIntensity,
+      sunOpacity: environment.sun.material.opacity,
+      sunVisibility: environment.atmosphere.material.uniforms.sunVisibility.value,
+      sunlight: environment.sunLight.intensity,
+      sky: environment.scene.background.toArray(),
+      exposure: environment.renderer?.toneMappingExposure,
+    };
+  });
+  assert.equal(clearState.overcast, 0, 'Ordinary clouds incorrectly greyed clear weather');
+  assert.equal(clearState.rain, 0);
+  assert.equal(clearState.sunOpacity, 1, 'The clear-weather sun disc is not fully visible');
+  assert.equal(clearState.sunVisibility, 1, 'The clear-weather atmosphere still masks the sun');
+  assert(clearState.sunlight > 2.5, `Clear daytime direct light is too dim: ${clearState.sunlight}`);
+  assert(clearState.sky[2] > clearState.sky[0] && clearState.sky[2] > 0.65,
+    `Clear daytime sky is not strongly blue: ${JSON.stringify(clearState.sky)}`);
+
+  if (screenshotPath) {
+    await page.screenshot({ path: screenshotPath, fullPage: false });
+  }
 
   const stormState = await frame.evaluate(() => {
     const environment = window.__worldloomEnvironment;
@@ -338,10 +397,6 @@ try {
   assert.equal(stormState.clearing.sunVisibility, 0, 'The atmosphere shader still drew a sun through overcast rain');
   assert(stormState.clearing.sunlight < 0.12, 'Direct sunlight remained too strong beneath overcast rain');
   assert.equal(stormState.cloudlessRain, 0, 'Rain continued without local clouds');
-
-  if (screenshotPath) {
-    await page.screenshot({ path: screenshotPath, fullPage: false });
-  }
 
   await page.setViewport({ width: 320, height: 640, deviceScaleFactor: 1 });
   await delay(250);
@@ -610,6 +665,7 @@ try {
   console.log(JSON.stringify({
     ok: true,
     gameState,
+    clearState,
     stormState,
     deployPresentation,
     mainMenuPresentation,

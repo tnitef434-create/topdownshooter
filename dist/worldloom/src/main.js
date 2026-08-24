@@ -15,11 +15,12 @@ import {
   combatProfile,
   recipeRequirements,
   recipeStations,
+  treeLogSpecies,
 } from './data.js';
 import { UI } from './ui.js';
 import { CreatureSystem } from './creatures.js';
 import { HeldItemView, createDroppedItemModel, disposeItemModel } from './viewmodel.js';
-import { PlayerAvatar } from './player-avatar.js';
+import { PlayerAvatar, WORLD_AVATAR_LAYER } from './player-avatar.js';
 import { GraphicsPipeline } from './graphics.js';
 import { SurvivalSystem } from './survival.js';
 
@@ -152,6 +153,7 @@ function initRenderer() {
 
   scene = new THREE.Scene();
   camera = new THREE.PerspectiveCamera(settings.fov, 1, 0.045, 320);
+  camera.layers.set(0);
   camera.rotation.order = 'YXZ';
   atlas = createTextureAtlas();
   atlas.texture.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy?.() || 1);
@@ -160,6 +162,9 @@ function initRenderer() {
     document.documentElement.style.setProperty('--worldloom-atlas', `url("${atlasUrl}")`);
   }
   environment = new Environment(scene, renderer);
+  // World-avatar geometry is structurally absent from the gameplay and GTAO
+  // camera, but remains part of the sun's shadow pass.
+  environment.sunLight?.shadow?.camera?.layers.enable(WORLD_AVATAR_LAYER);
   environment.onLightning = ({ distance, intensity }) => audio.thunder(distance, intensity);
   window.__worldloomEnvironment = environment;
   effects = new BlockEffects(scene);
@@ -626,7 +631,7 @@ function materialFor(blockId) {
   if ([BLOCK.TURF, BLOCK.ASH_LEAVES, BLOCK.PINE_NEEDLES, BLOCK.FERN, BLOCK.WILDFLOWER, BLOCK.SHORT_GRASS, BLOCK.CAVE_MUSHROOM].includes(blockId)) return 'grass';
   if (blockId === BLOCK.LOAM) return 'dirt';
   if (blockId === BLOCK.SAND) return 'sand';
-  if ([BLOCK.ASH_LOG, BLOCK.PINE_LOG, BLOCK.ASH_PLANKS, BLOCK.CAMP_BENCH, BLOCK.CHEST, BLOCK.BED, BLOCK.CACTUS].includes(blockId)) return 'wood';
+  if (treeLogSpecies(blockId) || [BLOCK.ASH_PLANKS, BLOCK.CAMP_BENCH, BLOCK.CHEST, BLOCK.BED, BLOCK.CACTUS].includes(blockId)) return 'wood';
   if ([BLOCK.GLASS, BLOCK.WINDOW].includes(blockId)) return 'glass';
   if (blockId === BLOCK.WATER) return 'water';
   if ([BLOCK.LUMEN_CRYSTAL, BLOCK.TORCH, BLOCK.LAVA].includes(blockId)) return 'crystal';
@@ -668,8 +673,9 @@ function measureNearbyTrees() {
       const ground = world.terrainHeight(x, z);
       for (let y = ground + 1; y <= Math.min(world.worldHeight - 1, ground + 10); y++) {
         const trunkId = world.getBlock(x, y, z);
-        if (![BLOCK.ASH_LOG, BLOCK.PINE_LOG].includes(trunkId)) continue;
-        const canopyId = trunkId === BLOCK.PINE_LOG ? BLOCK.PINE_NEEDLES : BLOCK.ASH_LEAVES;
+        const species = treeLogSpecies(trunkId);
+        if (!species) continue;
+        const canopyId = species === 'pine' ? BLOCK.PINE_NEEDLES : BLOCK.ASH_LEAVES;
         let canopy = false;
         for (let ly = y + 2; ly <= Math.min(world.worldHeight - 1, y + 7) && !canopy; ly++) {
           for (let lz = z - 2; lz <= z + 2 && !canopy; lz++) {
@@ -1214,8 +1220,10 @@ function placeSelectedBlock() {
     return;
   }
   if (world.setBlock(x, y, z, placedId)) {
-    // Pointer actions happen between animation frames. Kick the bounded mesh
-    // worker here so the visible edit does not wait for the streaming timer.
+    // Pointer actions happen between animation frames. Give the edited chunk a
+    // bounded foreground publish attempt, then leave any slow-device remainder
+    // and boundary-neighbor rebuilds at the head of the normal mesh worker.
+    world.rebuildEdited(12);
     scheduleWorldWork();
     heldItem?.use(0.9);
     if (placedId === BLOCK.CAMP_BENCH) flags.placedBench = true;
@@ -1341,6 +1349,7 @@ function updateMining(dt, hit) {
       resetMining();
       return false;
     }
+    world.rebuildEdited(12);
     scheduleWorldWork();
     if (mode !== 'builder' && harvestable && dropId) {
       const dropPosition = new THREE.Vector3(x + 0.5, y + 0.55, z + 0.5);

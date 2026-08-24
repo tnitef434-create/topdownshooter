@@ -7,7 +7,10 @@ import {
   createDroppedItemModel,
   disposeItemModel,
 } from '../src/public/worldloom/src/viewmodel.js';
-import { PlayerAvatar } from '../src/public/worldloom/src/player-avatar.js';
+import {
+  PlayerAvatar,
+  WORLD_AVATAR_LAYER,
+} from '../src/public/worldloom/src/player-avatar.js';
 
 function meshSummary(root) {
   const meshes = [];
@@ -61,8 +64,12 @@ test('Wayfarer avatar stays richly authored within strict draw and shadow budget
     if (node.userData?.playerAvatarPart) parts.push(node);
   });
   const shadowHead = avatar.root.getObjectByName('shadow-only head');
+  const displayHead = avatar.root.getObjectByName('Wayfarer display head mesh');
   const meshes = meshSummary(avatar.root);
   const shadowCasters = meshes.filter((mesh) => mesh.castShadow);
+  const gameplayCamera = new THREE.PerspectiveCamera(75, 1, 0.05, 100);
+  const shadowCamera = new THREE.OrthographicCamera(-20, 20, 20, -20, 0.1, 100);
+  shadowCamera.layers.enable(WORLD_AVATAR_LAYER);
   assert.equal(avatar.root.visible, true);
   assert.deepEqual(avatar.root.position.toArray(), player.position.toArray());
   assert.equal(avatar.root.rotation.y, player.yaw);
@@ -74,11 +81,31 @@ test('Wayfarer avatar stays richly authored within strict draw and shadow budget
   assert.ok(meshes.every((mesh) => mesh.frustumCulled), 'avatar meshes must be frustum-cullable');
   assert.ok(meshes.every((mesh) => mesh.geometry.getAttribute('color')),
     'merged avatar segments must preserve their colour panels as vertex colours');
+  assert.equal(WORLD_AVATAR_LAYER, 2);
+  assert.ok(meshes.every((mesh) => !mesh.layers.test(gameplayCamera.layers)),
+    'no world-avatar mesh may intersect the gameplay/GTAO camera layer');
+  assert.ok(shadowCasters.every((mesh) => mesh.layers.test(shadowCamera.layers)),
+    'every intended avatar caster must intersect the avatar-enabled sun shadow camera');
   assert.equal(shadowHead.castShadow, true);
   assert.equal(shadowHead.material.colorWrite, false);
+  assert.equal(shadowHead.material.depthWrite, false);
   assert.equal(shadowHead.userData.playerAvatarPartCount, 3);
+  assert.equal(displayHead.layers.test(gameplayCamera.layers), false,
+    'the authored face must stay on the third-person preview layer');
+  assert.equal(displayHead.material.colorWrite, true,
+    'the third-person face must remain visually authored');
+  assert.equal(shadowCasters.length, avatar.root.userData.shadowCasterBudget,
+    'self-hiding must not remove avatar shadow semantics');
   assert.notEqual(avatar.leftLeg.rotation.x, avatar.rightLeg.rotation.x);
   assert.notEqual(avatar.leftArm.rotation.x, avatar.rightArm.rotation.x);
+
+  avatar.setSelfVisible(true);
+  const thirdPersonBody = meshes.filter((mesh) => mesh.userData.localAvatarVisual);
+  assert.ok(thirdPersonBody.length >= 5);
+  assert.ok(thirdPersonBody.every((mesh) => mesh.material.colorWrite && mesh.material.depthWrite),
+    'a future third-person camera must be able to opt the body back in');
+  avatar.setSelfVisible(false);
+  assert.ok(thirdPersonBody.every((mesh) => !mesh.material.colorWrite && !mesh.material.depthWrite));
 
   avatar.dispose();
   assert.equal(scene.children.length, 0);
@@ -95,5 +122,14 @@ test('first-person Wayfarer arms keep their colour panels to one draw each', () 
   assert.equal(held.itemArm.userData.authoredVoxelParts, 4);
   assert.equal(actionMeshes[0].geometry.getAttribute('color').count, 5 * 36);
   assert.equal(gripMeshes[0].geometry.getAttribute('color').count, 4 * 36);
+  const gameplayCamera = new THREE.PerspectiveCamera(75, 1, 0.05, 100);
+  assert.ok(actionMeshes.every((mesh) => mesh.layers.test(gameplayCamera.layers)),
+    'first-person hands must remain on the gameplay camera layer');
+  assert.ok(gripMeshes.every((mesh) => mesh.layers.test(gameplayCamera.layers)),
+    'held items and their grip arm must remain on the gameplay camera layer');
+  assert.equal(actionMeshes[0].material.colorWrite, true,
+    'self-hiding the world avatar must not remove the first-person hand');
+  assert.equal(gripMeshes[0].material.colorWrite, true,
+    'self-hiding the world avatar must not remove held items and their grip arm');
   held.dispose();
 });

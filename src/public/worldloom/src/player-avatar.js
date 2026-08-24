@@ -1,5 +1,9 @@
 import * as THREE from '../vendor/three.module.min.js';
 
+// World-space avatar geometry is never rendered by the layer-0 gameplay/GTAO
+// camera. The sun shadow camera explicitly enables this layer in main.js.
+export const WORLD_AVATAR_LAYER = 2;
+
 /**
  * Worldloom's original Wayfarer palette. It deliberately uses broad voxel-
  * adventure language without reproducing any existing game's skin artwork.
@@ -82,7 +86,7 @@ export function createMergedVoxelGeometry(parts) {
   return geometry;
 }
 
-function avatarMaterial({ invisible = false } = {}) {
+function avatarMaterial({ invisible = false, selfHidden = false } = {}) {
   const result = new THREE.MeshStandardMaterial({
     color: 0xffffff,
     vertexColors: true,
@@ -90,10 +94,10 @@ function avatarMaterial({ invisible = false } = {}) {
     metalness: 0,
     flatShading: true,
   });
-  if (invisible) {
-    // The first-person camera occupies the head volume. Keeping this geometry
-    // in the shadow pass completes the silhouette without drawing a cube around
-    // the camera.
+  if (invisible || selfHidden) {
+    // The first-person camera occupies the avatar volume. Colour and depth are
+    // suppressed in its normal pass while the same geometry remains available
+    // to the light's shadow pass.
     result.colorWrite = false;
     result.depthWrite = false;
   }
@@ -107,10 +111,11 @@ function avatarMesh(parent, name, parts, options = {}) {
   mesh.castShadow = options.castShadow ?? true;
   mesh.receiveShadow = false;
   mesh.frustumCulled = true;
-  if (Number.isInteger(options.layer)) mesh.layers.set(options.layer);
+  mesh.layers.set(Number.isInteger(options.layer) ? options.layer : WORLD_AVATAR_LAYER);
   mesh.userData.playerAvatarParts = parts.map((part) => part.name).filter(Boolean);
   mesh.userData.playerAvatarPartCount = geometry.userData.voxelPartCount;
   mesh.userData.voxelPaletteSize = geometry.userData.voxelPaletteSize;
+  mesh.userData.localAvatarVisual = Boolean(options.selfHidden);
   // Lightweight, invisible metadata nodes preserve part-level inspection for
   // QA/accessibility tooling without restoring one renderable mesh per detail.
   for (const partName of mesh.userData.playerAvatarParts) {
@@ -139,7 +144,7 @@ function limb(parent, side, x) {
     part(`${side} forearm`, [0.205, 0.26, 0.235], [0, -0.415, 0], WAYFARER_SKIN.skin),
     part(`${side} hand`, [0.215, 0.16, 0.245], [0, -0.62, -0.004], WAYFARER_SKIN.skinLight),
     part(`${side} wrist pixels`, [0.219, 0.048, 0.249], [0, -0.51, -0.006], WAYFARER_SKIN.skinShadow),
-  ]);
+  ], { selfHidden: true });
   return pivot;
 }
 
@@ -153,7 +158,7 @@ function leg(parent, side, x) {
     part(`${side} trouser pixels`, [0.26, 0.12, 0.286], [0, -0.09, -0.004], WAYFARER_SKIN.trousersLight),
     part(`${side} boot`, [0.27, 0.22, 0.36], [0, -0.65, -0.055], WAYFARER_SKIN.boot),
     part(`${side} boot toe`, [0.275, 0.11, 0.385], [0, -0.63, -0.092], WAYFARER_SKIN.bootLight),
-  ]);
+  ], { selfHidden: true });
   return pivot;
 }
 
@@ -179,7 +184,7 @@ export class PlayerAvatar {
       part('leather belt', [0.59, 0.105, 0.325], [0, 0.845, 0.07], WAYFARER_SKIN.belt),
       part('square belt buckle', [0.12, 0.115, 0.035], [0, 0.845, -0.103], WAYFARER_SKIN.buckle),
       part('back trail panel', [0.28, 0.27, 0.045], [0, 0.73, 0.235], WAYFARER_SKIN.tunicShadow),
-    ]);
+    ], { selfHidden: true });
 
     this.leftArm = limb(this.root, 'left', -0.405);
     this.rightArm = limb(this.root, 'right', 0.405);
@@ -190,7 +195,7 @@ export class PlayerAvatar {
     // views. The normal first-person camera renders layer 0 only.
     this.displayHead = new THREE.Group();
     this.displayHead.name = 'Wayfarer display head';
-    this.displayHead.layers.set(2);
+    this.displayHead.layers.set(WORLD_AVATAR_LAYER);
     this.root.add(this.displayHead);
     avatarMesh(this.displayHead, 'Wayfarer display head mesh', [
       part('Wayfarer head', [0.47, 0.47, 0.47], [0, 1.64, 0.055], WAYFARER_SKIN.skin),
@@ -200,7 +205,7 @@ export class PlayerAvatar {
       part('Wayfarer right eye', [0.07, 0.065, 0.025], [0.115, 1.66, -0.19], WAYFARER_SKIN.eye),
       part('Wayfarer cheek pixel', [0.075, 0.045, 0.024], [-0.15, 1.565, -0.19], WAYFARER_SKIN.skinLight),
       part('Wayfarer scarf knot', [0.16, 0.095, 0.07], [0.12, 1.425, -0.13], WAYFARER_SKIN.scarf),
-    ], { layer: 2, castShadow: false });
+    ], { layer: WORLD_AVATAR_LAYER, castShadow: false });
 
     // One merged, colour-silent caster replaces three separate invisible head
     // meshes while preserving their exact silhouette.
@@ -214,6 +219,26 @@ export class PlayerAvatar {
     this.gaitBlend = 0;
     this.actionBlend = 0;
     this.lastGrounded = true;
+    this.selfVisible = false;
+  }
+
+  /**
+   * The gameplay camera must never render the body it is standing inside. A
+   * future third-person/photo camera can opt the authored body back in without
+   * rebuilding it; its normal shadow casting remains active in either mode.
+   */
+  setSelfVisible(visible) {
+    this.selfVisible = Boolean(visible);
+    this.root.traverse((node) => {
+      if (!node.isMesh || !node.userData.localAvatarVisual) return;
+      const materials = Array.isArray(node.material) ? node.material : [node.material];
+      for (const entry of materials) {
+        if (!entry) continue;
+        entry.colorWrite = this.selfVisible;
+        entry.depthWrite = this.selfVisible;
+        entry.needsUpdate = true;
+      }
+    });
   }
 
   update(dt, player, motion = {}, options = {}) {

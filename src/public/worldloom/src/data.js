@@ -263,9 +263,16 @@ export function toolMultiplier(itemId, blockId) {
   return item.speed || 2;
 }
 
+export function treeLogSpecies(blockId) {
+  if ([BLOCK.PINE_LOG, BLOCK.OVERGROWN_PINE_LOG].includes(blockId)) return 'pine';
+  if ([BLOCK.ASH_LOG, BLOCK.OVERGROWN_ASH_LOG].includes(blockId)) return 'ash';
+  return null;
+}
+
 export function canHarvest(itemId, blockId) {
   // Starter materials remain obtainable by hand, just deliberately slowly.
-  if ([BLOCK.TURF, BLOCK.LOAM, BLOCK.SAND, BLOCK.STONE, BLOCK.ASH_LOG, BLOCK.ASH_LEAVES, BLOCK.PINE_LOG, BLOCK.PINE_NEEDLES, BLOCK.SHORT_GRASS].includes(blockId)) return true;
+  if (treeLogSpecies(blockId)) return true;
+  if ([BLOCK.TURF, BLOCK.LOAM, BLOCK.SAND, BLOCK.STONE, BLOCK.ASH_LEAVES, BLOCK.PINE_NEEDLES, BLOCK.SHORT_GRASS].includes(blockId)) return true;
   if (blockId === BLOCK.COPPER_ORE) return [ITEM.STONE_PICK, ITEM.COPPER_PICK].includes(itemId);
   if (blockId === BLOCK.LUMEN_CRYSTAL) return itemId === ITEM.COPPER_PICK;
   const block = BLOCKS[blockId];

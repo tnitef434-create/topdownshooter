@@ -87,6 +87,8 @@ const CACTUS = resolveBlock(['CACTUS'], AIR);
 const CAVE_MUSHROOM = resolveBlock(['CAVE_MUSHROOM', 'GLOW_MUSHROOM'], AIR);
 const PINE_LOG = resolveBlock(['PINE_LOG'], LOG);
 const PINE_NEEDLES = resolveBlock(['PINE_NEEDLES'], LEAVES);
+const OVERGROWN_ASH_LOG = resolveBlock(['OVERGROWN_ASH_LOG'], LOG);
+const OVERGROWN_PINE_LOG = resolveBlock(['OVERGROWN_PINE_LOG'], PINE_LOG);
 const SHORT_GRASS = resolveBlock(['SHORT_GRASS'], AIR);
 
 function floorDiv(value, divisor) {
@@ -246,6 +248,7 @@ function createChunk(cx, cz) {
     glowMesh: null,
     meshJob: null,
     meshJobRevision: -1,
+    editMeshPriority: 0,
     faces: 0,
     triangles: 0,
     lastTouched: 0,
@@ -278,6 +281,7 @@ export class World {
     this.streamDistance = this.renderDistance + HORIZON_BUFFER_CHUNKS;
     this.streamDirection = { x: 0, z: -1, strength: 0 };
     this._streamTick = 0;
+    this._editMeshSerial = 0;
     this._columnCache = new Map();
     this._caveNodeCache = new Map();
     // Only player-created and simulated water needs metadata. Natural sea and
@@ -874,6 +878,10 @@ export class World {
     const lx = localCoordinate(x, cx);
     const lz = localCoordinate(z, cz);
     const index = localIndex(lx, y, lz);
+    // Direct setBlock calls originate from player mining/placement. Fluid
+    // simulation explicitly opts out through skipStats so its many small
+    // changes remain ordinary background mesh work.
+    const prioritizeVisibleEdit = !options?.skipStats;
     const editMap = this._editMap(cx, cz, true);
     const previousEdit = editMap.get(index);
     const generatedBase = this._baseBlockAt(x, y, z);
@@ -890,17 +898,20 @@ export class World {
     const chunk = this.chunks.get(chunkKey(cx, cz));
     if (chunk?.generated) {
       chunk.blocks[index] = id;
-      this._markDirty(chunk);
+      this._markDirty(chunk, prioritizeVisibleEdit);
     } else {
       // A rare out-of-range edit must never resurrect stale cached voxels when
       // the player returns. Dropping this one cache entry is cheaper and safer
       // than partially replaying decoration and fluid state here.
       this.dormantChunks.delete(chunkKey(cx, cz));
     }
-    if (lx === 0) this._markDirty(this.chunks.get(chunkKey(cx - 1, cz)));
-    if (lx === CHUNK_SIZE - 1) this._markDirty(this.chunks.get(chunkKey(cx + 1, cz)));
-    if (lz === 0) this._markDirty(this.chunks.get(chunkKey(cx, cz - 1)));
-    if (lz === CHUNK_SIZE - 1) this._markDirty(this.chunks.get(chunkKey(cx, cz + 1)));
+    // A boundary face is owned by both adjoining chunk meshes. Keep the edited
+    // chunk first, then enqueue every touching neighbor with the same urgency so
+    // a newly exposed face cannot linger behind horizon-generation work.
+    if (lx === 0) this._markDirty(this.chunks.get(chunkKey(cx - 1, cz)), prioritizeVisibleEdit);
+    if (lx === CHUNK_SIZE - 1) this._markDirty(this.chunks.get(chunkKey(cx + 1, cz)), prioritizeVisibleEdit);
+    if (lz === 0) this._markDirty(this.chunks.get(chunkKey(cx, cz - 1)), prioritizeVisibleEdit);
+    if (lz === CHUNK_SIZE - 1) this._markDirty(this.chunks.get(chunkKey(cx, cz + 1)), prioritizeVisibleEdit);
     const fluidKey = voxelKey(x, y, z);
     if (id === WATER) {
       const requestedLevel = Number(options?.fluidLevel);
@@ -1133,7 +1144,7 @@ export class World {
     return { processed, changed, remaining: this.fluidQueue.length - this.fluidQueueHead };
   }
 
-  _markDirty(chunk) {
+  _markDirty(chunk, prioritizeVisibleEdit = false) {
     if (!chunk?.generated) return;
     chunk.meshJob?.disposePartial?.();
     chunk.meshJob = null;
@@ -1141,6 +1152,12 @@ export class World {
     chunk.dirty = true;
     chunk.meshDirty = true;
     chunk.revision++;
+    // Preserve the first pending edit's order when several blocks are changed
+    // before its mesh publishes. This prevents a boundary neighbor or a rapid
+    // second click from continually pushing the original visible hole back.
+    if (prioritizeVisibleEdit && !chunk.editMeshPriority) {
+      chunk.editMeshPriority = ++this._editMeshSerial;
+    }
   }
 
   ensureChunk(cx, cz) {
@@ -1323,7 +1340,16 @@ export class World {
         );
         const isPine = PINE_LOG !== AIR && PINE_NEEDLES !== AIR
           && speciesRoll < 0.2 + pineClimate * 0.72;
-        const trunkBlock = isPine ? PINE_LOG : LOG;
+        const baseTrunkBlock = isPine ? PINE_LOG : LOG;
+        const overgrownRoll = hashUnit(hash2D(rootX, rootZ, this._noiseSeeds.trees ^ 0x3c6ef372));
+        const overgrownChance = isPine ? 0.18 : 0.38;
+        const isOvergrown = overgrownRoll < overgrownChance;
+        // Overgrowth is a bark texture variant, never a ring of protruding leaf
+        // cubes. Selected trees keep one clean trunk silhouette while ivy or
+        // moss pixels wrap every exposed side of the mature wood.
+        const trunkBlock = isOvergrown
+          ? (isPine ? OVERGROWN_PINE_LOG : OVERGROWN_ASH_LOG)
+          : baseTrunkBlock;
         const leafBlock = isPine ? PINE_NEEDLES : LEAVES;
         const trunkHeight = (isPine ? 7 : 4) + Math.floor(
           hashUnit(hash2D(rootX, rootZ, this._noiseSeeds.trees ^ 0x27d4eb2d)) * (isPine ? 4 : 4),
@@ -1381,55 +1407,14 @@ export class World {
         // Restore the visible trunk through the lower canopy.
         for (let dy = 0; dy < trunkHeight; dy++) {
           this._writeGenerated(chunk, rootX, rootY + dy, rootZ, trunkBlock, (id) => (
-            id === AIR || id === LEAVES || id === PINE_NEEDLES || id === LOG || id === PINE_LOG
+            id === AIR
+            || id === LEAVES
+            || id === PINE_NEEDLES
+            || id === LOG
+            || id === PINE_LOG
+            || id === OVERGROWN_ASH_LOG
+            || id === OVERGROWN_PINE_LOG
           ));
-        }
-
-        // A minority of mature trees carry deterministic ivy-like leaf patches
-        // on their lower trunks. Small one- and two-block clusters keep the log
-        // silhouette readable while making woodland growth feel less pristine.
-        const overgrownRoll = hashUnit(hash2D(rootX, rootZ, this._noiseSeeds.trees ^ 0x3c6ef372));
-        const overgrownChance = isPine ? 0.18 : 0.38;
-        if (overgrownRoll < overgrownChance && trunkHeight >= 4) {
-          const patchCount = 1 + Math.floor(hashUnit(hash2D(
-            rootX,
-            rootZ,
-            this._noiseSeeds.trees ^ 0xa54ff53a,
-          )) * (isPine ? 2 : 3));
-          const directions = [[1, 0], [0, 1], [-1, 0], [0, -1]];
-          for (let patch = 0; patch < patchCount; patch++) {
-            const patchRoll = hashUnit(hash2D(
-              rootX + patch * 29,
-              rootZ - patch * 17,
-              this._noiseSeeds.trees ^ 0x510e527f,
-            ));
-            const directionIndex = Math.floor(patchRoll * directions.length) % directions.length;
-            const [leafDx, leafDz] = directions[directionIndex];
-            const availableLevels = Math.max(1, trunkHeight - 3);
-            const patchY = rootY + 1 + Math.floor(hashUnit(hash2D(
-              rootX - patch * 13,
-              rootZ + patch * 23,
-              this._noiseSeeds.trees ^ 0x9b05688c,
-            )) * availableLevels);
-            this._writeGenerated(
-              chunk,
-              rootX + leafDx,
-              patchY,
-              rootZ + leafDz,
-              leafBlock,
-              (id) => id === AIR,
-            );
-            if (patchRoll > 0.7 && patchY > rootY + 1) {
-              this._writeGenerated(
-                chunk,
-                rootX + leafDx,
-                patchY - 1,
-                rootZ + leafDz,
-                leafBlock,
-                (id) => id === AIR,
-              );
-            }
-          }
         }
       }
     }
@@ -1716,18 +1701,40 @@ export class World {
     return true;
   }
 
-  rebuildDirty(maxChunks = 1, maxMilliseconds = 2.4) {
+  /**
+   * Spend one bounded foreground slice publishing the oldest player edit.
+   * Normal streaming remains incremental; this path is called directly from a
+   * mining/placement gesture so the clicked block gets a chance to appear in
+   * that same event turn. If a slow device exhausts the cap, rebuildDirty()
+   * continues the retained high-priority job before any background chunk.
+   */
+  rebuildEdited(maxMilliseconds = 7.5) {
+    const budget = THREE.MathUtils.clamp(Number(maxMilliseconds) || 0, 0.5, 12);
+    return this.rebuildDirty(1, budget, {
+      editsOnly: true,
+    });
+  }
+
+  rebuildDirty(maxChunks = 1, maxMilliseconds = 2.4, options = null) {
     const limit = Math.max(0, Math.floor(maxChunks));
     if (limit === 0) return 0;
+    const editsOnly = options?.editsOnly === true;
     const { cx, cz } = this.centerChunk;
     const dirty = [...this.chunks.values()]
       .filter((chunk) => (
         chunk.generated
         && chunk.wanted !== false
         && chunk.meshDirty
+        && (!editsOnly || chunk.editMeshPriority > 0)
         && this._neighborsReadyForMesh(chunk)
       ))
       .sort((a, b) => {
+        const editA = a.editMeshPriority > 0;
+        const editB = b.editMeshPriority > 0;
+        if (editA !== editB) return editA ? -1 : 1;
+        if (editA && a.editMeshPriority !== b.editMeshPriority) {
+          return a.editMeshPriority - b.editMeshPriority;
+        }
         const priorityA = Number.isFinite(a.streamPriority)
           ? a.streamPriority
           : (a.cx - cx) ** 2 + (a.cz - cz) ** 2;
@@ -1749,7 +1756,30 @@ export class World {
         chunk.meshJobRevision = chunk.revision;
       }
       const revision = chunk.meshJobRevision;
-      const complete = chunk.meshJob.step({ maxVoxels: 8192, maxMilliseconds });
+      let complete = false;
+      if (chunk.editMeshPriority > 0) {
+        const now = () => (
+          typeof performance !== 'undefined' && typeof performance.now === 'function'
+            ? performance.now()
+            : Date.now()
+        );
+        const deadline = Number.isFinite(maxMilliseconds)
+          ? now() + Math.max(0.5, maxMilliseconds)
+          : Number.POSITIVE_INFINITY;
+        // The mesher deliberately finalizes no more than one non-empty material
+        // bucket per step. Re-enter it while this edit's current budget lasts so
+        // neither the foreground attempt nor a later idle slice wastes callbacks
+        // merely finalizing empty material layers.
+        do {
+          const remaining = deadline - now();
+          complete = chunk.meshJob.step({
+            maxVoxels: Number.POSITIVE_INFINITY,
+            maxMilliseconds: remaining,
+          });
+        } while (!complete && deadline - now() >= 0.55);
+      } else {
+        complete = chunk.meshJob.step({ maxVoxels: 8192, maxMilliseconds });
+      }
       if (revision !== chunk.revision || !this.chunks.has(chunk.key)) {
         chunk.meshJob.disposePartial?.();
         chunk.meshJob = null;
@@ -1770,6 +1800,7 @@ export class World {
       chunk.triangles = result.triangles;
       chunk.dirty = false;
       chunk.meshDirty = false;
+      chunk.editMeshPriority = 0;
       rebuilt++;
       this.stats.rebuiltTotal++;
     }
@@ -1850,6 +1881,7 @@ export class World {
     chunk.glowMesh = null;
     chunk.faces = 0;
     chunk.triangles = 0;
+    chunk.editMeshPriority = 0;
     this.chunks.delete(key);
     this.queuedChunks.delete(key);
     this.generationQueue = this.generationQueue.filter((queuedKey) => queuedKey !== key);

@@ -34,6 +34,8 @@ export const BLOCK = Object.freeze({
   PINE_LOG: 28,
   PINE_NEEDLES: 29,
   SHORT_GRASS: 30,
+  OVERGROWN_ASH_LOG: 31,
+  OVERGROWN_PINE_LOG: 32,
 });
 
 const TILE = Object.freeze({
@@ -77,6 +79,8 @@ const TILE = Object.freeze({
   PINE_LOG_SIDE: 37,
   PINE_NEEDLES: 38,
   SHORT_GRASS: 39,
+  OVERGROWN_ASH_LOG_SIDE: 40,
+  OVERGROWN_PINE_LOG_SIDE: 41,
 });
 
 const ATLAS_COLUMNS = 7;
@@ -537,6 +541,34 @@ export const BLOCKS = Object.freeze([
     alphaTest: 0.28,
     shape: 'grass-tuft',
   }),
+  defineBlock(BLOCK.OVERGROWN_ASH_LOG, {
+    name: 'Ivy-Grown Ash Log',
+    description: 'An old ash trunk wrapped in flat, pixel-cut ivy growth.',
+    hardness: 2,
+    color: 0x65745a,
+    tiles: { top: TILE.ASH_LOG_TOP, side: TILE.OVERGROWN_ASH_LOG_SIDE, bottom: TILE.ASH_LOG_TOP },
+    drop: BLOCK.ASH_LOG,
+    tool: 'axe',
+    opaque: true,
+    transparent: false,
+    emissive: 0x000000,
+    solid: true,
+    liquid: false,
+  }),
+  defineBlock(BLOCK.OVERGROWN_PINE_LOG, {
+    name: 'Moss-Grown Pine Log',
+    description: 'A highland pine trunk with needles and moss growing into its bark.',
+    hardness: 2.15,
+    color: 0x586048,
+    tiles: { top: TILE.PINE_LOG_TOP, side: TILE.OVERGROWN_PINE_LOG_SIDE, bottom: TILE.PINE_LOG_TOP },
+    drop: BLOCK.PINE_LOG,
+    tool: 'axe',
+    opaque: true,
+    transparent: false,
+    emissive: 0x000000,
+    solid: true,
+    liquid: false,
+  }),
 ]);
 
 export const HOTBAR_BLOCKS = Object.freeze([
@@ -977,6 +1009,42 @@ function paintAtlas(context) {
       rect(tile, colors[Math.floor(random() * colors.length)], x, 31 - height, width, height);
       if (random() > 0.5) rect(tile, '#9abb65', x, 31 - height, 1, 3);
     }
+  });
+
+  paintTile(context, TILE.OVERGROWN_ASH_LOG_SIDE, (tile, random) => {
+    rect(tile, '#756d5d', 0, 0, 32, 32);
+    for (let x = 1; x < 32; x += 5) {
+      rect(tile, random() > 0.45 ? '#91836a' : '#5d584e', x, 0, 2 + random() * 3, 32);
+    }
+    scatter(tile, random, ['#b09f80', '#4d4b45'], 16, 1, 3);
+    // Flat ivy is painted into the bark tile: it changes the surface without
+    // adding collision or leaf cubes around the trunk silhouette.
+    const vineColumns = [3, 15, 25];
+    for (const [index, x] of vineColumns.entries()) {
+      const startY = 2 + Math.floor(random() * 7);
+      rect(tile, index === 1 ? '#315b36' : '#3e6f3f', x, startY, 2, 30 - startY);
+      for (let y = startY + 2; y < 31; y += 5 + Math.floor(random() * 3)) {
+        const left = (index + y) % 2 === 0;
+        rect(tile, '#4f8748', x + (left ? -3 : 2), y, 4, 3);
+        rect(tile, '#6a9b55', x + (left ? -2 : 3), y, 2, 2);
+      }
+    }
+    scatter(tile, random, ['#315e3a', '#5b914f', '#7aa65d'], 22, 1, 3);
+  });
+
+  paintTile(context, TILE.OVERGROWN_PINE_LOG_SIDE, (tile, random) => {
+    rect(tile, '#6e4b39', 0, 0, 32, 32);
+    for (let x = 1; x < 32; x += 5) {
+      rect(tile, random() > 0.45 ? '#8c6043' : '#50382f', x, 0, 2 + random() * 2, 32);
+    }
+    scatter(tile, random, ['#a0734e', '#49342b'], 18, 1, 3);
+    for (let y = 2; y < 31; y += 4) {
+      const x = 4 + ((y * 7) % 22);
+      rect(tile, '#244b3b', x, y, 2, Math.min(8, 32 - y));
+      rect(tile, '#47785b', Math.max(0, x - 4), y + 2, 6, 2);
+      rect(tile, '#5a8968', x + 2, Math.min(31, y + 4), 4, 2);
+    }
+    scatter(tile, random, ['#315e47', '#6b9368', '#1e3d32'], 25, 1, 3);
   });
 }
 
