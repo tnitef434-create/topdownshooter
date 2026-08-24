@@ -662,6 +662,61 @@ app.get('*', (req, res) => {
 // Matchmaking and Room State
 const rooms = new Map(); // roomId -> { id, players: [{id, name, ready, weapon}], status: 'lobby'|'playing' }
 
+const SIM_MODE_KEYS = ['casual', 'ranked_realistic', 'ranked_competitive', 'sabotage', 'worldloom'];
+const SIM_MODE_WEIGHTS = { casual: 0.2, ranked_realistic: 0.1, ranked_competitive: 0.1, sabotage: 0.4, worldloom: 0.2 };
+const simulatedPlayers = { casual: 0, ranked_realistic: 0, ranked_competitive: 0, sabotage: 0, worldloom: 0 };
+let simTargetTotal = 0;
+let simTargetUpdatedAt = 0;
+
+function simPickWeightedMode() {
+  const roll = Math.random();
+  let acc = 0;
+  for (const key of SIM_MODE_KEYS) {
+    acc += SIM_MODE_WEIGHTS[key];
+    if (roll <= acc) return key;
+  }
+  return SIM_MODE_KEYS[0];
+}
+
+function simRefreshTarget() {
+  const now = new Date();
+  const hour = now.getHours() + now.getMinutes() / 60;
+  const isPeakWindow = hour >= 10 && hour < 22;
+  simTargetTotal = isPeakWindow ? 8 + Math.floor(Math.random() * 28) : 3 + Math.floor(Math.random() * 6);
+  simTargetUpdatedAt = Date.now();
+}
+
+function simTotalCount() {
+  return SIM_MODE_KEYS.reduce((sum, key) => sum + simulatedPlayers[key], 0);
+}
+
+function simSeedPopulation() {
+  simRefreshTarget();
+  for (let i = 0; i < simTargetTotal; i++) {
+    simulatedPlayers[simPickWeightedMode()]++;
+  }
+}
+
+function simStep() {
+  if (Date.now() - simTargetUpdatedAt > 10 * 60 * 1000) simRefreshTarget();
+  const total = simTotalCount();
+  if (total === simTargetTotal) return;
+  if (Math.random() > 0.55) return;
+  if (total < simTargetTotal) {
+    simulatedPlayers[simPickWeightedMode()]++;
+  } else {
+    const occupied = SIM_MODE_KEYS.filter(key => simulatedPlayers[key] > 0);
+    const key = occupied[Math.floor(Math.random() * occupied.length)];
+    simulatedPlayers[key]--;
+  }
+}
+
+simSeedPopulation();
+setInterval(() => {
+  simStep();
+  broadcastPlayerCounts();
+}, 9000);
+
 function broadcastPlayerCounts() {
   let quickplay = 0;
   let ranked_realistic = 0;
@@ -682,13 +737,15 @@ function broadcastPlayerCounts() {
     }
   }
 
-  const totalOnline = io.engine.clientsCount;
+  const totalOnline = io.engine.clientsCount + simTotalCount();
 
   io.emit('player-counts', {
     total: totalOnline,
-    quickplay,
-    ranked_realistic,
-    ranked_competitive
+    quickplay: quickplay + simulatedPlayers.casual,
+    ranked_realistic: ranked_realistic + simulatedPlayers.ranked_realistic,
+    ranked_competitive: ranked_competitive + simulatedPlayers.ranked_competitive,
+    sabotage: simulatedPlayers.sabotage,
+    worldloom: simulatedPlayers.worldloom
   });
 }
 

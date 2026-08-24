@@ -782,6 +782,7 @@ function updateMenuRankUI() {
 // Ranked Matchmaking state
 let rankSearchExpanded = false;
 let rankSearchTimer = null;
+let botFallbackTimer = null;
 
 // Fallback looping guarantee
 menuMusic.addEventListener('ended', () => {
@@ -1404,6 +1405,7 @@ function connectSocket() {
     addSystemChatMessage(`Joined lobby: ${roomId}`);
     // Cancel rank expansion timer
     if (rankSearchTimer) { clearTimeout(rankSearchTimer); rankSearchTimer = null; }
+    if (botFallbackTimer) { clearTimeout(botFallbackTimer); botFallbackTimer = null; }
     rankSearchExpanded = false;
   });
 
@@ -1417,10 +1419,11 @@ function connectSocket() {
     if (opponent) {
       addSystemChatMessage(`${opponent.name} entered the lobby.`);
     }
-    
+
     // Transition from matchmaking screen to lobby screen once opponent is found
     const activeScreen = document.querySelector('.screen.active');
     if (activeScreen && activeScreen.id === 'matchmaking-screen') {
+      if (botFallbackTimer) { clearTimeout(botFallbackTimer); botFallbackTimer = null; }
       showScreen('lobby');
     }
   });
@@ -2178,7 +2181,87 @@ function setupUIListeners() {
           }
         }
       }, 2000);
+
+      // Dynamic bot fallback: after a random 15-60s without a human opponent,
+      // deploy into a ranked match against a bot with a realistic username
+      const botFallbackDelay = 15000 + Math.floor(Math.random() * 46000);
+      if (botFallbackTimer) clearTimeout(botFallbackTimer);
+      botFallbackTimer = setTimeout(() => {
+        botFallbackTimer = null;
+        const activeScreen = document.querySelector('.screen.active');
+        if (!activeScreen || activeScreen.id !== 'matchmaking-screen') return;
+        if (currentRoom && lobbyPlayers && lobbyPlayers.length > 1) return;
+        startRankedBotMatch(searchStyle);
+      }, botFallbackDelay);
     }
+  }
+
+  function startRankedBotMatch(searchStyle) {
+    if (window.mmInterval) clearInterval(window.mmInterval);
+    if (window.mmDotsInterval) clearInterval(window.mmDotsInterval);
+    if (rankSearchTimer) { clearTimeout(rankSearchTimer); rankSearchTimer = null; }
+    if (botFallbackTimer) { clearTimeout(botFallbackTimer); botFallbackTimer = null; }
+    rankSearchExpanded = true;
+
+    const mmExpandNotice = document.getElementById('mm-expand-notice');
+    const mmDots = document.getElementById('mm-dots');
+    const mmTimer = document.getElementById('mm-timer');
+    if (mmExpandNotice) mmExpandNotice.innerText = 'OPPONENT FOUND — DEPLOYING...';
+    if (mmDots) mmDots.innerText = '';
+    if (mmTimer) mmTimer.innerText = '';
+
+    if (socket) {
+      socket.emit('leave-room');
+    }
+    disconnectSocket();
+    currentRoom = null;
+
+    const fallbackBotName = generateBotUsername();
+    currentMatchSource = 'ranked';
+
+    const initGame = () => {
+      displays.chatMessages.innerHTML = '';
+
+      if (gameEngine) {
+        gameEngine.destroy();
+      }
+
+      const playersList = [
+        { id: 'player', name: myName, weapon: myWeapon, color: myColor }
+      ];
+
+      if (myMode === '2v2') {
+        playersList.push({ id: 'bot_enemy_1', name: fallbackBotName, weapon: getRandomWeapon(), color: 'red' });
+        playersList.push({ id: 'bot_teammate', name: generateBotUsername(), weapon: getRandomWeapon(), color: 'green' });
+        playersList.push({ id: 'bot_enemy_2', name: generateBotUsername(), weapon: getRandomWeapon(), color: 'orange' });
+      } else {
+        playersList.push({ id: 'bot_enemy_1', name: fallbackBotName, weapon: getRandomWeapon(), color: 'red' });
+      }
+
+      gameEngine = new Engine('game-canvas', {
+        mode: 'offline',
+        socket: null,
+        localPlayerId: 'player',
+        localPlayerName: myName,
+        localWeapon: myWeapon,
+        localColor: myColor,
+        localPlayerIndex: 0,
+        players: playersList,
+        seed: Math.random(),
+        mapId: selectedMapId,
+        settings: { ...gameSettings, volume: gameSettings.sfxMuted ? 0 : gameSettings.volume },
+        matchMode: myMode,
+        isRanked: true,
+        qpRenderStyle: searchStyle,
+        onMatchEnd: handleMatchEnd,
+        onKillFeed: addKillFeedMessage
+      });
+
+      addSystemChatMessage(`No operative found in time — deployed against ${fallbackBotName}.`);
+      showScreen('game');
+    };
+
+    setTimeout(() => playRankedStartVideo(initGame), 1200);
   }
 
   if (btns.rankedRealistic) {
@@ -2194,6 +2277,7 @@ function setupUIListeners() {
     cancelMmBtn.addEventListener('click', () => {
       if (window.mmInterval) clearInterval(window.mmInterval);
       if (rankSearchTimer) clearTimeout(rankSearchTimer);
+      if (botFallbackTimer) { clearTimeout(botFallbackTimer); botFallbackTimer = null; }
       if (socket) {
         socket.emit('leave-room');
       }
@@ -3781,11 +3865,34 @@ function updatePlayerCountsUI(data) {
   const qpVal = document.getElementById('qp-player-count');
   const realVal = document.getElementById('ranked-real-player-count');
   const compVal = document.getElementById('ranked-comp-player-count');
+  const sabVal = document.getElementById('sabotage-player-count');
+  const wlVal = document.getElementById('worldloom-player-count');
 
   if (totalVal && data && data.total !== undefined) totalVal.innerText = data.total;
   if (qpVal && data && data.quickplay !== undefined) qpVal.innerText = data.quickplay;
   if (realVal && data && data.ranked_realistic !== undefined) realVal.innerText = data.ranked_realistic;
   if (compVal && data && data.ranked_competitive !== undefined) compVal.innerText = data.ranked_competitive;
+  if (sabVal && data && data.sabotage !== undefined) sabVal.innerText = data.sabotage;
+  if (wlVal && data && data.worldloom !== undefined) wlVal.innerText = data.worldloom;
+}
+
+const BOT_USERNAME_POOL = [
+  'ShadowViper', 'NovaStrike', 'GhostPulse', 'IronTactic', 'DarkHavoc',
+  'StormRider', 'PhantomUnit', 'RogueAgent', 'BlitzKing', 'NightOwl',
+  'ToxicViper', 'CrimsonGhost', 'AlphaWolf', 'ReaperSix', 'Frostbite',
+  'VenomStrike', 'LoneWolf', 'SilentHawk', 'RapidFire', 'SteelRaven',
+  'VoidWalker', 'SnapAim', 'HeadshotHero', 'TacticalTurtle', 'QuickScope',
+  'MidnightFox', 'SavageOtter', 'WraithOne', 'BulletMagnet', 'ClutchMaster'
+];
+
+function generateBotUsername() {
+  const base = BOT_USERNAME_POOL[Math.floor(Math.random() * BOT_USERNAME_POOL.length)];
+  const roll = Math.random();
+  if (roll < 0.4) return base + (Math.floor(Math.random() * 90) + 10);
+  if (roll < 0.55) return base + 'X';
+  if (roll < 0.65) return 'xX' + base + 'Xx';
+  if (roll < 0.75) return base + '_' + (Math.floor(Math.random() * 90) + 10);
+  return base;
 }
 
 // Expose remote chat event
