@@ -7,12 +7,17 @@ dist/worldloom/*
 !dist/worldloom/src/
 dist/worldloom/src/*
 !dist/worldloom/src/hanging-leaves.js
+!dist/worldloom/src/birds.js
 !dist/worldloom/assets/
 dist/worldloom/assets/*
 !dist/worldloom/assets/environment/
 dist/worldloom/assets/environment/*
 !dist/worldloom/assets/environment/hanging-tree-leaves-atlas.png
 !dist/worldloom/assets/environment/hanging-tree-leaves.glb
+!dist/worldloom/assets/birds/
+dist/worldloom/assets/birds/*
+!dist/worldloom/assets/birds/worldloom-birds-atlas.png
+!dist/worldloom/assets/birds/worldloom-birds.glb
 .DS_Store
 .env
 .env.*

@@ -5,6 +5,7 @@ import { GRAPHICS_PRESETS } from './save.js';
 import { PondEcologyField } from './pond-ecology.js';
 import { HangingLeavesField } from './hanging-leaves.js';
 import { RedFlowerField } from './red-flowers.js';
+import { BirdField } from './birds.js';
 import { atmosphericFogRange } from './fog.js';
 
 const LIGHT_BLOCKS = new Set([BLOCK.TORCH, BLOCK.LUMEN_CRYSTAL, BLOCK.KILN, BLOCK.FURNACE]);
@@ -1267,6 +1268,7 @@ export class Environment {
     this.pondEcology = new PondEcologyField(scene, this.graphicsUniforms);
     this.hangingLeaves = new HangingLeavesField(scene, this.graphicsUniforms);
     this.redFlowers = new RedFlowerField(scene);
+    this.birds = new BirdField(scene);
     this.localLights = Array.from({ length: 8 }, (_, index) => {
       const light = new THREE.PointLight(0xffb45f, 0, 10, 2);
       light.name = `Nearby voxel light ${index + 1}`;
@@ -1290,6 +1292,7 @@ export class Environment {
     this.pondEcology.setWorld(this.weatherWorld);
     this.hangingLeaves.setWorld(this.weatherWorld);
     this.redFlowers.setWorld(this.weatherWorld);
+    this.birds.setWorld(this.weatherWorld);
   }
 
   preparePondEcology() {
@@ -1302,6 +1305,10 @@ export class Environment {
 
   prepareRedFlowers() {
     return this.redFlowers.prepare();
+  }
+
+  prepareBirds() {
+    return this.birds.prepare();
   }
 
   forceWeather(kind = 'rain', intensity = 0.78, duration = 120) {
@@ -1351,6 +1358,7 @@ export class Environment {
     this.lightning.setQuality(this.weatherEnabled && profile.atmosphereDetail >= 0.6, settings.reducedMotion);
     this.pondEcology.setQuality(profile, settings.reducedMotion);
     this.hangingLeaves.setQuality(profile, settings.reducedMotion);
+    this.birds.setQuality(profile, settings.reducedMotion);
     this.graphicsUniforms.windStrength.value = settings.reducedMotion ? 0.22 : 1;
 
     if (this.renderer?.shadowMap) {
@@ -1889,6 +1897,12 @@ export class Environment {
     });
     this.hangingLeaves.update(dt, focus, context);
     this.redFlowers.update(dt, focus);
+    this.birds.update(dt, focus, {
+      ...context,
+      dayAmount: this.dayAmount,
+      rainIntensity: this.rainIntensity,
+      skyExposure: this.skyExposure,
+    });
     const lightningEvent = this.lightning.update(
       dt,
       focus,
