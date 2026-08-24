@@ -1,8 +1,13 @@
+import {
+  LEGACY_WORLD_GENERATOR_VERSION,
+  WORLD_GENERATOR_VERSION,
+  isSupportedWorldGeneratorVersion,
+} from './generator-version.js';
+
 const SAVE_KEY = 'worldloom.save.v1';
 const BACKUP_KEY = 'worldloom.save.backup.v1';
 const SETTINGS_KEY = 'worldloom.settings.v1';
 const SCHEMA_VERSION = 1;
-const GENERATOR_VERSION = 1;
 const REGISTRY_VERSION = 1;
 
 export const GRAPHICS_PRESETS = Object.freeze({
@@ -15,6 +20,11 @@ export const GRAPHICS_PRESETS = Object.freeze({
     rainDensity: 0.28,
     cloudAmount: 0.28,
     atmosphereDetail: 0.45,
+    pondDetailRadius: 28,
+    pondPadCap: 24,
+    pondPadsPerPond: 2,
+    pondMistCap: 0,
+    pondFlyCap: 0,
     localLights: 1,
     localShadowLights: 0,
     localShadowSize: 256,
@@ -35,6 +45,11 @@ export const GRAPHICS_PRESETS = Object.freeze({
     rainDensity: 0.58,
     cloudAmount: 0.58,
     atmosphereDetail: 0.72,
+    pondDetailRadius: 48,
+    pondPadCap: 56,
+    pondPadsPerPond: 3,
+    pondMistCap: 16,
+    pondFlyCap: 8,
     localLights: 3,
     localShadowLights: 0,
     localShadowSize: 256,
@@ -59,6 +74,11 @@ export const GRAPHICS_PRESETS = Object.freeze({
     rainDensity: 1,
     cloudAmount: 1,
     atmosphereDetail: 1,
+    pondDetailRadius: 72,
+    pondPadCap: 96,
+    pondPadsPerPond: 5,
+    pondMistCap: 36,
+    pondFlyCap: 14,
     localLights: 5,
     localShadowLights: 1,
     localShadowSize: 512,
@@ -89,6 +109,11 @@ export const GRAPHICS_PRESETS = Object.freeze({
     rainDensity: 1.45,
     cloudAmount: 1.25,
     atmosphereDetail: 1.18,
+    pondDetailRadius: 96,
+    pondPadCap: 144,
+    pondPadsPerPond: 6,
+    pondMistCap: 72,
+    pondFlyCap: 24,
     localLights: 8,
     localShadowLights: 2,
     localShadowSize: 1024,
@@ -138,10 +163,11 @@ function safeParse(value) {
 
 function validateSave(data) {
   if (!data || data.schemaVersion !== SCHEMA_VERSION || !Number.isInteger(data.seed)) return false;
-  // Legacy v1 snapshots did not always include these fields. Once present,
-  // however, never apply seed-relative edits to an incompatible generator or
-  // block registry: doing so would silently reshape a player's world.
-  if (data.generatorVersion != null && data.generatorVersion !== GENERATOR_VERSION) return false;
+  // Saves created before generator metadata existed are genuine v1 worlds.
+  // Explicit values, including null and strings, must be supported integers so
+  // corrupt or future terrain is never loaded under a different generator.
+  const hasGeneratorVersion = Object.prototype.hasOwnProperty.call(data, 'generatorVersion');
+  if (hasGeneratorVersion && !isSupportedWorldGeneratorVersion(data.generatorVersion)) return false;
   if (data.registryVersion != null && data.registryVersion !== REGISTRY_VERSION) return false;
   if (!data.player || !Array.isArray(data.player.position) || data.player.position.length !== 3) return false;
   if (!data.player.position.every((value, index) => Number.isFinite(value)
@@ -227,10 +253,22 @@ export class SaveStore {
   }
 
   load() {
-    const primary = safeParse(this._get(SAVE_KEY));
-    const backup = safeParse(this._get(BACKUP_KEY));
-    const primaryValid = validateSave(primary);
-    const backupValid = validateSave(backup);
+    const rawPrimary = safeParse(this._get(SAVE_KEY));
+    const rawBackup = safeParse(this._get(BACKUP_KEY));
+    const primaryValid = validateSave(rawPrimary);
+    const backupValid = validateSave(rawBackup);
+    const primary = primaryValid ? {
+      ...rawPrimary,
+      generatorVersion: Object.prototype.hasOwnProperty.call(rawPrimary, 'generatorVersion')
+        ? rawPrimary.generatorVersion
+        : LEGACY_WORLD_GENERATOR_VERSION,
+    } : null;
+    const backup = backupValid ? {
+      ...rawBackup,
+      generatorVersion: Object.prototype.hasOwnProperty.call(rawBackup, 'generatorVersion')
+        ? rawBackup.generatorVersion
+        : LEGACY_WORLD_GENERATOR_VERSION,
+    } : null;
     if (!primaryValid) return backupValid ? backup : null;
     if (!backupValid) return primary;
 
@@ -246,13 +284,21 @@ export class SaveStore {
   }
 
   save(snapshot) {
+    const generatorVersion = snapshot
+      && Object.prototype.hasOwnProperty.call(snapshot, 'generatorVersion')
+      ? snapshot.generatorVersion
+      : WORLD_GENERATOR_VERSION;
     const data = {
       ...snapshot,
       schemaVersion: SCHEMA_VERSION,
-      generatorVersion: GENERATOR_VERSION,
+      generatorVersion,
       registryVersion: REGISTRY_VERSION,
       updatedAt: new Date().toISOString(),
     };
+    if (!validateSave(data)) {
+      this.saveError = new Error('Worldloom refused to save an unsupported or malformed world snapshot.');
+      return false;
+    }
     const encoded = JSON.stringify(data);
     try {
       const current = this._get(SAVE_KEY);

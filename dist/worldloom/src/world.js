@@ -12,6 +12,15 @@ import {
   normalizeSeed,
 } from './noise.js';
 import { createChunkGeometryJob } from './mesher.js';
+import {
+  LEGACY_WORLD_GENERATOR_VERSION,
+  WORLD_GENERATOR_VERSION,
+} from './generator-version.js';
+
+export {
+  LEGACY_WORLD_GENERATOR_VERSION,
+  WORLD_GENERATOR_VERSION,
+} from './generator-version.js';
 
 export const CHUNK_SIZE = 16;
 // Horizontal coordinates are intentionally not bounded: chunks stream around the
@@ -25,6 +34,10 @@ const COLUMN_CACHE_LIMIT = 32_768;
 const TREE_CELL_SIZE = 5;
 const PLANT_CELL_SIZE = 3;
 const CACTUS_CELL_SIZE = 7;
+const POND_CELL_SIZE = 56;
+const POND_CELL_CACHE_LIMIT = 2_048;
+const POND_MIN_RADIUS = 4.25;
+const POND_MAX_RADIUS = 7.25;
 const CAVE_CELL_SIZE = 34;
 const FISSURE_CELL_SIZE = 78;
 const CAVE_NODE_CACHE_LIMIT = 4_096;
@@ -258,8 +271,18 @@ function createChunk(cx, cz) {
 }
 
 export class World {
-  constructor(seed, scene, atlas) {
+  constructor(seed, scene, atlas, options = null) {
     this.seed = normalizeSeed(seed ?? Date.now());
+    const requestedGeneratorVersion = Number(
+      options && typeof options === 'object' ? options.generatorVersion : options,
+    );
+    // Version 1 is the exact pre-pond generator used by existing saves. All
+    // fresh and unspecified worlds use version 2; save validation prevents a
+    // future unsupported version from reaching this fallback.
+    this.generatorVersion = requestedGeneratorVersion === LEGACY_WORLD_GENERATOR_VERSION
+      ? LEGACY_WORLD_GENERATOR_VERSION
+      : WORLD_GENERATOR_VERSION;
+    this.pondsEnabled = this.generatorVersion >= WORLD_GENERATOR_VERSION;
     this.scene = scene ?? null;
     this.atlas = atlas ?? null;
     this.chunkSize = CHUNK_SIZE;
@@ -284,6 +307,7 @@ export class World {
     this._editMeshSerial = 0;
     this._columnCache = new Map();
     this._caveNodeCache = new Map();
+    this._pondCellCache = new Map();
     // Only player-created and simulated water needs metadata. Natural sea and
     // river blocks are implicit level-zero sources supplied by world generation.
     this.fluidLevels = new Map();
@@ -312,6 +336,7 @@ export class World {
       trees: (this.seed ^ 0x85ebca6b) >>> 0,
       plants: (this.seed ^ 0x4b1d3f27) >>> 0,
       grassPatches: (this.seed ^ 0x6d703ef3) >>> 0,
+      ponds: (this.seed ^ 0xd1b54a35) >>> 0,
       cavePools: (this.seed ^ 0x93c467e3) >>> 0,
     };
 
@@ -592,13 +617,7 @@ export class World {
     };
   }
 
-  _columnInfo(x, z) {
-    x = Math.floor(x);
-    z = Math.floor(z);
-    const key = `${x},${z}`;
-    const cached = this._columnCache.get(key);
-    if (cached) return cached;
-
+  _macroTerrainAt(x, z) {
     // Domain warping is deliberately shared by the macro fields. That keeps
     // rivers, ranges and biome boundaries geographically related and eliminates
     // the square, axis-aligned look of raw value-noise terrain.
@@ -678,13 +697,261 @@ export class World {
       1,
     );
     const height = THREE.MathUtils.clamp(Math.round(rawHeight), 6, WORLD_HEIGHT - 7);
+    return {
+      height,
+      biome,
+      temperature,
+      moisture,
+      desertWeight,
+      forestWeight,
+      riverStrength,
+      rockiness,
+      surfaceSand,
+    };
+  }
+
+  _pondCandidateForCell(cellX, cellZ) {
+    const key = `${cellX},${cellZ}`;
+    if (this._pondCellCache.has(key)) return this._pondCellCache.get(key) || null;
+    if (!this.pondsEnabled) return null;
+    const seed = this._noiseSeeds.ponds;
+    const roll = hashUnit(hash2D(cellX, cellZ, seed));
+    let pond = null;
+    if (roll > 0.48) {
+      const margin = POND_MAX_RADIUS + 2.4;
+      const span = POND_CELL_SIZE - margin * 2;
+      const centerX = Math.floor(cellX * POND_CELL_SIZE + margin
+        + hashUnit(hash2D(cellX, cellZ, seed ^ 0x9e3779b9)) * span) + 0.5;
+      const centerZ = Math.floor(cellZ * POND_CELL_SIZE + margin
+        + hashUnit(hash2D(cellX, cellZ, seed ^ 0x85ebca6b)) * span) + 0.5;
+      const radiusX = POND_MIN_RADIUS
+        + hashUnit(hash2D(cellX, cellZ, seed ^ 0xc2b2ae35)) * (POND_MAX_RADIUS - POND_MIN_RADIUS);
+      const radiusZ = POND_MIN_RADIUS
+        + hashUnit(hash2D(cellX, cellZ, seed ^ 0x27d4eb2d)) * (POND_MAX_RADIUS - POND_MIN_RADIUS);
+      const rotation = hashUnit(hash2D(cellX, cellZ, seed ^ 0x165667b1)) * Math.PI;
+      const center = this._macroTerrainAt(centerX, centerZ);
+      const samples = [center];
+      for (let index = 0; index < 8; index++) {
+        const angle = rotation + index / 8 * Math.PI * 2;
+        samples.push(this._macroTerrainAt(
+          Math.round(centerX + Math.cos(angle) * radiusX * 1.08),
+          Math.round(centerZ + Math.sin(angle) * radiusZ * 1.08),
+        ));
+      }
+      const heights = samples.map((sample) => sample.height);
+      const minHeight = Math.min(...heights);
+      const maxHeight = Math.max(...heights);
+      const cave = this._caveTopologyAt(centerX, centerZ, center.height);
+      const eligible = center.height > SEA_LEVEL + 2
+        && center.moisture > 0.3
+        && center.desertWeight < 0.42
+        && center.riverStrength < 0.34
+        && center.rockiness < 0.66
+        && !center.surfaceSand
+        && !cave.caveMouth
+        && maxHeight - minHeight <= 8;
+      if (eligible) {
+        const candidate = Object.freeze({
+          id: `${cellX},${cellZ}`,
+          cellX,
+          cellZ,
+          centerX,
+          centerZ,
+          radiusX,
+          radiusZ,
+          rotation,
+          waterY: Math.max(SEA_LEVEL + 2, Math.min(center.height - 1, minHeight - 1)),
+          phase: hashUnit(hash2D(cellX, cellZ, seed ^ 0x94d049bb)) * Math.PI * 2,
+        });
+        // Accept or reject the authored pool as one deterministic feature. The
+        // validator deliberately uses only macro terrain and cave topology, not
+        // _columnInfo(), so evaluating a pond can never recurse back into itself.
+        if (this._pondCandidateIsSafe(candidate)) pond = candidate;
+      }
+    }
+    trimCache(this._pondCellCache, POND_CELL_CACHE_LIMIT);
+    this._pondCellCache.set(key, pond || false);
+    return pond;
+  }
+
+  _pondNormalizedAt(pond, x, z) {
+    const cosine = Math.cos(pond.rotation);
+    const sine = Math.sin(pond.rotation);
+    const offsetX = x - pond.centerX;
+    const offsetZ = z - pond.centerZ;
+    const localX = offsetX * cosine + offsetZ * sine;
+    const localZ = -offsetX * sine + offsetZ * cosine;
+    const edgeNoise = (hashUnit(hash2D(
+      Math.floor(x),
+      Math.floor(z),
+      this._noiseSeeds.ponds ^ 0x632be5ab,
+    )) - 0.5) * 0.075;
+    return Math.hypot(localX / pond.radiusX, localZ / pond.radiusZ) + edgeNoise;
+  }
+
+  _pondCandidateIsSafe(pond) {
+    const reach = Math.ceil(Math.max(pond.radiusX, pond.radiusZ) * 1.08) + 2;
+    const samples = new Map();
+    const sampleAt = (x, z) => {
+      const key = `${x},${z}`;
+      let sample = samples.get(key);
+      if (!sample) {
+        sample = { x, z, macro: this._macroTerrainAt(x, z), topology: null };
+        samples.set(key, sample);
+      }
+      return sample;
+    };
+    const topologyAt = (sample) => {
+      if (!sample.topology) {
+        sample.topology = this._caveTopologyAt(sample.x, sample.z, sample.macro.height);
+      }
+      return sample.topology;
+    };
+    const caveInfo = (topology) => ({
+      caveEntrances: topology.entrances,
+      caveFissure: topology.fissure,
+      caveTunnels: topology.tunnels,
+      caveChambers: topology.chambers,
+    });
+
+    const water = [];
+    const waterKeys = new Set();
+    for (let z = Math.floor(pond.centerZ) - reach; z <= Math.ceil(pond.centerZ) + reach; z++) {
+      for (let x = Math.floor(pond.centerX) - reach; x <= Math.ceil(pond.centerX) + reach; x++) {
+        const normalized = this._pondNormalizedAt(pond, x, z);
+        if (normalized >= 0.82) continue;
+        const sample = sampleAt(x, z);
+        // A pond may carve down into intact terrain, but it must never synthesize
+        // a floating bed across terrain that was already below the water line.
+        if (sample.macro.height < pond.waterY) return false;
+        const bedY = pond.waterY - (normalized < 0.43 ? 2 : 1);
+        water.push({ ...sample, normalized, bedY });
+        waterKeys.add(`${x},${z}`);
+      }
+    }
+    if (water.length === 0) return false;
+
+    // Edge noise must not split a nominal ellipse into detached source pools.
+    // Treat disconnected shapes as an invalid candidate rather than applying a
+    // different decision to individual columns during generation.
+    const visited = new Set();
+    const pending = [water[0]];
+    while (pending.length) {
+      const current = pending.pop();
+      const currentKey = `${current.x},${current.z}`;
+      if (visited.has(currentKey)) continue;
+      visited.add(currentKey);
+      for (const [dx, dz] of FLUID_DIRECTIONS) {
+        const neighborKey = `${current.x + dx},${current.z + dz}`;
+        if (!waterKeys.has(neighborKey) || visited.has(neighborKey)) continue;
+        pending.push(sampleAt(current.x + dx, current.z + dz));
+      }
+    }
+    if (visited.size !== water.length) return false;
+
+    const perimeter = new Map();
+    for (const column of water) {
+      for (const [dx, dz] of FLUID_DIRECTIONS) {
+        const x = column.x + dx;
+        const z = column.z + dz;
+        const key = `${x},${z}`;
+        if (waterKeys.has(key) || perimeter.has(key)) continue;
+        const sample = sampleAt(x, z);
+        if (sample.macro.height < pond.waterY) return false;
+        perimeter.set(key, sample);
+      }
+    }
+
+    // Only after the cheap complete macro-height pass succeeds do the more
+    // expensive cave checks. The bed and its support cannot intersect a cave,
+    // and every four-neighbor bank voxel at water level must remain solid.
+    for (const column of water) {
+      const topology = topologyAt(column);
+      if (topology.caveMouth) return false;
+      const info = caveInfo(topology);
+      if (this._isCave(column.x, column.bedY, column.z, column.bedY, info)
+        || this._isCave(column.x, column.bedY - 1, column.z, column.bedY, info)) return false;
+    }
+    for (const sample of perimeter.values()) {
+      const normalized = this._pondNormalizedAt(pond, sample.x, sample.z);
+      const surface = normalized <= 1.08
+        ? Math.min(sample.macro.height, pond.waterY + (normalized > 0.97 ? 1 : 0))
+        : sample.macro.height;
+      if (surface < pond.waterY) return false;
+      const topology = topologyAt(sample);
+      if (topology.caveMouth
+        || this._isCave(sample.x, pond.waterY, sample.z, surface, caveInfo(topology))) return false;
+    }
+    return true;
+  }
+
+  _pondAt(x, z) {
+    if (!this.pondsEnabled) return null;
+    const cellX = floorDiv(Math.floor(x), POND_CELL_SIZE);
+    const cellZ = floorDiv(Math.floor(z), POND_CELL_SIZE);
+    const pond = this._pondCandidateForCell(cellX, cellZ);
+    if (!pond) return null;
+    const normalized = this._pondNormalizedAt(pond, x, z);
+    return normalized <= 1.08 ? { pond, normalized } : null;
+  }
+
+  getPondsNear(x, z, radius = 72) {
+    if (!this.pondsEnabled) return [];
+    const safeRadius = THREE.MathUtils.clamp(Number(radius) || 0, 0, 256);
+    // Include one neighboring feature cell so a pond whose centre is just past
+    // the culling circle is still discovered when its near bank is in range.
+    const minCellX = floorDiv(Math.floor(x - safeRadius), POND_CELL_SIZE) - 1;
+    const minCellZ = floorDiv(Math.floor(z - safeRadius), POND_CELL_SIZE) - 1;
+    const maxCellX = floorDiv(Math.floor(x + safeRadius), POND_CELL_SIZE) + 1;
+    const maxCellZ = floorDiv(Math.floor(z + safeRadius), POND_CELL_SIZE) + 1;
+    const ponds = [];
+    for (let cellZ = minCellZ; cellZ <= maxCellZ; cellZ++) {
+      for (let cellX = minCellX; cellX <= maxCellX; cellX++) {
+        const pond = this._pondCandidateForCell(cellX, cellZ);
+        if (!pond || Math.hypot(pond.centerX - x, pond.centerZ - z) > safeRadius + POND_MAX_RADIUS) continue;
+        ponds.push(pond);
+      }
+    }
+    ponds.sort((a, b) => (
+      Math.hypot(a.centerX - x, a.centerZ - z) - Math.hypot(b.centerX - x, b.centerZ - z)
+      || a.id.localeCompare(b.id)
+    ));
+    return ponds;
+  }
+
+  _columnInfo(x, z) {
+    x = Math.floor(x);
+    z = Math.floor(z);
+    const key = `${x},${z}`;
+    const cached = this._columnCache.get(key);
+    if (cached) return cached;
+    const macro = this._macroTerrainAt(x, z);
+    const baseHeight = macro.height;
 
     // The underground is assembled from deterministic random feature cells.
     // Nodes are jittered independently per seed, connected with bowed tunnel
     // segments, and occasionally replaced by chambers, fissures or entrances.
     // Unlike a repeated contour formula, neighboring regions can therefore have
     // entirely different topology while a saved seed still recreates it exactly.
-    const caveTopology = this._caveTopologyAt(x, z, height);
+    const caveTopology = this._caveTopologyAt(x, z, baseHeight);
+    const pondSample = this._pondAt(x, z);
+    let height = baseHeight;
+    let pondWaterLevel = null;
+    let pondStrength = 0;
+    let pondId = null;
+    if (pondSample) {
+      const { pond, normalized } = pondSample;
+      pondId = pond.id;
+      if (normalized < 0.82) {
+        pondWaterLevel = pond.waterY;
+        pondStrength = THREE.MathUtils.clamp(1 - normalized / 0.82, 0, 1);
+        height = pond.waterY - (normalized < 0.43 ? 2 : 1);
+      } else {
+        // A low one-block bank closes the source water while blending back into
+        // the untouched meadow. Never raise the original terrain around a pond.
+        height = Math.min(baseHeight, pond.waterY + (normalized > 0.97 ? 1 : 0));
+      }
+    }
     const routeA = caveTopology.tunnels[0];
     const routeB = caveTopology.tunnels[1];
     const caveRouteA = routeA ? routeA.distance / routeA.radius : 2;
@@ -695,14 +962,18 @@ export class World {
 
     const info = {
       height,
-      biome,
-      temperature,
-      moisture,
-      desertWeight,
-      forestWeight,
-      riverStrength,
-      rockiness,
-      surfaceSand,
+      baseHeight,
+      biome: macro.biome,
+      temperature: macro.temperature,
+      moisture: macro.moisture,
+      desertWeight: macro.desertWeight,
+      forestWeight: macro.forestWeight,
+      riverStrength: macro.riverStrength,
+      rockiness: macro.rockiness,
+      surfaceSand: macro.surfaceSand,
+      pondId,
+      pondWaterLevel,
+      pondStrength,
       caveRouteA,
       caveRouteB,
       caveCenterA,
@@ -798,7 +1069,10 @@ export class World {
     if (y < 0 || y >= WORLD_HEIGHT) return AIR;
     if (y === 0) return BEDROCK;
     const surface = info.height;
-    if (y > surface) return y <= SEA_LEVEL ? WATER : AIR;
+    if (y > surface) {
+      if (Number.isFinite(info.pondWaterLevel) && y <= info.pondWaterLevel) return WATER;
+      return y <= SEA_LEVEL ? WATER : AIR;
+    }
     if (this._isCave(x, y, z, surface, info)) {
       // Deep chambers collect coherent pools rather than isolated liquid voxels.
       // Lava owns the lowest pockets; water appears higher in broad chambers and
@@ -814,9 +1088,16 @@ export class World {
       return AIR;
     }
 
-    const submerged = surface <= SEA_LEVEL;
+    const pondBed = Number.isFinite(info.pondWaterLevel);
+    const submerged = surface <= SEA_LEVEL || pondBed;
     if (info.rockiness > 0.66 && !submerged && y >= surface - 1) {
       return y < 12 && info.rockiness > 0.84 ? BASALT : STONE;
+    }
+    if (pondBed) {
+      // Shallow loam shelves keep the new inland pools visually distinct from
+      // ocean beaches while using an existing, fully supported terrain material.
+      if (y >= surface - 3) return DIRT;
+      return this._stoneOrOre(x, y, z);
     }
     if (info.surfaceSand || submerged || info.riverStrength > 0.44) {
       if (y >= surface - 4) return SAND;
@@ -1315,6 +1596,7 @@ export class World {
         const info = this._columnInfo(rootX, rootZ);
         if (
           info.height <= SEA_LEVEL + 1
+          || info.pondId
           || info.desertWeight > 0.58
           || info.riverStrength > 0.42
           || info.rockiness > 0.56
@@ -1438,7 +1720,7 @@ export class World {
         const rootX = cellX * PLANT_CELL_SIZE + Math.floor(hashUnit(hash2D(cellX, cellZ, this._noiseSeeds.plants ^ 0x9e3779b9)) * PLANT_CELL_SIZE);
         const rootZ = cellZ * PLANT_CELL_SIZE + Math.floor(hashUnit(hash2D(cellX, cellZ, this._noiseSeeds.plants ^ 0x85ebca6b)) * PLANT_CELL_SIZE);
         const info = this._columnInfo(rootX, rootZ);
-        if (info.height <= SEA_LEVEL || info.surfaceSand || info.caveMouth || info.rockiness > 0.58) continue;
+        if (info.height <= SEA_LEVEL || info.pondId || info.surfaceSand || info.caveMouth || info.rockiness > 0.58) continue;
         const rootY = info.height + 1;
         const choice = info.biome === 'forest' || roll > 0.88 ? FERN : WILDFLOWER;
         if (choice === AIR) continue;
@@ -1457,7 +1739,7 @@ export class World {
           const worldX = originX + x;
           const worldZ = originZ + z;
           const info = this._columnInfo(worldX, worldZ);
-          if (info.surfaceSand || info.height <= SEA_LEVEL || info.caveMouth || info.rockiness > 0.62) continue;
+          if (info.pondId || info.surfaceSand || info.height <= SEA_LEVEL || info.caveMouth || info.rockiness > 0.62) continue;
           const patch = fbm2D(worldX / 11, worldZ / 11, this._noiseSeeds.grassPatches, {
             octaves: 2,
             lacunarity: 2.05,
@@ -1483,7 +1765,7 @@ export class World {
         const rootX = cellX * CACTUS_CELL_SIZE + 1 + Math.floor(hashUnit(hash2D(cellX, cellZ, this._noiseSeeds.plants ^ 0x27d4eb2d)) * (CACTUS_CELL_SIZE - 2));
         const rootZ = cellZ * CACTUS_CELL_SIZE + 1 + Math.floor(hashUnit(hash2D(cellX, cellZ, this._noiseSeeds.plants ^ 0x165667b1)) * (CACTUS_CELL_SIZE - 2));
         const info = this._columnInfo(rootX, rootZ);
-        if (info.biome !== 'desert' || !info.surfaceSand || info.height <= SEA_LEVEL || info.caveMouth) continue;
+        if (info.pondId || info.biome !== 'desert' || !info.surfaceSand || info.height <= SEA_LEVEL || info.caveMouth) continue;
         const rootY = info.height + 1;
         const height = 2 + Math.floor(roll * 3);
         for (let dy = 0; dy < height; dy++) {
@@ -1913,6 +2195,7 @@ export class World {
           if (radius > 0 && Math.abs(x) !== radius && Math.abs(z) !== radius) continue;
           const info = this._columnInfo(x, z);
           if (info.height <= SEA_LEVEL + 1) continue;
+          if (Number.isFinite(info.pondWaterLevel)) continue;
           if (info.caveMouth) continue;
           const slope = Math.max(
             Math.abs(info.height - this.terrainHeight(x + 1, z)),
@@ -2071,6 +2354,7 @@ export class World {
     this.detailNormalMap?.dispose?.();
     this._columnCache.clear();
     this._caveNodeCache.clear();
+    this._pondCellCache.clear();
     this._refreshStats();
   }
 }

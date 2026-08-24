@@ -2,6 +2,7 @@ import * as THREE from '../vendor/three.module.min.js';
 import { BLOCK, BLOCKS, blockShapeHeight } from './blocks.js';
 import { CRACK_STAGES, createCrackAtlasTexture } from './crack-texture.js';
 import { GRAPHICS_PRESETS } from './save.js';
+import { PondEcologyField } from './pond-ecology.js';
 
 const LIGHT_BLOCKS = new Set([BLOCK.TORCH, BLOCK.LUMEN_CRYSTAL, BLOCK.KILN, BLOCK.FURNACE]);
 const FOLIAGE_BLOCKS = new Set([BLOCK.ASH_LEAVES, BLOCK.PINE_NEEDLES]);
@@ -991,6 +992,7 @@ export class Environment {
     this.rain = new RainField(scene);
     this.fallingLeaves = new FallingLeaves(scene);
     this.lightning = new LightningField(scene);
+    this.pondEcology = new PondEcologyField(scene, this.graphicsUniforms);
     this.localLights = Array.from({ length: 8 }, (_, index) => {
       const light = new THREE.PointLight(0xffb45f, 0, 10, 2);
       light.name = `Nearby voxel light ${index + 1}`;
@@ -1011,6 +1013,11 @@ export class Environment {
     this.rain.setWorld(this.weatherWorld);
     this.fallingLeaves.setWorld(this.weatherWorld);
     this.lightning.setWorld(this.weatherWorld);
+    this.pondEcology.setWorld(this.weatherWorld);
+  }
+
+  preparePondEcology() {
+    return this.pondEcology.prepare();
   }
 
   forceWeather(kind = 'rain', intensity = 0.78, duration = 120) {
@@ -1058,6 +1065,7 @@ export class Environment {
     this.rain.setQuality(profile, this.weatherEnabled, settings.reducedMotion);
     this.fallingLeaves.setQuality(profile, true, settings.reducedMotion);
     this.lightning.setQuality(this.weatherEnabled && profile.atmosphereDetail >= 0.6, settings.reducedMotion);
+    this.pondEcology.setQuality(profile, settings.reducedMotion);
     this.graphicsUniforms.windStrength.value = settings.reducedMotion ? 0.22 : 1;
 
     if (this.renderer?.shadowMap) {
@@ -1569,6 +1577,11 @@ export class Environment {
     });
     this.rain.update(dt, focus, this.rainIntensity);
     this.fallingLeaves.update(dt, focus, this.graphicsUniforms.windStrength.value, this.rainIntensity);
+    this.pondEcology.update(dt, focus, {
+      rainIntensity: this.rainIntensity,
+      dayAmount: this.dayAmount,
+      skyExposure: this.skyExposure,
+    });
     const lightningEvent = this.lightning.update(
       dt,
       focus,

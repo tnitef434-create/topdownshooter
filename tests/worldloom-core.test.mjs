@@ -4,7 +4,11 @@ import * as THREE from '../src/public/worldloom/vendor/three.module.min.js';
 import { Inventory, SaveStore, DEFAULT_SETTINGS } from '../src/public/worldloom/src/save.js';
 import { SurvivalSystem } from '../src/public/worldloom/src/survival.js';
 import { BLOCK, BLOCKS } from '../src/public/worldloom/src/blocks.js';
-import { World } from '../src/public/worldloom/src/world.js';
+import {
+  World,
+  LEGACY_WORLD_GENERATOR_VERSION,
+  WORLD_GENERATOR_VERSION,
+} from '../src/public/worldloom/src/world.js';
 import {
   BlockEffects,
   Environment,
@@ -159,6 +163,93 @@ test('save round-trips an exact fractional player position and persistent loose 
   assert.deepEqual(loaded.droppedItems, snapshot.droppedItems);
 });
 
+test('fresh saves use generator v2 while supported explicit versions round-trip unchanged', () => {
+  const values = new Map();
+  globalThis.localStorage = {
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, value) => values.set(key, value),
+    removeItem: (key) => values.delete(key),
+  };
+  const store = new SaveStore();
+  assert.equal(store.save(validSnapshot()), true);
+  assert.equal(store.load()?.generatorVersion, WORLD_GENERATOR_VERSION);
+
+  assert.equal(store.save({
+    ...validSnapshot(),
+    seed: 4321,
+    generatorVersion: LEGACY_WORLD_GENERATOR_VERSION,
+  }), true);
+  assert.equal(store.load()?.generatorVersion, LEGACY_WORLD_GENERATOR_VERSION);
+
+  assert.equal(store.save({
+    ...validSnapshot(),
+    seed: 6789,
+    generatorVersion: WORLD_GENERATOR_VERSION,
+  }), true);
+  assert.equal(store.load()?.generatorVersion, WORLD_GENERATOR_VERSION);
+});
+
+test('legacy saves without generator metadata normalize to v1 and remain v1 after autosave', () => {
+  const values = new Map();
+  const legacy = {
+    ...validSnapshot(),
+    seed: 64,
+    schemaVersion: 1,
+    registryVersion: 1,
+  };
+  values.set('worldloom.save.v1', JSON.stringify(legacy));
+  globalThis.localStorage = {
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, value) => values.set(key, value),
+    removeItem: (key) => values.delete(key),
+  };
+
+  const store = new SaveStore();
+  const loaded = store.load();
+  assert.equal(loaded?.generatorVersion, LEGACY_WORLD_GENERATOR_VERSION);
+  assert.equal(store.save(loaded), true);
+  assert.equal(
+    JSON.parse(values.get('worldloom.save.v1')).generatorVersion,
+    LEGACY_WORLD_GENERATOR_VERSION,
+    'autosave must not silently migrate deterministic terrain beneath legacy edits',
+  );
+});
+
+test('unsupported explicit generator metadata is rejected before replacing a valid save', () => {
+  const values = new Map();
+  globalThis.localStorage = {
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, value) => values.set(key, value),
+    removeItem: (key) => values.delete(key),
+  };
+  const store = new SaveStore();
+  const supported = {
+    ...validSnapshot(),
+    seed: 2468,
+    generatorVersion: LEGACY_WORLD_GENERATOR_VERSION,
+  };
+  assert.equal(store.save(supported), true);
+  const originalPrimary = values.get('worldloom.save.v1');
+  for (const generatorVersion of [null, '1', WORLD_GENERATOR_VERSION + 1]) {
+    assert.equal(store.save({ ...validSnapshot(), seed: 8642, generatorVersion }), false);
+    assert.equal(values.get('worldloom.save.v1'), originalPrimary);
+  }
+  assert.equal(store.load()?.seed, 2468);
+
+  const invalidPrimary = {
+    ...validSnapshot(),
+    seed: 9999,
+    schemaVersion: 1,
+    generatorVersion: WORLD_GENERATOR_VERSION + 1,
+    registryVersion: 1,
+  };
+  values.set('worldloom.save.v1', JSON.stringify(invalidPrimary));
+  values.set('worldloom.save.backup.v1', originalPrimary);
+  const recovered = new SaveStore().load();
+  assert.equal(recovered?.seed, 2468);
+  assert.equal(recovered?.generatorVersion, LEGACY_WORLD_GENERATOR_VERSION);
+});
+
 test('unsafe or impossible loose-item records invalidate a save', () => {
   const invalid = {
     ...validSnapshot(),
@@ -303,6 +394,315 @@ test('highland pine and walk-through shortgrass form deterministic natural patch
   assert.ok(grassCount > 8 && grassCount < 192, 'shortgrass should cluster without carpeting every block');
   assert.ok(pineCount > 20, 'the second tree species should be visibly represented');
   assert.equal(BLOCKS[BLOCK.SHORT_GRASS].solid, false, 'shortgrass must remain walk-through');
+  world.dispose();
+});
+
+function pondDescriptor(pond) {
+  return {
+    id: pond.id,
+    cellX: pond.cellX,
+    cellZ: pond.cellZ,
+    centerX: pond.centerX,
+    centerZ: pond.centerZ,
+    radiusX: pond.radiusX,
+    radiusZ: pond.radiusZ,
+    rotation: pond.rotation,
+    waterY: pond.waterY,
+    phase: pond.phase,
+  };
+}
+
+function pondFootprint(world, pond) {
+  const reach = Math.ceil(Math.max(pond.radiusX, pond.radiusZ)) + 3;
+  const columns = [];
+  for (let z = Math.floor(pond.centerZ) - reach; z <= Math.ceil(pond.centerZ) + reach; z++) {
+    for (let x = Math.floor(pond.centerX) - reach; x <= Math.ceil(pond.centerX) + reach; x++) {
+      const info = world._columnInfo(x, z);
+      if (info.pondId !== pond.id) continue;
+      columns.push({ x, z, info });
+    }
+  }
+  return {
+    columns,
+    water: columns.filter(({ info }) => Number.isFinite(info.pondWaterLevel)),
+    rim: columns.filter(({ info }) => !Number.isFinite(info.pondWaterLevel)),
+  };
+}
+
+test('generator v1 keeps legacy terrain pond-free and retains edits across Continue loads', () => {
+  const fresh = new World(64, null, null);
+  assert.equal(fresh.generatorVersion, WORLD_GENERATOR_VERSION);
+  const pond = fresh.getPondsNear(0, 0, 96)[0];
+  assert.ok(pond, 'the v2 fixture needs a pond where legacy terrain remains untouched');
+  const x = Math.floor(pond.centerX);
+  const z = Math.floor(pond.centerZ);
+  const v2Info = fresh._columnInfo(x, z);
+  assert.equal(v2Info.pondId, pond.id);
+
+  const legacy = new World(64, null, null, {
+    generatorVersion: LEGACY_WORLD_GENERATOR_VERSION,
+  });
+  assert.equal(legacy.generatorVersion, LEGACY_WORLD_GENERATOR_VERSION);
+  assert.deepEqual(legacy.getPondsNear(0, 0, 256), []);
+  const legacyInfo = legacy._columnInfo(x, z);
+  assert.equal(legacyInfo.pondId, null);
+  assert.equal(legacyInfo.height, legacyInfo.baseHeight);
+  assert.notEqual(legacy.getBlock(x, pond.waterY, z), BLOCK.WATER);
+
+  const editY = v2Info.height;
+  const editBlock = fresh.getBlock(x, editY, z);
+  assert.notEqual(legacy.getBlock(x, editY, z), editBlock,
+    'the compatibility fixture needs generator-dependent deterministic terrain');
+  legacy.ensurePositionGenerated(x, z);
+  assert.equal(legacy.setBlock(x, editY, z, editBlock), true);
+  const savedEdits = legacy.serializeEdits();
+  assert.ok(savedEdits.chunks.length > 0);
+  const continued = new World(64, null, null, {
+    generatorVersion: LEGACY_WORLD_GENERATOR_VERSION,
+  });
+  continued.loadEdits(savedEdits);
+  assert.equal(continued.getBlock(x, editY, z), editBlock);
+  assert.ok(continued.serializeEdits().chunks.length > 0,
+    'legacy edit canonicalization must use the v1 base generator selected before loading');
+
+  const wronglyMigrated = new World(64, null, null, {
+    generatorVersion: WORLD_GENERATOR_VERSION,
+  });
+  wronglyMigrated.loadEdits(savedEdits);
+  assert.equal(wronglyMigrated.serializeEdits().chunks.length, 0,
+    'control: relabeling this save as v2 would incorrectly discard the legacy surface edit');
+  fresh.dispose();
+  legacy.dispose();
+  continued.dispose();
+  wronglyMigrated.dispose();
+});
+
+function intendedPondWaterColumns(world, pond) {
+  const reach = Math.ceil(Math.max(pond.radiusX, pond.radiusZ) * 1.08) + 2;
+  const columns = [];
+  for (let z = Math.floor(pond.centerZ) - reach; z <= Math.ceil(pond.centerZ) + reach; z++) {
+    for (let x = Math.floor(pond.centerX) - reach; x <= Math.ceil(pond.centerX) + reach; x++) {
+      const normalized = world._pondNormalizedAt(pond, x, z);
+      if (normalized < 0.82) columns.push({ x, z, normalized });
+    }
+  }
+  return columns;
+}
+
+function assertPondIsClosedAndAtomic(world, pond, label) {
+  const intended = intendedPondWaterColumns(world, pond);
+  assert.ok(intended.length > 0, `${label} must contain intended source columns`);
+  const waterKeys = new Set(intended.map(({ x, z }) => `${x},${z}`));
+  const visited = new Set();
+  const pending = [intended[0]];
+  while (pending.length) {
+    const column = pending.pop();
+    const key = `${column.x},${column.z}`;
+    if (visited.has(key)) continue;
+    visited.add(key);
+    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const neighborKey = `${column.x + dx},${column.z + dz}`;
+      if (!waterKeys.has(neighborKey) || visited.has(neighborKey)) continue;
+      pending.push({ x: column.x + dx, z: column.z + dz });
+    }
+  }
+  assert.equal(visited.size, intended.length, `${label} source footprint cannot fragment`);
+
+  const checkedPerimeter = new Set();
+  for (const { x, z, normalized } of intended) {
+    const info = world._columnInfo(x, z);
+    const macro = world._macroTerrainAt(x, z);
+    const intendedBedY = pond.waterY - (normalized < 0.43 ? 2 : 1);
+    assert.equal(info.pondId, pond.id, `${label} must apply every intended column atomically`);
+    assert.equal(info.pondWaterLevel, pond.waterY);
+    assert.equal(info.height, intendedBedY);
+    assert.ok(macro.height >= pond.waterY, `${label} cannot float over low macro terrain`);
+    assert.ok(BLOCKS[world.getBlock(x, intendedBedY, z)]?.solid,
+      `${label} needs a solid bed at ${x},${intendedBedY},${z}`);
+
+    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const bankX = x + dx;
+      const bankZ = z + dz;
+      const bankKey = `${bankX},${bankZ}`;
+      if (waterKeys.has(bankKey) || checkedPerimeter.has(bankKey)) continue;
+      checkedPerimeter.add(bankKey);
+      assert.ok(world._macroTerrainAt(bankX, bankZ).height >= pond.waterY,
+        `${label} four-neighbor perimeter cannot rely on raised terrain at ${bankKey}`);
+      assert.ok(BLOCKS[world.getBlock(bankX, pond.waterY, bankZ)]?.solid,
+        `${label} source must be closed by a solid four-neighbor bank at ${bankKey}`);
+    }
+  }
+  assert.ok(checkedPerimeter.size > 0);
+}
+
+test('unsafe cave and low-rim pond repros are rejected as whole deterministic candidates', () => {
+  const lowRim = new World(7, null, null, { generatorVersion: WORLD_GENERATOR_VERSION });
+  assert.equal(lowRim._pondCandidateForCell(-1, 1), null,
+    'seed 7 pond -1,1 previously exposed source water to low AIR at its perimeter');
+  const caveBed = new World(65, null, null, { generatorVersion: WORLD_GENERATOR_VERSION });
+  assert.equal(caveBed._pondCandidateForCell(2, 1), null,
+    'seed 65 pond 2,1 previously carved its intended bed through a cave entrance');
+  const fragmented = new World(143, null, null, { generatorVersion: WORLD_GENERATOR_VERSION });
+  assert.equal(fragmented._pondCandidateForCell(-1, -1), null,
+    'edge-noise islands must reject the whole feature instead of creating detached pools');
+  lowRim.dispose();
+  caveBed.dispose();
+  fragmented.dispose();
+});
+
+test('accepted ponds remain connected, cave-safe and fully banked across a bounded seed sweep', () => {
+  let checked = 0;
+  for (let seed = 1; seed <= 48; seed++) {
+    const world = new World(seed, null, null, { generatorVersion: WORLD_GENERATOR_VERSION });
+    for (const pond of world.getPondsNear(0, 0, 112).slice(0, 2)) {
+      assertPondIsClosedAndAtomic(world, pond, `seed ${seed} pond ${pond.id}`);
+      checked++;
+    }
+    assert.equal(world.fluidLevels.size, 0, `seed ${seed} natural ponds cannot allocate flow metadata`);
+    assert.equal(world.fluidQueue.length - world.fluidQueueHead, 0,
+      `seed ${seed} natural ponds cannot enqueue simulation work`);
+    assert.deepEqual(world.serializeEdits().chunks, []);
+    assert.deepEqual(world.serializeEdits().fluids, []);
+    world.dispose();
+  }
+  assert.ok(checked >= 20, 'the safety pass must retain a useful density of valid small ponds');
+});
+
+test('small-pond descriptors are deterministic for a seed and vary across seeds', () => {
+  const first = new World(64, null, null);
+  const replay = new World(64, null, null);
+  const different = new World(65, null, null);
+  const firstDescriptors = first.getPondsNear(0, 0, 96).map(pondDescriptor);
+  const replayDescriptors = replay.getPondsNear(0, 0, 96).map(pondDescriptor);
+  const differentDescriptors = different.getPondsNear(0, 0, 96).map(pondDescriptor);
+
+  assert.ok(firstDescriptors.length > 0, 'the deterministic fixture must contain an inland pond');
+  assert.deepEqual(replayDescriptors, firstDescriptors, 'the same seed must reproduce exact pond descriptors');
+  assert.notDeepEqual(differentDescriptors, firstDescriptors, 'a different seed must not reuse the pond layout');
+  assert.ok(firstDescriptors.every((pond) => (
+    pond.waterY > first.seaLevel
+    && pond.radiusX >= 4 && pond.radiusX < 8
+    && pond.radiusZ >= 4 && pond.radiusZ < 8
+  )), 'pond descriptors should remain small, shallow inland features');
+
+  first.dispose();
+  replay.dispose();
+  different.dispose();
+});
+
+test('generated ponds preserve flat source water, solid beds and base-query agreement', () => {
+  const world = new World(64, null, null);
+  const pond = world.getPondsNear(0, 0, 96)[0];
+  assert.ok(pond, 'the deterministic fixture must contain a nearby pond');
+  const footprint = pondFootprint(world, pond);
+  assert.ok(footprint.water.length >= 24 && footprint.water.length <= 192, 'the pond should stay compact');
+  assert.ok(footprint.rim.length > 0, 'the source water must have an authored bank ring');
+  assert.deepEqual(
+    [...new Set(footprint.water.map(({ info }) => info.pondWaterLevel))],
+    [pond.waterY],
+    'every pond column must share one flat water level',
+  );
+
+  const waterKeys = new Set(footprint.water.map(({ x, z }) => `${x},${z}`));
+  const checkedRim = new Set();
+  const beforeGeneration = [];
+  for (const { x, z, info } of footprint.columns) {
+    const minimumY = Math.min(info.height, pond.waterY - 2);
+    for (let y = minimumY; y <= pond.waterY; y++) {
+      beforeGeneration.push([x, y, z, world.getBlock(x, y, z)]);
+    }
+  }
+  for (const { x, z, info } of footprint.water) {
+    assert.ok(BLOCKS[world.getBlock(x, info.height, z)]?.solid, 'pond water needs a solid voxel bed');
+    assert.ok(pond.waterY - info.height >= 1 && pond.waterY - info.height <= 2,
+      'small ponds should be one or two source blocks deep');
+    for (let y = info.height + 1; y <= pond.waterY; y++) {
+      assert.equal(world.getBlock(x, y, z), BLOCK.WATER, 'the carved bowl must contain only water');
+    }
+    assert.equal(world.getFluidLevel(x, pond.waterY, z), 0, 'natural pond water is a full source');
+    assert.ok(Math.abs(world.getFluidSurfaceY(x, pond.waterY, z) - (pond.waterY + 0.92)) < 1e-9);
+
+    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const neighborKey = `${x + dx},${z + dz}`;
+      if (waterKeys.has(neighborKey) || checkedRim.has(neighborKey)) continue;
+      checkedRim.add(neighborKey);
+      assert.ok(
+        BLOCKS[world.getBlock(x + dx, pond.waterY, z + dz)]?.solid,
+        `pond source at ${x},${z} must be closed by a solid bank at ${neighborKey}`,
+      );
+    }
+  }
+  assert.ok(checkedRim.size > 0);
+  assert.equal(world.fluidLevels.size, 0, 'natural sources must not allocate simulated-flow metadata');
+  assert.equal(world.fluidQueue.length - world.fluidQueueHead, 0, 'natural sources must not start fluid work');
+  assert.deepEqual(world.serializeEdits().chunks, []);
+  assert.deepEqual(world.serializeEdits().fluids, []);
+
+  // Materialize every chunk touched by the feature. The loaded voxel arrays
+  // must agree with unloaded deterministic getBlock() queries exactly.
+  for (const { x, z } of footprint.columns) world.ensurePositionGenerated(x, z);
+  for (const [x, y, z, expected] of beforeGeneration) {
+    assert.equal(world.getBlock(x, y, z), expected, `generated pond voxel diverged at ${x},${y},${z}`);
+  }
+  const forbiddenWaterGrowth = new Set([
+    BLOCK.ASH_LOG,
+    BLOCK.PINE_LOG,
+    BLOCK.OVERGROWN_ASH_LOG,
+    BLOCK.OVERGROWN_PINE_LOG,
+    BLOCK.FERN,
+    BLOCK.WILDFLOWER,
+    BLOCK.SHORT_GRASS,
+    BLOCK.CACTUS,
+  ]);
+  for (const { x, z, info } of footprint.water) {
+    for (let y = info.height + 1; y <= pond.waterY; y++) {
+      assert.equal(world.getBlock(x, y, z), BLOCK.WATER, 'decorations must never replace pond water');
+    }
+    assert.equal(
+      forbiddenWaterGrowth.has(world.getBlock(x, pond.waterY + 1, z)),
+      false,
+      'trees and plants must not root immediately above pond water',
+    );
+  }
+  assert.equal(world.fluidLevels.size, 0);
+  assert.equal(world.fluidQueue.length - world.fluidQueueHead, 0);
+  assert.deepEqual(world.serializeEdits().chunks, []);
+  assert.deepEqual(world.serializeEdits().fluids, []);
+  world.dispose();
+});
+
+test('breaking a generated pond bank activates a persisted flowing-water cell', () => {
+  const world = new World(64, null, null);
+  const pond = world.getPondsNear(0, 0, 96)[0];
+  const footprint = pondFootprint(world, pond);
+  for (const { x, z } of footprint.columns) world.ensurePositionGenerated(x, z);
+  const waterKeys = new Set(footprint.water.map(({ x, z }) => `${x},${z}`));
+  let bank = null;
+  for (const { x, z } of footprint.water) {
+    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      if (waterKeys.has(`${x + dx},${z + dz}`)) continue;
+      if (!BLOCKS[world.getBlock(x + dx, pond.waterY, z + dz)]?.solid) continue;
+      bank = { x: x + dx, y: pond.waterY, z: z + dz };
+      break;
+    }
+    if (bank) break;
+  }
+  assert.ok(bank, 'the pond fixture needs a breakable bank beside source water');
+  world.ensurePositionGenerated(bank.x, bank.z);
+  assert.deepEqual(world.serializeEdits().chunks, []);
+  assert.deepEqual(world.serializeEdits().fluids, []);
+
+  assert.equal(world.setBlock(bank.x, bank.y, bank.z, BLOCK.AIR), true);
+  assert.ok(world.fluidQueue.length - world.fluidQueueHead > 0, 'opening the bank must wake a source cell');
+  for (let pass = 0; pass < 8 && world.getBlock(bank.x, bank.y, bank.z) !== BLOCK.WATER; pass++) {
+    world.updateFluids(32);
+  }
+  assert.equal(world.getBlock(bank.x, bank.y, bank.z), BLOCK.WATER, 'the source should flow into the opening');
+  assert.ok(world.getFluidLevel(bank.x, bank.y, bank.z) > 0, 'new outflow must retain a finite flow level');
+  const saved = world.serializeEdits();
+  assert.ok(saved.chunks.length > 0, 'the opened bank must persist as a world edit');
+  assert.ok(saved.fluids.some(([x, y, z]) => x === bank.x && y === bank.y && z === bank.z),
+    'the simulated outflow level must be serialized');
   world.dispose();
 });
 

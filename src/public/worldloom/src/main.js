@@ -1,7 +1,12 @@
 import * as THREE from '../vendor/three.module.min.js';
 import { BLOCK, BLOCKS, HOTBAR_BLOCKS, createTextureAtlas, isLiquid, blockShapeHeight } from './blocks.js';
 import { normalizeSeed } from './noise.js';
-import { World, SEA_LEVEL } from './world.js';
+import {
+  World,
+  SEA_LEVEL,
+  LEGACY_WORLD_GENERATOR_VERSION,
+  WORLD_GENERATOR_VERSION,
+} from './world.js';
 import { InputController, PlayerController, fallDamageForImpact } from './player.js';
 import { AudioSystem } from './audio.js';
 import { Environment, BlockEffects } from './environment.js';
@@ -162,6 +167,7 @@ function initRenderer() {
     document.documentElement.style.setProperty('--worldloom-atlas', `url("${atlasUrl}")`);
   }
   environment = new Environment(scene, renderer);
+  window.__worldloomPonds = environment.pondEcology;
   // World-avatar geometry is structurally absent from the gameplay and GTAO
   // camera, but remains part of the sun's shadow pass.
   environment.sunLight?.shadow?.camera?.layers.enable(WORLD_AVATAR_LAYER);
@@ -390,10 +396,17 @@ async function startWorld({ seed, mode: selectedMode, saveData = null }) {
   worldWorkScheduled = false;
   environment.updateLocalLights(null, null);
   world?.dispose();
-  world = new World(seed, scene, atlas);
+  const generatorVersion = saveData
+    ? (saveData.generatorVersion ?? LEGACY_WORLD_GENERATOR_VERSION)
+    : WORLD_GENERATOR_VERSION;
+  // Generator selection must happen before edits are loaded: loadEdits removes
+  // entries equal to deterministic base terrain, which differs between v1 and v2.
+  world = new World(seed, scene, atlas, { generatorVersion });
   streamingFogFar = null;
   environment.enhanceWorldMaterials(world);
   environment.setWeatherContext(world);
+  ui.setLoading(0.075, 'Growing lily ponds and waterside life…');
+  await environment.preparePondEcology();
   mode = selectedMode === 'builder' ? 'builder' : 'survival';
   worldCreatedAt = saveData?.createdAt || new Date().toISOString();
   flags = { ...(saveData?.flags || {}) };
@@ -985,6 +998,7 @@ function saveSnapshot() {
   if (!world || !player) return null;
   return {
     seed: world.seed,
+    generatorVersion: world.generatorVersion,
     mode,
     name: 'My Worldloom',
     createdAt: worldCreatedAt,

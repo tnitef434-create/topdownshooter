@@ -176,7 +176,11 @@ try {
   assert.equal(Number.parseFloat(settingsPresentation.toggleRadius), 0, 'Settings toggles reverted to pill switches');
   await frame.evaluate(() => document.querySelector('#settings-close')?.click());
   await frame.waitForFunction(() => document.querySelector('#settings-panel')?.classList.contains('hidden'));
-  await frame.evaluate(() => document.querySelector('#new-world-button')?.click());
+  await frame.evaluate(() => {
+    const seed = document.querySelector('#seed-input');
+    if (seed) seed.value = '64';
+    document.querySelector('#new-world-button')?.click();
+  });
   await frame.waitForFunction(() => !document.querySelector('#hud')?.classList.contains('hidden'), {
     timeout: 60_000,
   });
@@ -310,6 +314,132 @@ try {
   assert(Number.isFinite(gameState.fogFar) && gameState.fogFar <= gameState.safeTerrainFar + 1.5,
     `Fog exposed unmeshed horizon space (fog ${gameState.fogFar}, safe ${gameState.safeTerrainFar})`);
 
+  await frame.waitForFunction(() => {
+    const stats = window.__worldloomPonds?.getStats?.();
+    return stats?.ready && !stats.failed && stats.pads > 0;
+  }, { timeout: 10_000 });
+  const pondState = await frame.evaluate(() => {
+    const environment = window.__worldloomEnvironment;
+    const ponds = window.__worldloomPonds;
+    const focus = environment.atmosphere.position.clone();
+    const clearContext = { rainIntensity: 0, dayAmount: 1, skyExposure: 1 };
+    const matrixPositions = (mesh) => {
+      const positions = [];
+      const values = mesh?.instanceMatrix?.array;
+      for (let index = 0; values && index < mesh.count; index++) {
+        const offset = index * 16;
+        positions.push([values[offset + 12], values[offset + 13], values[offset + 14]]);
+      }
+      return positions;
+    };
+    const maximumDrift = (before, after) => before.reduce((maximum, point, index) => {
+      const next = after[index] || [Number.POSITIVE_INFINITY, 0, 0];
+      return Math.max(maximum, Math.hypot(
+        point[0] - next[0],
+        point[1] - next[1],
+        point[2] - next[2],
+      ));
+    }, before.length === after.length ? 0 : Number.POSITIVE_INFINITY);
+
+    environment.applyGraphicsSettings({
+      graphicsQuality: 'balanced',
+      weatherEffects: true,
+      reducedMotion: false,
+    });
+    ponds.update(0, focus, clearContext);
+    const initial = ponds.getStats();
+    const canonicalBefore = ponds.padAnchors.map(({ x, y, z }) => [x, y, z]);
+    const matricesBefore = matrixPositions(ponds.padMesh);
+    const nearbyPonds = ponds.world?.getPondsNear?.(focus.x, focus.z, 48) || [];
+    const nearestPadDistance = ponds.padAnchors.reduce((distance, anchor) => Math.min(
+      distance,
+      Math.hypot(anchor.x - focus.x, anchor.z - focus.z),
+    ), Number.POSITIVE_INFINITY);
+
+    // Simulate a short player movement without advancing animation time. The
+    // ecology may cull against this focus, but its canonical world coordinates
+    // and rendered instance translations must never inherit that movement.
+    ponds._syncTimer = 1;
+    const shiftedFocus = focus.clone();
+    shiftedFocus.x += 3.25;
+    shiftedFocus.z -= 2.5;
+    ponds.update(0, shiftedFocus, clearContext);
+    const canonicalAfter = ponds.padAnchors.map(({ x, y, z }) => [x, y, z]);
+    const matricesAfter = matrixPositions(ponds.padMesh);
+
+    environment.applyGraphicsSettings({
+      graphicsQuality: 'low',
+      weatherEffects: true,
+      reducedMotion: false,
+    });
+    ponds.update(0, focus, clearContext);
+    const lowQuality = ponds.getStats();
+
+    environment.applyGraphicsSettings({
+      graphicsQuality: 'balanced',
+      weatherEffects: true,
+      reducedMotion: false,
+    });
+    ponds.update(0, focus, clearContext);
+    const restoredClear = ponds.getStats();
+    ponds.update(0, focus, { rainIntensity: 1, dayAmount: 1, skyExposure: 1 });
+    const heavyRain = ponds.getStats();
+    ponds.update(0, focus, clearContext);
+
+    return {
+      asset: {
+        ready: ponds.ready,
+        failed: ponds.failed,
+        error: ponds.error ? String(ponds.error.message || ponds.error) : '',
+        url: initial.assetUrl,
+        meshesReady: [ponds.padMesh, ponds.mistMesh, ponds.flyMesh]
+          .every((mesh) => Boolean(mesh?.isInstancedMesh && mesh.geometry)),
+        groupAttached: ponds.group?.parent === environment.scene,
+      },
+      initial,
+      nearbyPondCount: nearbyPonds.length,
+      nearestPadDistance,
+      anchoring: {
+        canonicalCount: canonicalBefore.length,
+        canonicalDrift: maximumDrift(canonicalBefore, canonicalAfter),
+        matrixDrift: maximumDrift(matricesBefore, matricesAfter),
+      },
+      lowQuality,
+      restoredClear,
+      heavyRain,
+    };
+  });
+  assert.equal(pondState.asset.ready, true, 'The Blender pond-detail asset did not finish loading');
+  assert.equal(pondState.asset.failed, false, `The Blender pond-detail asset failed: ${pondState.asset.error}`);
+  assert.match(pondState.asset.url, /pond-details\.glb(?:$|[?#])/i);
+  assert.equal(pondState.asset.meshesReady, true, 'Pond detail GLB did not produce all three instanced meshes');
+  assert.equal(pondState.asset.groupAttached, true, 'Pond ecology is detached from the live scene');
+  assert(pondState.nearbyPondCount > 0, 'The spawned player has no generated pond within the balanced detail radius');
+  assert(pondState.initial.pads > 0, 'No visible lily pads were instanced near the spawned player');
+  assert(pondState.initial.mist > 0, 'Clear balanced weather has no visible low pond mist');
+  assert(pondState.initial.flySwarms > 0, 'Clear daytime balanced weather has no visible pond flies');
+  assert(pondState.nearestPadDistance <= 48,
+    `The nearest visible lily pad is outside the balanced detail radius: ${pondState.nearestPadDistance}`);
+  assert(pondState.initial.draws > 0 && pondState.initial.draws <= 3,
+    `Pond ecology exceeded its three-draw budget: ${JSON.stringify(pondState.initial)}`);
+  assert(pondState.initial.triangles > 0 && pondState.initial.triangles <= 15_000,
+    `Pond ecology exceeded its balanced triangle budget: ${JSON.stringify(pondState.initial)}`);
+  assert(pondState.anchoring.canonicalCount > 0);
+  assert(pondState.anchoring.canonicalDrift <= 1e-6,
+    `Pond anchors followed simulated player movement by ${pondState.anchoring.canonicalDrift}`);
+  assert(pondState.anchoring.matrixDrift <= 1e-5,
+    `Rendered pond instances followed simulated player movement by ${pondState.anchoring.matrixDrift}`);
+  assert(pondState.lowQuality.pads > 0, 'Low quality incorrectly removes the core lily-pad detail');
+  assert.equal(pondState.lowQuality.mist, 0, 'Low quality still renders pond mist');
+  assert.equal(pondState.lowQuality.flySwarms, 0, 'Low quality still renders animated pond flies');
+  assert(pondState.lowQuality.draws <= 1, 'Low quality uses more than the single lily-pad draw');
+  assert(pondState.restoredClear.mist > 0 && pondState.restoredClear.flySwarms > 0,
+    'Balanced pond ambience did not recover after leaving Low quality');
+  assert.equal(pondState.heavyRain.mist, 0, 'Heavy rain did not hide low pond mist');
+  assert.equal(pondState.heavyRain.flySwarms, 0, 'Heavy rain did not hide pond flies');
+  assert(pondState.heavyRain.pads > 0, 'Heavy rain incorrectly removes solid lily pads');
+  assert(pondState.heavyRain.draws <= 1, 'Hidden rain ambience still consumes pond draw calls');
+
   const clearState = await frame.evaluate(() => {
     const environment = window.__worldloomEnvironment;
     const focus = environment.atmosphere.position.clone();
@@ -343,7 +473,73 @@ try {
     `Clear daytime sky is not strongly blue: ${JSON.stringify(clearState.sky)}`);
 
   if (screenshotPath) {
-    await page.screenshot({ path: screenshotPath, fullPage: false });
+    await frame.evaluate(() => {
+      const graphics = window.__worldloomGraphics;
+      const ponds = window.__worldloomPonds;
+      const focus = window.__worldloomEnvironment.atmosphere.position;
+      const target = ponds.mistAnchors.reduce((nearest, anchor) => (
+        !nearest
+          || Math.hypot(anchor.x - focus.x, anchor.z - focus.z)
+            < Math.hypot(nearest.x - focus.x, nearest.z - focus.z)
+          ? anchor
+          : nearest
+      ), null);
+      if (!graphics?.camera || !target) throw new Error('No deterministic pond view is available');
+
+      const candidates = Array.from({ length: 12 }, (_, index) => {
+        const angle = index * Math.PI * 2 / 12;
+        const position = {
+          x: target.x + Math.cos(angle) * 9,
+          y: target.y + 6.5,
+          z: target.z + Math.sin(angle) * 9,
+        };
+        let obstructions = 0;
+        for (let step = 0; step <= 14; step++) {
+          const blend = step / 18;
+          const x = position.x + (target.x - position.x) * blend;
+          const y = position.y + (target.y + 0.2 - position.y) * blend;
+          const z = position.z + (target.z - position.z) * blend;
+          if (ponds.world.getBlock(Math.floor(x), Math.floor(y), Math.floor(z)) !== 0) {
+            obstructions += step < 3 ? 10 : 1;
+          }
+        }
+        return { position, obstructions, index };
+      }).sort((a, b) => a.obstructions - b.obstructions || a.index - b.index);
+
+      const camera = graphics.camera;
+      const original = {
+        position: camera.position.toArray(),
+        quaternion: camera.quaternion.toArray(),
+        setPosition: camera.position.set,
+        setRotation: camera.quaternion.setFromEuler,
+      };
+      camera.position.set(
+        candidates[0].position.x,
+        candidates[0].position.y,
+        candidates[0].position.z,
+      );
+      camera.lookAt(target.x, target.y + 0.2, target.z);
+      camera.updateMatrixWorld(true);
+      camera.position.set = function holdPondView() { return this; };
+      camera.quaternion.setFromEuler = function holdPondView() { return this; };
+      window.__worldloomSmokeCameraRestore = original;
+      graphics.render(0);
+    });
+    try {
+      await delay(120);
+      await page.screenshot({ path: screenshotPath, fullPage: false });
+    } finally {
+      await frame.evaluate(() => {
+        const camera = window.__worldloomGraphics?.camera;
+        const original = window.__worldloomSmokeCameraRestore;
+        if (!camera || !original) return;
+        camera.position.set = original.setPosition;
+        camera.quaternion.setFromEuler = original.setRotation;
+        camera.position.fromArray(original.position);
+        camera.quaternion.fromArray(original.quaternion);
+        delete window.__worldloomSmokeCameraRestore;
+      });
+    }
   }
 
   const stormState = await frame.evaluate(() => {
@@ -665,6 +861,7 @@ try {
   console.log(JSON.stringify({
     ok: true,
     gameState,
+    pondState,
     clearState,
     stormState,
     deployPresentation,
