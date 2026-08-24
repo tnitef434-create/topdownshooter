@@ -44,18 +44,26 @@
           <div id="total-player-count" style="font-family: var(--font-title); font-size: 11px; color: #66fcf1; border: 1px solid rgba(102, 252, 241, 0.3); background: rgba(102, 252, 241, 0.05); padding: 4px 10px; border-radius: 4px; display: inline-block; margin-top: 10px; letter-spacing: 1.5px;">
             ● <span id="total-player-count-value">0</span> OPERATIVES ONLINE
           </div>
-        </header>
 
-        <!-- Operative Profile Card with Rank -->
-        <div class="card" style="padding: 18px 24px; display: flex; flex-direction: column; gap: 12px; border: 1px solid rgba(212, 175, 55, 0.15);">
-          <div style="display:flex; justify-content:space-between; align-items:center;">
-            <label style="font-family: var(--font-title); font-size: 11px; letter-spacing: 1.5px; color: #d4af37; font-weight:700;">OPERATIVE PROFILE</label>
-            <div id="menu-rank-display" style="display:flex; align-items:center; gap:6px; font-family:var(--font-title); font-size:12px; letter-spacing:1px;">
-              <span id="menu-rank-icon" style="font-size:14px; color:#8a9bb5;">▪</span>
-              <span id="menu-rank-label" style="font-weight:700; color:#8a9bb5;">RECRUIT</span>
-              <span id="menu-rank-rp" style="color:var(--text-muted); font-size:10px;">(0 RP)</span>
+          <!-- Operative Rank Display with XP Progress -->
+          <div id="menu-rank-display" style="margin-top: 16px; display: flex; flex-direction: column; align-items: center; gap: 7px; width: 100%;">
+            <div style="display:flex; align-items:center; gap:10px; font-family:var(--font-title);">
+              <span id="menu-rank-icon" style="font-size:26px; color:#8a9bb5; text-shadow:0 0 14px rgba(138,155,181,0.5);">▪</span>
+              <span id="menu-rank-label" style="font-size:24px; font-weight:900; letter-spacing:4px; color:#8a9bb5; text-shadow:0 0 16px rgba(138,155,181,0.4);">RECRUIT</span>
+              <span id="menu-rank-rp" style="font-size:11px; color:var(--text-muted); letter-spacing:1.5px; align-self:flex-end; padding-bottom:4px;">0 RP</span>
+            </div>
+            <div style="width: 280px; max-width: 85%;">
+              <div style="height: 9px; border-radius: 5px; background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.1); overflow: hidden; box-shadow: inset 0 1px 3px rgba(0,0,0,0.6);">
+                <div id="menu-rank-progress" style="height: 100%; width: 0%; border-radius: 5px; background: linear-gradient(90deg, #8a9bb5, #e8c84a); transition: width 0.5s ease; box-shadow: 0 0 8px rgba(232,200,74,0.4);"></div>
+              </div>
+              <span id="menu-rank-progress-text" style="font-family:var(--font-title); font-size:9px; color:var(--text-muted); letter-spacing:1.5px; display:block; margin-top:5px; text-align:center;">0 / 1000 RP TO VETERAN</span>
             </div>
           </div>
+        </header>
+
+        <!-- Operative Profile Card -->
+        <div class="card" style="padding: 18px 24px; display: flex; flex-direction: column; gap: 12px; border: 1px solid rgba(212, 175, 55, 0.15);">
+          <label for="player-name-input" style="font-family: var(--font-title); font-size: 11px; letter-spacing: 1.5px; color: #d4af37; font-weight:700;">OPERATIVE PROFILE</label>
           <input type="text" id="player-name-input" class="game-input" placeholder="Enter your codename..." maxlength="15" aria-label="Player Codename" style="width: 100%;">
         </div>
 

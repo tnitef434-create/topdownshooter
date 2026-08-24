@@ -730,24 +730,52 @@ function getRankForRP(rp) {
   return RANKS[0];
 }
 
+function getRankIndexForRP(rp) {
+  for (let i = RANKS.length - 1; i >= 0; i--) {
+    if (rp >= RANKS[i].minRP) return i;
+  }
+  return 0;
+}
+
 function updateMenuRankUI() {
   const rpVal = parseInt(localStorage.getItem('tacticstrike_rp') || '0');
-  const rk = getRankForRP(rpVal);
+  const rankIndex = getRankIndexForRP(rpVal);
+  const rk = RANKS[rankIndex];
+  const nextRank = RANKS[rankIndex + 1];
   
   const rIcon = document.getElementById('menu-rank-icon');
   const rLabel = document.getElementById('menu-rank-label');
   const rRp = document.getElementById('menu-rank-rp');
+  const rBar = document.getElementById('menu-rank-progress');
+  const rBarText = document.getElementById('menu-rank-progress-text');
   
   if (rIcon) {
     rIcon.innerText = rk.icon;
     rIcon.style.color = rk.color;
+    rIcon.style.textShadow = `0 0 14px ${rk.color}80`;
   }
   if (rLabel) {
     rLabel.innerText = rk.label;
     rLabel.style.color = rk.color;
+    rLabel.style.textShadow = `0 0 16px ${rk.color}66`;
   }
   if (rRp) {
-    rRp.innerText = `(${rpVal} RP)`;
+    rRp.innerText = `${rpVal} RP`;
+  }
+  if (rBar && rBarText) {
+    if (nextRank) {
+      const span = nextRank.minRP - rk.minRP;
+      const pct = Math.min(100, Math.max(0, ((rpVal - rk.minRP) / span) * 100));
+      rBar.style.width = `${pct}%`;
+      rBar.style.background = `linear-gradient(90deg, ${rk.color}, ${nextRank.color})`;
+      rBar.style.boxShadow = `0 0 8px ${nextRank.color}66`;
+      rBarText.innerText = `${rpVal} / ${nextRank.minRP} RP TO ${nextRank.label}`;
+    } else {
+      rBar.style.width = '100%';
+      rBar.style.background = `linear-gradient(90deg, ${rk.color}, ${rk.color})`;
+      rBar.style.boxShadow = `0 0 10px ${rk.color}80`;
+      rBarText.innerText = 'MAX RANK ACHIEVED';
+    }
   }
 }
 
