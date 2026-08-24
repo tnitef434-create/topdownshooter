@@ -19,6 +19,13 @@ export function skylightTransmission(blockId, definition = BLOCKS[blockId]) {
   return 0.7;
 }
 
+export function outdoorBounceIntensity(dayAmount, skyExposure, overcastAmount) {
+  const day = THREE.MathUtils.clamp(Number(dayAmount) || 0, 0, 1);
+  const sky = THREE.MathUtils.clamp(Number(skyExposure) || 0, 0, 1);
+  const overcast = THREE.MathUtils.clamp(Number(overcastAmount) || 0, 0, 1);
+  return (0.012 + day * 0.18) * (0.02 + sky * 0.98) * (1 - overcast * 0.38);
+}
+
 function makeAtmosphereMaterial() {
   return new THREE.ShaderMaterial({
     name: 'Worldloom atmosphere',
@@ -33,6 +40,7 @@ function makeAtmosphereMaterial() {
       lowerColor: { value: new THREE.Color('#5b8794') },
       sunDirection: { value: new THREE.Vector3(0, 1, 0) },
       sunColor: { value: new THREE.Color('#fff1c2') },
+      sunVisibility: { value: 1 },
       twilight: { value: 0 },
       dayAmount: { value: 1 },
       atmosphereDetail: { value: 0.72 },
@@ -51,6 +59,7 @@ function makeAtmosphereMaterial() {
       uniform vec3 lowerColor;
       uniform vec3 sunDirection;
       uniform vec3 sunColor;
+      uniform float sunVisibility;
       uniform float twilight;
       uniform float dayAmount;
       uniform float atmosphereDetail;
@@ -74,7 +83,7 @@ function makeAtmosphereMaterial() {
         float sunHalo = pow(sunDot, 18.0) * (0.16 + twilight * 0.28);
         float sunCore = pow(sunDot, 620.0) * 1.4;
         float horizonGlow = exp(-abs(height) * 9.0) * twilight * 0.28;
-        sky += sunColor * (sunHalo + sunCore + horizonGlow);
+        sky += sunColor * (sunHalo + sunCore + horizonGlow) * sunVisibility;
 
         // Tiny ordered-looking noise prevents visible color bands in dark skies.
         float grain = hash21(gl_FragCoord.xy) - 0.5;
@@ -837,6 +846,7 @@ export class Environment {
     this.rainTarget = 0;
     this.cloudCover = 0.34;
     this.cloudCoverTarget = 0.34;
+    this.overcastAmount = 0;
     this.localCloudCoverage = 0;
     this.localCloudCount = 0;
     this.nearestCloudDistance = Number.POSITIVE_INFINITY;
@@ -900,6 +910,12 @@ export class Environment {
 
     this.hemisphere = new THREE.HemisphereLight(0xbfe8ff, 0x334124, 1.55);
     scene.add(this.hemisphere);
+    // Soft sky bounce keeps downward-facing leaf and bark faces readable under
+    // a canopy. Its intensity follows measured sky access, so sealed rooms and
+    // deep caves still fall to black while outdoor shade retains natural detail.
+    this.bounceLight = new THREE.AmbientLight(0xc4d5ca, 0.12);
+    this.bounceLight.name = 'Diffuse outdoor sky bounce';
+    scene.add(this.bounceLight);
     this.sunLight = new THREE.DirectionalLight(0xfff3d1, 2.45);
     this.sunLight.castShadow = true;
     this.sunLight.shadow.mapSize.set(2048, 2048);
@@ -976,8 +992,13 @@ export class Environment {
     const raining = kind === 'rain';
     // Forced storms still obey the visual contract: clouds gather and darken
     // overhead first; precipitation is never switched on beneath a blue sky.
-    this.weatherPhase = raining ? 'building' : 'clear';
-    this.cloudCoverTarget = raining ? 0.96 : 0.32;
+    this.weatherPhase = raining
+      ? 'building'
+      : this.rainIntensity > 0.004 ? 'clearing' : 'clear';
+    // A clearing storm keeps its cloud deck until precipitation has audibly
+    // and visibly faded. This avoids the old blue-sky cut caused by clouds
+    // dispersing faster than the rain recording's gain envelope.
+    this.cloudCoverTarget = raining ? 0.96 : this.weatherPhase === 'clearing' ? 0.9 : 0.32;
     this.stormIntensity = raining ? clamp(intensity, 0, 1) : this.stormIntensity;
     this.pendingStormDuration = Math.max(12, Number(duration) || 120);
     this.weatherBuildAge = 0;
@@ -991,6 +1012,7 @@ export class Environment {
       intensity: this.rainIntensity,
       sheltered: this.rain.sheltered,
       cloudCover: this.cloudCover,
+      overcastAmount: this.overcastAmount,
       localCloudCoverage: this.localCloudCoverage,
       localCloudCount: this.localCloudCount,
       skyExposure: this.skyExposure,
@@ -1158,7 +1180,7 @@ export class Environment {
     // Storm fronts prioritize physically nearby cloud banks. Their independent
     // world positions and wind motion do not follow the player, but this makes
     // the visible buildup happen overhead before rain is permitted.
-    if (this.weatherPhase === 'building' || this.weatherPhase === 'rain') {
+    if (this.weatherPhase === 'building' || this.weatherPhase === 'rain' || this.weatherPhase === 'clearing') {
       ranked.sort((a, b) => a.distance - b.distance);
     }
     const selected = new Set(ranked.slice(0, visibleClouds).map(({ cloud }) => cloud));
@@ -1194,25 +1216,48 @@ export class Environment {
       ? 1 - THREE.MathUtils.smoothstep(nearest, 34, 78)
       : 0;
     const areaCoverage = clamp(weightedCoverage / 2.1, 0, 1);
-    this.localCloudCount = nearbyCount;
+    // Once a verified local front has become a continuous overcast deck, the
+    // low-poly cloud banks are depth cues rather than the sole source of cloud
+    // coverage. Do not let one bank crossing an arbitrary radius toggle rain
+    // off for a frame while the entire atmospheric dome is still overcast.
+    const continuousStormDeck = (this.weatherPhase === 'rain' || this.weatherPhase === 'clearing')
+      && this.overcastAmount >= 0.9
+      && this.cloudCover >= 0.8;
+    this.localCloudCount = continuousStormDeck ? Math.max(3, nearbyCount) : nearbyCount;
     this.nearestCloudDistance = nearest;
-    this.localCloudCoverage = nearbyCount >= 3 ? Math.min(areaCoverage, overheadPermission) : 0;
+    const measuredCoverage = nearbyCount >= 3 ? Math.min(areaCoverage, overheadPermission) : 0;
+    this.localCloudCoverage = continuousStormDeck
+      ? Math.max(0.82, measuredCoverage)
+      : measuredCoverage;
   }
 
   _updateWeather(dt) {
+    if (!Number.isFinite(this.overcastAmount)) this.overcastAmount = 0;
     if (this.weatherPhase === 'building') this.weatherBuildAge += dt;
     if (this.weatherWorld && this.weatherEnabled) {
-      this.weatherTimer -= dt;
-      if (this.weatherTimer <= 0) {
-        if (this.weatherPhase === 'rain') {
+      // Clearing is a real state rather than an instant switch to clear. Its
+      // timer is deliberately held so another front cannot begin while the
+      // outgoing rain and cloud audio envelopes are still fading.
+      if (this.weatherPhase !== 'clearing') this.weatherTimer -= dt;
+      if (this.weatherPhase === 'clearing') {
+        this.rainTarget = 0;
+        this.cloudCoverTarget = Math.max(this.cloudCoverTarget, 0.9);
+        if (this.rainIntensity <= 0.006) {
+          this.rainIntensity = 0;
           this.weatherPhase = 'clear';
-          this.rainTarget = 0;
           this.cloudCoverTarget = 0.22 + Math.random() * 0.28;
+        }
+      } else if (this.weatherTimer <= 0) {
+        if (this.weatherPhase === 'rain') {
+          this.weatherPhase = 'clearing';
+          this.rainTarget = 0;
+          this.cloudCoverTarget = Math.max(0.9, this.cloudCover);
           this.weatherTimer = 105 + Math.random() * 210;
         } else if (this.weatherPhase === 'building') {
           if (
             this.weatherBuildAge >= 10
             && this.cloudCover >= 0.8
+            && this.overcastAmount >= 0.9
             && this.localCloudCount >= 3
             && this.localCloudCoverage >= 0.58
           ) {
@@ -1234,19 +1279,52 @@ export class Environment {
       }
     } else if (!this.weatherEnabled) {
       this.rainTarget = 0;
-      this.weatherPhase = 'clear';
+      if (this.rainIntensity > 0.006) {
+        this.weatherPhase = 'clearing';
+        this.cloudCoverTarget = Math.max(0.9, this.cloudCover);
+      } else {
+        this.rainIntensity = 0;
+        this.weatherPhase = 'clear';
+        this.cloudCoverTarget = 0.32;
+      }
     }
     this.cloudCover += (this.cloudCoverTarget - this.cloudCover) * (1 - Math.exp(-dt / 8.5));
+
+    // The atmospheric layer is the contiguous cloud deck. Individual voxel
+    // cloud banks provide depth and motion, while this value makes the entire
+    // dome coherently grey before the first drop and keeps it that way until
+    // the final drops have faded.
+    const cloudDrivenOvercast = THREE.MathUtils.smoothstep(this.cloudCover, 0.44, 0.8);
+    const stormSequence = this.weatherPhase === 'rain' || this.weatherPhase === 'clearing';
+    const overcastTarget = stormSequence
+      ? 1
+      : this.weatherPhase === 'building' ? cloudDrivenOvercast : cloudDrivenOvercast * 0.16;
+    const overcastResponse = overcastTarget > this.overcastAmount ? 2.6 : 8.5;
+    this.overcastAmount += (overcastTarget - this.overcastAmount)
+      * (1 - Math.exp(-dt / overcastResponse));
+    // Once precipitation begins, the cloud deck is continuous. The building
+    // phase already brought this close to one, so the final lock is visually
+    // seamless while guaranteeing there is never a bright patch or sun disc
+    // behind active rain.
+    if (stormSequence) this.overcastAmount = 1;
+    this.overcastAmount = clamp(this.overcastAmount, 0, 1);
+
     const cloudPermission = THREE.MathUtils.smoothstep(this.cloudCover, 0.7, 0.86);
     const localPermission = this.localCloudCount >= 3
       ? THREE.MathUtils.smoothstep(this.localCloudCoverage, 0.54, 0.78)
       : 0;
     const permittedRain = this.rainTarget * cloudPermission * localPermission;
-    const response = permittedRain > this.rainIntensity ? 7 : 1.25;
+    // Rain takes several seconds to trail off, matching the WebAudio gain
+    // ramp. Do not clamp every frame to the fluctuating local-coverage score:
+    // that was the source of apparently random, single-frame rain cut-outs.
+    // A ~1s release constant gives a visible five-second tail before the
+    // epsilon cutoff, rather than either a pop or a half-minute drizzle.
+    const response = permittedRain > this.rainIntensity ? 7 : 1.05;
     this.rainIntensity += (permittedRain - this.rainIntensity) * (1 - Math.exp(-dt / response));
-    // These caps are the invariant: no local cloud cover means no local rain,
-    // even if a storm remains active elsewhere in the streamed world.
-    this.rainIntensity = Math.min(this.rainIntensity, cloudPermission, localPermission);
+    this.rainIntensity = clamp(this.rainIntensity, 0, Math.max(0, cloudPermission));
+    // Preserve the hard invariant for a genuinely cloudless local sky. A
+    // partial bank now produces a graceful tail instead of the old abrupt cap.
+    if (this.localCloudCount <= 0 || this.cloudCover <= 0.02) this.rainIntensity = 0;
     if (this.rainIntensity < 0.0005) this.rainIntensity = 0;
   }
 
@@ -1343,7 +1421,7 @@ export class Environment {
     this._colorB.copy(this.nightFog).lerp(this.dayFog, this.dayAmount);
     this.fogColor.copy(this._colorB).lerp(this.dawnFog, twilight * 0.7);
     const formingFront = THREE.MathUtils.smoothstep(this.cloudCover, 0.58, 0.92);
-    const stormAmount = Math.max(this.rainIntensity * 0.72, formingFront * 0.38);
+    const stormAmount = Math.max(this.overcastAmount, formingFront * 0.32);
     this.skyColor.lerp(this._stormSky, stormAmount);
     this.fogColor.lerp(this._stormFog, stormAmount * 0.82);
     this.scene.background.copy(this.skyColor);
@@ -1358,6 +1436,8 @@ export class Environment {
     skyUniforms.lowerColor.value.copy(this.fogColor).multiplyScalar(0.52 + this.dayAmount * 0.25);
     skyUniforms.twilight.value = twilight;
     skyUniforms.dayAmount.value = this.dayAmount;
+    const sunVisibility = 1 - THREE.MathUtils.smoothstep(this.overcastAmount, 0.38, 0.92);
+    skyUniforms.sunVisibility.value = sunVisibility;
 
     // Keep skylight subordinate to the directional sources so form is defined
     // by light and shadow instead of the previous flat ambient wash.
@@ -1366,20 +1446,29 @@ export class Environment {
     // visibly brighter than its interior; roof shadows and baked cover lighting
     // still remove that component from enclosed surfaces.
     const directSky = 0.08 + THREE.MathUtils.smoothstep(this.skyExposure, 0.08, 0.62) * 0.92;
-    this.hemisphere.intensity = (0.2 + this.dayAmount * 0.72) * (1 - this.rainIntensity * 0.2) * skyAccess;
+    this.hemisphere.intensity = (0.2 + this.dayAmount * 0.72)
+      * (1 - this.overcastAmount * 0.34)
+      * skyAccess;
     this.hemisphere.color.setRGB(0.34 + this.dayAmount * 0.44, 0.42 + this.dayAmount * 0.45, 0.66 + this.dayAmount * 0.34);
     this.hemisphere.groundColor.setRGB(0.055 + this.dayAmount * 0.09, 0.07 + this.dayAmount * 0.11, 0.095 + this.dayAmount * 0.035);
-    this.sunLight.intensity = (0.015 + this.dayAmount * 3.65) * (1 - this.rainIntensity * 0.62) * directSky;
+    this.bounceLight.intensity = outdoorBounceIntensity(
+      this.dayAmount,
+      this.skyExposure,
+      this.overcastAmount,
+    );
+    this.sunLight.intensity = (0.015 + this.dayAmount * 3.65)
+      * (0.025 + sunVisibility * 0.975)
+      * directSky;
     this.sunLight.color.copy(this._sunDawn).lerp(this._sunDay, this.dayAmount);
     this.moonLight.intensity = Math.pow(1 - this.dayAmount, 1.55) * 0.24 * directSky;
     if ('environmentIntensity' in this.scene) {
       this.scene.environmentIntensity = (0.035 + this.dayAmount * 0.43)
-        * (1 - this.rainIntensity * 0.28)
+        * (1 - this.overcastAmount * 0.46)
         * (0.025 + this.skyExposure * 0.975);
     }
     if (this.renderer) {
       const baseExposure = this.graphicsQuality === 'low' ? 0.96 : this.graphicsQuality === 'ultra' ? 1.04 : 1.01;
-      const targetExposure = baseExposure * (0.96 + (1 - this.dayAmount) * 0.12 - this.rainIntensity * 0.07);
+      const targetExposure = baseExposure * (0.96 + (1 - this.dayAmount) * 0.12 - this.overcastAmount * 0.08);
       this.renderer.toneMappingExposure += (targetExposure - this.renderer.toneMappingExposure) * (1 - Math.exp(-dt / 1.8));
     }
 
@@ -1387,8 +1476,8 @@ export class Environment {
     const sunPosition = new THREE.Vector3(Math.cos(angle) * radius, solar * radius, Math.sin(angle) * radius * 0.35);
     this.sun.position.copy(focus).add(sunPosition);
     this.moon.position.copy(focus).sub(sunPosition);
-    this.sun.material.opacity = THREE.MathUtils.smoothstep(solar, -0.16, 0.03);
-    this.moon.material.opacity = THREE.MathUtils.smoothstep(-solar, -0.12, 0.05) * 0.88;
+    this.sun.material.opacity = THREE.MathUtils.smoothstep(solar, -0.16, 0.03) * sunVisibility;
+    this.moon.material.opacity = THREE.MathUtils.smoothstep(-solar, -0.12, 0.05) * 0.88 * sunVisibility;
     this._sunDirection.copy(sunPosition).normalize();
     const shadowMapSize = Math.max(1, this.sunLight.shadow.mapSize.x);
     const shadowTexel = (this.shadowExtent * 2) / shadowMapSize;
@@ -1408,13 +1497,13 @@ export class Environment {
     skyUniforms.sunColor.value.copy(this.sunLight.color);
 
     this.stars.position.set(focus.x, 0, focus.z);
-    this.stars.material.opacity = Math.pow(1 - this.dayAmount, 1.7) * 0.88;
+    this.stars.material.opacity = Math.pow(1 - this.dayAmount, 1.7) * 0.88 * sunVisibility;
     this.stars.rotation.y += dt * 0.003;
     const cloudMaterial = this.clouds.children[0]?.children[0]?.material;
     if (cloudMaterial) {
       cloudMaterial.color.copy(this._cloudNight).lerp(this._cloudDay, this.dayAmount).lerp(this._cloudDawn, twilight * 0.25);
-      cloudMaterial.color.lerp(this._stormSky, Math.max(this.rainIntensity * 0.65, formingFront * 0.52));
-      cloudMaterial.opacity = Math.min(0.94, (0.34 + this.dayAmount * 0.2 + this.cloudCover * 0.34 + this.rainIntensity * 0.12) * Math.min(1, this.graphicsProfile.cloudAmount + 0.28));
+      cloudMaterial.color.lerp(this._stormSky, Math.max(this.overcastAmount * 0.82, formingFront * 0.52));
+      cloudMaterial.opacity = Math.min(0.96, (0.34 + this.dayAmount * 0.2 + this.cloudCover * 0.34 + this.overcastAmount * 0.14) * Math.min(1, this.graphicsProfile.cloudAmount + 0.28));
     }
     const clock = performance.now();
     this.localLights.forEach((light, index) => {

@@ -1,6 +1,7 @@
 import * as THREE from '../vendor/three.module.min.js';
 import { BLOCKS } from './blocks.js';
 import { getItem } from './data.js';
+import { WAYFARER_SKIN, createMergedVoxelGeometry } from './player-avatar.js';
 
 function material(color, options = {}) {
   return new THREE.MeshStandardMaterial({
@@ -11,6 +12,7 @@ function material(color, options = {}) {
     emissiveIntensity: options.emissiveIntensity ?? 0,
     transparent: Boolean(options.transparent),
     opacity: options.opacity ?? 1,
+    vertexColors: Boolean(options.vertexColors),
     depthTest: false,
     depthWrite: false,
   });
@@ -72,6 +74,97 @@ function cylinder(parent, radius, height, position, color, rotation = [0, 0, 0],
   return mesh;
 }
 
+function voxelPart(size, position, color, rotation = [0, 0, 0], name = '') {
+  return { size, position, color, rotation, name };
+}
+
+function mergedVoxelMesh(parts, options = {}) {
+  const geometry = createMergedVoxelGeometry(parts);
+  const mesh = new THREE.Mesh(
+    geometry,
+    material(0xffffff, { ...options, vertexColors: true }),
+  );
+  mesh.userData.authoredVoxelParts = geometry.userData.voxelPartCount;
+  mesh.userData.voxelPaletteSize = geometry.userData.voxelPaletteSize;
+  return mesh;
+}
+
+function makePixelMeatModel(item) {
+  const group = new THREE.Group();
+  const cooked = item.cooked === true || /roast|cook/i.test(item.name || '');
+  const palette = cooked
+    ? {
+      outline: 0x3b1b16, rind: 0x71301f, meat: 0xad542e, light: 0xd47a3d,
+      fat: 0xe6a761, boneShade: 0x8d5b39, bone: 0xe7c78d, marrow: 0x744127,
+      accent: 0x2b1713,
+    }
+    : {
+      outline: 0x541f2b, rind: 0xa64c57, meat: 0xd45762, light: 0xf0837e,
+      fat: 0xf4b7aa, boneShade: 0x9f665f, bone: 0xf3d3bb, marrow: 0xad5861,
+      accent: 0xffc0ad,
+    };
+  const parts = [];
+
+  // The overlapping stepped slabs create an irregular steak silhouette using
+  // only cuboids. They are merged after authoring so 256 loose drops still cost
+  // one draw call each instead of thousands.
+  parts.push(
+    voxelPart([0.42, 0.2, 0.13], [-0.025, 0, 0], palette.outline, [0, 0, 0], 'outline centre'),
+    voxelPart([0.31, 0.29, 0.13], [-0.03, 0.005, 0], palette.outline, [0, 0, 0], 'outline crown'),
+    voxelPart([0.16, 0.2, 0.13], [0.21, -0.012, 0], palette.outline, [0, 0, 0], 'outline right step'),
+    voxelPart([0.13, 0.16, 0.13], [-0.245, -0.01, 0], palette.outline, [0, 0, 0], 'outline left step'),
+    voxelPart([0.36, 0.17, 0.03], [-0.025, -0.002, 0.079], palette.rind, [0, 0, 0], 'rind'),
+    voxelPart([0.25, 0.235, 0.03], [-0.035, 0.004, 0.079], palette.meat, [0, 0, 0], 'main cut'),
+    voxelPart([0.105, 0.14, 0.03], [0.19, -0.018, 0.079], palette.meat, [0, 0, 0], 'right cut'),
+    voxelPart([0.095, 0.1, 0.034], [-0.19, -0.038, 0.083], palette.light, [0, 0, 0], 'cut highlight'),
+  );
+
+  // Broken fat cap and square T-bone mirror the inventory silhouette.
+  parts.push(
+    voxelPart([0.19, 0.045, 0.04], [-0.12, 0.137, 0.088], palette.fat, [0, 0, 0], 'fat cap left'),
+    voxelPart([0.12, 0.04, 0.04], [0.05, 0.13, 0.088], palette.fat, [0, 0, 0], 'fat cap right'),
+    voxelPart([0.045, 0.13, 0.04], [-0.245, 0.035, 0.088], palette.fat, [0, 0, 0], 'fat cap edge'),
+    voxelPart([0.12, 0.045, 0.042], [0.09, 0.04, 0.091], palette.boneShade, [0, 0, 0], 'bone shade top'),
+    voxelPart([0.046, 0.16, 0.042], [0.11, -0.02, 0.091], palette.boneShade, [0, 0, 0], 'bone shade stem'),
+    voxelPart([0.14, 0.05, 0.042], [0.11, -0.09, 0.091], palette.boneShade, [0, 0, 0], 'bone shade base'),
+    voxelPart([0.076, 0.034, 0.047], [0.09, 0.04, 0.095], palette.bone, [0, 0, 0], 'bone top'),
+    voxelPart([0.028, 0.115, 0.047], [0.11, -0.02, 0.095], palette.bone, [0, 0, 0], 'bone stem'),
+    voxelPart([0.09, 0.032, 0.048], [0.11, -0.088, 0.096], palette.bone, [0, 0, 0], 'bone base'),
+    voxelPart([0.017, 0.08, 0.052], [0.11, -0.02, 0.1], palette.marrow, [0, 0, 0], 'marrow'),
+  );
+
+  if (cooked) {
+    for (let index = -1; index <= 1; index++) {
+      parts.push(voxelPart(
+        [0.025, 0.19, 0.018],
+        [-0.105 + index * 0.075, -0.005, 0.112],
+        palette.accent,
+        [0, 0, -0.66],
+        `sear mark ${index + 2}`,
+      ));
+    }
+    parts.push(voxelPart([0.055, 0.026, 0.02], [-0.205, 0.065, 0.113], palette.light, [0, 0, 0], 'roast glint'));
+  } else {
+    parts.push(
+      voxelPart([0.018, 0.15, 0.018], [-0.09, 0.002, 0.112], palette.accent, [0, 0, -0.54], 'marbling dark'),
+      voxelPart([0.018, 0.12, 0.018], [-0.015, -0.025, 0.112], palette.fat, [0, 0, -0.54], 'marbling pale'),
+      voxelPart([0.042, 0.026, 0.02], [-0.18, 0.07, 0.113], palette.accent, [0, 0, 0], 'moisture glint'),
+    );
+  }
+
+  group.name = cooked ? 'Pixel fire-roasted steak' : 'Pixel raw game steak';
+  group.userData.itemModel = 'pixel-bone-steak';
+  group.userData.cooked = cooked;
+  group.userData.authoredVoxelParts = parts.length;
+  group.userData.voxelPaletteSize = new Set(parts.map((entry) => entry.color)).size;
+  group.userData.drawMeshCount = 1;
+  const mesh = mergedVoxelMesh(parts, { roughness: cooked ? 0.94 : 0.8 });
+  mesh.name = `${group.name} merged voxel mesh`;
+  mesh.userData.itemModel = 'pixel-bone-steak';
+  group.add(mesh);
+  return group;
+}
+
 function makeToolModel(item) {
   const group = new THREE.Group();
   const handleColor = 0x8c5b37;
@@ -95,43 +188,7 @@ function makeToolModel(item) {
     group.add(tip);
     cylinder(group, 0.047, 0.075, [0, -0.44, 0], 0xd4b05f, [0, 0, 0], { metalness: 0.68, roughness: 0.26 });
   } else if (item.category === 'food') {
-    const cooked = item.cooked === true || /roast|cook/i.test(item.name || '');
-    const meat = new THREE.Mesh(
-      new THREE.SphereGeometry(0.19, 16, 10),
-      material(cooked ? 0xa95732 : 0xc95e63, { roughness: cooked ? 0.84 : 0.68 }),
-    );
-    meat.scale.set(1.3, 0.62, 0.74);
-    meat.rotation.set(0.25, -0.3, -0.2);
-    group.add(meat);
-    const fatRim = new THREE.Mesh(
-      new THREE.TorusGeometry(0.19, 0.022, 7, 22),
-      material(cooked ? 0xd49a5c : 0xefc2b0, { roughness: 0.82 }),
-    );
-    fatRim.position.set(0, 0, 0.135);
-    fatRim.rotation.set(0.25, -0.3, -0.2);
-    fatRim.scale.set(1.22, 0.58, 0.72);
-    group.add(fatRim);
-
-    const bone = cylinder(group, 0.041, 0.2, [0.075, -0.015, 0.16], cooked ? 0xdfbf8e : 0xf0d2c0, [0, 0, Math.PI / 2], { roughness: 0.76 });
-    bone.scale.z = 0.7;
-    for (const side of [-1, 1]) {
-      const joint = new THREE.Mesh(
-        new THREE.SphereGeometry(0.055, 9, 7),
-        material(cooked ? 0xdfbf8e : 0xf0d2c0, { roughness: 0.76 }),
-      );
-      joint.position.set(0.075 + side * 0.095, -0.015, 0.16);
-      joint.scale.set(0.82, 0.58, 0.45);
-      group.add(joint);
-    }
-    if (cooked) {
-      for (let index = -2; index <= 1; index++) {
-        box(group, [0.018, 0.22, 0.014], [index * 0.065, 0.018, 0.171], 0x4d281f, [0, 0, -0.62], { roughness: 0.94 });
-      }
-    } else {
-      for (let index = -1; index <= 1; index++) {
-        box(group, [0.012, 0.18, 0.01], [index * 0.075 - 0.035, 0.01, 0.166], 0xf1b0aa, [0, 0, -0.48 + index * 0.2], { roughness: 0.72 });
-      }
-    }
+    group.add(makePixelMeatModel(item));
   } else if (item.category === 'relic') {
     const core = new THREE.Mesh(
       new THREE.OctahedronGeometry(0.2, 1),
@@ -156,15 +213,49 @@ function makeToolModel(item) {
 
 function makeActionHand() {
   const group = new THREE.Group();
-  // A compact voxel forearm gives empty-hand and block-selected actions a
-  // readable first-person swing without restoring the permanent generic cube.
-  box(group, [0.19, 0.42, 0.2], [0.02, -0.12, 0], 0x445f79, [0, 0, -0.08], { roughness: 0.92 });
-  box(group, [0.205, 0.2, 0.215], [0.02, 0.18, 0], 0xb98465, [0, 0, -0.08], { roughness: 0.9 });
-  box(group, [0.16, 0.075, 0.17], [0.02, 0.295, 0.018], 0xc99572, [0, 0, -0.08], { roughness: 0.88 });
+  // The action hand shares the full player's original Wayfarer skin instead of
+  // presenting an unrelated generic sleeve in first person. All five colour
+  // panels share one vertex-coloured draw call.
+  const parts = [
+    voxelPart([0.2, 0.42, 0.21], [0.02, -0.12, 0], WAYFARER_SKIN.tunic, [0, 0, -0.08], 'Wayfarer action sleeve'),
+    voxelPart([0.207, 0.09, 0.217], [0.02, 0.08, 0], WAYFARER_SKIN.tunicLight, [0, 0, -0.08], 'Wayfarer stitched cuff'),
+    voxelPart([0.215, 0.2, 0.225], [0.02, 0.205, 0], WAYFARER_SKIN.skin, [0, 0, -0.08], 'Wayfarer action hand'),
+    voxelPart([0.17, 0.068, 0.18], [0.02, 0.31, 0.02], WAYFARER_SKIN.skinLight, [0, 0, -0.08], 'Wayfarer knuckle pixels'),
+    voxelPart([0.045, 0.035, 0.024], [-0.035, 0.323, 0.115], WAYFARER_SKIN.skinShadow, [0, 0, -0.08], 'Wayfarer finger shadow'),
+  ];
+  const mesh = mergedVoxelMesh(parts, { roughness: 0.93 });
+  mesh.name = 'Merged Wayfarer action hand';
+  group.add(mesh);
   group.rotation.set(-0.08, -0.28, -0.24);
   group.scale.setScalar(0.86);
   group.visible = false;
+  group.userData.playerSkin = 'wayfarer';
+  group.userData.authoredVoxelParts = parts.length;
+  group.userData.drawMeshCount = 1;
   return finishModel(group);
+}
+
+function makeGripArm() {
+  const group = new THREE.Group();
+  const parts = [
+    voxelPart([0.21, 0.43, 0.22], [0.08, -0.19, 0.03], WAYFARER_SKIN.tunic, [0, 0, -0.05], 'Wayfarer held-item sleeve'),
+    voxelPart([0.218, 0.095, 0.228], [0.07, 0.02, 0.03], WAYFARER_SKIN.tunicLight, [0, 0, -0.05], 'Wayfarer held-item cuff'),
+    voxelPart([0.225, 0.19, 0.235], [0.055, 0.155, 0.035], WAYFARER_SKIN.skin, [0, 0, -0.07], 'Wayfarer gripping hand'),
+    voxelPart([0.17, 0.055, 0.04], [0.055, 0.245, 0.15], WAYFARER_SKIN.skinLight, [0, 0, -0.07], 'Wayfarer gripping fingers'),
+  ];
+  const mesh = mergedVoxelMesh(parts, { roughness: 0.93 });
+  mesh.name = 'Merged Wayfarer grip arm';
+  group.add(mesh);
+  group.position.set(0.08, -0.25, 0.08);
+  group.rotation.set(-0.05, -0.2, -0.22);
+  group.scale.setScalar(0.82);
+  group.visible = false;
+  group.userData.playerSkin = 'wayfarer';
+  group.userData.authoredVoxelParts = parts.length;
+  group.userData.drawMeshCount = 1;
+  finishModel(group);
+  group.traverse((node) => { if (node.isMesh) node.renderOrder = 1002; });
+  return group;
 }
 
 function disposeObject(root) {
@@ -221,6 +312,8 @@ export class HeldItemView {
     camera.add(this.root);
     this.actionHand = makeActionHand();
     this.root.add(this.actionHand);
+    this.itemArm = makeGripArm();
+    this.root.add(this.itemArm);
     this.itemId = null;
     this.model = null;
     this.presentationVisible = false;
@@ -250,6 +343,7 @@ export class HeldItemView {
     this.model = id && !block?.tiles ? makeToolModel(item) : null;
     if (this.model) this.root.add(this.model);
     this.actionHand.visible = false;
+    this.itemArm.visible = Boolean(this.model);
     this.root.visible = Boolean(this.presentationVisible && this.model);
   }
 
@@ -284,6 +378,7 @@ export class HeldItemView {
       this.model.rotation.y += dt * 1.4;
     }
     this.actionHand.visible = Boolean(!this.model && (mining || this.useImpulse > 0.015));
+    this.itemArm.visible = Boolean(this.model);
     this.root.visible = Boolean(this.presentationVisible && (this.model || this.actionHand.visible));
   }
 
@@ -295,8 +390,10 @@ export class HeldItemView {
   dispose() {
     if (this.model) disposeObject(this.model);
     disposeObject(this.actionHand);
+    disposeObject(this.itemArm);
     this.camera.remove(this.root);
     this.model = null;
     this.actionHand = null;
+    this.itemArm = null;
   }
 }

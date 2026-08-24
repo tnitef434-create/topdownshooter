@@ -28,6 +28,10 @@ const CACTUS_CELL_SIZE = 7;
 const CAVE_CELL_SIZE = 34;
 const FISSURE_CELL_SIZE = 78;
 const CAVE_NODE_CACHE_LIMIT = 4_096;
+// The atmospheric fog reaches a little beyond the selected view distance. Keep
+// two fully meshed rings behind it so a fast turn or a chunk-boundary crossing
+// reveals terrain instead of the clear color while the next strip streams in.
+const HORIZON_BUFFER_CHUNKS = 2;
 // Keep a modest amount of generated voxel data after a chunk leaves the view
 // radius. Walking back across a recently visited boundary then only needs a new
 // GPU mesh instead of repeating terrain, cave and decoration generation. At the
@@ -246,6 +250,7 @@ function createChunk(cx, cz) {
     triangles: 0,
     lastTouched: 0,
     wanted: true,
+    streamPriority: Number.POSITIVE_INFINITY,
   };
 }
 
@@ -270,6 +275,8 @@ export class World {
     this._preloadChunksRemaining = 13;
     this.centerChunk = { cx: 0, cz: 0 };
     this.renderDistance = 5;
+    this.streamDistance = this.renderDistance + HORIZON_BUFFER_CHUNKS;
+    this.streamDirection = { x: 0, z: -1, strength: 0 };
     this._streamTick = 0;
     this._columnCache = new Map();
     this._caveNodeCache = new Map();
@@ -983,10 +990,28 @@ export class World {
   }
 
   isImmediateNeighborhoodRendered(x, z) {
+    return this.isNeighborhoodRendered(x, z, 1);
+  }
+
+  isNeighborhoodGenerated(x, z, radius = 1) {
     const cx = floorDiv(Math.floor(x), CHUNK_SIZE);
     const cz = floorDiv(Math.floor(z), CHUNK_SIZE);
-    for (let dz = -1; dz <= 1; dz++) {
-      for (let dx = -1; dx <= 1; dx++) {
+    const safeRadius = THREE.MathUtils.clamp(Math.floor(Number(radius) || 0), 0, 18);
+    for (let dz = -safeRadius; dz <= safeRadius; dz++) {
+      for (let dx = -safeRadius; dx <= safeRadius; dx++) {
+        const chunk = this.chunks.get(chunkKey(cx + dx, cz + dz));
+        if (!chunk?.generated || chunk.wanted === false) return false;
+      }
+    }
+    return true;
+  }
+
+  isNeighborhoodRendered(x, z, radius = 1) {
+    const cx = floorDiv(Math.floor(x), CHUNK_SIZE);
+    const cz = floorDiv(Math.floor(z), CHUNK_SIZE);
+    const safeRadius = THREE.MathUtils.clamp(Math.floor(Number(radius) || 0), 0, 18);
+    for (let dz = -safeRadius; dz <= safeRadius; dz++) {
+      for (let dx = -safeRadius; dx <= safeRadius; dx++) {
         if (!this.isChunkRendered(cx + dx, cz + dz)) return false;
       }
     }
@@ -1156,7 +1181,7 @@ export class World {
     return chunk;
   }
 
-  updateStreaming(position, renderDistance = this.renderDistance) {
+  updateStreaming(position, renderDistance = this.renderDistance, motion = null) {
     const px = Number(position?.x ?? position?.[0] ?? 0);
     const pz = Number(position?.z ?? position?.[2] ?? 0);
     const centerX = floorDiv(Number.isFinite(px) ? px : 0, CHUNK_SIZE);
@@ -1165,25 +1190,53 @@ export class World {
     // remain effectively unbounded, while this cap prevents a settings mistake
     // from scheduling an unbounded amount of work in one streaming update.
     const distance = THREE.MathUtils.clamp(Math.floor(Number(renderDistance) || 5), 2, 16);
+    const streamDistance = Math.min(18, distance + HORIZON_BUFFER_CHUNKS);
+    const motionX = Number(motion?.x ?? motion?.[0] ?? 0);
+    const motionZ = Number(motion?.z ?? motion?.[2] ?? 0);
+    const motionLength = Math.hypot(motionX, motionZ);
+    if (Number.isFinite(motionLength) && motionLength > 0.2) {
+      this.streamDirection.x = motionX / motionLength;
+      this.streamDirection.z = motionZ / motionLength;
+      this.streamDirection.strength = THREE.MathUtils.clamp((motionLength - 0.2) / 4.8, 0, 1);
+    } else {
+      this.streamDirection.strength = 0;
+    }
     this.centerChunk = { cx: centerX, cz: centerZ };
     this.renderDistance = distance;
+    this.streamDistance = streamDistance;
 
     const wanted = [];
     const wantedKeys = new Set();
     for (const chunk of this.chunks.values()) chunk.wanted = false;
-    for (let dz = -distance; dz <= distance; dz++) {
-      for (let dx = -distance; dx <= distance; dx++) {
+    for (let dz = -streamDistance; dz <= streamDistance; dz++) {
+      for (let dx = -streamDistance; dx <= streamDistance; dx++) {
         const cx = centerX + dx;
         const cz = centerZ + dz;
         const key = chunkKey(cx, cz);
+        const ring = Math.max(Math.abs(dx), Math.abs(dz));
+        const radial = dx * dx + dz * dz;
+        const forward = dx * this.streamDirection.x + dz * this.streamDirection.z;
+        const lateral = Math.abs(dx * this.streamDirection.z - dz * this.streamDirection.x);
+        // Whole nearer rings always win, which guarantees mesh support on every
+        // side. Within a ring, moving-forward chunks win deterministically so
+        // the player has two chunk widths of prepared terrain in front of them.
+        const priority = ring * 1_000
+          + radial * 3
+          + this.streamDirection.strength * (lateral * 2 - forward * 12)
+          + (dx + streamDistance) * 0.001
+          + (dz + streamDistance) * 0.000001;
         wantedKeys.add(key);
-        wanted.push({ cx, cz, priority: dx * dx + dz * dz });
+        wanted.push({ cx, cz, priority });
       }
     }
     wanted.sort((a, b) => a.priority - b.priority);
-    for (const target of wanted) this.ensureChunk(target.cx, target.cz).wanted = true;
+    for (const target of wanted) {
+      const chunk = this.ensureChunk(target.cx, target.cz);
+      chunk.wanted = true;
+      chunk.streamPriority = target.priority;
+    }
 
-    const unloadDistance = distance + 1;
+    const unloadDistance = streamDistance + 1;
     for (const [key, chunk] of [...this.chunks]) {
       if (Math.abs(chunk.cx - centerX) > unloadDistance || Math.abs(chunk.cz - centerZ) > unloadDistance) {
         this._removeChunk(key, chunk);
@@ -1199,9 +1252,8 @@ export class World {
       .sort((a, b) => {
         const ca = this.chunks.get(a);
         const cb = this.chunks.get(b);
-        const da = (ca.cx - centerX) ** 2 + (ca.cz - centerZ) ** 2;
-        const db = (cb.cx - centerX) ** 2 + (cb.cz - centerZ) ** 2;
-        return da - db;
+        return (ca?.streamPriority ?? Number.POSITIVE_INFINITY)
+          - (cb?.streamPriority ?? Number.POSITIVE_INFINITY);
       });
     this.queuedChunks = new Set(this.generationQueue);
     this.fluidQueue = this.fluidQueue.slice(this.fluidQueueHead).filter((key) => {
@@ -1331,6 +1383,53 @@ export class World {
           this._writeGenerated(chunk, rootX, rootY + dy, rootZ, trunkBlock, (id) => (
             id === AIR || id === LEAVES || id === PINE_NEEDLES || id === LOG || id === PINE_LOG
           ));
+        }
+
+        // A minority of mature trees carry deterministic ivy-like leaf patches
+        // on their lower trunks. Small one- and two-block clusters keep the log
+        // silhouette readable while making woodland growth feel less pristine.
+        const overgrownRoll = hashUnit(hash2D(rootX, rootZ, this._noiseSeeds.trees ^ 0x3c6ef372));
+        const overgrownChance = isPine ? 0.18 : 0.38;
+        if (overgrownRoll < overgrownChance && trunkHeight >= 4) {
+          const patchCount = 1 + Math.floor(hashUnit(hash2D(
+            rootX,
+            rootZ,
+            this._noiseSeeds.trees ^ 0xa54ff53a,
+          )) * (isPine ? 2 : 3));
+          const directions = [[1, 0], [0, 1], [-1, 0], [0, -1]];
+          for (let patch = 0; patch < patchCount; patch++) {
+            const patchRoll = hashUnit(hash2D(
+              rootX + patch * 29,
+              rootZ - patch * 17,
+              this._noiseSeeds.trees ^ 0x510e527f,
+            ));
+            const directionIndex = Math.floor(patchRoll * directions.length) % directions.length;
+            const [leafDx, leafDz] = directions[directionIndex];
+            const availableLevels = Math.max(1, trunkHeight - 3);
+            const patchY = rootY + 1 + Math.floor(hashUnit(hash2D(
+              rootX - patch * 13,
+              rootZ + patch * 23,
+              this._noiseSeeds.trees ^ 0x9b05688c,
+            )) * availableLevels);
+            this._writeGenerated(
+              chunk,
+              rootX + leafDx,
+              patchY,
+              rootZ + leafDz,
+              leafBlock,
+              (id) => id === AIR,
+            );
+            if (patchRoll > 0.7 && patchY > rootY + 1) {
+              this._writeGenerated(
+                chunk,
+                rootX + leafDx,
+                patchY - 1,
+                rootZ + leafDz,
+                leafBlock,
+                (id) => id === AIR,
+              );
+            }
+          }
         }
       }
     }
@@ -1629,9 +1728,13 @@ export class World {
         && this._neighborsReadyForMesh(chunk)
       ))
       .sort((a, b) => {
-        const distanceA = (a.cx - cx) ** 2 + (a.cz - cz) ** 2;
-        const distanceB = (b.cx - cx) ** 2 + (b.cz - cz) ** 2;
-        if (distanceA !== distanceB) return distanceA - distanceB;
+        const priorityA = Number.isFinite(a.streamPriority)
+          ? a.streamPriority
+          : (a.cx - cx) ** 2 + (a.cz - cz) ** 2;
+        const priorityB = Number.isFinite(b.streamPriority)
+          ? b.streamPriority
+          : (b.cx - cx) ** 2 + (b.cz - cz) ** 2;
+        if (priorityA !== priorityB) return priorityA - priorityB;
         // Continue an equally near partial job to avoid retaining several large
         // geometry writers, but never let an old far job outrank visible ground.
         if (Boolean(a.meshJob) !== Boolean(b.meshJob)) return a.meshJob ? -1 : 1;
@@ -1672,6 +1775,65 @@ export class World {
     }
     this._refreshStats();
     return rebuilt;
+  }
+
+  getStreamingCoverage() {
+    let total = 0;
+    let generated = 0;
+    let rendered = 0;
+    for (const chunk of this.chunks.values()) {
+      if (chunk.wanted === false) continue;
+      total++;
+      if (chunk.generated) generated++;
+      const positions = chunk.opaqueMesh?.geometry?.getAttribute?.('position');
+      if (chunk.generated && chunk.opaqueMesh?.visible && positions?.count > 0 && !chunk.meshDirty) rendered++;
+    }
+    return { total, generated, rendered };
+  }
+
+  getRenderedRadius(position, maximumRadius = this.streamDistance || this.renderDistance) {
+    const px = Number(position?.x ?? position?.[0] ?? 0);
+    const pz = Number(position?.z ?? position?.[2] ?? 0);
+    const worldX = Number.isFinite(px) ? px : 0;
+    const worldZ = Number.isFinite(pz) ? pz : 0;
+    const centerX = floorDiv(worldX, CHUNK_SIZE);
+    const centerZ = floorDiv(worldZ, CHUNK_SIZE);
+    let completeRadius = -1;
+    const radiusLimit = THREE.MathUtils.clamp(Math.floor(Number(maximumRadius) || 0), 0, 18);
+    for (let radius = 0; radius <= radiusLimit; radius++) {
+      let complete = true;
+      for (let dz = -radius; dz <= radius && complete; dz++) {
+        for (let dx = -radius; dx <= radius; dx++) {
+          if (radius > 0 && Math.abs(dx) !== radius && Math.abs(dz) !== radius) continue;
+          const chunk = this.chunks.get(chunkKey(centerX + dx, centerZ + dz));
+          const positions = chunk?.opaqueMesh?.geometry?.getAttribute?.('position');
+          // A retained mesh remains a safe visual cover while an edit rebuilds;
+          // requiring meshDirty=false here would pull fog inward on every mine.
+          if (!chunk?.generated || !chunk.opaqueMesh?.visible || !(positions?.count > 0)) {
+            complete = false;
+            break;
+          }
+        }
+      }
+      if (!complete) break;
+      completeRadius = radius;
+    }
+    return completeRadius;
+  }
+
+  getSafeTerrainDistance(position) {
+    const px = Number(position?.x ?? position?.[0] ?? 0);
+    const pz = Number(position?.z ?? position?.[2] ?? 0);
+    const worldX = Number.isFinite(px) ? px : 0;
+    const worldZ = Number.isFinite(pz) ? pz : 0;
+    const centerX = floorDiv(worldX, CHUNK_SIZE);
+    const centerZ = floorDiv(worldZ, CHUNK_SIZE);
+    const completeRadius = this.getRenderedRadius(position);
+    if (completeRadius < 0) return 8;
+    const localX = localCoordinate(worldX, centerX);
+    const localZ = localCoordinate(worldZ, centerZ);
+    const nearestChunkEdge = Math.min(localX, CHUNK_SIZE - localX, localZ, CHUNK_SIZE - localZ);
+    return Math.max(8, completeRadius * CHUNK_SIZE + nearestChunkEdge - 2);
   }
 
   _removeChunk(key, chunk, keepGeneratedData = true) {

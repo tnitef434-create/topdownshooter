@@ -10,8 +10,8 @@
     "dev:client": "vite src",
     "build": "vite build src --outDir ../dist --emptyOutDir",
     "preview": "vite preview src",
-    "test": "node --test tests/worldloom-core.test.mjs",
-    "test:worldloom": "node --test tests/worldloom-core.test.mjs",
+    "test": "node --test --test-isolation=none tests/worldloom-core.test.mjs tests/worldloom-assets.test.mjs",
+    "test:worldloom": "node --test --test-isolation=none tests/worldloom-core.test.mjs tests/worldloom-assets.test.mjs",
     "test:browser": "node tests/worldloom-browser-smoke.mjs"
   },
   "dependencies": {

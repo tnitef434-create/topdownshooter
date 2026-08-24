@@ -19,6 +19,7 @@ import {
 import { UI } from './ui.js';
 import { CreatureSystem } from './creatures.js';
 import { HeldItemView, createDroppedItemModel, disposeItemModel } from './viewmodel.js';
+import { PlayerAvatar } from './player-avatar.js';
 import { GraphicsPipeline } from './graphics.js';
 import { SurvivalSystem } from './survival.js';
 
@@ -40,6 +41,7 @@ let inventory = new Inventory();
 let survival = new SurvivalSystem();
 let creatures = null;
 let heldItem = null;
+let playerAvatar = null;
 let graphicsPipeline = null;
 let state = 'boot';
 let mode = 'survival';
@@ -55,6 +57,7 @@ let suppressMining = 0;
 let saveTimer = 0;
 let streamingTimer = 0;
 let streamWorkFlip = false;
+let streamingFogFar = null;
 let hudTimer = 0;
 let fps = 60;
 let frameCounter = 0;
@@ -332,7 +335,7 @@ function bindUI() {
   ui.onSettingsChanged = (partial) => {
     settings = saves.saveSettings({ ...settings, ...partial });
     applySettings(settings);
-    if (world && player) world.updateStreaming(player.position, settings.viewDistance);
+    if (world && player) world.updateStreaming(player.position, settings.viewDistance, player.velocity);
   };
   ui.applySettings(settings);
   ui.setContinueAvailable(saves.hasSave());
@@ -375,12 +378,15 @@ async function startWorld({ seed, mode: selectedMode, saveData = null }) {
 
   creatures?.dispose();
   creatures = null;
+  playerAvatar?.dispose();
+  playerAvatar = null;
   clearDroppedItems();
   worldWorkToken++;
   worldWorkScheduled = false;
   environment.updateLocalLights(null, null);
   world?.dispose();
   world = new World(seed, scene, atlas);
+  streamingFogFar = null;
   environment.enhanceWorldMaterials(world);
   environment.setWeatherContext(world);
   mode = selectedMode === 'builder' ? 'builder' : 'survival';
@@ -400,6 +406,8 @@ async function startWorld({ seed, mode: selectedMode, saveData = null }) {
   environment.time = Number.isFinite(saveData?.timeOfDay) ? saveData.timeOfDay : 0.31;
 
   player = new PlayerController(camera, world);
+  playerAvatar = new PlayerAvatar(scene);
+  window.__worldloomPlayerAvatar = playerAvatar;
   const defaultSpawn = world.findSpawn();
   spawnPoint.copy(defaultSpawn);
   if (Array.isArray(saveData?.respawnPoint)
@@ -414,34 +422,67 @@ async function startWorld({ seed, mode: selectedMode, saveData = null }) {
   creatures = new CreatureSystem(scene, world);
   creatures.onPlayerDamage = (amount, sourcePosition, creature, combat) => damagePlayer(amount, sourcePosition, combat);
 
-  world.updateStreaming(player.position, settings.viewDistance);
-  // Incremental generation normally runs only during idle time, but each of the
-  // nine chunks immediately around the player needs its cardinal support chunks
-  // before it can be meshed correctly. Complete that 21-chunk support footprint
-  // behind the loading screen so a camera near a chunk corner never opens onto
-  // a half-sky void; later travel remains progressively frame-budgeted.
-  const preloadTarget = Math.min(21, world.generationQueue.length);
-  const maximumGenerationSlices = Math.max(1, preloadTarget * 320);
+  world.updateStreaming(player.position, settings.viewDistance, player.velocity);
+  // Prepare a compact seven-by-seven playable core plus its one-chunk generation
+  // support ring. The fog clamp below never reveals farther terrain until each
+  // complete mesh ring is ready, so repeat loads stay quick without sky voids.
+  // The remaining buffered footprint continues through bounded idle slices.
+  const preloadRenderedRadius = 3;
+  const preloadSupportRadius = preloadRenderedRadius + 1;
+  const preloadTarget = Math.min(
+    world.generationQueue.length,
+    (preloadSupportRadius * 2 + 1) ** 2,
+  );
   let preloadGenerated = 0;
   let generationSlice = 0;
-  while (preloadGenerated < preloadTarget && generationSlice < maximumGenerationSlices) {
-    preloadGenerated += world.processQueue(1);
-    world.rebuildDirty(1);
+  let generationProgressMarker = '';
+  let generationProgressAt = performance.now();
+  while (preloadGenerated < preloadTarget) {
+    preloadGenerated += world.processQueue(1, 7.5);
     generationSlice++;
-    const progress = 0.12 + (preloadGenerated / Math.max(1, preloadTarget)) * 0.62;
-    ui.setLoading(progress, preloadGenerated < 1 ? 'Raising the mountain chains…' : preloadGenerated < 4 ? 'Carving rivers and caverns…' : 'Painting the near horizon…');
-    if (generationSlice % 2 === 0) await new Promise((resolve) => requestAnimationFrame(resolve));
+    const headChunk = world.chunks.get(world.generationQueue[0]);
+    const marker = `${preloadGenerated}:${world.generationQueue.length}:${headChunk?.key || ''}:${headChunk?.generationPhase || ''}:${headChunk?.generationCursor || 0}`;
+    if (marker !== generationProgressMarker) {
+      generationProgressMarker = marker;
+      generationProgressAt = performance.now();
+    } else if (performance.now() - generationProgressAt > 30_000) {
+      throw new Error('Starting terrain generation stopped making progress.');
+    }
+    const progress = 0.1 + (preloadGenerated / Math.max(1, preloadTarget)) * 0.5;
+    ui.setLoading(progress, preloadGenerated < 1 ? 'Raising the mountain chains…' : preloadGenerated < Math.min(12, preloadTarget) ? 'Carving rivers and caverns…' : 'Preparing the nearby wilds…');
+    if (generationSlice % 6 === 0) await new Promise((resolve) => requestAnimationFrame(resolve));
+  }
+  if (preloadGenerated < preloadTarget) {
+    throw new Error('The starting terrain could not be generated safely.');
   }
   let meshSlice = 0;
-  while (!world.isImmediateNeighborhoodRendered(player.position.x, player.position.z) && meshSlice < 640) {
-    world.rebuildDirty(1);
+  const preloadMeshTarget = (preloadRenderedRadius * 2 + 1) ** 2;
+  let meshProgressMarker = '';
+  let meshProgressAt = performance.now();
+  while (!world.isNeighborhoodRendered(player.position.x, player.position.z, preloadRenderedRadius)) {
+    world.rebuildDirty(1, 7.5);
     meshSlice++;
-    ui.setLoading(0.76 + Math.min(0.18, meshSlice / 640 * 0.18), 'Painting the near horizon…');
-    if (meshSlice % 2 === 0) await new Promise((resolve) => requestAnimationFrame(resolve));
+    const coverage = world.getStreamingCoverage();
+    const partialChunk = [...world.chunks.values()].find((chunk) => chunk.meshJob);
+    const marker = `${coverage.rendered}:${world.stats.rebuiltTotal}:${partialChunk?.key || ''}:${partialChunk?.meshJob?.voxelCursor || 0}:${partialChunk?.meshJob?.finishCursor || 0}`;
+    if (marker !== meshProgressMarker) {
+      meshProgressMarker = marker;
+      meshProgressAt = performance.now();
+    } else if (performance.now() - meshProgressAt > 30_000) {
+      throw new Error('Starting terrain meshing stopped making progress.');
+    }
+    ui.setLoading(
+      0.6 + Math.min(1, coverage.rendered / Math.max(1, preloadMeshTarget)) * 0.36,
+      coverage.rendered < 9 ? 'Painting the nearby ground…' : 'Opening a safe horizon…',
+    );
+    if (meshSlice % 6 === 0) await new Promise((resolve) => requestAnimationFrame(resolve));
   }
-  if (!world.isImmediateNeighborhoodRendered(player.position.x, player.position.z)) {
-    throw new Error('The starting terrain could not be prepared safely.');
+  if (!world.isNeighborhoodRendered(player.position.x, player.position.z, preloadRenderedRadius)) {
+    throw new Error('The starting horizon could not be prepared safely.');
   }
+  // Loading has just proven this complete radius. Open directly to that safe
+  // boundary; only later background-grown rings use the gentle outward fade.
+  streamingFogFar = world.getSafeTerrainDistance(player.position);
   // A valid saved position is already authoritative. Previous builds always
   // snapped it to a nearby block centre on Continue, which made a correctly
   // saved cave or home feel like a different location after every reload.
@@ -474,6 +515,9 @@ async function startWorld({ seed, mode: selectedMode, saveData = null }) {
     console.error('Worldloom could not start this world.', error);
     creatures?.dispose();
     creatures = null;
+    playerAvatar?.dispose();
+    playerAvatar = null;
+    window.__worldloomPlayerAvatar = null;
     clearDroppedItems();
     world?.dispose();
     world = null;
@@ -910,6 +954,9 @@ function leaveToTitle() {
   setState('menu');
   creatures?.dispose();
   creatures = null;
+  playerAvatar?.dispose();
+  playerAvatar = null;
+  window.__worldloomPlayerAvatar = null;
   clearDroppedItems();
   environment.updateLocalLights(null, null);
   environment.setWeatherContext(null);
@@ -1372,32 +1419,70 @@ function scheduleWorldWork() {
     const timedOut = Boolean(deadline?.didTimeout);
     const startedAt = performance.now();
     const inputPendingAtStart = navigator.scheduling?.isInputPending?.() === true;
+    const stagingRadiusTarget = Math.min(4, Math.max(2, Math.floor(settings.viewDistance || 4)));
+    const stagingBoost = Boolean(
+      state === 'playing'
+      && initialClickHint
+      && !input?.locked
+      && !inputPendingAtStart
+      && world.getRenderedRadius(player?.position, stagingRadiusTarget) < stagingRadiusTarget
+    );
     // A normal idle period may use several small slices instead of wasting the
     // remainder after one call. A timeout or pending input gets a much smaller
     // cap, guaranteeing progress without turning mouse/keyboard work into a
-    // long frame. Each World method independently observes the same slice cap.
-    const hardBudget = inputPendingAtStart ? 1.15 : timedOut ? 2.4 : deadline ? 6.5 : 2.4;
+    // long frame. Before the first pointer lock, the loading-stage streamer may
+    // use a larger capped idle window to open the horizon while the player is
+    // stationary; pending input or pointer lock disables it on the next task.
+    const grantedIdleBudget = deadline && !timedOut
+      ? Math.max(0, deadline.timeRemaining() - 0.75)
+      : 0;
+    const hardBudget = inputPendingAtStart
+      ? 1.15
+      : timedOut
+        ? 2.4
+        : deadline
+          ? Math.min(stagingBoost ? 14 : 6.5, grantedIdleBudget)
+          : 2.4;
+    const passLimit = stagingBoost && !timedOut ? 14 : 6;
     let passes = 0;
     while (
-      passes < 6
+      passes < passLimit
       && (world.generationQueue.length || world.stats.dirty > 0)
     ) {
+      if (stagingBoost && input?.locked) break;
       if (passes > 0 && navigator.scheduling?.isInputPending?.() === true) break;
       const elapsed = performance.now() - startedAt;
       const wallRemaining = hardBudget - elapsed;
       const idleRemaining = deadline && !timedOut
         ? deadline.timeRemaining() - 0.75
         : wallRemaining;
-      const sliceBudget = Math.min(2.4, wallRemaining, idleRemaining);
+      const sliceBudget = Math.min(stagingBoost ? 4.5 : 2.4, wallRemaining, idleRemaining);
       if (sliceBudget < 0.55) break;
 
-      streamWorkFlip = !streamWorkFlip;
-      if (streamWorkFlip && world.generationQueue.length) {
-        world.processQueue(1, sliceBudget);
-      } else if (world.stats.dirty > 0) {
+      const renderedRadius = stagingBoost
+        ? world.getRenderedRadius(player?.position, stagingRadiusTarget)
+        : -1;
+      const nextRenderedRadius = Math.min(stagingRadiusTarget, renderedRadius + 1);
+      const nextSupportReady = stagingBoost && world.isNeighborhoodGenerated(
+        player.position.x,
+        player.position.z,
+        nextRenderedRadius + 1,
+      );
+      if (stagingBoost && nextSupportReady) {
+        // Finish the newly supported ring first: this increases the safe fog
+        // distance immediately instead of meshing far chunks out of order.
         world.rebuildDirty(1, sliceBudget);
-      } else if (world.generationQueue.length) {
+      } else if (stagingBoost && world.generationQueue.length) {
         world.processQueue(1, sliceBudget);
+      } else {
+        streamWorkFlip = !streamWorkFlip;
+        if (streamWorkFlip && world.generationQueue.length) {
+          world.processQueue(1, sliceBudget);
+        } else if (world.stats.dirty > 0) {
+          world.rebuildDirty(1, sliceBudget);
+        } else if (world.generationQueue.length) {
+          world.processQueue(1, sliceBudget);
+        }
       }
       passes++;
     }
@@ -1406,7 +1491,12 @@ function scheduleWorldWork() {
   if (typeof window.requestIdleCallback === 'function') {
     // The timeout guarantees a very small bounded slice even on busy
     // high-refresh-rate render loops that expose no long idle window.
-    window.requestIdleCallback(work, { timeout: 48 });
+    const stagingRadiusTarget = Math.min(4, Math.max(2, Math.floor(settings.viewDistance || 4)));
+    const staging = state === 'playing'
+      && initialClickHint
+      && !input?.locked
+      && world.getRenderedRadius(player?.position, stagingRadiusTarget) < stagingRadiusTarget;
+    window.requestIdleCallback(work, { timeout: staging ? 32 : 48 });
   } else {
     setTimeout(work, 16);
   }
@@ -1509,7 +1599,7 @@ function updateGame(dt) {
   streamingTimer += dt;
   if (streamingTimer >= 0.28) {
     streamingTimer = 0;
-    world.updateStreaming(player.position, settings.viewDistance);
+    world.updateStreaming(player.position, settings.viewDistance, player.velocity);
     environment.updateLocalLights(world, player.position);
   }
   const fluidBudget = { low: 10, balanced: 18, high: 28, ultra: 40 }[settings.graphicsQuality] || 18;
@@ -1520,6 +1610,10 @@ function updateGame(dt) {
   heldItem?.update(dt, {
     mining: input.locked && input.buttons.has(0) && Boolean(miningTarget),
     moving: Math.hypot(player.velocity.x, player.velocity.z),
+    reducedMotion: Boolean(settings.reducedMotion),
+  });
+  playerAvatar?.update(dt, player, motion, {
+    action: input.locked && (input.buttons.has(0) || attackGesture),
     reducedMotion: Boolean(settings.reducedMotion),
   });
   saveTimer += dt;
@@ -1586,6 +1680,17 @@ function animate(now) {
   else if (state === 'menu') effects.update(dt);
   const environmentDt = state === 'playing' || state === 'inventory' ? dt : state === 'menu' ? dt * 0.12 : 0;
   environment.update(environmentDt, focus, settings.viewDistance);
+  if (scene?.fog && world && player) {
+    const atmosphericFar = scene.fog.far;
+    const safeTerrainFar = world.getSafeTerrainDistance(player.position);
+    const targetFar = Math.min(atmosphericFar, safeTerrainFar);
+    if (!Number.isFinite(streamingFogFar)) streamingFogFar = targetFar;
+    else if (targetFar < streamingFogFar) streamingFogFar = targetFar;
+    else streamingFogFar += (targetFar - streamingFogFar) * (1 - Math.exp(-environmentDt * 2.2));
+    scene.fog.far = Math.min(atmosphericFar, streamingFogFar);
+    const fogBand = Math.min(34, Math.max(8, scene.fog.far * 0.55));
+    scene.fog.near = Math.min(scene.fog.near, Math.max(5, scene.fog.far - fogBand));
+  }
   const weather = environment.getWeatherState();
   const surface = world && player ? world.terrainHeight(player.position.x, player.position.z) : 0;
   const biome = world && player ? world.biomeAt(player.position.x, player.position.z) : 'plains';

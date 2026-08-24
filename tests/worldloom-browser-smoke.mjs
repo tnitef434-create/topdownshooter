@@ -122,6 +122,60 @@ try {
   assert.match(mainMenuPresentation.titleFont, /Consolas|Courier New|monospace/i,
     'Worldloom title is no longer rendered in the approved block-built monospace style');
   assert.equal(mainMenuPresentation.hasBlockMark, true, 'Worldloom title plate lost its voxel block mark');
+
+  await frame.evaluate(() => document.querySelector('#settings-button')?.click());
+  await frame.waitForFunction(() => !document.querySelector('#settings-panel')?.classList.contains('hidden'));
+  const settingsPresentation = await frame.evaluate(() => {
+    const panel = document.querySelector('.settings-window.surface-panel');
+    const list = document.querySelector('.settings-list');
+    const toggleFace = document.querySelector('.settings-window .toggle > span');
+    if (!panel || !list || !toggleFace) return null;
+    const thumbRules = [];
+    const collectRules = (ruleList) => {
+      for (const rule of ruleList || []) {
+        if (rule.selectorText?.includes('.settings-list::-webkit-scrollbar-thumb')) thumbRules.push(rule.cssText);
+        if (rule.cssRules) collectRules(rule.cssRules);
+      }
+    };
+    for (const sheet of document.styleSheets) {
+      try { collectRules(sheet.cssRules); } catch { /* ignore injected cross-origin styles */ }
+    }
+    const panelStyle = getComputedStyle(panel);
+    const listStyle = getComputedStyle(list);
+    const toggleStyle = getComputedStyle(toggleFace);
+    return {
+      borderWidths: [panelStyle.borderTopWidth, panelStyle.borderRightWidth, panelStyle.borderBottomWidth, panelStyle.borderLeftWidth],
+      borderColors: [panelStyle.borderTopColor, panelStyle.borderRightColor, panelStyle.borderBottomColor, panelStyle.borderLeftColor],
+      radii: [panelStyle.borderTopLeftRadius, panelStyle.borderTopRightRadius, panelStyle.borderBottomRightRadius, panelStyle.borderBottomLeftRadius],
+      backdropFilter: panelStyle.backdropFilter || panelStyle.webkitBackdropFilter || 'none',
+      font: panelStyle.fontFamily,
+      groupCount: panel.querySelectorAll('.settings-group').length,
+      rowCount: panel.querySelectorAll('.setting-row').length,
+      blockMark: Boolean(panel.querySelector('.settings-block-mark')),
+      overflowY: listStyle.overflowY,
+      scrollable: list.scrollHeight > list.clientHeight,
+      scrollbarColor: listStyle.scrollbarColor,
+      thumbRule: thumbRules.join('\n'),
+      toggleRadius: toggleStyle.borderRadius,
+    };
+  });
+  assert(settingsPresentation, 'Settings presentation is missing');
+  assert.deepEqual(settingsPresentation.borderWidths, ['4px', '4px', '4px', '4px'], 'Settings lost its 4px block bevel');
+  assert(settingsPresentation.radii.every((radius) => Number.parseFloat(radius) <= 2), 'Settings became rounded');
+  assert.notEqual(settingsPresentation.borderColors[0], settingsPresentation.borderColors[2], 'Settings lost bevel contrast');
+  assert.equal(settingsPresentation.backdropFilter, 'none', 'Settings reintroduced glass blur');
+  assert.match(settingsPresentation.font, /Consolas|Courier New|monospace/i);
+  assert.equal(settingsPresentation.groupCount, 3, 'Settings controls are no longer grouped into authored control banks');
+  assert.equal(settingsPresentation.rowCount, 11, 'A live Settings control disappeared during redesign');
+  assert.equal(settingsPresentation.blockMark, true, 'Settings lost its control-block mark');
+  assert.match(settingsPresentation.overflowY, /auto|scroll/);
+  assert.equal(settingsPresentation.scrollable, true, 'Settings does not expose overflow through its custom scrollbar');
+  assert.match(settingsPresentation.scrollbarColor, /119\D+119\D+119|#777/i, 'Settings scrollbar is not block-grey');
+  assert.match(settingsPresentation.thumbRule, /(?:#8e8e8e|rgb\(142\s*,\s*142\s*,\s*142\))/i,
+    'Settings is missing its custom square WebKit scrollbar thumb');
+  assert.equal(Number.parseFloat(settingsPresentation.toggleRadius), 0, 'Settings toggles reverted to pill switches');
+  await frame.evaluate(() => document.querySelector('#settings-close')?.click());
+  await frame.waitForFunction(() => document.querySelector('#settings-panel')?.classList.contains('hidden'));
   await frame.evaluate(() => document.querySelector('#new-world-button')?.click());
   await frame.waitForFunction(() => !document.querySelector('#hud')?.classList.contains('hidden'), {
     timeout: 60_000,
@@ -169,6 +223,30 @@ try {
     const camera = graphics?.camera;
     const forward = camera?.position?.clone();
     if (camera && forward) camera.getWorldDirection(forward);
+    const renderedChunkKeys = new Set(terrain
+      .filter((mesh) => mesh.visible && mesh.vertices > 0)
+      .map((mesh) => `${Math.round(mesh.position[0] / 16)},${Math.round(mesh.position[2] / 16)}`));
+    const centerChunkX = Math.floor((camera?.position?.x || 0) / 16);
+    const centerChunkZ = Math.floor((camera?.position?.z || 0) / 16);
+    let completeTerrainRadius = -1;
+    for (let radius = 0; radius <= 12; radius++) {
+      let ringComplete = true;
+      for (let dz = -radius; dz <= radius && ringComplete; dz++) {
+        for (let dx = -radius; dx <= radius; dx++) {
+          if (radius > 0 && Math.abs(dx) !== radius && Math.abs(dz) !== radius) continue;
+          if (!renderedChunkKeys.has(`${centerChunkX + dx},${centerChunkZ + dz}`)) {
+            ringComplete = false;
+            break;
+          }
+        }
+      }
+      if (!ringComplete) break;
+      completeTerrainRadius = radius;
+    }
+    const localX = (camera?.position?.x || 0) - centerChunkX * 16;
+    const localZ = (camera?.position?.z || 0) - centerChunkZ * 16;
+    const nearestChunkEdge = Math.min(localX, 16 - localX, localZ, 16 - localZ);
+    const safeTerrainFar = Math.max(8, completeTerrainRadius * 16 + nearestChunkEdge - 2);
     return {
       webgl2: Boolean(document.querySelector('#game')?.getContext('webgl2')),
       timeIcon: Boolean(document.querySelector('.time-chip__sun')),
@@ -178,9 +256,18 @@ try {
       objective: document.querySelector('#objective-text')?.textContent || '',
       renderer: Boolean(graphics),
       environment: Boolean(window.__worldloomEnvironment),
+      avatar: Boolean(window.__worldloomPlayerAvatar?.root?.visible),
+      avatarParts: (() => {
+        let count = 0;
+        window.__worldloomPlayerAvatar?.root?.traverse?.((node) => { if (node.userData?.playerAvatarPart) count++; });
+        return count;
+      })(),
       camera: camera?.position?.toArray() || null,
       cameraForward: forward?.toArray() || null,
       terrain,
+      completeTerrainRadius,
+      safeTerrainFar,
+      fogFar: graphics?.scene?.fog?.far ?? null,
     };
   });
   assert.equal(gameState.webgl2, true, 'WebGL 2 did not initialize');
@@ -191,10 +278,14 @@ try {
   assert.notEqual(gameState.objective.trim(), '');
   assert.equal(gameState.renderer, true);
   assert.equal(gameState.environment, true);
+  assert.equal(gameState.avatar, true, 'The Wayfarer player avatar is not active');
+  assert(gameState.avatarParts >= 25, 'The Wayfarer player avatar lost authored body parts');
   assert(gameState.terrain.some((mesh) => mesh.visible && mesh.vertices > 0),
     `No visible terrain geometry reached the first playable frame: ${JSON.stringify(gameState.terrain)}`);
-  assert(gameState.terrain.filter((mesh) => mesh.visible && mesh.vertices > 0).length >= 9,
-    `The playable frame opened before its immediate terrain neighborhood was ready: ${JSON.stringify(gameState.terrain)}`);
+  assert(gameState.completeTerrainRadius >= 3,
+    `The playable frame opened before its safe seven-by-seven terrain core was ready: ${JSON.stringify(gameState.terrain)}`);
+  assert(Number.isFinite(gameState.fogFar) && gameState.fogFar <= gameState.safeTerrainFar + 1.5,
+    `Fog exposed unmeshed horizon space (fog ${gameState.fogFar}, safe ${gameState.safeTerrainFar})`);
 
   const stormState = await frame.evaluate(() => {
     const environment = window.__worldloomEnvironment;
@@ -205,8 +296,28 @@ try {
     const focus = environment.atmosphere.position.clone();
     const strike = environment.lightning.update(0.1, focus, 0.9, 0.9, 0.9);
     const boltVertices = environment.lightning.geometry.getAttribute('position')?.count || 0;
+    environment.time = 0.5;
+    environment.weatherPhase = 'clearing';
+    environment.weatherTimer = 60;
+    environment.rainTarget = 0;
+    environment.rainIntensity = 0.8;
+    environment.cloudCover = 1;
+    environment.cloudCoverTarget = 1;
+    environment.localCloudCoverage = 1;
+    environment.localCloudCount = 3;
+    environment.overcastAmount = 1;
+    environment.update(0.25, focus, 4);
+    const clearing = {
+      rain: environment.rainIntensity,
+      overcast: environment.overcastAmount,
+      sunOpacity: environment.sun.material.opacity,
+      sunVisibility: environment.atmosphere.material.uniforms.sunVisibility.value,
+      sunlight: environment.sunLight.intensity,
+    };
     environment.rainTarget = 1;
     environment.rainIntensity = 0.9;
+    environment.weatherPhase = 'rain';
+    environment.overcastAmount = 0;
     environment.cloudCover = 0;
     environment.localCloudCoverage = 0;
     environment.localCloudCount = 0;
@@ -214,11 +325,18 @@ try {
     return {
       strike: Boolean(strike),
       boltVertices,
+      clearing,
       cloudlessRain: environment.rainIntensity,
     };
   });
   assert.equal(stormState.strike, true, 'Procedural lightning did not produce a strike');
   assert(stormState.boltVertices >= 32, 'Lightning bolt did not contain a full branching path');
+  assert(stormState.clearing.rain > 0 && stormState.clearing.rain < 0.8,
+    'Rain did not fade progressively during clearing');
+  assert.equal(stormState.clearing.overcast, 1, 'The storm deck dispersed before rain finished');
+  assert.equal(stormState.clearing.sunOpacity, 0, 'The sun disc remained visible through overcast rain');
+  assert.equal(stormState.clearing.sunVisibility, 0, 'The atmosphere shader still drew a sun through overcast rain');
+  assert(stormState.clearing.sunlight < 0.12, 'Direct sunlight remained too strong beneath overcast rain');
   assert.equal(stormState.cloudlessRain, 0, 'Rain continued without local clouds');
 
   if (screenshotPath) {
@@ -495,6 +613,7 @@ try {
     stormState,
     deployPresentation,
     mainMenuPresentation,
+    settingsPresentation,
     hudPresentation,
     mobileInventory,
     closeDuration,
@@ -503,6 +622,11 @@ try {
     exactResume: 'safe fractional X/Z position restored without snapping',
     webglRecovery: 'portal exposed retry and return actions',
   }, null, 2));
+} catch (error) {
+  if (pageErrors.length) {
+    console.error(`Browser errors captured before failure:\n${pageErrors.join('\n\n')}`);
+  }
+  throw error;
 } finally {
   await browser.close();
 }

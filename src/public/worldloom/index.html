@@ -247,95 +247,123 @@
       <section id="settings-panel" class="screen overlay-screen hidden" role="dialog" aria-modal="true" aria-labelledby="settings-title">
         <div class="dialog-card surface-panel settings-window">
           <header class="panel-header">
-            <div>
-              <p class="panel-kicker">Make it yours</p>
+            <span class="settings-block-mark" aria-hidden="true"><i></i></span>
+            <div class="settings-heading">
+              <p class="panel-kicker">World controls</p>
               <h2 id="settings-title">Settings</h2>
+              <p class="settings-heading__hint">Tune the weave for this machine</p>
             </div>
             <button id="settings-close" class="icon-button" type="button" aria-label="Close settings">×</button>
           </header>
 
           <div class="settings-list">
-            <label class="setting-row" for="graphics-quality">
-              <span><strong>Graphics mode</strong><small>Instant performance and atmosphere preset</small></span>
-              <select id="graphics-quality" class="setting-select">
-                <option value="low">Low · maximum speed</option>
-                <option value="balanced" selected>Balanced · filmic + fast</option>
-                <option value="high">High · GTAO lighting</option>
-                <option value="ultra">Ultra · cinematic maximum</option>
-              </select>
-            </label>
-            <label class="setting-row" for="sensitivity">
-              <span><strong>Look sensitivity</strong><small>Mouse turn speed</small></span>
-              <span class="range-control">
-                <input id="sensitivity" type="range" min="0.0004" max="0.006" step="0.0001" value="0.0022" />
-                <output id="sensitivity-value" for="sensitivity">100%</output>
-              </span>
-            </label>
-            <label class="setting-row" for="fov">
-              <span><strong>Field of view</strong><small>Wider views may feel faster</small></span>
-              <span class="range-control">
-                <input id="fov" type="range" min="60" max="100" step="1" value="75" />
-                <output id="fov-value" for="fov">75°</output>
-              </span>
-            </label>
-            <label class="setting-row" for="view-distance">
-              <span><strong>View distance</strong><small>Higher values use more memory</small></span>
-              <span class="range-control">
-                <input id="view-distance" type="range" min="2" max="9" step="1" value="4" />
-                <output id="view-distance-value" for="view-distance">4 chunks</output>
-              </span>
-            </label>
-            <label class="setting-row" for="render-scale">
-              <span><strong>Render scale</strong><small>Lower this for smoother play</small></span>
-              <span class="range-control">
-                <input id="render-scale" type="range" min="0.6" max="1.25" step="0.05" value="1" />
-                <output id="render-scale-value" for="render-scale">100%</output>
-              </span>
-            </label>
-            <label class="setting-row" for="volume">
-              <span><strong>Master volume</strong><small>All Worldloom audio</small></span>
-              <span class="range-control">
-                <input id="volume" type="range" min="0" max="1" step="0.02" value="0.72" />
-                <output id="volume-value" for="volume">72%</output>
-              </span>
-            </label>
-            <label class="setting-row" for="music-volume">
-              <span><strong>Music volume</strong><small>Soft flow-state soundtrack</small></span>
-              <span class="range-control">
-                <input id="music-volume" type="range" min="0" max="1" step="0.02" value="0.28" />
-                <output id="music-volume-value" for="music-volume">28%</output>
-              </span>
-            </label>
-            <label class="setting-row" for="ambience-volume">
-              <span><strong>Ambient volume</strong><small>Wind, wildlife, caves, water, and rain</small></span>
-              <span class="range-control">
-                <input id="ambience-volume" type="range" min="0" max="1" step="0.02" value="0.68" />
-                <output id="ambience-volume-value" for="ambience-volume">68%</output>
-              </span>
-            </label>
-            <label class="setting-row setting-row--toggle" for="music-enabled">
-              <span><strong>Background music</strong><small>Fades gently between play and menus</small></span>
-              <span class="toggle">
-                <input id="music-enabled" type="checkbox" checked />
-                <span aria-hidden="true"></span>
-              </span>
-            </label>
-            <label class="setting-row setting-row--toggle" for="weather-effects">
-              <span><strong>Weather effects</strong><small>Rain streaks, mist, and ground splashes</small></span>
-              <span class="toggle">
-                <input id="weather-effects" type="checkbox" checked />
-                <span aria-hidden="true"></span>
-              </span>
-            </label>
-            <label class="setting-row setting-row--toggle" for="reduced-motion">
-              <span><strong>Reduced motion</strong><small>Softens sway, shake, and transitions</small></span>
-              <span class="toggle">
-                <input id="reduced-motion" type="checkbox" />
-                <span aria-hidden="true"></span>
-              </span>
-            </label>
+            <section class="settings-group" aria-labelledby="settings-video-title">
+              <header class="settings-group__header">
+                <span class="settings-group__rune" aria-hidden="true"></span>
+                <div><h3 id="settings-video-title">Video</h3><p>Clarity and distance</p></div>
+              </header>
+              <div class="settings-group__well">
+                <label class="setting-row" for="graphics-quality">
+                  <span><strong>Graphics mode</strong><small>Instant performance and atmosphere preset</small></span>
+                  <select id="graphics-quality" class="setting-select">
+                    <option value="low">Low · maximum speed</option>
+                    <option value="balanced" selected>Balanced · filmic + fast</option>
+                    <option value="high">High · GTAO lighting</option>
+                    <option value="ultra">Ultra · cinematic maximum</option>
+                  </select>
+                </label>
+                <label class="setting-row" for="fov">
+                  <span><strong>Field of view</strong><small>Wider views may feel faster</small></span>
+                  <span class="range-control">
+                    <input id="fov" type="range" min="60" max="100" step="1" value="75" />
+                    <output id="fov-value" for="fov">75°</output>
+                  </span>
+                </label>
+                <label class="setting-row" for="view-distance">
+                  <span><strong>View distance</strong><small>Higher values use more memory</small></span>
+                  <span class="range-control">
+                    <input id="view-distance" type="range" min="2" max="9" step="1" value="4" />
+                    <output id="view-distance-value" for="view-distance">4 chunks</output>
+                  </span>
+                </label>
+                <label class="setting-row" for="render-scale">
+                  <span><strong>Render scale</strong><small>Lower this for smoother play</small></span>
+                  <span class="range-control">
+                    <input id="render-scale" type="range" min="0.6" max="1.25" step="0.05" value="1" />
+                    <output id="render-scale-value" for="render-scale">100%</output>
+                  </span>
+                </label>
+              </div>
+            </section>
+
+            <section class="settings-group" aria-labelledby="settings-control-title">
+              <header class="settings-group__header">
+                <span class="settings-group__rune settings-group__rune--control" aria-hidden="true"></span>
+                <div><h3 id="settings-control-title">Control</h3><p>Look and comfort</p></div>
+              </header>
+              <div class="settings-group__well">
+                <label class="setting-row" for="sensitivity">
+                  <span><strong>Look sensitivity</strong><small>Mouse turn speed</small></span>
+                  <span class="range-control">
+                    <input id="sensitivity" type="range" min="0.0004" max="0.006" step="0.0001" value="0.0022" />
+                    <output id="sensitivity-value" for="sensitivity">100%</output>
+                  </span>
+                </label>
+                <label class="setting-row setting-row--toggle" for="reduced-motion">
+                  <span><strong>Reduced motion</strong><small>Softens sway, shake, and transitions</small></span>
+                  <span class="toggle">
+                    <input id="reduced-motion" type="checkbox" />
+                    <span aria-hidden="true"></span>
+                  </span>
+                </label>
+              </div>
+            </section>
+
+            <section class="settings-group" aria-labelledby="settings-audio-title">
+              <header class="settings-group__header">
+                <span class="settings-group__rune settings-group__rune--audio" aria-hidden="true"></span>
+                <div><h3 id="settings-audio-title">Audio &amp; world</h3><p>Sound and atmosphere</p></div>
+              </header>
+              <div class="settings-group__well">
+                <label class="setting-row" for="volume">
+                  <span><strong>Master volume</strong><small>All Worldloom audio</small></span>
+                  <span class="range-control">
+                    <input id="volume" type="range" min="0" max="1" step="0.02" value="0.72" />
+                    <output id="volume-value" for="volume">72%</output>
+                  </span>
+                </label>
+                <label class="setting-row" for="music-volume">
+                  <span><strong>Music volume</strong><small>Soft flow-state soundtrack</small></span>
+                  <span class="range-control">
+                    <input id="music-volume" type="range" min="0" max="1" step="0.02" value="0.28" />
+                    <output id="music-volume-value" for="music-volume">28%</output>
+                  </span>
+                </label>
+                <label class="setting-row" for="ambience-volume">
+                  <span><strong>Ambient volume</strong><small>Wind, wildlife, caves, water, and rain</small></span>
+                  <span class="range-control">
+                    <input id="ambience-volume" type="range" min="0" max="1" step="0.02" value="0.68" />
+                    <output id="ambience-volume-value" for="ambience-volume">68%</output>
+                  </span>
+                </label>
+                <label class="setting-row setting-row--toggle" for="music-enabled">
+                  <span><strong>Background music</strong><small>Fades gently between play and menus</small></span>
+                  <span class="toggle">
+                    <input id="music-enabled" type="checkbox" checked />
+                    <span aria-hidden="true"></span>
+                  </span>
+                </label>
+                <label class="setting-row setting-row--toggle" for="weather-effects">
+                  <span><strong>Weather effects</strong><small>Rain streaks, mist, and ground splashes</small></span>
+                  <span class="toggle">
+                    <input id="weather-effects" type="checkbox" checked />
+                    <span aria-hidden="true"></span>
+                  </span>
+                </label>
+              </div>
+            </section>
           </div>
-          <p class="dialog-note">Changes are saved automatically.</p>
+          <p class="dialog-note"><span aria-hidden="true"></span> Changes are saved automatically.</p>
         </div>
       </section>
 

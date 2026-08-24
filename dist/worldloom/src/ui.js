@@ -334,7 +334,19 @@ export class UI {
       ['ambience-volume', 'ambience-volume-value', (value) => `${Math.round(Number(value) * 100)}%`],
     ];
     mappings.forEach(([input, output, format]) => {
-      if ($(input) && $(output)) $(output).textContent = format($(input).value);
+      const control = $(input);
+      const display = $(output);
+      if (!control || !display) return;
+      const formatted = format(control.value);
+      display.textContent = formatted;
+      control.setAttribute('aria-valuetext', formatted);
+      const min = Number(control.min);
+      const max = Number(control.max);
+      const value = Number(control.value);
+      const progress = Number.isFinite(min) && Number.isFinite(max) && max > min
+        ? Math.max(0, Math.min(100, ((value - min) / (max - min)) * 100))
+        : 0;
+      control.style.setProperty('--range-progress', `${progress}%`);
     });
   }
 

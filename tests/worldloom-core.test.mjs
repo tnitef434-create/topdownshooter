@@ -8,6 +8,7 @@ import { World } from '../src/public/worldloom/src/world.js';
 import {
   BlockEffects,
   Environment,
+  outdoorBounceIntensity,
   skylightTransmission,
 } from '../src/public/worldloom/src/environment.js';
 import {
@@ -393,6 +394,47 @@ test('recently unloaded chunks reuse their generated voxel data when revisited',
   world.dispose();
 });
 
+test('streaming prepares hidden horizon rings and favors the direction of travel', () => {
+  const world = new World(7341, null, null);
+  world.updateStreaming({ x: 0.5, z: 0.5 }, 4, { x: 0, z: -7.1 });
+  assert.equal(world.renderDistance, 4);
+  assert.equal(world.streamDistance, 6);
+  assert.equal(world.chunks.size, 169, 'the 13×13 fog-covered footprint should be resident');
+  assert.equal(world.generationQueue.length, 169);
+  assert.ok(
+    world.generationQueue.indexOf('0,-4') < world.generationQueue.indexOf('0,4'),
+    'forward terrain should win over the rear cell in the same complete ring',
+  );
+  assert.ok(
+    world.generationQueue.indexOf('2,0') < world.generationQueue.indexOf('0,-3'),
+    'a nearer complete ring must still outrank forward bias in a farther ring',
+  );
+  world.dispose();
+});
+
+test('mature trees deterministically grow sparse leaf patches down their trunks', () => {
+  const world = new World(64, null, null);
+  for (let cz = -2; cz <= 2; cz++) {
+    for (let cx = -2; cx <= 2; cx++) world.ensurePositionGenerated(cx * 16, cz * 16);
+  }
+  let lowerTrunkPatches = 0;
+  for (let z = -32; z < 48; z++) {
+    for (let x = -32; x < 48; x++) {
+      for (let y = 2; y < world.worldHeight - 3; y++) {
+        const log = world.getBlock(x, y, z);
+        if (log !== BLOCK.ASH_LOG && log !== BLOCK.PINE_LOG) continue;
+        if (world.getBlock(x, y + 2, z) !== log) continue;
+        const leaf = log === BLOCK.ASH_LOG ? BLOCK.ASH_LEAVES : BLOCK.PINE_NEEDLES;
+        const touchesPatch = [[1, 0], [-1, 0], [0, 1], [0, -1]]
+          .some(([dx, dz]) => world.getBlock(x + dx, y, z + dz) === leaf);
+        lowerTrunkPatches += Number(touchesPatch);
+      }
+    }
+  }
+  assert.ok(lowerTrunkPatches >= 12, 'overgrown trees should be obvious but deterministic in a woodland sample');
+  world.dispose();
+});
+
 test('rain intensity is clamped to zero whenever the local sky has no storm clouds', () => {
   const environment = Object.create(Environment.prototype);
   Object.assign(environment, {
@@ -410,6 +452,40 @@ test('rain intensity is clamped to zero whenever the local sky has no storm clou
   });
   environment._updateWeather(0.1);
   assert.equal(environment.rainIntensity, 0);
+});
+
+test('clearing rain fades over several updates while the overcast deck stays locked', () => {
+  const environment = Object.create(Environment.prototype);
+  Object.assign(environment, {
+    weatherPhase: 'clearing',
+    weatherBuildAge: 20,
+    weatherWorld: {},
+    weatherEnabled: true,
+    weatherTimer: 60,
+    cloudCover: 1,
+    cloudCoverTarget: 1,
+    localCloudCount: 3,
+    localCloudCoverage: 1,
+    rainTarget: 0,
+    rainIntensity: 0.8,
+    overcastAmount: 1,
+  });
+  environment._updateWeather(0.25);
+  assert.ok(environment.rainIntensity > 0 && environment.rainIntensity < 0.8,
+    'the first clearing update should visibly reduce rain without cutting it off');
+  assert.equal(environment.weatherPhase, 'clearing');
+  assert.equal(environment.overcastAmount, 1);
+  assert.ok(environment.cloudCoverTarget >= 0.9);
+
+  let elapsed = 0.25;
+  while (environment.weatherPhase === 'clearing' && elapsed < 8) {
+    environment._updateWeather(0.25);
+    elapsed += 0.25;
+  }
+  assert.equal(environment.weatherPhase, 'clear');
+  assert.equal(environment.rainIntensity, 0);
+  assert.ok(elapsed >= 3.5 && elapsed <= 8, `rain fade completed at an implausible ${elapsed}s`);
+  assert.ok(environment.cloudCoverTarget <= 0.5, 'clouds may disperse only after the rain tail has ended');
 });
 
 test('an opaque player-built roof removes ambient sky exposure at any depth', () => {
@@ -446,6 +522,12 @@ test('dense tree foliage provides shade without applying cave darkness', () => {
   environment._updateSkyExposure(0.18, { x: 0.5, y: 2, z: 0.5 });
   assert.ok(environment.skyExposureTarget >= 0.45, 'a natural canopy must retain readable diffuse skylight');
   assert.ok(environment.skyExposureTarget < 0.7, 'dense pine boughs should still look visibly shaded');
+  assert.ok(outdoorBounceIntensity(1, environment.skyExposureTarget, 0) >= 0.08,
+    'daylight canopy shade must retain enough indirect light to read bark and leaf undersides');
+  assert.ok(outdoorBounceIntensity(1, environment.skyExposureTarget, 1) >= 0.05,
+    'rainy canopy shade must remain readable beneath the overcast deck');
+  assert.ok(outdoorBounceIntensity(1, 0, 0) < 0.005,
+    'a sealed surface shelter must not inherit outdoor bounce light');
 });
 
 test('selection effects never show the red placement cube without a placeable stack', () => {

@@ -166,71 +166,114 @@ function drawSword(context, item) {
   context.stroke();
 }
 
+function paintPixelRows(context, rows, color, offsetX = 0, offsetY = 0) {
+  context.fillStyle = color;
+  for (const [y, x, width] of rows) context.fillRect(x + offsetX, y + offsetY, width, 1);
+}
+
+/**
+ * An original 36px bone-in game cut built one scanline at a time. Keeping the
+ * silhouette, marbling and sear marks on the same integer grid makes the art
+ * stay crisp in the hotbar instead of turning into a soft red blob when scaled.
+ */
 function drawFood(context, item, cooked = false, random = Math.random) {
-  context.save();
-  context.shadowColor = 'rgba(18, 10, 8, .48)';
-  context.shadowBlur = 5;
-  context.shadowOffsetY = 3;
-  path(context, [[7, 30], [11, 19], [22, 10], [38, 8], [53, 17], [58, 29], [54, 43], [43, 54], [26, 58], [12, 49], [6, 39]]);
-  const fat = context.createLinearGradient(9, 9, 55, 55);
-  fat.addColorStop(0, cooked ? '#e8b66f' : '#f2c9b6');
-  fat.addColorStop(0.48, cooked ? '#b96e3f' : '#dd8d83');
-  fat.addColorStop(1, cooked ? '#5a3025' : '#81333b');
-  context.fillStyle = fat;
-  context.fill();
-  roundedStroke(context, cooked ? '#45271f' : '#642b32', 2.8);
-  context.stroke();
-  context.restore();
+  const palette = cooked
+    ? {
+      shadow: '#261512', outline: '#3b1b16', rind: '#71301f', dark: '#8a3b25',
+      meat: '#ad542e', light: '#d47a3d', fat: '#e6a761', boneShade: '#8d5b39',
+      bone: '#e7c78d', marrow: '#744127', char: '#2b1713', sparkle: '#f0a75a',
+    }
+    : {
+      shadow: '#32151d', outline: '#541f2b', rind: '#a64c57', dark: '#b63e4e',
+      meat: '#d45762', light: '#f0837e', fat: '#f4b7aa', boneShade: '#9f665f',
+      bone: '#f3d3bb', marrow: '#ad5861', char: '#6d2734', sparkle: '#ffc0ad',
+    };
+  const outline = [
+    [7, 15, 7], [8, 12, 13], [9, 10, 17], [10, 8, 21], [11, 7, 23],
+    [12, 6, 25], [13, 5, 27], [14, 4, 28], [15, 4, 29], [16, 3, 30],
+    [17, 3, 30], [18, 3, 31], [19, 3, 31], [20, 4, 30], [21, 4, 29],
+    [22, 5, 28], [23, 5, 27], [24, 6, 26], [25, 7, 24], [26, 8, 22],
+    [27, 10, 19], [28, 12, 15], [29, 15, 9],
+  ];
+  const rind = [
+    [9, 14, 9], [10, 11, 15], [11, 9, 19], [12, 8, 21], [13, 7, 23],
+    [14, 6, 25], [15, 5, 27], [16, 5, 27], [17, 5, 28], [18, 5, 28],
+    [19, 5, 28], [20, 6, 27], [21, 6, 26], [22, 7, 24], [23, 8, 22],
+    [24, 9, 20], [25, 10, 18], [26, 12, 14], [27, 14, 10],
+  ];
+  const muscle = [
+    [12, 14, 10], [13, 11, 15], [14, 9, 19], [15, 8, 21], [16, 7, 23],
+    [17, 7, 23], [18, 7, 23], [19, 7, 23], [20, 8, 21], [21, 8, 20],
+    [22, 9, 18], [23, 10, 16], [24, 12, 12], [25, 14, 8],
+  ];
 
-  // The inset cut and pale fat cap make the icon read as a steak rather than a
-  // generic red blob, even at the 32px size used by the hotbar.
-  path(context, [[12, 29], [16, 20], [27, 14], [39, 13], [50, 20], [53, 30], [48, 41], [38, 49], [25, 52], [15, 45], [10, 37]]);
-  const meat = context.createRadialGradient(26, 22, 2, 33, 34, 27);
-  meat.addColorStop(0, cooked ? '#dc8b4d' : '#f28e8d');
-  meat.addColorStop(0.5, cooked ? '#a95732' : '#c84f59');
-  meat.addColorStop(1, cooked ? '#633127' : '#792d38');
-  context.fillStyle = meat;
-  context.fill();
-  roundedStroke(context, cooked ? '#7d402d' : '#9a414b', 1.8);
-  context.stroke();
+  paintPixelRows(context, outline, palette.shadow, 2, 3);
+  paintPixelRows(context, outline, palette.outline);
+  paintPixelRows(context, rind, palette.rind);
+  paintPixelRows(context, muscle, palette.meat);
 
-  // Bone, marrow and a small highlight.
-  context.save();
-  context.translate(39, 37);
-  context.rotate(-0.42);
-  context.fillStyle = cooked ? '#e4c390' : '#f1d6c4';
-  context.strokeStyle = cooked ? '#7a5037' : '#9c6c68';
-  context.lineWidth = 1.8;
-  context.beginPath();
-  context.ellipse(0, 0, 8, 5.2, 0, 0, Math.PI * 2);
-  context.fill();
-  context.stroke();
-  context.fillStyle = cooked ? '#8f5437' : '#b96f72';
-  context.beginPath();
-  context.ellipse(0.5, 0.2, 3.5, 2.1, 0, 0, Math.PI * 2);
-  context.fill();
-  context.restore();
+  // Stepped colour fields describe the cut's grain without anti-aliasing.
+  context.fillStyle = palette.dark;
+  context.fillRect(7, 17, 4, 5);
+  context.fillRect(10, 22, 5, 3);
+  context.fillRect(23, 13, 5, 3);
+  context.fillRect(25, 21, 4, 3);
+  context.fillStyle = palette.light;
+  context.fillRect(12, 13, 7, 2);
+  context.fillRect(10, 15, 5, 2);
+  context.fillRect(9, 18, 4, 2);
+  context.fillRect(15, 23, 5, 2);
+
+  // A broken fat cap and two embedded seams keep raw and roasted variants
+  // recognisable as the same item while still giving each a distinct finish.
+  context.fillStyle = palette.fat;
+  context.fillRect(12, 9, 8, 1);
+  context.fillRect(9, 10, 8, 1);
+  context.fillRect(7, 11, 5, 3);
+  context.fillRect(5, 14, 2, 6);
+  context.fillRect(6, 21, 2, 3);
+  context.fillRect(13, 18, 2, 1);
+  context.fillRect(14, 19, 4, 1);
+  context.fillRect(17, 20, 3, 1);
+  context.fillRect(18, 21, 2, 1);
+
+  // T-shaped bone with a shaded marrow channel.
+  context.fillStyle = palette.boneShade;
+  context.fillRect(20, 15, 7, 2);
+  context.fillRect(22, 16, 5, 8);
+  context.fillRect(20, 22, 8, 3);
+  context.fillStyle = palette.bone;
+  context.fillRect(21, 15, 5, 2);
+  context.fillRect(23, 17, 3, 6);
+  context.fillRect(21, 22, 6, 2);
+  context.fillStyle = palette.marrow;
+  context.fillRect(23, 16, 2, 2);
+  context.fillRect(24, 18, 1, 4);
+  context.fillRect(22, 22, 3, 1);
 
   if (cooked) {
-    roundedStroke(context, 'rgba(54, 27, 21, .72)', 2.2);
-    [[16, 28, 28, 21], [17, 38, 31, 29], [24, 47, 34, 41], [32, 20, 44, 26]].forEach(([x1, y1, x2, y2]) => {
-      context.beginPath();
-      context.moveTo(x1, y1);
-      context.lineTo(x2, y2);
-      context.stroke();
+    context.fillStyle = palette.char;
+    [[11, 15], [14, 17], [10, 20], [14, 22]].forEach(([x, y], index) => {
+      context.fillRect(x, y, 8, 1);
+      context.fillRect(x + 1, y + 1, 7 - (index % 2), 1);
     });
-    for (let index = 0; index < 12; index++) {
-      context.fillStyle = random() > 0.45 ? 'rgba(255,191,105,.32)' : 'rgba(52,24,18,.24)';
-      context.fillRect(14 + random() * 35, 18 + random() * 29, 0.8 + random(), 0.8 + random());
-    }
+    context.fillStyle = palette.sparkle;
+    context.fillRect(8, 14, 2, 1);
+    context.fillRect(27, 18, 2, 1);
+    context.fillRect(12, 25, 2, 1);
   } else {
-    roundedStroke(context, 'rgba(255, 205, 196, .58)', 1.45);
-    [[16, 27, 30, 20], [14, 38, 29, 31], [23, 48, 34, 42]].forEach(([x1, y1, x2, y2]) => {
-      context.beginPath();
-      context.moveTo(x1, y1);
-      context.bezierCurveTo(x1 + 4, y1 - 2, x2 - 5, y2 + 3, x2, y2);
-      context.stroke();
-    });
+    context.fillStyle = palette.sparkle;
+    context.fillRect(10, 14, 4, 1);
+    context.fillRect(8, 19, 3, 1);
+    context.fillRect(15, 24, 3, 1);
+    context.fillRect(27, 17, 2, 2);
+    // Deterministic single-pixel moisture highlights prevent cloned stacks from
+    // looking mechanically stamped without sacrificing the fixed pixel grid.
+    for (let index = 0; index < 4; index++) {
+      const x = 10 + Math.floor(random() * 9);
+      const y = 16 + Math.floor(random() * 7);
+      context.fillRect(x, y, 1, 1);
+    }
   }
 }
 
@@ -242,14 +285,20 @@ export function createItemArtwork(item) {
   canvas.dataset.itemId = `${item.id || 0}`;
   canvas.setAttribute('aria-hidden', 'true');
   const context = canvas.getContext('2d');
-  context.scale(2.25, 2.25);
-  context.imageSmoothingEnabled = true;
   const random = randomFor((item.id || 1) * 0x9e3779b1);
+  if (item.category === 'food') {
+    context.imageSmoothingEnabled = false;
+    context.scale(4, 4);
+    drawFood(context, item, item.cooked === true || /roast|cook/i.test(item.name || ''), random);
+  } else {
+    context.scale(2.25, 2.25);
+    context.imageSmoothingEnabled = true;
+  }
+  if (item.category === 'food') return canvas;
   if (item.tool === 'pickaxe') drawPick(context, item, random);
   else if (item.tool === 'axe') drawAxe(context, item, random);
   else if (item.tool === 'sword') drawSword(context, item);
   else if (item.category === 'relic') drawCore(context, item);
-  else if (item.category === 'food') drawFood(context, item, item.cooked === true || /roast|cook/i.test(item.name || ''), random);
   else if (/ingot/i.test(item.name || '')) drawIngot(context, item, random);
   else drawRod(context, item);
   return canvas;
