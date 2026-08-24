@@ -8,7 +8,7 @@ const DEFAULT_LOAD_TIMEOUT_MS = 8_000;
 const MAX_FLOWERS = 150;
 const SCAN_RADIUS = 40;
 const SCAN_CELL = 2;
-const SPAWN_CHANCE = 0.15;
+const SPAWN_CHANCE = 0.09;
 const RESYNC_INTERVAL = 0.5;
 const TARGET_HEIGHT = 1.05;
 

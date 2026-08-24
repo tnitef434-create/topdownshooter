@@ -1,4 +1,4 @@
-# Generates the Worldloom red meadow flower as a voxel-relief .glb asset.
+# Generates the Worldloom red meadow flower as a voxel .glb asset.
 #
 # Usage (run from the repository root):
 #   "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe" --background ^
@@ -6,9 +6,11 @@
 #     --output src/public/worldloom/assets/environment/red-flower.glb ^
 #     --preview outputs/red-flower-qa.png
 #
-# The mesh is a 16x16 voxel relief transcribed from the reference pixel art:
-# a five-petal red flower with a yellow core, a two-pixel stem, two left
-# leaves, a side bud, and a lower right leaflet.
+# The mesh is two 16x16 voxel reliefs crossed at 90 degrees (mirroring how the
+# vanilla flora uses crossed billboards, so the flower reads from every
+# angle). The relief is transcribed from the reference pixel art: a five-petal
+# red flower with a yellow core, a two-pixel stem, two left leaves, a side
+# bud, and a lower right leaflet.
 
 import argparse
 import math
@@ -121,51 +123,72 @@ def build_mesh(pixel_size, depth_ratio):
         face_colors.append(color)
 
     depth = pixel_size * depth_ratio
-    y_front = depth / 2.0
-    y_back = -depth / 2.0
 
-    for (col, level), char in sorted(occupied.items()):
-        color = palette[char]
-        x0 = (col - cols / 2.0) * pixel_size
-        x1 = x0 + pixel_size
-        z0 = level * pixel_size
-        z1 = z0 + pixel_size
+    def emit_relief(quarter_turns):
+        def rotate_point(point):
+            x, y, z = point
+            for _ in range(quarter_turns):
+                x, y = -y, x
+            return (x, y, z)
 
-        corners = {
-            "ftb": (x0, y_front, z0), "ftt": (x0, y_front, z1),
-            "ftbr": (x1, y_front, z0), "fttr": (x1, y_front, z1),
-            "btb": (x0, y_back, z0), "btt": (x0, y_back, z1),
-            "bbr": (x1, y_back, z0), "btr": (x1, y_back, z1),
-        }
+        direction_map = {
+            0: {"top": "top", "bottom": "bottom", "south": "south",
+                "north": "north", "east": "east", "west": "west"},
+            1: {"top": "top", "bottom": "bottom", "south": "west",
+                "north": "east", "east": "south", "west": "north"},
+        }[quarter_turns % 4]
 
-        if (col, level + 1) not in occupied:
+        for (col, level), char in sorted(occupied.items()):
+            color = palette[char]
+            x0 = (col - cols / 2.0) * pixel_size
+            x1 = x0 + pixel_size
+            z0 = level * pixel_size
+            z1 = z0 + pixel_size
+            y_front = depth / 2.0
+            y_back = -depth / 2.0
+
+            corners = {
+                "ftb": rotate_point((x0, y_front, z0)),
+                "ftt": rotate_point((x0, y_front, z1)),
+                "fbr": rotate_point((x1, y_front, z0)),
+                "ftr": rotate_point((x1, y_front, z1)),
+                "btb": rotate_point((x0, y_back, z0)),
+                "btt": rotate_point((x0, y_back, z1)),
+                "bbr": rotate_point((x1, y_back, z0)),
+                "btr": rotate_point((x1, y_back, z1)),
+            }
+
+            if (col, level + 1) not in occupied:
+                emit_face(
+                    [corners["ftt"], corners["ftr"], corners["btr"], corners["btt"]],
+                    shade(color, FACE_SHADE[direction_map["top"]]),
+                )
+            if (col, level - 1) not in occupied:
+                emit_face(
+                    [corners["ftb"], corners["btb"], corners["bbr"], corners["fbr"]],
+                    shade(color, FACE_SHADE[direction_map["bottom"]]),
+                )
+            if (col - 1, level) not in occupied:
+                emit_face(
+                    [corners["ftb"], corners["ftt"], corners["btt"], corners["btb"]],
+                    shade(color, FACE_SHADE[direction_map["west"]]),
+                )
+            if (col + 1, level) not in occupied:
+                emit_face(
+                    [corners["fbr"], corners["bbr"], corners["btr"], corners["ftr"]],
+                    shade(color, FACE_SHADE[direction_map["east"]]),
+                )
             emit_face(
-                [corners["ftt"], corners["fttr"], corners["btr"], corners["btt"]],
-                shade(color, FACE_SHADE["top"]),
+                [corners["ftb"], corners["fbr"], corners["ftr"], corners["ftt"]],
+                shade(color, FACE_SHADE[direction_map["south"]]),
             )
-        if (col, level - 1) not in occupied:
             emit_face(
-                [corners["ftb"], corners["btb"], corners["bbr"], corners["ftbr"]],
-                shade(color, FACE_SHADE["bottom"]),
+                [corners["btb"], corners["btt"], corners["btr"], corners["bbr"]],
+                shade(color, FACE_SHADE[direction_map["north"]]),
             )
-        if (col - 1, level) not in occupied:
-            emit_face(
-                [corners["ftb"], corners["ftt"], corners["btt"], corners["btb"]],
-                shade(color, FACE_SHADE["west"]),
-            )
-        if (col + 1, level) not in occupied:
-            emit_face(
-                [corners["ftbr"], corners["bbr"], corners["btr"], corners["fttr"]],
-                shade(color, FACE_SHADE["east"]),
-            )
-        emit_face(
-            [corners["ftb"], corners["ftbr"], corners["fttr"], corners["ftt"]],
-            shade(color, FACE_SHADE["south"]),
-        )
-        emit_face(
-            [corners["btb"], corners["btt"], corners["btr"], corners["bbr"]],
-            shade(color, FACE_SHADE["north"]),
-        )
+
+    emit_relief(0)
+    emit_relief(1)
 
     mesh = bpy.data.meshes.new("Red_Flower_Voxels")
     mesh.from_pydata(verts, [], faces)
