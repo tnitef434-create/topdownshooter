@@ -2,7 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import * as THREE from '../src/public/worldloom/vendor/three.module.min.js';
-import { Inventory, SaveStore, DEFAULT_SETTINGS } from '../src/public/worldloom/src/save.js';
+import {
+  Inventory,
+  SaveStore,
+  DEFAULT_SETTINGS,
+  GRAPHICS_PRESETS,
+} from '../src/public/worldloom/src/save.js';
 import { SurvivalSystem } from '../src/public/worldloom/src/survival.js';
 import { BLOCK, BLOCKS } from '../src/public/worldloom/src/blocks.js';
 import {
@@ -12,12 +17,23 @@ import {
 } from '../src/public/worldloom/src/world.js';
 import {
   BlockEffects,
+  caveEntranceSkylight,
+  directionalSkyAccess,
   Environment,
   nearestPeriodicCloudCoordinate,
   outdoorBounceIntensity,
   skylightTransmission,
   weatherLightingState,
 } from '../src/public/worldloom/src/environment.js';
+import {
+  CAVE_LIGHTING_DEPTH_BLOCKS,
+  caveLightingDepth,
+  cavePostProcessAmount,
+  projectLightToScreen,
+  volumetricSunIntensity,
+} from '../src/public/worldloom/src/graphics.js';
+import { coverDepthSkylight, plantCoverSkylight } from '../src/public/worldloom/src/mesher.js';
+import { VolumetricSunPass } from '../src/public/worldloom/src/volumetric-sun-pass.js';
 import {
   InputController,
   PLAYER,
@@ -1271,7 +1287,236 @@ test('cloud banks retain canonical world positions when the player moves', () =>
   assert.equal(nearestPeriodicCloudCoordinate(46, 400, 310), cloud.position.x);
 });
 
-test('an opaque player-built roof removes ambient sky exposure at any depth', () => {
+test('cave-mouth daylight fades with unobstructed distance instead of switching off at the roof', () => {
+  const tunnelWorld = {
+    worldHeight: 20,
+    getBlock: (x, y) => (x >= 0 && y >= 7 ? BLOCK.STONE : BLOCK.AIR),
+    terrainHeight: (x) => (x >= 0 ? 10 : 3),
+  };
+  const nearMouth = caveEntranceSkylight(tunnelWorld, { x: 0.5, y: 4, z: 0.5 });
+  const deeper = caveEntranceSkylight(tunnelWorld, { x: 12.5, y: 4, z: 0.5 });
+  const beyondDaylight = caveEntranceSkylight(tunnelWorld, { x: 18.5, y: 4, z: 0.5 });
+  assert.ok(nearMouth > 0.72, 'a directly visible entrance should provide strong natural light');
+  assert.ok(deeper > 0 && deeper < 0.09, 'direct skylight should fall off smoothly deeper in the tunnel');
+  assert.equal(beyondDaylight, 0, 'natural cave light must stop beyond its bounded visible range');
+
+  const sealedWorld = {
+    worldHeight: 20,
+    getBlock: (_x, y) => (y >= 7 ? BLOCK.STONE : BLOCK.AIR),
+  };
+  assert.equal(caveEntranceSkylight(sealedWorld, { x: 0.5, y: 4, z: 0.5 }), 0,
+    'a solid ceiling cannot leak entrance light');
+
+  const diagonalSeamWorld = {
+    worldHeight: 20,
+    getBlock: (x, y, z) => {
+      if (x >= 1 && z >= 1) return BLOCK.AIR;
+      if (x === 0 && z === 0 && (y === 4 || y === 5)) return BLOCK.AIR;
+      if (y >= 4) return BLOCK.STONE;
+      return BLOCK.AIR;
+    },
+  };
+  assert.equal(caveEntranceSkylight(diagonalSeamWorld, { x: 0.5, y: 4, z: 0.5 }), 0,
+    'conservative rays must not leak daylight between diagonal wall corners');
+
+  const slopedEntranceWorld = {
+    worldHeight: 24,
+    terrainHeight: (x) => (x < 0 ? 3 : 18),
+    getBlock: (x, y, z) => {
+      if (z !== 0) return y >= 4 ? BLOCK.STONE : BLOCK.AIR;
+      if (x < 0) return BLOCK.AIR;
+      const floor = 3 + Math.floor(Math.max(0, 12 - x) * 0.72);
+      return y >= floor && y <= floor + 3 ? BLOCK.AIR : BLOCK.STONE;
+    },
+  };
+  assert.ok(caveEntranceSkylight(slopedEntranceWorld, { x: 12.5, y: 3, z: 0.5 }) > 0.01,
+    'daylight should follow a directly visible rising natural cave mouth');
+
+  const narrowPath = new Set();
+  let previousX = 0;
+  let previousZ = 0;
+  for (let index = 0; index <= 96; index++) {
+    const amount = index / 96;
+    const x = Math.floor(0.5 + 13 * amount);
+    const z = Math.floor(0.5 + 3 * amount);
+    narrowPath.add(`${x},${z}`);
+    narrowPath.add(`${x - 1},${z}`);
+    narrowPath.add(`${x + 1},${z}`);
+    narrowPath.add(`${x},${z - 1}`);
+    narrowPath.add(`${x},${z + 1}`);
+    if (x !== previousX && z !== previousZ) {
+      narrowPath.add(`${x},${previousZ}`);
+      narrowPath.add(`${previousX},${z}`);
+    }
+    previousX = x;
+    previousZ = z;
+  }
+  const narrowMouthWorld = {
+    worldHeight: 20,
+    terrainHeight: (x, z) => (x === 13 && z === 3 ? 3 : 10),
+    getBlock: (x, y, z) => {
+      if (x === 13 && z === 3 && y >= 4) return BLOCK.AIR;
+      if (narrowPath.has(`${x},${z}`) && (y === 4 || y === 5)) return BLOCK.AIR;
+      return y >= 4 ? BLOCK.STONE : BLOCK.AIR;
+    },
+  };
+  assert.ok(caveEntranceSkylight(narrowMouthWorld, { x: 0.5, y: 4, z: 0.5 }) > 0,
+    'a narrow visible mouth between fixed compass angles must still admit daylight');
+
+  const foliageMouthWorld = {
+    worldHeight: 20,
+    getBlock: (x, y) => {
+      if (x >= 0 && y >= 7) return BLOCK.STONE;
+      if (x < 0 && y >= 7 && y <= 12) return BLOCK.PINE_NEEDLES;
+      return BLOCK.AIR;
+    },
+  };
+  const foliageMouth = caveEntranceSkylight(foliageMouthWorld, { x: 0.5, y: 4, z: 0.5 });
+  assert.ok(foliageMouth > 0.3 && foliageMouth < nearMouth,
+    'foliage outside a cave mouth should attenuate daylight without becoming stone');
+
+  let shaftOpen = true;
+  const editedShaftWorld = {
+    worldHeight: 20,
+    terrainHeight: () => 10,
+    getBlock: (x, y) => {
+      if (y === 10) return x < 0 && shaftOpen ? BLOCK.AIR : BLOCK.STONE;
+      if (x >= 0 && y >= 7 && y < 10) return BLOCK.STONE;
+      return BLOCK.AIR;
+    },
+  };
+  assert.ok(caveEntranceSkylight(editedShaftWorld, { x: 0.5, y: 4, z: 0.5 }) > 0.7,
+    'mining a surface opening should restore cave daylight without regenerating terrain');
+  shaftOpen = false;
+  assert.equal(caveEntranceSkylight(editedShaftWorld, { x: 0.5, y: 4, z: 0.5 }), 0,
+    'closing the same surface opening should remove its daylight immediately');
+
+  let probeReads = 0;
+  const tallCoveredWorld = {
+    worldHeight: 96,
+    terrainHeight: () => 90,
+    getBlock: (_x, y) => {
+      probeReads++;
+      return y === 90 ? BLOCK.STONE : BLOCK.AIR;
+    },
+  };
+  assert.equal(caveEntranceSkylight(tallCoveredWorld, { x: 0.5, y: 4, z: 0.5 }), 0);
+  assert.ok(probeReads < 6_000,
+    `the bounded cave probe exceeded its synchronous read budget (${probeReads})`);
+
+  let roofProbeReads = 0;
+  const playerRoofWorld = {
+    worldHeight: 20,
+    terrainHeight: () => 2,
+    getBlock: (_x, y) => {
+      roofProbeReads++;
+      return y >= 4 ? BLOCK.STONE : BLOCK.AIR;
+    },
+  };
+  assert.equal(caveEntranceSkylight(playerRoofWorld, { x: 0.5, y: 2, z: 0.5 }), 0);
+  assert.ok(roofProbeReads < 5_000,
+    `a player-built roof made the adaptive cave probe too expensive (${roofProbeReads})`);
+
+  let shallowRoofReads = 0;
+  const shallowNaturalRoofWorld = {
+    worldHeight: 20,
+    terrainHeight: () => 10,
+    getBlock: (_x, y) => {
+      shallowRoofReads++;
+      return y >= 7 && y <= 10 ? BLOCK.STONE : BLOCK.AIR;
+    },
+  };
+  assert.equal(caveEntranceSkylight(shallowNaturalRoofWorld, { x: 0.5, y: 4, z: 0.5 }), 0);
+  assert.ok(shallowRoofReads < 5_000,
+    `a shallow natural roof exceeded the adaptive probe budget (${shallowRoofReads})`);
+});
+
+test('covered voxel faces preserve mouth detail before reaching deep-cave black', () => {
+  assert.equal(coverDepthSkylight(0), 1);
+  assert.ok(coverDepthSkylight(1) > 0.84, 'the first covered block should remain readable');
+  assert.ok(coverDepthSkylight(4) > 0.55 && coverDepthSkylight(4) < 0.68,
+    'the cave mouth should retain a gradual natural-light transition');
+  assert.ok(coverDepthSkylight(10) > 0.27 && coverDepthSkylight(10) < 0.38,
+    'mid-cave faces need a gradual spatial falloff');
+  assert.ok(coverDepthSkylight(28) < 0.09, 'far cave fronts should receive almost no natural skylight');
+  assert.equal(plantCoverSkylight(0), 1);
+  assert.equal(plantCoverSkylight(4), coverDepthSkylight(4),
+    'crossed plants must use the same gradual cave-light falloff as terrain faces');
+  assert.ok(plantCoverSkylight(1) > 0.84 && plantCoverSkylight(28) < 0.09,
+    'plant geometry stays readable at mouths but darkens in deep caves');
+  assert.ok(cavePostProcessAmount(0.18, 0) < 0.12,
+    'terrain depth alone must not trigger an abrupt full-screen blackout');
+  assert.ok(cavePostProcessAmount(0.9, 0) > 0.95,
+    'deep enclosed caves retain the cinematic black floor');
+  assert.ok(cavePostProcessAmount(0.65, 0.38) < 0.4,
+    'a visible entrance suppresses most full-screen cave grading');
+  assert.equal(CAVE_LIGHTING_DEPTH_BLOCKS, 28);
+  const twelveBlockDepth = caveLightingDepth(40, 28.5);
+  assert.ok(twelveBlockDepth > 0.44 && twelveBlockDepth < 0.46);
+  assert.ok(cavePostProcessAmount(twelveBlockDepth, 0) < 0.5,
+    'twelve blocks of cover must not max the full-screen cave grade');
+  assert.equal(caveLightingDepth(40, 13), 1);
+  assert.equal(cavePostProcessAmount(caveLightingDepth(40, 13), 0), 1,
+    'natural light should be fully exhausted around twenty-eight blocks deep');
+  assert.equal(GRAPHICS_PRESETS.balanced.softShadows, false);
+  assert.equal(GRAPHICS_PRESETS.high.softShadows, true);
+  assert.equal(GRAPHICS_PRESETS.ultra.softShadows, true);
+  assert.equal(directionalSkyAccess(true, 0), 1,
+    'shadowed modes keep world sunlight independent of the player probe');
+  assert.equal(directionalSkyAccess(false, 0), 0,
+    'low mode must suppress unshadowed sun in a deep enclosed cave');
+  assert.ok(directionalSkyAccess(false, 0.5) > 0.75,
+    'low mode retains most sunlight while a cave entrance is still visible');
+});
+
+test('volumetric sunlight is depth-ready, projected safely, and limited to high-end presets', () => {
+  assert.equal(GRAPHICS_PRESETS.low.godRayStrength, 0);
+  assert.equal(GRAPHICS_PRESETS.balanced.godRayStrength, 0);
+  assert.ok(GRAPHICS_PRESETS.high.godRayStrength > 0);
+  assert.ok(GRAPHICS_PRESETS.ultra.godRayStrength > GRAPHICS_PRESETS.high.godRayStrength);
+
+  const camera = new THREE.PerspectiveCamera(75, 16 / 9, 0.1, 320);
+  camera.position.set(0, 2, 0);
+  camera.lookAt(0, 2, -10);
+  camera.updateProjectionMatrix();
+  camera.updateMatrixWorld(true);
+  const front = projectLightToScreen(camera, new THREE.Vector3(0, 2, -80));
+  const behind = projectLightToScreen(camera, new THREE.Vector3(0, 2, 80));
+  const farOffscreen = projectLightToScreen(camera, new THREE.Vector3(200, 2, -10));
+  assert.ok(Math.abs(front.uv.x - 0.5) < 0.001 && Math.abs(front.uv.y - 0.5) < 0.001);
+  assert.ok(front.facing > 0.99 && front.screenFade > 0.99);
+  assert.ok(behind.facing < -0.99, 'a sun behind the camera must not create forward shafts');
+  assert.equal(farOffscreen.screenFade, 0, 'far off-screen suns must not smear across the viewport');
+
+  const clearEnvironment = {
+    dayAmount: 1,
+    rainAmount: 0,
+    caveAmount: 0,
+    skyExposure: 1,
+    sunVisibility: 1,
+  };
+  const clearHigh = volumetricSunIntensity(GRAPHICS_PRESETS.high, clearEnvironment, front);
+  const clearUltra = volumetricSunIntensity(GRAPHICS_PRESETS.ultra, clearEnvironment, front);
+  assert.ok(clearHigh > 0.1 && clearUltra > clearHigh);
+  assert.equal(volumetricSunIntensity(GRAPHICS_PRESETS.balanced, clearEnvironment, front), 0);
+  assert.equal(volumetricSunIntensity(GRAPHICS_PRESETS.high, { ...clearEnvironment, rainAmount: 1 }, front), 0);
+  assert.equal(volumetricSunIntensity(GRAPHICS_PRESETS.high, { ...clearEnvironment, caveAmount: 1 }, front), 0);
+  assert.equal(volumetricSunIntensity(GRAPHICS_PRESETS.high, { ...clearEnvironment, skyExposure: 0 }, front), 0);
+  assert.equal(volumetricSunIntensity(GRAPHICS_PRESETS.high, clearEnvironment, behind), 0);
+
+  const pass = new VolumetricSunPass();
+  pass.configure({ resolutionScale: GRAPHICS_PRESETS.high.godRayScale });
+  pass.setSize(1000, 500);
+  pass.setDepthTexture({ isDepthTexture: true });
+  const diagnostics = pass.getDiagnostics();
+  assert.equal(diagnostics.depthBound, true);
+  assert.equal(diagnostics.width, 420);
+  assert.equal(diagnostics.height, 210);
+  assert.equal(diagnostics.samples, 24);
+  pass.dispose();
+});
+
+test('an opaque player-built roof removes ambient sky exposure with gradual eye adaptation', () => {
   const environment = Object.create(Environment.prototype);
   Object.assign(environment, {
     weatherWorld: {
@@ -1285,7 +1530,12 @@ test('an opaque player-built roof removes ambient sky exposure at any depth', ()
   });
   environment._updateSkyExposure(0.18, { x: 0.5, y: 2, z: 0.5 });
   assert.equal(environment.skyExposureTarget, 0);
-  assert.ok(environment.skyExposure < 0.5, 'enclosure darkness should react quickly');
+  assert.ok(environment.skyExposure > 0.7 && environment.skyExposure < 1,
+    'stepping under an ordinary roof should not cause a one-frame blackout');
+  for (let index = 0; index < 24; index++) {
+    environment._updateSkyExposure(0.18, { x: 0.5, y: 2, z: 0.5 });
+  }
+  assert.ok(environment.skyExposure < 0.01, 'a sustained fully covered position must still adapt to black');
 });
 
 test('dense tree foliage provides shade without applying cave darkness', () => {

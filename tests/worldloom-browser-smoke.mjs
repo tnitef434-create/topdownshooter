@@ -323,6 +323,110 @@ try {
   assert(gameState.fogClarity > 0.8,
     `The open daylight spawn did not select the clear-air fog profile (${gameState.fogClarity})`);
 
+  const caveLightingState = await frame.evaluate(async () => {
+    const THREE = await import('/worldloom/vendor/three.module.min.js');
+    const { BLOCK } = await import('/worldloom/src/blocks.js');
+    const {
+      caveEntranceSkylight,
+      directionalSkyAccess,
+    } = await import('/worldloom/src/environment.js');
+    const { caveLightingDepth, cavePostProcessAmount } = await import('/worldloom/src/graphics.js');
+    const { GRAPHICS_PRESETS } = await import('/worldloom/src/save.js');
+    const { coverDepthSkylight } = await import('/worldloom/src/mesher.js');
+    const environment = window.__worldloomEnvironment;
+    const graphics = window.__worldloomGraphics;
+    const tunnelWorld = {
+      worldHeight: 20,
+      getBlock: (x, y) => (x >= 0 && y >= 7 ? BLOCK.STONE : BLOCK.AIR),
+      terrainHeight: (x) => (x >= 0 ? 10 : 3),
+    };
+    const nearMouth = caveEntranceSkylight(tunnelWorld, { x: 0.5, y: 4, z: 0.5 });
+    const deepTunnel = caveEntranceSkylight(tunnelWorld, { x: 12.5, y: 4, z: 0.5 });
+    const beyondDaylight = caveEntranceSkylight(tunnelWorld, { x: 18.5, y: 4, z: 0.5 });
+
+    environment.applyGraphicsSettings({
+      graphicsQuality: 'high',
+      weatherEffects: true,
+      reducedMotion: false,
+    });
+    const highShadowType = environment.renderer.shadowMap.type;
+    environment.applyGraphicsSettings({
+      graphicsQuality: 'balanced',
+      weatherEffects: true,
+      reducedMotion: false,
+    });
+    const balancedShadowType = environment.renderer.shadowMap.type;
+    const forward = new THREE.Vector3();
+    graphics.camera.getWorldDirection(forward);
+    const centeredSun = graphics.camera.position.clone().addScaledVector(forward, 120);
+    graphics.applyProfile(GRAPHICS_PRESETS.high);
+    graphics.setEnvironment({
+      dayAmount: 1,
+      rainAmount: 0,
+      caveAmount: 0,
+      skyExposure: 1,
+      sunVisibility: 1,
+      sunWorldPosition: centeredSun,
+    });
+    graphics.render(1 / 60);
+    const highGodRays = graphics.getDiagnostics();
+    const passOrder = graphics.composer.passes.map((pass) => pass.name || pass.constructor.name);
+    const depthIdentity = graphics.volumetricSunPass?.depthTexture === graphics.gtaoPass?.depthTexture;
+    graphics.applyProfile(GRAPHICS_PRESETS.balanced);
+    return {
+      nearMouth,
+      deepTunnel,
+      beyondDaylight,
+      mouthFace: coverDepthSkylight(1),
+      deepFace: coverDepthSkylight(28),
+      shallowGrade: cavePostProcessAmount(0.18, 0),
+      deepGrade: cavePostProcessAmount(0.9, 0),
+      twelveBlockGrade: cavePostProcessAmount(caveLightingDepth(40, 28.5), 0),
+      twentyEightBlockGrade: cavePostProcessAmount(caveLightingDepth(40, 13), 0),
+      lowDeepDirect: directionalSkyAccess(false, 0),
+      highShadowType,
+      balancedShadowType,
+      pcfSoftShadowType: THREE.PCFSoftShadowMap,
+      pcfShadowType: THREE.PCFShadowMap,
+      highGodRays,
+      passOrder,
+      depthIdentity,
+    };
+  });
+  assert(caveLightingState.nearMouth > 0.72,
+    `Built cave-mouth skylight is too weak: ${caveLightingState.nearMouth}`);
+  assert(caveLightingState.deepTunnel > 0 && caveLightingState.deepTunnel < 0.09,
+    `Built cave daylight did not attenuate naturally: ${caveLightingState.deepTunnel}`);
+  assert.equal(caveLightingState.beyondDaylight, 0,
+    'Built cave skylight continued beyond its natural-light range');
+  assert(caveLightingState.mouthFace > caveLightingState.deepFace * 8,
+    'Baked cave-face lighting lost its mouth-to-depth contrast');
+  assert(caveLightingState.shallowGrade < 0.12 && caveLightingState.deepGrade > 0.95,
+    'The live cinematic pipeline no longer distinguishes shallow and deep caves');
+  assert(caveLightingState.twelveBlockGrade < 0.5 && caveLightingState.twentyEightBlockGrade > 0.99,
+    'The production cave grade no longer follows the twenty-eight-block light range');
+  assert.equal(caveLightingState.lowDeepDirect, 0,
+    'Low graphics mode can leak unshadowed sunlight into a deep cave');
+  assert.equal(caveLightingState.highShadowType, caveLightingState.pcfSoftShadowType,
+    'High graphics mode did not enable soft PCF shadows');
+  assert.equal(caveLightingState.balancedShadowType, caveLightingState.pcfShadowType,
+    'Balanced graphics mode no longer uses its lower-cost shadow filter');
+  assert.equal(caveLightingState.highGodRays.volumetricSun, true,
+    'High graphics mode did not enable volumetric sunlight');
+  assert.equal(caveLightingState.highGodRays.volumetricSunState.active, true,
+    'A visible clear-sky sun did not activate the shaft pass');
+  assert.equal(caveLightingState.highGodRays.volumetricSunState.depthBound, true,
+    'The shaft pass is not bound to the live scene depth texture');
+  assert(caveLightingState.highGodRays.volumetricSunState.resolutionScale < 0.6,
+    'Volumetric sunlight lost its reduced-resolution performance guard');
+  assert.equal(caveLightingState.depthIdentity, true,
+    'Volumetric sunlight duplicated or lost GTAO depth instead of reusing it');
+  const gtaoIndex = caveLightingState.passOrder.indexOf('GTAOPass');
+  const shaftsIndex = caveLightingState.passOrder.indexOf('WorldloomVolumetricSunPass');
+  const bloomIndex = caveLightingState.passOrder.indexOf('UnrealBloomPass');
+  assert(gtaoIndex >= 0 && shaftsIndex > gtaoIndex && bloomIndex > shaftsIndex,
+    `Volumetric pass order is invalid: ${caveLightingState.passOrder.join(' -> ')}`);
+
   await frame.waitForFunction(() => {
     const stats = window.__worldloomPonds?.getStats?.();
     return stats?.ready && !stats.failed && stats.pads > 0;
@@ -596,7 +700,8 @@ try {
     `Clear daytime sky is not strongly blue: ${JSON.stringify(clearState.sky)}`);
 
   if (screenshotPath) {
-    await frame.evaluate(() => {
+    await frame.evaluate(async () => {
+      const { GRAPHICS_PRESETS } = await import('/worldloom/src/save.js');
       const graphics = window.__worldloomGraphics;
       const ponds = window.__worldloomPonds;
       const hangingLeaves = window.__worldloomHangingLeaves;
@@ -652,6 +757,8 @@ try {
         quaternion: camera.quaternion.toArray(),
         setPosition: camera.position.set,
         setRotation: camera.quaternion.setFromEuler,
+        setEnvironment: graphics.setEnvironment,
+        profile: graphics.profile,
       };
       camera.position.set(
         candidates[0].position.x,
@@ -660,8 +767,19 @@ try {
       );
       camera.lookAt(target.x, target.y + (nearestStrand ? -0.2 : 0.2), target.z);
       camera.updateMatrixWorld(true);
+      const forward = target.clone().sub(camera.position).normalize();
+      graphics.applyProfile(GRAPHICS_PRESETS.high);
+      graphics.setEnvironment({
+        dayAmount: 1,
+        rainAmount: 0,
+        caveAmount: 0,
+        skyExposure: 1,
+        sunVisibility: 1,
+        sunWorldPosition: camera.position.clone().addScaledVector(forward, 120),
+      });
       camera.position.set = function holdPondView() { return this; };
       camera.quaternion.setFromEuler = function holdPondView() { return this; };
+      graphics.setEnvironment = function holdClearSunlight() {};
       window.__worldloomSmokeCameraRestore = original;
       graphics.render(0);
     });
@@ -675,6 +793,8 @@ try {
         if (!camera || !original) return;
         camera.position.set = original.setPosition;
         camera.quaternion.setFromEuler = original.setRotation;
+        window.__worldloomGraphics.setEnvironment = original.setEnvironment;
+        window.__worldloomGraphics.applyProfile(original.profile);
         camera.position.fromArray(original.position);
         camera.quaternion.fromArray(original.quaternion);
         delete window.__worldloomSmokeCameraRestore;
@@ -791,7 +911,7 @@ try {
       .some((element) => element.hasAttribute('inert')),
   }));
   assert.equal(closedState.src, null);
-  assert.equal(closedState.focus, 'btn-play-worldloom');
+  assert.equal(closedState.focus, 'btn-deploy-main');
   assert.equal(closedState.backgroundInert, false);
   console.log(`portal close handshake: ${closeDuration}ms`);
   assert(closeDuration < 2_500, 'Portal save acknowledgement timed out during close');
@@ -1001,6 +1121,7 @@ try {
   console.log(JSON.stringify({
     ok: true,
     gameState,
+    caveLightingState,
     pondState,
     hangingLeafState,
     clearState,

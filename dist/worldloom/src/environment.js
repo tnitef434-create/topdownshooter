@@ -10,6 +10,23 @@ import { atmosphericFogRange } from './fog.js';
 const LIGHT_BLOCKS = new Set([BLOCK.TORCH, BLOCK.LUMEN_CRYSTAL, BLOCK.KILN, BLOCK.FURNACE]);
 const FOLIAGE_BLOCKS = new Set([BLOCK.ASH_LEAVES, BLOCK.PINE_NEEDLES]);
 const CLOUD_WORLD_REPEAT = 310;
+const CAVE_SKYLIGHT_RADIUS = 16;
+const CAVE_SKYLIGHT_DIRECTIONS = Object.freeze(Array.from({ length: 12 }, (_, index) => {
+  const angle = (index / 12) * Math.PI * 2;
+  return Object.freeze([Math.cos(angle), Math.sin(angle)]);
+}));
+const CAVE_SKYLIGHT_SLOPES = Object.freeze([0, 0.22, 0.5, 0.85, 1.35]);
+const CAVE_SKYLIGHT_OFFSETS = Object.freeze((() => {
+  const offsets = [];
+  for (let x = -24; x <= 24; x++) {
+    for (let z = -24; z <= 24; z++) {
+      if (x === 0 && z === 0) continue;
+      const distance = Math.hypot(x, z);
+      if (distance <= 24.5) offsets.push(Object.freeze([x, z, distance]));
+    }
+  }
+  return offsets.sort((a, b) => a[2] - b[2] || a[0] - b[0] || a[1] - b[1]);
+})());
 
 export function skylightTransmission(blockId, definition = BLOCKS[blockId]) {
   if (!definition?.solid || definition.liquid) return 1;
@@ -22,6 +39,256 @@ export function skylightTransmission(blockId, definition = BLOCKS[blockId]) {
   if (blockId === BLOCK.PINE_NEEDLES) return 0.84;
   if (blockId === BLOCK.GLASS) return 0.76;
   return 0.7;
+}
+
+function sampleSkylightColumn(world, x, z, startY, maxY) {
+  // Most cave probes sit below an intact terrain surface. Reject that column
+  // with one edited-block-aware lookup instead of walking as many as 90 empty
+  // cave cells. If the surface voxel was mined away, continue the full scan so
+  // player-cut skylight shafts work immediately.
+  const surface = Number(world.terrainHeight?.(x, z));
+  if (Number.isFinite(surface) && surface >= startY && surface <= maxY) {
+    const surfaceId = world.getBlock(x, Math.floor(surface), z);
+    const surfaceDefinition = BLOCKS[surfaceId];
+    if (
+      surfaceDefinition?.solid
+      && !surfaceDefinition.liquid
+      && skylightTransmission(surfaceId, surfaceDefinition) <= 0
+    ) return 0;
+  }
+  let transmission = 1;
+  let foliageOnly = true;
+  let sawFoliage = false;
+  for (let y = startY; y <= maxY; y++) {
+    const blockId = world.getBlock(x, y, z);
+    const definition = BLOCKS[blockId];
+    if (!definition?.solid || definition.liquid) continue;
+    const blockTransmission = skylightTransmission(blockId, definition);
+    if (blockTransmission <= 0) return 0;
+    sawFoliage ||= FOLIAGE_BLOCKS.has(blockId);
+    foliageOnly &&= FOLIAGE_BLOCKS.has(blockId);
+    transmission *= blockTransmission;
+    if (transmission <= 0.01) return 0;
+  }
+  // Several overlapping foliage voxels should create shade, not behave like a
+  // stone ceiling. Directional shadows retain the fine branch silhouette.
+  if (sawFoliage && foliageOnly) return Math.max(0.46, transmission);
+  return transmission;
+}
+
+function corridorTransmission(world, x, y, z) {
+  let transmission = 1;
+  for (const sampleY of [y - 1, y]) {
+    const blockId = world.getBlock(x, sampleY, z);
+    const definition = BLOCKS[blockId];
+    if (!definition?.solid || definition.liquid) continue;
+    const blockTransmission = skylightTransmission(blockId, definition);
+    if (blockTransmission <= 0) return 0;
+    transmission *= blockTransmission;
+  }
+  return transmission;
+}
+
+function shortColumnIsOpen(world, x, z, startY, maxY) {
+  const stopY = Math.min(maxY, startY + 7);
+  for (let y = startY; y <= stopY; y++) {
+    const blockId = world.getBlock(x, y, z);
+    const definition = BLOCKS[blockId];
+    if (!definition?.solid || definition.liquid) continue;
+    if (skylightTransmission(blockId, definition) <= 0) return false;
+  }
+  return true;
+}
+
+function traceCaveCorridor(world, focus, startY, targetX, targetY, targetZ) {
+  const startX = focus.x;
+  const startZ = focus.z;
+  const eyeY = startY + 0.5;
+  const endX = targetX + 0.5;
+  const endY = targetY + 0.5;
+  const endZ = targetZ + 0.5;
+  const deltaX = endX - startX;
+  const deltaY = endY - eyeY;
+  const deltaZ = endZ - startZ;
+  // Half-voxel samples plus a conservative transition supercover are cheap at
+  // this bounded radius and cannot skip thin ceilings or diagonal wall seams.
+  const steps = Math.max(1, Math.ceil(Math.max(
+    Math.abs(deltaX),
+    Math.abs(deltaY),
+    Math.abs(deltaZ),
+  ) * 2));
+  let previousX = Math.floor(startX);
+  let previousY = startY;
+  let previousZ = Math.floor(startZ);
+  let transmission = 1;
+
+  for (let index = 1; index <= steps; index++) {
+    const amount = index / steps;
+    const x = Math.floor(startX + deltaX * amount);
+    const y = Math.floor(eyeY + deltaY * amount);
+    const z = Math.floor(startZ + deltaZ * amount);
+    if (x === previousX && y === previousY && z === previousZ) continue;
+
+    const cells = new Map();
+    const addCell = (cellX, cellY, cellZ) => {
+      cells.set(`${cellX},${cellY},${cellZ}`, [cellX, cellY, cellZ]);
+    };
+    const minY = Math.min(previousY, y);
+    const maxY = Math.max(previousY, y);
+    if (x !== previousX && z !== previousZ) {
+      for (let sideY = minY; sideY <= maxY; sideY++) {
+        addCell(x, sideY, previousZ);
+        addCell(previousX, sideY, z);
+      }
+    }
+    for (let sampleY = minY; sampleY <= maxY; sampleY++) addCell(x, sampleY, z);
+    for (const [cellX, cellY, cellZ] of cells.values()) {
+      transmission *= corridorTransmission(world, cellX, cellY, cellZ);
+      if (transmission <= 0.01) return 0;
+    }
+    previousX = x;
+    previousY = y;
+    previousZ = z;
+  }
+  return transmission;
+}
+
+/**
+ * Estimates direct daylight arriving through a visible cave mouth. A bounded
+ * three-dimensional cone follows horizontal and rising corridors, while the
+ * conservative supercover checks prevent light turning corners or leaking
+ * through voxel seams. Inverse-square attenuation and a hard outer fade make
+ * the contribution naturally disappear deeper in the tunnel.
+ */
+export function caveEntranceSkylight(world, focus, radius = CAVE_SKYLIGHT_RADIUS) {
+  if (!world?.getBlock || !focus) return 0;
+  const safeRadius = Math.max(2, Math.min(24, Math.floor(Number(radius) || CAVE_SKYLIGHT_RADIUS)));
+  const startY = Math.floor(focus.y + 1.55);
+  const maxY = Math.max(startY, (Number(world.worldHeight) || 96) - 1);
+  let best = 0;
+
+  // Production worlds expose their height field, so inspect the exact nearby
+  // cells that could open to the sky. This catches a one-block mouth at any
+  // azimuth; fixed compass rays alone can miss it between sample angles.
+  if (typeof world.terrainHeight === 'function') {
+    const originX = Math.floor(focus.x);
+    const originZ = Math.floor(focus.z);
+    const focusSurface = Number(world.terrainHeight(focus.x, focus.z));
+    for (const [offsetX, offsetZ, nominalDistance] of CAVE_SKYLIGHT_OFFSETS) {
+      if (nominalDistance > safeRadius + 0.75) break;
+      const x = originX + offsetX;
+      const z = originZ + offsetZ;
+      const distance = Math.hypot(x + 0.5 - focus.x, z + 0.5 - focus.z);
+      if (distance > safeRadius) continue;
+      const inverseSquare = 1 / (1 + (distance / 4.8) ** 2);
+      const outerFade = 1 - THREE.MathUtils.smoothstep(distance, safeRadius * 0.62, safeRadius);
+      const maximumContribution = inverseSquare * outerFade * 0.9;
+      if (maximumContribution <= best + 0.0001) continue;
+
+      const surface = Number(world.terrainHeight(x, z));
+      let opaqueSurface = false;
+      // A height-field surface below eye level is ground, not an overhead
+      // blocker. Avoid reading it for every candidate; dynamic roofs above the
+      // player are still caught by the short edited-block-aware column probe.
+      if (Number.isFinite(surface) && surface >= startY && surface <= maxY) {
+        const surfaceId = world.getBlock(x, Math.floor(surface), z);
+        const definition = BLOCKS[surfaceId];
+        opaqueSurface = Boolean(
+          definition?.solid
+          && !definition.liquid
+          && skylightTransmission(surfaceId, definition) <= 0,
+        );
+      }
+      // An intact surface at the same height as the player's local terrain is
+      // not an entrance candidate. Any ray aimed above it must first emerge
+      // through a lower or actually opened column, which is inspected directly.
+      // This prunes thousands of doomed high-slope traces under a shallow roof.
+      if (
+        opaqueSurface
+        && Number.isFinite(focusSurface)
+        && surface >= focusSurface - 0.5
+      ) continue;
+
+      for (const rise of CAVE_SKYLIGHT_SLOPES) {
+        const y = startY + Math.floor(distance * rise);
+        if (y > maxY || (opaqueSurface && surface >= y)) continue;
+        // Catch player-built roofs that are not represented in the natural
+        // height field before tracing hundreds of candidate corridors.
+        if (!shortColumnIsOpen(world, x, z, y, maxY)) continue;
+        // Trace first: most above-ground candidates are behind the cave roof,
+        // so rejecting their corridor avoids an expensive clear-sky column scan.
+        const pathTransmission = traceCaveCorridor(world, focus, startY, x, y, z);
+        if (pathTransmission <= 0.01) continue;
+        const columnTransmission = sampleSkylightColumn(world, x, z, y, maxY);
+        if (columnTransmission <= 0.01) continue;
+        best = Math.max(
+          best,
+          pathTransmission * columnTransmission * maximumContribution,
+        );
+      }
+      if (best >= 0.89) break;
+    }
+    return THREE.MathUtils.clamp(best, 0, 1);
+  }
+
+  // Lightweight fallback for test/dynamic worlds without a height field.
+  for (const [directionX, directionZ] of CAVE_SKYLIGHT_DIRECTIONS) {
+    for (const rise of CAVE_SKYLIGHT_SLOPES) {
+      let pathTransmission = 1;
+      let previousX = Math.floor(focus.x);
+      let previousY = startY;
+      let previousZ = Math.floor(focus.z);
+      for (let step = 1; step <= safeRadius; step++) {
+        const x = Math.floor(focus.x + directionX * (step + 0.35));
+        const z = Math.floor(focus.z + directionZ * (step + 0.35));
+        const y = startY + Math.floor(step * rise);
+        if (y > maxY) break;
+        if (x === previousX && y === previousY && z === previousZ) continue;
+
+        // Both the eye-height and body-height cells must remain open. This
+        // rejects roof leaks and keeps a four-wall shelter sealed. When a ray
+        // crosses an X/Z corner, conservatively test both touched side voxels
+        // as a supercover DDA would; daylight cannot slip through a diagonal
+        // seam between two solid blocks.
+        const crossedX = x !== previousX;
+        const crossedZ = z !== previousZ;
+        if (crossedX && crossedZ) {
+          const sideHeights = y === previousY ? [y] : [previousY, y];
+          for (const sideY of sideHeights) {
+            pathTransmission *= corridorTransmission(world, x, sideY, previousZ);
+            pathTransmission *= corridorTransmission(world, previousX, sideY, z);
+          }
+        }
+        // A steep ray may rise by more than one voxel in a horizontal step.
+        // Walk every intermediate height so it cannot skip through a ceiling.
+        for (let sampleY = previousY + 1; sampleY <= y; sampleY++) {
+          pathTransmission *= corridorTransmission(world, x, sampleY, z);
+        }
+        pathTransmission *= corridorTransmission(world, x, y, z);
+        previousX = x;
+        previousY = y;
+        previousZ = z;
+        if (pathTransmission <= 0.01) break;
+
+        const columnTransmission = sampleSkylightColumn(world, x, z, y, maxY);
+        if (columnTransmission <= 0.01) continue;
+        const distance = Math.hypot(x + 0.5 - focus.x, z + 0.5 - focus.z);
+        const inverseSquare = 1 / (1 + (distance / 4.8) ** 2);
+        const outerFade = 1 - THREE.MathUtils.smoothstep(distance, safeRadius * 0.62, safeRadius);
+        best = Math.max(best, pathTransmission * columnTransmission * inverseSquare * outerFade * 0.9);
+        break;
+      }
+    }
+  }
+  return THREE.MathUtils.clamp(best, 0, 1);
+}
+
+export function directionalSkyAccess(shadowsEnabled, skyExposure) {
+  if (shadowsEnabled) return 1;
+  const sky = THREE.MathUtils.clamp(Number(skyExposure) || 0, 0, 1);
+  // Low mode has no shadow map. Gate its global directional source with the
+  // local entrance probe so sunlight cannot shine forever through cave walls.
+  return THREE.MathUtils.smoothstep(sky, 0.015, 0.7);
 }
 
 export function outdoorBounceIntensity(dayAmount, skyExposure, overcastAmount) {
@@ -895,6 +1162,7 @@ export class Environment {
     this.skyExposure = 1;
     this.skyExposureTarget = 1;
     this.skyExposureTimer = 0;
+    this.skyExposureSealed = false;
     this.fogClarity = 0;
     this.skyColor = new THREE.Color();
     this.fogColor = new THREE.Color();
@@ -1087,7 +1355,10 @@ export class Environment {
 
     if (this.renderer?.shadowMap) {
       this.renderer.shadowMap.enabled = Boolean(profile.shadows);
-      if (THREE.PCFShadowMap != null) this.renderer.shadowMap.type = THREE.PCFShadowMap;
+      const shadowType = profile.softShadows && THREE.PCFSoftShadowMap != null
+        ? THREE.PCFSoftShadowMap
+        : THREE.PCFShadowMap;
+      if (shadowType != null) this.renderer.shadowMap.type = shadowType;
     }
     this.sunLight.castShadow = Boolean(profile.shadows);
     this.sunLight.shadow.camera.left = -this.shadowExtent;
@@ -1411,6 +1682,7 @@ export class Environment {
       const world = this.weatherWorld;
       if (!world?.getBlock || !focus) {
         this.skyExposureTarget = 1;
+        this.skyExposureSealed = false;
       } else {
         const startY = Math.floor(focus.y + 1.55);
         const maxY = Math.max(startY, (Number(world.worldHeight) || 96) - 1);
@@ -1426,32 +1698,11 @@ export class Environment {
         ];
         let exposure = 0;
         let centerTransmission = 1;
+        let sealedEnclosure = false;
         for (const [offsetX, offsetZ, weight] of samples) {
           const x = Math.floor(focus.x + offsetX);
           const z = Math.floor(focus.z + offsetZ);
-          let transmission = 1;
-          let foliageOnly = true;
-          let sawFoliage = false;
-          for (let y = startY; y <= maxY; y++) {
-            const blockId = world.getBlock(x, y, z);
-            const definition = BLOCKS[blockId];
-            if (!definition?.solid || definition.liquid) continue;
-            const blockTransmission = skylightTransmission(blockId, definition);
-            if (blockTransmission <= 0) {
-              transmission = 0;
-              foliageOnly = false;
-              break;
-            }
-            sawFoliage ||= FOLIAGE_BLOCKS.has(blockId);
-            foliageOnly &&= FOLIAGE_BLOCKS.has(blockId);
-            transmission *= blockTransmission;
-          }
-          // A generated crown can contain several overlapping leaf voxels.
-          // Preserve enough diffuse skylight to read the ground and nearby
-          // forms while the shadow map still supplies convincing canopy shade.
-          if (sawFoliage && foliageOnly) {
-            transmission = Math.max(0.46, transmission);
-          }
+          const transmission = sampleSkylightColumn(world, x, z, startY, maxY);
           if (offsetX === 0 && offsetZ === 0) centerTransmission = transmission;
           exposure += transmission * weight;
         }
@@ -1463,19 +1714,41 @@ export class Environment {
             const definition = BLOCKS[world.getBlock(centerX + dx, enclosureY, centerZ + dz)];
             return count + Number(Boolean(definition?.solid && !definition.liquid && !definition.transparent));
           }, 0);
-          if (wallCount >= 4) exposure = 0;
+          if (wallCount >= 4) {
+            exposure = 0;
+            sealedEnclosure = true;
+          }
           else if (wallCount === 3) exposure *= 0.08;
           else if (wallCount === 2) exposure *= 0.28;
         }
         const surface = Number(world.terrainHeight?.(focus.x, focus.z));
         const depth = Number.isFinite(surface)
-          ? clamp((surface + 1 - focus.y) / 18, 0, 1)
+          ? clamp((surface + 1 - focus.y) / 28, 0, 1)
           : 0;
-        const depthTransmission = 1 - THREE.MathUtils.smoothstep(depth, 0.04, 1) * 0.8;
-        this.skyExposureTarget = clamp(exposure * depthTransmission, 0, 1);
+        // Indirect skylight starts fading only after roughly three blocks of
+        // cover and reaches darkness around 28 blocks. A visible cave mouth is
+        // a separate direct contribution, so stepping beneath its first roof
+        // no longer causes an instant blackout.
+        const depthTransmission = 1 - THREE.MathUtils.smoothstep(depth, 0.11, 1) * 0.94;
+        const entranceExposure = centerTransmission <= 0.001 && !sealedEnclosure
+          ? caveEntranceSkylight(world, focus)
+          : 0;
+        const overheadExposure = centerTransmission > 0.001
+          ? Math.max(exposure, centerTransmission)
+          : 0;
+        this.skyExposureTarget = clamp(Math.max(
+          exposure * depthTransmission,
+          overheadExposure,
+          entranceExposure,
+        ), 0, 1);
+        this.skyExposureSealed = sealedEnclosure;
       }
     }
-    const response = this.skyExposureTarget < this.skyExposure ? 0.18 : 0.62;
+    // Eyes take time to adapt when entering a cavern; a genuinely sealed
+    // player-built room remains an immediate hard occluder.
+    const response = this.skyExposureTarget < this.skyExposure
+      ? this.skyExposureSealed ? 0.16 : 0.78
+      : 0.34;
     this.skyExposure += (this.skyExposureTarget - this.skyExposure) * (1 - Math.exp(-dt / response));
     if (this.skyExposure < 0.002) this.skyExposure = 0;
   }
@@ -1529,11 +1802,7 @@ export class Environment {
 
     // Keep skylight subordinate to the directional sources so form is defined
     // by light and shadow instead of the previous flat ambient wash.
-    const skyAccess = 0.02 + this.skyExposure * 0.98;
-    // Keep a small global directional component so a cave entrance remains
-    // visibly brighter than its interior; roof shadows and baked cover lighting
-    // still remove that component from enclosed surfaces.
-    const directSky = 0.08 + THREE.MathUtils.smoothstep(this.skyExposure, 0.08, 0.62) * 0.92;
+    const skyAccess = THREE.MathUtils.smoothstep(this.skyExposure, 0.005, 0.92);
     this.hemisphere.intensity = (0.2 + this.dayAmount * 0.72)
       * (1 - this.overcastAmount * 0.34)
       * skyAccess;
@@ -1544,19 +1813,30 @@ export class Environment {
       this.skyExposure,
       this.overcastAmount,
     );
+    // In shadowed modes, direct sunlight is a property of the world rather than
+    // the player's roof probe. Shadow maps and per-vertex cover lighting decide
+    // which cave surfaces receive it, keeping a visible entrance bright. Low
+    // mode uses the probe as its no-shadow leakage guard.
+    const directAccess = directionalSkyAccess(Boolean(this.graphicsProfile?.shadows), this.skyExposure);
+    // Moon shadows are intentionally disabled for performance on every preset,
+    // so the local probe must always gate moonlight inside sealed caves.
+    const moonAccess = directionalSkyAccess(false, this.skyExposure);
     this.sunLight.intensity = (0.015 + this.dayAmount * 3.65)
       * (0.025 + sunVisibility * 0.975)
-      * directSky;
+      * directAccess;
     this.sunLight.color.copy(this._sunDawn).lerp(this._sunDay, this.dayAmount);
-    this.moonLight.intensity = Math.pow(1 - this.dayAmount, 1.55) * 0.24 * directSky;
+    this.moonLight.intensity = Math.pow(1 - this.dayAmount, 1.55) * 0.24 * moonAccess;
     if ('environmentIntensity' in this.scene) {
       this.scene.environmentIntensity = (0.035 + this.dayAmount * 0.43)
         * (1 - this.overcastAmount * 0.46)
-        * (0.025 + this.skyExposure * 0.975);
+        * skyAccess;
     }
     if (this.renderer) {
       const baseExposure = this.graphicsQuality === 'low' ? 0.96 : this.graphicsQuality === 'ultra' ? 1.04 : 1.01;
-      const targetExposure = baseExposure * (0.96 + (1 - this.dayAmount) * 0.12 - this.overcastAmount * 0.08);
+      const eyeAdaptation = 1 + THREE.MathUtils.smoothstep(1 - this.skyExposure, 0.45, 1) * 0.12;
+      const targetExposure = baseExposure
+        * (0.96 + (1 - this.dayAmount) * 0.12 - this.overcastAmount * 0.08)
+        * eyeAdaptation;
       this.renderer.toneMappingExposure += (targetExposure - this.renderer.toneMappingExposure) * (1 - Math.exp(-dt / 1.8));
     }
 

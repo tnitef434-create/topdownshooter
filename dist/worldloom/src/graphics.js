@@ -6,6 +6,58 @@ import { GTAOPass } from '../vendor/GTAOPass.js';
 import { UnrealBloomPass } from '../vendor/UnrealBloomPass.js';
 import { OutputPass } from '../vendor/OutputPass.js';
 import { FXAAShader } from '../vendor/FXAAShader.js';
+import { VolumetricSunPass } from './volumetric-sun-pass.js';
+
+export const CAVE_LIGHTING_DEPTH_BLOCKS = 28;
+
+export function caveLightingDepth(surfaceHeight, playerY) {
+  const surface = Number(surfaceHeight);
+  const player = Number(playerY);
+  if (!Number.isFinite(surface) || !Number.isFinite(player)) return 0;
+  return THREE.MathUtils.clamp((surface + 1 - player) / CAVE_LIGHTING_DEPTH_BLOCKS, 0, 1);
+}
+
+export function cavePostProcessAmount(caveDepth = 0, skyExposure = 1) {
+  const depth = THREE.MathUtils.clamp(Number(caveDepth) || 0, 0, 1);
+  const sky = THREE.MathUtils.clamp(Number(skyExposure) || 0, 0, 1);
+  const enclosed = 1 - THREE.MathUtils.smoothstep(sky, 0.025, 0.58);
+  const establishedDepth = THREE.MathUtils.smoothstep(depth, 0.08, 0.98);
+  return THREE.MathUtils.clamp(enclosed * establishedDepth, 0, 1);
+}
+
+export function projectLightToScreen(camera, worldPosition, target = {}) {
+  target.uv ||= new THREE.Vector2(0.5, 0.5);
+  if (!camera?.isCamera || !worldPosition?.isVector3) {
+    target.uv.set(0.5, 0.5);
+    target.facing = 0;
+    target.screenFade = 0;
+    return target;
+  }
+  camera.updateMatrixWorld(true);
+  const cameraForward = target.cameraForward || (target.cameraForward = new THREE.Vector3());
+  const cameraToLight = target.cameraToLight || (target.cameraToLight = new THREE.Vector3());
+  const projected = target.projected || (target.projected = new THREE.Vector3());
+  camera.getWorldDirection(cameraForward);
+  cameraToLight.subVectors(worldPosition, camera.position).normalize();
+  target.facing = THREE.MathUtils.clamp(cameraForward.dot(cameraToLight), -1, 1);
+  projected.copy(worldPosition).project(camera);
+  target.uv.set(projected.x * 0.5 + 0.5, projected.y * 0.5 + 0.5);
+  const edge = Math.max(Math.abs(projected.x), Math.abs(projected.y));
+  target.screenFade = 1 - THREE.MathUtils.smoothstep(edge, 0.92, 1.65);
+  return target;
+}
+
+export function volumetricSunIntensity(profile = {}, environment = {}, projection = {}) {
+  const authoredStrength = THREE.MathUtils.clamp(Number(profile.godRayStrength) || 0, 0, 0.5);
+  const day = THREE.MathUtils.smoothstep(Number(environment.dayAmount) || 0, 0.16, 0.86);
+  const dry = 1 - THREE.MathUtils.smoothstep(Number(environment.rainAmount) || 0, 0.025, 0.78);
+  const openCave = 1 - THREE.MathUtils.smoothstep(Number(environment.caveAmount) || 0, 0.02, 0.82);
+  const sky = THREE.MathUtils.smoothstep(Number(environment.skyExposure) || 0, 0.04, 0.72);
+  const visibleSun = THREE.MathUtils.clamp(Number(environment.sunVisibility) || 0, 0, 1);
+  const facing = THREE.MathUtils.smoothstep(Number(projection.facing) || 0, 0.015, 0.3);
+  const onScreen = THREE.MathUtils.clamp(Number(projection.screenFade) || 0, 0, 1);
+  return authoredStrength * day * dry * openCave * sky * visibleSun * facing * onScreen;
+}
 
 const CinematicShader = {
   name: 'WorldloomCinematicShader',
@@ -98,17 +150,34 @@ export class GraphicsPipeline {
     this.renderPass = null;
     this.gtaoPass = null;
     this.bloomPass = null;
+    this.volumetricSunPass = null;
     this.cinematicPass = null;
     this.outputPass = null;
     this.fxaaPass = null;
     this.enabled = false;
     this.aoEnabled = false;
     this.bloomEnabled = false;
+    this.volumetricSunEnabled = false;
     this.width = 1;
     this.height = 1;
     this.pixelRatio = 1;
     this.aoScale = 0.55;
-    this.environment = { dayAmount: 1, rainAmount: 0, caveAmount: 0 };
+    this.profile = {};
+    this.environment = {
+      dayAmount: 1,
+      rainAmount: 0,
+      caveAmount: 0,
+      skyExposure: 1,
+      sunVisibility: 0,
+    };
+    this.sunProjection = {
+      uv: new THREE.Vector2(0.5, 0.5),
+      cameraForward: new THREE.Vector3(),
+      cameraToLight: new THREE.Vector3(),
+      projected: new THREE.Vector3(),
+      facing: 0,
+      screenFade: 0,
+    };
   }
 
   _ensureBasePipeline() {
@@ -127,11 +196,18 @@ export class GraphicsPipeline {
     this.gtaoPass.output = GTAOPass.OUTPUT.Default;
   }
 
+  _ensureVolumetricSun() {
+    if (this.volumetricSunPass) return;
+    this.volumetricSunPass = new VolumetricSunPass();
+    this.volumetricSunPass.setDepthTexture(this.gtaoPass?.depthTexture);
+  }
+
   _rebuildPasses() {
     if (!this.composer) return;
     this.composer.passes.length = 0;
     this.composer.addPass(this.renderPass);
     if (this.aoEnabled && this.gtaoPass) this.composer.addPass(this.gtaoPass);
+    if (this.volumetricSunEnabled && this.volumetricSunPass) this.composer.addPass(this.volumetricSunPass);
     if (this.bloomEnabled) this.composer.addPass(this.bloomPass);
     this.composer.addPass(this.cinematicPass);
     // Antialias the linear scene before OutputPass performs the final display
@@ -158,12 +234,32 @@ export class GraphicsPipeline {
   }
 
   applyProfile(profile = {}) {
+    this.profile = profile;
     this.enabled = Boolean(profile.postProcessing);
-    if (!this.enabled) return;
+    if (!this.enabled) {
+      this.volumetricSunEnabled = false;
+      if (this.volumetricSunPass) this.volumetricSunPass.enabled = false;
+      return;
+    }
     this._ensureBasePipeline();
     this.aoEnabled = Boolean(profile.ambientOcclusion);
     this.bloomEnabled = Number(profile.bloomStrength || 0) > 0;
     if (this.aoEnabled) this._ensureGtao();
+    this.volumetricSunEnabled = this.aoEnabled && Number(profile.godRayStrength || 0) > 0;
+    if (this.volumetricSunEnabled) {
+      this._ensureVolumetricSun();
+      this.volumetricSunPass.setDepthTexture(this.gtaoPass?.depthTexture);
+      this.volumetricSunPass.configure({
+        resolutionScale: profile.godRayScale,
+        sourceRadius: profile.godRaySourceRadius,
+        density: profile.godRayDensity,
+        decay: profile.godRayDecay,
+        weight: profile.godRayWeight,
+        tint: profile.godRayTint,
+      });
+    } else if (this.volumetricSunPass) {
+      this.volumetricSunPass.enabled = false;
+    }
     this.aoScale = Number(profile.aoScale) || 0.55;
 
     if (this.gtaoPass) {
@@ -206,10 +302,25 @@ export class GraphicsPipeline {
     this._resizePasses();
   }
 
-  setEnvironment({ dayAmount = 1, rainAmount = 0, caveAmount = 0 } = {}) {
+  setEnvironment({
+    dayAmount = 1,
+    rainAmount = 0,
+    caveAmount = 0,
+    skyExposure = 1,
+    sunVisibility = 0,
+    sunWorldPosition = null,
+  } = {}) {
     this.environment.dayAmount = THREE.MathUtils.clamp(dayAmount, 0, 1);
     this.environment.rainAmount = THREE.MathUtils.clamp(rainAmount, 0, 1);
     this.environment.caveAmount = THREE.MathUtils.clamp(caveAmount, 0, 1);
+    this.environment.skyExposure = THREE.MathUtils.clamp(skyExposure, 0, 1);
+    this.environment.sunVisibility = THREE.MathUtils.clamp(sunVisibility, 0, 1);
+    if (this.volumetricSunPass) {
+      const projection = projectLightToScreen(this.camera, sunWorldPosition, this.sunProjection);
+      const intensity = volumetricSunIntensity(this.profile, this.environment, projection);
+      this.volumetricSunPass.setLight(projection.uv, intensity);
+      this.volumetricSunPass.enabled = this.volumetricSunEnabled && intensity > 0.0001;
+    }
     if (!this.cinematicPass) return;
     this.cinematicPass.uniforms.dayAmount.value = this.environment.dayAmount;
     this.cinematicPass.uniforms.rainAmount.value = this.environment.rainAmount;
@@ -230,6 +341,8 @@ export class GraphicsPipeline {
       enabled: this.enabled,
       ambientOcclusion: this.aoEnabled,
       bloom: this.bloomEnabled,
+      volumetricSun: this.volumetricSunEnabled,
+      volumetricSunState: this.volumetricSunPass?.getDiagnostics() || null,
       passes: this.composer?.passes.filter((pass) => pass.enabled !== false).length || 1,
       aoScale: this.aoEnabled ? this.aoScale : 0,
       width: this.width,
