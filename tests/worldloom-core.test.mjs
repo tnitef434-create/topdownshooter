@@ -18,8 +18,10 @@ import {
   weatherLightingState,
 } from '../src/public/worldloom/src/environment.js';
 import {
+  InputController,
   PLAYER,
   PlayerController,
+  continuousPointerDelta,
   fallDamageForImpact,
   raycastVoxels,
 } from '../src/public/worldloom/src/player.js';
@@ -40,6 +42,10 @@ import {
   treeLogSpecies,
 } from '../src/public/worldloom/src/data.js';
 import { HeldItemView } from '../src/public/worldloom/src/viewmodel.js';
+import {
+  atmosphericFogRange,
+  clampFogToMeshedTerrain,
+} from '../src/public/worldloom/src/fog.js';
 
 function validSnapshot() {
   return {
@@ -940,6 +946,103 @@ test('mature overgrown trees use ivy bark textures without protruding lower-trun
   world.dispose();
 });
 
+test('dry open daylight starts fog later without moving the opaque horizon', () => {
+  const legacyNear = 4 * 10 - 8;
+  const legacyFar = 4 * 16 + 34;
+  const clear = atmosphericFogRange(4, {
+    rainIntensity: 0,
+    overcastAmount: 0,
+    skyExposure: 1,
+    dayAmount: 1,
+    submerged: false,
+  });
+  assert.equal(clear.far, legacyFar, 'clear-air tuning must not expose terrain beyond the old horizon');
+  assert.equal(clear.near, 58, 'balanced clear fog should retain a measured forty-metre blend band');
+  const legacyOpacityAt64m = (64 - legacyNear) / (legacyFar - legacyNear);
+  const clearOpacityAt64m = (64 - clear.near) / (clear.far - clear.near);
+  assert.ok(clearOpacityAt64m <= legacyOpacityAt64m - 0.3,
+    `clear-air haze was not materially reduced (${legacyOpacityAt64m} -> ${clearOpacityAt64m})`);
+});
+
+test('storm, cave, night and underwater contexts preserve established fog density', () => {
+  const legacy = atmosphericFogRange(4, {
+    rainIntensity: 0,
+    overcastAmount: 0,
+    skyExposure: 0,
+    dayAmount: 1,
+  });
+  assert.deepEqual(legacy, { near: 32, far: 98, clarity: 0 });
+  assert.equal(atmosphericFogRange(4, {
+    rainIntensity: 0,
+    overcastAmount: 0,
+    skyExposure: 1,
+    dayAmount: 1,
+    submerged: true,
+  }).near, 32);
+  assert.equal(atmosphericFogRange(4, {
+    rainIntensity: 0,
+    overcastAmount: 0,
+    skyExposure: 1,
+    dayAmount: 0,
+  }).near, 32);
+  const storm = atmosphericFogRange(4, {
+    rainIntensity: 0.8,
+    overcastAmount: 1,
+    skyExposure: 1,
+    dayAmount: 1,
+  });
+  assert.equal(storm.near, 32 - 0.8 * 11);
+  assert.equal(storm.far, 98 - 0.8 * 16);
+  assert.equal(storm.clarity, 0);
+});
+
+test('fog clamp never reveals terrain beyond the complete meshed horizon', () => {
+  const atmosphere = atmosphericFogRange(4, {
+    rainIntensity: 0,
+    overcastAmount: 0,
+    skyExposure: 1,
+    dayAmount: 1,
+  });
+  for (const safeTerrainFar of [8, 24, 50, 82, 98, 140]) {
+    const clamped = clampFogToMeshedTerrain({
+      atmosphericNear: atmosphere.near,
+      atmosphericFar: atmosphere.far,
+      safeTerrainFar,
+      previousFar: 140,
+      deltaSeconds: 1,
+      clarity: atmosphere.clarity,
+    });
+    assert.ok(clamped.far <= Math.min(atmosphere.far, Math.max(8, safeTerrainFar)),
+      `fog exposed the unmeshed horizon at safe distance ${safeTerrainFar}`);
+    assert.ok(clamped.near < clamped.far);
+  }
+  const loading = clampFogToMeshedTerrain({
+    atmosphericNear: atmosphere.near,
+    atmosphericFar: atmosphere.far,
+    safeTerrainFar: 50,
+    previousFar: null,
+    deltaSeconds: 0.016,
+    clarity: atmosphere.clarity,
+  });
+  assert.equal(loading.far, 50);
+  assert.equal(loading.streamingFar, 50);
+  assert.ok(Math.abs(loading.near - 34) < 1e-9,
+    `clear initial fog must begin materially later than the legacy 22.5m onset: ${loading.near}`);
+
+  const legacyLoading = clampFogToMeshedTerrain({
+    atmosphericNear: 32,
+    atmosphericFar: 98,
+    safeTerrainFar: 50,
+    previousFar: null,
+    deltaSeconds: 0.016,
+    clarity: 0,
+  });
+  assert.ok(Math.abs(legacyLoading.near - 22.5) < 1e-9,
+    'storm/cave/night/underwater clarity must retain the exact legacy safety band');
+  assert.equal(legacyLoading.far, loading.far,
+    'both clear and dense fog must become fully opaque before the same unmeshed horizon');
+});
+
 test('rain intensity is clamped to zero whenever the local sky has no storm clouds', () => {
   const environment = Object.create(Environment.prototype);
   Object.assign(environment, {
@@ -1309,6 +1412,104 @@ test('partial-height furniture uses matching collision bounds', () => {
   player.setPosition(0.5, 0.47, 0.5);
   assert.equal(player.intersectsBlock(0, 0, 0, BLOCK.BED), false);
   assert.equal(player.intersectsBlock(0, 0, 0, BLOCK.STONE), true);
+});
+
+test('pointer-lock filtering rejects monitor recenter spikes without limiting cumulative 360 turns', () => {
+  assert.equal(continuousPointerDelta(220, 640, 640, 1280), 220,
+    'a large but plausible high-DPI event remains responsive');
+  assert.equal(continuousPointerDelta(1366, 640, 640, 1366), 0,
+    'a constant-screen-coordinate Windows edge spike must not rotate the camera');
+  assert.equal(continuousPointerDelta(-639, 640, 1279, 1280), 0,
+    'a pointer-lock recenter signature must be discarded');
+  assert.equal(continuousPointerDelta(Number.POSITIVE_INFINITY), 0);
+  const cumulativePixels = Array.from({ length: 16 }, () => (
+    continuousPointerDelta(220, 640, 640, 1280)
+  )).reduce((sum, value) => sum + value, 0);
+  assert.ok(cumulativePixels * 0.0022 > Math.PI * 2,
+    'many valid events must still accumulate beyond a complete turn');
+});
+
+test('pointer unlock clears pending look and a large acquisition event cannot snap the view', () => {
+  const originalWindow = globalThis.window;
+  const originalDocument = globalThis.document;
+  const canvas = {
+    clientWidth: 1280,
+    clientHeight: 720,
+    addEventListener() {},
+  };
+  try {
+    globalThis.window = {
+      innerWidth: 1280,
+      innerHeight: 720,
+      screen: { width: 1280, height: 720 },
+      addEventListener() {},
+    };
+    globalThis.document = {
+      pointerLockElement: null,
+      addEventListener() {},
+    };
+    const input = new InputController(canvas);
+    globalThis.document.pointerLockElement = canvas;
+    input._lockChange();
+    input._mouseMove({ movementX: 1366, movementY: 0, screenX: 640, screenY: 360 });
+    assert.deepEqual(input.consumeLook(), { x: 0, y: 0 },
+      'the synthetic first movement after pointer acquisition must be ignored');
+
+    input._mouseMove({ movementX: 120, movementY: -35, screenX: 640, screenY: 360 });
+    input.buttons.add(0);
+    input.keys.add('KeyW');
+    globalThis.document.pointerLockElement = null;
+    input._lockChange();
+    assert.equal(input.locked, false);
+    assert.deepEqual(input.consumeLook(), { x: 0, y: 0 });
+    assert.equal(input.buttons.size, 0);
+    assert.equal(input.keys.size, 0);
+  } finally {
+    if (originalWindow === undefined) delete globalThis.window;
+    else globalThis.window = originalWindow;
+    if (originalDocument === undefined) delete globalThis.document;
+    else globalThis.document = originalDocument;
+  }
+});
+
+test('first-person yaw stays continuous across repeated full turns and Continue state loads', () => {
+  const camera = new THREE.PerspectiveCamera(75, 1, 0.05, 100);
+  const world = { getBlock: () => BLOCK.AIR };
+  const player = new PlayerController(camera, world);
+  player.flying = true;
+  const input = {
+    consumeLook: () => ({ x: -200, y: 0 }),
+    isDown: () => false,
+  };
+  const turnStep = 200 * 0.0022;
+  let previousYaw = player.yaw;
+  let previousDirection = player.getLookDirection(new THREE.Vector3());
+  for (let frame = 0; frame < 40; frame++) {
+    player.update(0.016, input, { sensitivity: 0.0022 });
+    assert.ok(Math.abs((player.yaw - previousYaw) - turnStep) < 1e-10,
+      `yaw changed discontinuously on frame ${frame}`);
+    const direction = player.getLookDirection(new THREE.Vector3());
+    assert.ok(Math.abs(direction.angleTo(previousDirection) - turnStep) < 1e-9,
+      `camera snapped while crossing a turn boundary on frame ${frame}`);
+    previousYaw = player.yaw;
+    previousDirection = direction;
+  }
+  assert.ok(player.yaw > Math.PI * 2 * 2, 'the fixture must cross multiple complete turns');
+
+  const state = player.getState();
+  const restoredCamera = new THREE.PerspectiveCamera(75, 1, 0.05, 100);
+  const restored = new PlayerController(restoredCamera, world);
+  restored.loadState(state);
+  assert.equal(restored.yaw, state.yaw, 'Continue must preserve an ordinary multi-turn yaw exactly');
+  assert.ok(restored.getLookDirection(new THREE.Vector3()).angleTo(previousDirection) < 1e-7);
+
+  const pitchInput = {
+    consumeLook: () => ({ x: 0, y: 1_000_000 }),
+    isDown: () => false,
+  };
+  restored.flying = true;
+  restored.update(0.016, pitchInput, { sensitivity: 0.0022 });
+  assert.equal(restored.pitch, -Math.PI * 0.495, 'the existing pitch limit remains unchanged');
 });
 
 test('flying out of water clears liquid state and emits one entry splash', () => {

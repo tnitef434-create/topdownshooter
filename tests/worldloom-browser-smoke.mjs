@@ -216,6 +216,7 @@ try {
 
   const gameState = await frame.evaluate(() => {
     const graphics = window.__worldloomGraphics;
+    const environment = window.__worldloomEnvironment;
     const terrain = graphics?.scene?.children
       ?.filter((child) => child.name?.startsWith('Terrain '))
       .map((mesh) => ({
@@ -289,7 +290,9 @@ try {
       terrain,
       completeTerrainRadius,
       safeTerrainFar,
+      fogNear: graphics?.scene?.fog?.near ?? null,
       fogFar: graphics?.scene?.fog?.far ?? null,
+      fogClarity: environment?.fogClarity ?? null,
     };
   });
   assert.equal(gameState.webgl2, true, 'WebGL 2 did not initialize');
@@ -313,6 +316,12 @@ try {
     `The playable frame opened before its safe seven-by-seven terrain core was ready: ${JSON.stringify(gameState.terrain)}`);
   assert(Number.isFinite(gameState.fogFar) && gameState.fogFar <= gameState.safeTerrainFar + 1.5,
     `Fog exposed unmeshed horizon space (fog ${gameState.fogFar}, safe ${gameState.safeTerrainFar})`);
+  assert(Number.isFinite(gameState.fogNear) && gameState.fogNear >= 28,
+    `Clear-weather haze still begins too close to the player (${gameState.fogNear}m)`);
+  assert(gameState.fogNear < gameState.fogFar,
+    `Clear-weather fog has no valid transition band (${gameState.fogNear} -> ${gameState.fogFar})`);
+  assert(gameState.fogClarity > 0.8,
+    `The open daylight spawn did not select the clear-air fog profile (${gameState.fogClarity})`);
 
   await frame.waitForFunction(() => {
     const stats = window.__worldloomPonds?.getStats?.();
@@ -392,8 +401,27 @@ try {
         failed: ponds.failed,
         error: ponds.error ? String(ponds.error.message || ponds.error) : '',
         url: initial.assetUrl,
-        meshesReady: [ponds.padMesh, ponds.mistMesh, ponds.flyMesh]
-          .every((mesh) => Boolean(mesh?.isInstancedMesh && mesh.geometry)),
+        meshesReady: Boolean(
+          ponds.padMesh?.isInstancedMesh
+          && ponds.padMesh.geometry?.getAttribute?.('uv')
+          && ponds.mistMesh?.isInstancedMesh
+          && ponds.mistMesh.geometry
+          && ponds.flyMesh?.isPoints
+          && ponds.flyMesh.geometry,
+        ),
+        atlasReady: Boolean(
+          ponds.padMesh?.material?.map?.isTexture
+          && ponds.padMesh.material.map.magFilter === 1003
+          && ponds.padMesh.material.map.minFilter === 1003
+          && ponds.padMesh.material.map.generateMipmaps === false
+          && ponds.padMesh.material.alphaTest >= 0.5,
+        ),
+        flyDotsReady: Boolean(
+          ponds.flyMesh?.isPoints
+          && ponds.flyMesh.material?.isPointsMaterial
+          && ponds.flyMesh.userData?.representation === 'unlit-points'
+          && ponds.flyMesh.userData?.activePointCount > 0,
+        ),
         groupAttached: ponds.group?.parent === environment.scene,
       },
       initial,
@@ -412,7 +440,12 @@ try {
   assert.equal(pondState.asset.ready, true, 'The Blender pond-detail asset did not finish loading');
   assert.equal(pondState.asset.failed, false, `The Blender pond-detail asset failed: ${pondState.asset.error}`);
   assert.match(pondState.asset.url, /pond-details\.glb(?:$|[?#])/i);
-  assert.equal(pondState.asset.meshesReady, true, 'Pond detail GLB did not produce all three instanced meshes');
+  assert.equal(pondState.asset.meshesReady, true,
+    'Pond detail GLB did not produce its instanced lily/mist and point-fly render set');
+  assert.equal(pondState.asset.atlasReady, true,
+    'The live lily mesh did not preserve its hard nearest-filtered pixel atlas');
+  assert.equal(pondState.asset.flyDotsReady, true,
+    'The live pond flies are not using the one-draw procedural black-dot representation');
   assert.equal(pondState.asset.groupAttached, true, 'Pond ecology is detached from the live scene');
   assert(pondState.nearbyPondCount > 0, 'The spawned player has no generated pond within the balanced detail radius');
   assert(pondState.initial.pads > 0, 'No visible lily pads were instanced near the spawned player');

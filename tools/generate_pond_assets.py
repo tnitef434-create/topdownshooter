@@ -1,12 +1,14 @@
 """Generate original voxel-style pond-detail assets with Blender.
 
 Requirements:
-  - Blender 4.0+ (tested API target; no third-party Python packages).
+  - Blender 4.0+ (verified with Blender 5.2; no third-party Python packages).
   - The bundled Blender glTF 2.0 exporter must be enabled (default installs are).
 
 Example:
   blender --background --python tools/generate_pond_assets.py -- \
-    --output build/pond_details.glb --seed 240824 --flies 5 --flower --animate
+    --output src/public/worldloom/assets/environment/pond-details.glb \
+    --atlas src/public/worldloom/assets/environment/pond-lily-atlas.png \
+    --preview outputs/pond-lily-qa.png --seed 240824 --flies 5 --flower --animate
 
 The scene is rebuilt from scratch, every pseudo-random choice uses ``--seed``,
 and all generated data has stable names. The resulting GLB/GLTF contains three
@@ -23,16 +25,21 @@ import math
 import random
 import sys
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Sequence
 
 import bpy
+from mathutils import Vector
 
 
-GENERATOR_VERSION = "1.0.0"
+GENERATOR_VERSION = "1.1.0"
 DEFAULT_SEED = 240824
 LOOP_START = 1
 LOOP_END = 97
 VOXEL_UNIT = 0.0625
+DEFAULT_ATLAS = (
+    Path(__file__).resolve().parents[1]
+    / "src/public/worldloom/assets/environment/pond-lily-atlas.png"
+)
 
 
 def blender_arguments() -> list[str]:
@@ -56,6 +63,18 @@ def parse_args() -> argparse.Namespace:
         default="AUTO",
         help="Export container; AUTO infers it from --output (default: AUTO).",
     )
+    parser.add_argument(
+        "--atlas",
+        type=Path,
+        default=DEFAULT_ATLAS,
+        help="64x64 RGBA lily/flower atlas embedded into the exported asset.",
+    )
+    parser.add_argument(
+        "--preview",
+        type=Path,
+        default=None,
+        help="Optional PNG path for a deterministic rendered lily QA still.",
+    )
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED, help="Deterministic layout seed.")
     parser.add_argument("--flies", type=int, default=5, help="Number of flies, from 1 to 12.")
     parser.add_argument("--scale", type=float, default=1.0, help="Uniform asset scale in metres.")
@@ -69,6 +88,9 @@ def parse_args() -> argparse.Namespace:
         parser.error("--flies must be between 1 and 12 so Fly_Swarm_Asset remains loadable")
     if not math.isfinite(args.scale) or args.scale <= 0:
         parser.error("--scale must be a positive finite number")
+    args.atlas = args.atlas.expanduser().resolve()
+    if not args.atlas.is_file():
+        parser.error(f"--atlas does not exist: {args.atlas}")
     return args
 
 
@@ -175,6 +197,54 @@ def create_material(
     return material
 
 
+def create_lily_atlas_material(atlas_path: Path) -> bpy.types.Material:
+    """Create a nearest-filtered material whose source PNG is packed into the GLB."""
+    image = bpy.data.images.load(str(atlas_path), check_existing=True)
+    if tuple(int(value) for value in image.size) != (64, 64):
+        raise ValueError(f"Lily atlas must be exactly 64x64 pixels: {atlas_path}")
+    image.name = "Worldloom_Pond_Lily_Atlas_64"
+    image.colorspace_settings.name = "sRGB"
+    image.pack()
+
+    material = create_material(
+        "Worldloom_Pond_Lily_Atlas",
+        (1.0, 1.0, 1.0),
+        roughness=0.94,
+        double_sided=True,
+    )
+    material["atlas_layout"] = "pad:0,0,32,32;flower:32,0,32,32;swatches:0,32,64,32"
+    material.use_backface_culling = False
+    if hasattr(material, "surface_render_method"):
+        material.surface_render_method = "DITHERED"
+    elif hasattr(material, "blend_method"):
+        material.blend_method = "CLIP"
+    if hasattr(material, "alpha_threshold"):
+        material.alpha_threshold = 0.5
+
+    nodes = material.node_tree.nodes
+    links = material.node_tree.links
+    principled = nodes.get("Principled BSDF")
+    texture = nodes.new("ShaderNodeTexImage")
+    texture.name = "Nearest_Pond_Lily_Atlas"
+    texture.label = "64px nearest lily atlas"
+    texture.image = image
+    texture.interpolation = "Closest"
+    texture.extension = "EXTEND"
+    alpha_clip = nodes.new("ShaderNodeMath")
+    alpha_clip.name = "Pond_Atlas_Alpha_Cutoff"
+    alpha_clip.operation = "GREATER_THAN"
+    alpha_clip.inputs[1].default_value = 0.5
+    if principled:
+        base = principled_input(principled, "Base Color")
+        alpha_socket = principled_input(principled, "Alpha")
+        if base:
+            links.new(texture.outputs["Color"], base)
+        if alpha_socket:
+            links.new(texture.outputs["Alpha"], alpha_clip.inputs[0])
+            links.new(alpha_clip.outputs[0], alpha_socket)
+    return material
+
+
 def create_box(
     name: str,
     size: Sequence[float],
@@ -222,21 +292,64 @@ def create_low_poly_cylinder(
     return link_object(obj, collection)
 
 
+def inset_tile_uv(
+    pixel_x: float,
+    pixel_y: float,
+    pixel_width: float,
+    pixel_height: float,
+    x: float,
+    y: float,
+) -> tuple[float, float]:
+    """Map normalized tile coordinates to a half-texel-inset Blender UV."""
+    u_min = (pixel_x + 0.5) / 64.0
+    u_max = (pixel_x + pixel_width - 0.5) / 64.0
+    # Atlas pixel coordinates start at the upper-left; Blender UVs start below.
+    v_min = 1.0 - (pixel_y + pixel_height - 0.5) / 64.0
+    v_max = 1.0 - (pixel_y + 0.5) / 64.0
+    return (
+        u_min + (u_max - u_min) * x,
+        v_min + (v_max - v_min) * y,
+    )
+
+
 def create_lily_pad_mesh(
     collection: bpy.types.Collection,
     root: bpy.types.Object,
     material: bpy.types.Material,
 ) -> bpy.types.Object:
-    radius = 0.53
-    thickness = 0.045
-    segments = 14
-    notch_half_angle = math.radians(23)
-    outline = []
-    for index in range(segments + 1):
-        angle = notch_half_angle + (math.tau - 2 * notch_half_angle) * index / segments
-        stepped_radius = radius * (0.96 if index % 3 == 0 else 1.0)
-        outline.append((math.cos(angle) * stepped_radius, math.sin(angle) * stepped_radius))
-    outline.append((0.11, 0.0))
+    # A hand-authored 1/16m grid silhouette: broad enough to read at range,
+    # stepped at every quadrant, and deeply concave at the characteristic split.
+    outline = [
+        (0.4375, 0.1875),
+        (0.4375, 0.3125),
+        (0.3125, 0.3125),
+        (0.3125, 0.4375),
+        (0.1875, 0.4375),
+        (0.1875, 0.5),
+        (-0.1875, 0.5),
+        (-0.1875, 0.4375),
+        (-0.3125, 0.4375),
+        (-0.3125, 0.3125),
+        (-0.4375, 0.3125),
+        (-0.4375, 0.1875),
+        (-0.5, 0.1875),
+        (-0.5, -0.1875),
+        (-0.4375, -0.1875),
+        (-0.4375, -0.3125),
+        (-0.3125, -0.3125),
+        (-0.3125, -0.4375),
+        (-0.1875, -0.4375),
+        (-0.1875, -0.5),
+        (0.1875, -0.5),
+        (0.1875, -0.4375),
+        (0.3125, -0.4375),
+        (0.3125, -0.3125),
+        (0.4375, -0.3125),
+        (0.4375, -0.1875),
+        (0.5, -0.1875),
+        (0.0625, 0.0),
+    ]
+    thickness = VOXEL_UNIT
 
     top_z = thickness * 0.5
     bottom_z = -top_z
@@ -251,9 +364,73 @@ def create_lily_pad_mesh(
     mesh.from_pydata(vertices, [], faces)
     mesh.materials.append(material)
     mesh.update(calc_edges=True)
+    uv_layer = mesh.uv_layers.new(name="UVMap")
+    for polygon in mesh.polygons:
+        if polygon.index == 0:
+            # Top surface consumes the authored upper-left 32x32 pad tile.
+            for loop_index in polygon.loop_indices:
+                vertex = mesh.vertices[mesh.loops[loop_index].vertex_index].co
+                uv_layer.data[loop_index].uv = inset_tile_uv(
+                    0, 0, 32, 32, vertex.x + 0.5, vertex.y + 0.5,
+                )
+        elif polygon.index == 1:
+            # The lower face maps into the opaque underside swatch (tile two).
+            for loop_index in polygon.loop_indices:
+                vertex = mesh.vertices[mesh.loops[loop_index].vertex_index].co
+                uv_layer.data[loop_index].uv = inset_tile_uv(
+                    16, 32, 16, 32, vertex.x + 0.5, vertex.y + 0.5,
+                )
+        else:
+            # Every vertical step maps to the first opaque bottom-row edge swatch.
+            side_uv = ((0.0, 1.0), (1.0, 1.0), (1.0, 0.0), (0.0, 0.0))
+            for index, loop_index in enumerate(polygon.loop_indices):
+                uv_layer.data[loop_index].uv = inset_tile_uv(0, 32, 16, 32, *side_uv[index])
+    mesh.validate(clean_customdata=False)
+    mesh.calc_loop_triangles()
     obj = bpy.data.objects.new("Lily_Pad", mesh)
     collection.objects.link(obj)
     obj.parent = root
+    obj["voxel_step"] = VOXEL_UNIT
+    obj["surface_tile"] = "atlas_top_left_32"
+    return obj
+
+
+def create_crossed_flower_mesh(
+    collection: bpy.types.Collection,
+    root: bpy.types.Object,
+    material: bpy.types.Material,
+) -> bpy.types.Object:
+    """Create exactly two crossed alpha-cutout planes using the flower tile."""
+    center_x, center_y = -0.13, 0.08
+    half_width = 0.23
+    bottom_z = VOXEL_UNIT * 0.42
+    top_z = bottom_z + 0.48
+    vertices = [
+        (center_x - half_width, center_y, bottom_z),
+        (center_x + half_width, center_y, bottom_z),
+        (center_x + half_width, center_y, top_z),
+        (center_x - half_width, center_y, top_z),
+        (center_x, center_y - half_width, bottom_z),
+        (center_x, center_y + half_width, bottom_z),
+        (center_x, center_y + half_width, top_z),
+        (center_x, center_y - half_width, top_z),
+    ]
+    mesh = bpy.data.meshes.new("Crossed_Waybloom_Mesh")
+    mesh.from_pydata(vertices, [], [(0, 1, 2, 3), (4, 5, 6, 7)])
+    mesh.materials.append(material)
+    mesh.update(calc_edges=True)
+    uv_layer = mesh.uv_layers.new(name="UVMap")
+    plane_uv = ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))
+    for polygon in mesh.polygons:
+        for index, loop_index in enumerate(polygon.loop_indices):
+            uv_layer.data[loop_index].uv = inset_tile_uv(32, 0, 32, 32, *plane_uv[index])
+    mesh.validate(clean_customdata=False)
+    mesh.calc_loop_triangles()
+    obj = bpy.data.objects.new("Crossed_Waybloom_Flower", mesh)
+    collection.objects.link(obj)
+    obj.parent = root
+    obj["alpha_cutout_planes"] = 2
+    obj["surface_tile"] = "atlas_top_right_32"
     return obj
 
 
@@ -264,30 +441,12 @@ def build_lily_pad(
 ) -> bpy.types.Object:
     root = create_empty("Lily_Pad_Asset", collection)
     root["asset_role"] = "pond_surface_detail"
-    create_lily_pad_mesh(collection, root, materials["pad"])
-
-    # Raised square flecks give the broad surface an intentional pixel texture.
-    create_box("Pad_Light_Pixel_A", (0.12, 0.08, 0.008), (-0.19, 0.19, 0.027), materials["pad_light"], collection, rotation_z=0.18, parent=root)
-    create_box("Pad_Light_Pixel_B", (0.07, 0.06, 0.008), (0.18, -0.22, 0.027), materials["pad_light"], collection, rotation_z=-0.12, parent=root)
-    create_box("Pad_Dark_Pixel", (0.1, 0.065, 0.009), (-0.29, -0.1, 0.028), materials["pad_dark"], collection, rotation_z=-0.3, parent=root)
+    root["runtime_draw_budget"] = 1
+    root["atlas_pixels"] = 64
+    create_lily_pad_mesh(collection, root, materials["lily_atlas"])
 
     if include_flower:
-        flower_root = create_empty("Optional_Block_Flower", collection, root)
-        flower_root.location = (-0.13, 0.08, 0.03)
-        create_low_poly_cylinder("Flower_Stem", 0.026, 0.16, (0.0, 0.0, 0.08), materials["stem"], collection, vertices=6, parent=flower_root)
-        for index in range(6):
-            angle = math.tau * index / 6
-            distance = 0.105
-            create_box(
-                f"Flower_Petal_{index + 1:02d}",
-                (0.16, 0.085, 0.026),
-                (math.cos(angle) * distance, math.sin(angle) * distance, 0.175),
-                materials["petal"],
-                collection,
-                rotation_z=angle,
-                parent=flower_root,
-            )
-        create_low_poly_cylinder("Flower_Core", 0.072, 0.052, (0.0, 0.0, 0.187), materials["flower_core"], collection, vertices=8, parent=flower_root)
+        create_crossed_flower_mesh(collection, root, materials["lily_atlas"])
     return root
 
 
@@ -370,111 +529,28 @@ def build_mist(
     return root
 
 
-def create_wing_mesh(
-    name: str,
-    side: float,
-    collection: bpy.types.Collection,
-    parent: bpy.types.Object,
-    material: bpy.types.Material,
-) -> bpy.types.Object:
-    vertices = [
-        (0.0, 0.0, 0.0),
-        (side * 0.075, -0.01, 0.008),
-        (side * 0.12, 0.035, 0.0),
-        (side * 0.055, 0.062, -0.004),
-    ]
-    mesh = bpy.data.meshes.new(f"{name}_Mesh")
-    mesh.from_pydata(vertices, [], [(0, 1, 2, 3)])
-    mesh.materials.append(material)
-    mesh.update(calc_edges=True)
-    obj = bpy.data.objects.new(name, mesh)
-    collection.objects.link(obj)
-    obj.parent = parent
-    return obj
-
-
-def animate_fly(
-    fly: bpy.types.Object,
-    wings: Iterable[bpy.types.Object],
-    index: int,
-    base: Sequence[float],
-    radius: float,
-    phase: float,
-) -> None:
-    frames = (LOOP_START, 25, 49, 73, LOOP_END)
-    for step, frame in enumerate(frames):
-        angle = phase + math.tau * step / (len(frames) - 1)
-        fly.location = (
-            base[0] + math.cos(angle) * radius,
-            base[1] + math.sin(angle) * radius * 0.7,
-            base[2] + math.sin(angle * 2.0) * 0.035,
-        )
-        fly.rotation_euler[2] = angle + math.pi * 0.5
-        fly.keyframe_insert("location", frame=frame)
-        fly.keyframe_insert("rotation_euler", frame=frame)
-    if fly.animation_data and fly.animation_data.action:
-        fly.animation_data.action.name = f"Fly_{index:02d}_Orbit_Loop"
-    set_linear_interpolation(fly)
-
-    flap_frames = (LOOP_START, 13, 25, 37, 49, 61, 73, 85, LOOP_END)
-    for wing_index, wing in enumerate(wings):
-        direction = -1.0 if wing_index == 0 else 1.0
-        for step, frame in enumerate(flap_frames):
-            wing.rotation_euler[1] = direction * (0.18 if step % 2 == 0 else 0.78)
-            wing.keyframe_insert("rotation_euler", frame=frame)
-        if wing.animation_data and wing.animation_data.action:
-            wing.animation_data.action.name = f"Fly_{index:02d}_Wing_{wing_index + 1}_Loop"
-        set_linear_interpolation(wing)
-
-
 def build_flies(
     collection: bpy.types.Collection,
-    materials: dict[str, bpy.types.Material],
     count: int,
     rng: random.Random,
     animate: bool,
 ) -> bpy.types.Object:
     swarm = create_empty("Fly_Swarm_Asset", collection)
     swarm["asset_role"] = "pond_microfauna"
-    for index in range(1, count + 1):
-        fly = create_empty(f"Fly_{index:02d}", collection, swarm)
-        base_angle = math.tau * (index - 1) / max(1, count) + rng.uniform(-0.18, 0.18)
-        base_radius = rng.uniform(0.32, 0.62)
-        base = (
-            math.cos(base_angle) * base_radius,
-            math.sin(base_angle) * base_radius * 0.72,
-            rng.uniform(0.18, 0.48),
-        )
-        fly.location = base
-        fly["loop_phase"] = round(base_angle, 6)
-        create_box("Fly_%02d_Body" % index, (0.058, 0.035, 0.035), (0.0, 0.0, 0.0), materials["fly"], collection, parent=fly)
-        create_box("Fly_%02d_Head" % index, (0.027, 0.032, 0.03), (0.039, 0.0, 0.0), materials["fly_eye"], collection, parent=fly)
-        left_wing = create_wing_mesh(f"Fly_{index:02d}_Wing_L", -1.0, collection, fly, materials["wing"])
-        right_wing = create_wing_mesh(f"Fly_{index:02d}_Wing_R", 1.0, collection, fly, materials["wing"])
-        if animate:
-            animate_fly(
-                fly,
-                (left_wing, right_wing),
-                index,
-                base,
-                rng.uniform(0.055, 0.13),
-                rng.uniform(0.0, math.tau),
-            )
+    # Browser runtime deliberately renders flies as one tiny black-dot Points
+    # draw with procedural motion. Keep only deterministic metadata in the GLB;
+    # the superseded wing/body prototype would never be consumed and cost bytes.
+    swarm["runtime_representation"] = "procedural_black_points"
+    swarm["flies_per_swarm"] = count
+    swarm["seed_probe"] = round(rng.random(), 8)
+    swarm["animated_at_runtime"] = bool(animate)
     return swarm
 
 
-def make_materials() -> dict[str, bpy.types.Material]:
+def make_materials(atlas_path: Path) -> dict[str, bpy.types.Material]:
     return {
-        "pad": create_material("Pad_Moss_Green", (0.16, 0.43, 0.19), roughness=0.96),
-        "pad_light": create_material("Pad_Light_Pixels", (0.29, 0.58, 0.25), roughness=0.94),
-        "pad_dark": create_material("Pad_Dark_Pixels", (0.08, 0.28, 0.13), roughness=0.98),
-        "stem": create_material("Flower_Stem", (0.12, 0.38, 0.16), roughness=0.95),
-        "petal": create_material("Flower_Petal", (0.93, 0.68, 0.72), roughness=0.9),
-        "flower_core": create_material("Flower_Core", (0.92, 0.66, 0.19), roughness=0.9),
+        "lily_atlas": create_lily_atlas_material(atlas_path),
         "mist": create_material("Mist_Translucent", (0.72, 0.82, 0.82), roughness=1.0, alpha=0.24, emission_strength=0.08, double_sided=True),
-        "fly": create_material("Fly_Charcoal", (0.055, 0.065, 0.06), roughness=0.82),
-        "fly_eye": create_material("Fly_Eye", (0.19, 0.12, 0.08), roughness=0.58),
-        "wing": create_material("Fly_Wing", (0.66, 0.76, 0.74), roughness=0.72, alpha=0.52, double_sided=True),
     }
 
 
@@ -504,7 +580,7 @@ def export_scene(output: Path, export_format: str, animate: bool) -> None:
         "export_lights": False,
         "export_extras": True,
         "export_materials": "EXPORT",
-        "export_texcoords": False,
+        "export_texcoords": True,
         "export_normals": True,
         "export_tangents": False,
         "export_colors": True,
@@ -516,6 +592,68 @@ def export_scene(output: Path, export_format: str, animate: bool) -> None:
     result = bpy.ops.export_scene.gltf(**{key: value for key, value in requested.items() if key in supported})
     if "FINISHED" not in result:
         raise RuntimeError(f"glTF export did not finish: {sorted(result)}")
+
+
+def render_preview(preview_path: Path, asset_root: bpy.types.Object, scale: float) -> Path:
+    """Render a compact deterministic QA still after the export-only scene is saved."""
+    preview = preview_path.expanduser().resolve().with_suffix(".png")
+    preview.parent.mkdir(parents=True, exist_ok=True)
+
+    bpy.ops.mesh.primitive_plane_add(size=8.0, location=(0.0, 0.0, -0.045 * scale))
+    water = bpy.context.object
+    water.name = "QA_Water_Backdrop"
+    water_material = create_material("QA_Water", (0.075, 0.24, 0.3), roughness=0.34)
+    water.data.materials.append(water_material)
+
+    camera_data = bpy.data.cameras.new("QA_Lily_Camera")
+    camera = bpy.data.objects.new("QA_Lily_Camera", camera_data)
+    bpy.context.scene.collection.objects.link(camera)
+    camera.location = (1.38 * scale, -1.52 * scale, 1.12 * scale)
+    camera.rotation_euler = (
+        Vector((0.0, 0.0, 0.13 * scale)) - camera.location
+    ).to_track_quat("-Z", "Y").to_euler()
+    camera_data.lens = 58
+    bpy.context.scene.camera = camera
+
+    key_data = bpy.data.lights.new("QA_Key", type="AREA")
+    key_data.energy = 620
+    key_data.shape = "DISK"
+    key_data.size = 3.0
+    key = bpy.data.objects.new("QA_Key", key_data)
+    bpy.context.scene.collection.objects.link(key)
+    key.location = (-1.6 * scale, -1.15 * scale, 2.5 * scale)
+    key.rotation_euler = (
+        Vector((0.0, 0.0, 0.0)) - key.location
+    ).to_track_quat("-Z", "Y").to_euler()
+
+    fill_data = bpy.data.lights.new("QA_Fill", type="AREA")
+    fill_data.energy = 260
+    fill_data.size = 2.0
+    fill = bpy.data.objects.new("QA_Fill", fill_data)
+    bpy.context.scene.collection.objects.link(fill)
+    fill.location = (1.2 * scale, 0.85 * scale, 1.4 * scale)
+    fill.rotation_euler = (
+        Vector((0.0, 0.0, 0.1 * scale)) - fill.location
+    ).to_track_quat("-Z", "Y").to_euler()
+
+    scene = bpy.context.scene
+    # Blender's 5.2 LTS API exposes the Eevee engine as BLENDER_EEVEE while
+    # several earlier 4.x point releases used BLENDER_EEVEE_NEXT.
+    try:
+        scene.render.engine = "BLENDER_EEVEE_NEXT"
+    except TypeError:
+        scene.render.engine = "BLENDER_EEVEE"
+    scene.render.resolution_x = 768
+    scene.render.resolution_y = 512
+    scene.render.resolution_percentage = 100
+    scene.render.image_settings.file_format = "PNG"
+    scene.render.image_settings.color_mode = "RGBA"
+    scene.render.film_transparent = False
+    scene.render.filepath = str(preview)
+    scene.world.color = (0.035, 0.075, 0.09)
+    asset_root.hide_render = False
+    bpy.ops.render.render(write_still=True)
+    return preview
 
 
 def main() -> None:
@@ -531,23 +669,27 @@ def main() -> None:
     root["loop_start"] = LOOP_START
     root["loop_end"] = LOOP_END
 
-    materials = make_materials()
+    materials = make_materials(args.atlas)
     lily = build_lily_pad(collection, materials, args.flower)
     mist = build_mist(collection, materials["mist"], args.animate)
-    flies = build_flies(collection, materials, args.flies, rng, args.animate)
+    flies = build_flies(collection, args.flies, rng, args.animate)
     lily.parent = root
     mist.parent = root
     flies.parent = root
 
     output, export_format = resolve_export(args)
     export_scene(output, export_format, args.animate)
+    preview = render_preview(args.preview, root, args.scale) if args.preview else None
     manifest = {
         "output": str(output),
+        "atlas": str(args.atlas),
+        "preview": str(preview) if preview else None,
         "format": export_format,
         "seed": args.seed,
         "scale": args.scale,
         "flower": args.flower,
         "flies": args.flies,
+        "fly_representation": "procedural_black_points",
         "animated": args.animate,
         "loop_frames": [LOOP_START, LOOP_END] if args.animate else None,
         "generator_version": GENERATOR_VERSION,

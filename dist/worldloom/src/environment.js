@@ -3,6 +3,7 @@ import { BLOCK, BLOCKS, blockShapeHeight } from './blocks.js';
 import { CRACK_STAGES, createCrackAtlasTexture } from './crack-texture.js';
 import { GRAPHICS_PRESETS } from './save.js';
 import { PondEcologyField } from './pond-ecology.js';
+import { atmosphericFogRange } from './fog.js';
 
 const LIGHT_BLOCKS = new Set([BLOCK.TORCH, BLOCK.LUMEN_CRYSTAL, BLOCK.KILN, BLOCK.FURNACE]);
 const FOLIAGE_BLOCKS = new Set([BLOCK.ASH_LEAVES, BLOCK.PINE_NEEDLES]);
@@ -892,6 +893,7 @@ export class Environment {
     this.skyExposure = 1;
     this.skyExposureTarget = 1;
     this.skyExposureTimer = 0;
+    this.fogClarity = 0;
     this.skyColor = new THREE.Color();
     this.fogColor = new THREE.Color();
     this.daySky = new THREE.Color('#70bce8');
@@ -1463,7 +1465,7 @@ export class Environment {
     if (this.skyExposure < 0.002) this.skyExposure = 0;
   }
 
-  update(dt, focus, viewDistance = 4) {
+  update(dt, focus, viewDistance = 4, context = {}) {
     this.graphicsUniforms.time.value += dt;
     this.time = (this.time + dt / this.cycleSeconds) % 1;
     this._updateCloudField(dt, focus);
@@ -1489,8 +1491,16 @@ export class Environment {
     this.fogColor.lerp(this._stormFog, stormAmount * 0.82);
     this.scene.background.copy(this.skyColor);
     this.scene.fog.color.copy(this.fogColor);
-    this.scene.fog.near = Math.max(12, viewDistance * 10 - 8 - this.rainIntensity * 11);
-    this.scene.fog.far = viewDistance * 16 + 34 - this.rainIntensity * Math.min(32, viewDistance * 4);
+    const fogRange = atmosphericFogRange(viewDistance, {
+      rainIntensity: this.rainIntensity,
+      overcastAmount: this.overcastAmount,
+      skyExposure: this.skyExposure,
+      dayAmount: this.dayAmount,
+      submerged: Boolean(context.submerged),
+    });
+    this.fogClarity = fogRange.clarity;
+    this.scene.fog.near = fogRange.near;
+    this.scene.fog.far = fogRange.far;
 
     this.atmosphere.position.copy(focus);
     const skyUniforms = this.atmosphere.material.uniforms;

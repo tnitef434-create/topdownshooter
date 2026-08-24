@@ -12,7 +12,10 @@ import {
   PlayerAvatar,
   WORLD_AVATAR_LAYER,
 } from '../src/public/worldloom/src/player-avatar.js';
-import { PondEcologyField } from '../src/public/worldloom/src/pond-ecology.js';
+import {
+  PondEcologyField,
+  pondFlyOffset,
+} from '../src/public/worldloom/src/pond-ecology.js';
 
 function meshSummary(root) {
   const meshes = [];
@@ -22,6 +25,10 @@ function meshSummary(root) {
 
 const POND_DETAILS_URL = new URL(
   '../src/public/worldloom/assets/environment/pond-details.glb',
+  import.meta.url,
+);
+const POND_ATLAS_URL = new URL(
+  '../src/public/worldloom/assets/environment/pond-lily-atlas.png',
   import.meta.url,
 );
 const POND_GENERATOR_URL = new URL('../tools/generate_pond_assets.py', import.meta.url);
@@ -46,6 +53,39 @@ function parseGlb(buffer) {
   return json;
 }
 
+function embeddedBufferView(buffer, document, viewIndex) {
+  const view = document.bufferViews?.[viewIndex];
+  assert.ok(view, `GLB is missing bufferView ${viewIndex}`);
+  const jsonLength = buffer.readUInt32LE(12);
+  const binaryStart = 20 + jsonLength + 8;
+  const start = binaryStart + (view.byteOffset || 0);
+  return buffer.subarray(start, start + view.byteLength);
+}
+
+function pngMetadata(buffer) {
+  assert.equal(buffer.subarray(0, 8).toString('hex'), '89504e470d0a1a0a', 'atlas must be PNG');
+  assert.equal(buffer.subarray(12, 16).toString('ascii'), 'IHDR', 'atlas PNG must start with IHDR');
+  return {
+    width: buffer.readUInt32BE(16),
+    height: buffer.readUInt32BE(20),
+    bitDepth: buffer[24],
+    colorType: buffer[25],
+  };
+}
+
+function descendantNodeIndices(document, rootName) {
+  const rootIndex = (document.nodes || []).findIndex((node) => node.name === rootName);
+  assert.notEqual(rootIndex, -1, `generated GLB is missing ${rootName}`);
+  const indices = [];
+  const pending = [rootIndex];
+  while (pending.length) {
+    const index = pending.pop();
+    indices.push(index);
+    pending.push(...(document.nodes[index]?.children || []));
+  }
+  return indices;
+}
+
 function createTestPondGltf(packScale = 1) {
   const scene = new THREE.Scene();
   const pack = new THREE.Group();
@@ -53,18 +93,29 @@ function createTestPondGltf(packScale = 1) {
   pack.scale.setScalar(packScale);
   scene.add(pack);
   const colors = [0x4a8b45, 0xb9d4d2, 0x211c17];
+  const atlasTexture = new THREE.DataTexture(
+    new Uint8Array([74, 139, 69, 255]),
+    1,
+    1,
+    THREE.RGBAFormat,
+  );
+  atlasTexture.name = 'Fake embedded pond lily atlas';
+  atlasTexture.colorSpace = THREE.SRGBColorSpace;
+  atlasTexture.needsUpdate = true;
   ['Lily_Pad_Asset', 'Mist_Wisp_Asset', 'Fly_Swarm_Asset'].forEach((name, index) => {
     const root = new THREE.Group();
     root.name = name;
+    const material = new THREE.MeshStandardMaterial({ color: colors[index] });
+    if (index === 0) material.map = atlasTexture;
     const mesh = new THREE.Mesh(
       new THREE.BoxGeometry(1, 0.1 + index * 0.05, 1),
-      new THREE.MeshStandardMaterial({ color: colors[index] }),
+      material,
     );
     root.add(mesh);
     pack.add(root);
   });
   scene.updateMatrixWorld(true);
-  return { scene, animations: [] };
+  return { scene, animations: [], atlasTexture };
 }
 
 test('generated pond-detail GLB is valid, embedded, and kept within its web budget', () => {
@@ -77,6 +128,20 @@ test('generated pond-detail GLB is valid, embedded, and kept within its web budg
   assert.equal(document.buffers?.[0]?.uri, undefined, 'GLB must not depend on an external binary file');
   assert.ok((document.meshes?.length || 0) >= 3, 'pond pack must contain nontrivial mesh detail');
   assert.ok((document.animations?.length || 0) >= 1, 'pond wildlife must retain its looping animation data');
+
+  const sourceAtlas = pngMetadata(readFileSync(POND_ATLAS_URL));
+  assert.deepEqual(sourceAtlas, { width: 64, height: 64, bitDepth: 8, colorType: 6 },
+    'source pond atlas must remain an exact 64x64 RGBA PNG');
+  assert.equal(document.images?.length, 1, 'one pond atlas should be embedded in the GLB');
+  const embeddedImage = document.images[0];
+  assert.equal(embeddedImage.uri, undefined, 'pond GLB cannot depend on an external atlas request');
+  assert.equal(embeddedImage.mimeType, 'image/png');
+  assert.ok(Number.isInteger(embeddedImage.bufferView));
+  assert.deepEqual(
+    pngMetadata(embeddedBufferView(glb, document, embeddedImage.bufferView)),
+    sourceAtlas,
+    'embedded atlas metadata must exactly match the authored source PNG',
+  );
 });
 
 test('pond asset pack exposes every stable root and contains no Draco dependency', () => {
@@ -89,6 +154,45 @@ test('pond asset pack exposes every stable root and contains no Draco dependency
     'GLB must load without a Draco decoder');
   assert.doesNotMatch(JSON.stringify(document), /KHR_draco_mesh_compression/,
     'no mesh primitive may retain a hidden Draco extension');
+
+  const lilyNodes = descendantNodeIndices(document, 'Lily_Pad_Asset')
+    .map((index) => document.nodes[index]);
+  const lilyPrimitives = lilyNodes
+    .filter((node) => Number.isInteger(node.mesh))
+    .flatMap((node) => document.meshes[node.mesh]?.primitives || []);
+  assert.equal(lilyPrimitives.length, 2,
+    'authored lily should contain only its stepped pad and crossed-flower meshes');
+  assert.ok(lilyPrimitives.every((primitive) => Number.isInteger(primitive.attributes?.TEXCOORD_0)),
+    'every lily primitive must preserve its authored atlas UVs');
+  assert.equal(new Set(lilyPrimitives.map((primitive) => primitive.material)).size, 1,
+    'pad and crossed flower should share one atlas material for runtime baking');
+  assert.ok(lilyPrimitives.every((primitive) => Number.isInteger(
+    document.materials?.[primitive.material]?.pbrMetallicRoughness?.baseColorTexture?.index,
+  )), 'every lily primitive must reference the embedded atlas texture');
+  const lilyMaterial = document.materials?.[lilyPrimitives[0].material];
+  assert.equal(lilyMaterial?.alphaMode, 'MASK', 'authored flower planes must export as alpha cutouts');
+  assert.equal(lilyMaterial?.alphaCutoff ?? 0.5, 0.5,
+    'omitted glTF alphaCutoff must resolve to the specification default of 0.5');
+  assert.equal(lilyMaterial?.doubleSided, true, 'both crossed planes must render from every view');
+  const lilyTexture = document.textures?.[
+    lilyMaterial?.pbrMetallicRoughness?.baseColorTexture?.index
+  ];
+  const lilySampler = document.samplers?.[lilyTexture?.sampler];
+  assert.equal(lilySampler?.magFilter, 9728, 'embedded atlas must use glTF NEAREST magnification');
+  assert.ok([9728, 9984].includes(lilySampler?.minFilter),
+    'embedded atlas must use nearest-only minification before runtime disables mipmaps');
+  const lilyTriangles = lilyPrimitives.reduce((total, primitive) => {
+    const count = document.accessors?.[primitive.indices]?.count
+      || document.accessors?.[primitive.attributes?.POSITION]?.count
+      || 0;
+    return total + count / 3;
+  }, 0);
+  assert.ok(lilyTriangles <= 128, `lily authored geometry exceeded its 128-triangle budget (${lilyTriangles})`);
+
+  const flyNodes = descendantNodeIndices(document, 'Fly_Swarm_Asset')
+    .map((index) => document.nodes[index]);
+  assert.ok(flyNodes.every((node) => !Number.isInteger(node.mesh)),
+    'GLB must not ship superseded fly body/wing geometry; runtime owns the one-draw dots');
 });
 
 test('Blender pond generator keeps deterministic roots and a safe uncompressed exporter contract', () => {
@@ -109,6 +213,14 @@ test('Blender pond generator keeps deterministic roots and a safe uncompressed e
     'every successful export must retain a non-empty Fly_Swarm_Asset');
   assert.match(source, /--flies must be between 1 and 12/,
     'invalid empty fly packs need a clear CLI error');
+  assert.match(source, /["']export_texcoords["']\s*:\s*True/,
+    'generator must export authored atlas UV coordinates');
+  assert.match(source, /texture\.interpolation\s*=\s*["']Closest["']/,
+    'generator must preserve hard pixel edges in Blender');
+  assert.match(source, /--atlas/,
+    'generator CLI must accept the exact atlas path used for reproducible builds');
+  assert.doesNotMatch(source, /create_box\(["']Flower_Petal_|create_low_poly_cylinder\(["']Flower_(?:Stem|Core)/,
+    'lily flower must remain two atlas-cutout planes rather than cylinder/cuboid petals');
 });
 
 test('pond asset failures and stalls remain bounded cosmetic failures', async () => {
@@ -140,10 +252,14 @@ test('disposing an in-flight pond load permits a clean scaled reload and rejects
   const scene = new THREE.Scene();
   const stale = createTestPondGltf();
   let staleGeometryDisposals = 0;
+  let staleAtlasDisposals = 0;
+  stale.atlasTexture.addEventListener('dispose', () => { staleAtlasDisposals++; });
   stale.scene.traverse((node) => {
     node.geometry?.addEventListener?.('dispose', () => { staleGeometryDisposals++; });
   });
   const fresh = createTestPondGltf(2);
+  let importedAtlasDisposals = 0;
+  fresh.atlasTexture.addEventListener('dispose', () => { importedAtlasDisposals++; });
   let resolveStale = null;
   let attempts = 0;
   const field = new PondEcologyField(scene, null, {
@@ -168,7 +284,12 @@ test('disposing an in-flight pond load permits a clean scaled reload and rejects
   assert.equal(field.ready, true);
   assert.equal(attempts, 2);
   assert.equal(field.group.parent, scene, 're-prepare must reattach a disposed ecology group');
+  assert.equal(importedAtlasDisposals, 1,
+    'runtime must release the imported atlas after cloning its owned texture');
   const activePad = field.padMesh;
+  const runtimeAtlas = activePad.material.map;
+  let runtimeAtlasDisposals = 0;
+  runtimeAtlas.addEventListener('dispose', () => { runtimeAtlasDisposals++; });
   const padSize = activePad.geometry.boundingBox.getSize(new THREE.Vector3());
   assert.ok(Math.abs(padSize.x - 2) < 1e-6, 'authored pack --scale must survive runtime baking');
 
@@ -176,6 +297,154 @@ test('disposing an in-flight pond load permits a clean scaled reload and rejects
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(field.padMesh, activePad, 'a late stale load must not replace the active meshes');
   assert.ok(staleGeometryDisposals >= 3, 'late imported geometry must be disposed');
+  assert.equal(staleAtlasDisposals, 1, 'late imported atlas texture must be disposed');
+  field.dispose();
+  assert.equal(runtimeAtlasDisposals, 1, 'field disposal must release its cloned runtime atlas');
+  assert.equal(scene.children.length, 0);
+});
+
+test('pond lily runtime keeps pixel UVs and atlas filtering within one instanced draw', async () => {
+  const scene = new THREE.Scene();
+  const gltf = createTestPondGltf();
+  const field = new PondEcologyField(scene, null, {
+    loaderFactory: () => ({ loadAsync: () => Promise.resolve(gltf) }),
+  });
+  await field.prepare();
+
+  const pad = field.padMesh;
+  assert.equal(pad.isInstancedMesh, true, 'all authored lily parts must bake into one instanced draw');
+  assert.ok(pad.geometry.getAttribute('uv'), 'runtime lily baking must preserve TEXCOORD_0');
+  assert.equal(pad.geometry.getAttribute('color'), undefined,
+    'atlas lily cannot retain the old vertex-colour override');
+  assert.ok(pad.material.map?.isTexture, 'lily material must own a clone of the embedded atlas');
+  assert.notEqual(pad.material.map, gltf.atlasTexture,
+    'runtime material must not retain an imported texture disposed with the glTF scene');
+  assert.equal(pad.material.map.colorSpace, THREE.SRGBColorSpace);
+  assert.equal(pad.material.map.magFilter, THREE.NearestFilter);
+  assert.equal(pad.material.map.minFilter, THREE.NearestFilter);
+  assert.equal(pad.material.map.generateMipmaps, false);
+  assert.equal(pad.material.alphaTest, 0.5);
+  assert.equal(pad.material.transparent, false);
+  assert.equal(pad.material.depthWrite, true);
+  assert.equal(pad.material.side, THREE.DoubleSide);
+  assert.equal(field.group.children.filter((child) => child === pad).length, 1,
+    'exactly one lily instanced mesh may be attached');
+
+  field.dispose();
+  assert.equal(scene.children.length, 0);
+});
+
+test('pond flies are tiny unlit dots with deterministic fast short-loop motion', async () => {
+  const scene = new THREE.Scene();
+  const field = new PondEcologyField(scene, null, {
+    loaderFactory: () => ({ loadAsync: () => Promise.resolve(createTestPondGltf()) }),
+  });
+  await field.prepare();
+  field.setWorld({
+    getPondsNear: () => [{
+      id: '-1,-1',
+      cellX: -1,
+      cellZ: -1,
+      centerX: -14.5,
+      centerZ: -19.5,
+      radiusX: 5.8,
+      radiusZ: 6.1,
+      waterY: 38,
+      phase: 6,
+    }],
+    isPositionReady: () => true,
+    getFluidSurfaceY: () => 38.92,
+  });
+  field.setQuality({
+    pondDetailRadius: 48,
+    pondPadCap: 0,
+    pondMistCap: 0,
+    pondFlyCap: 1,
+  }, false);
+  field.update(0.05, new THREE.Vector3(-14.5, 39, -19.5), {
+    dayAmount: 1,
+    rainIntensity: 0,
+    skyExposure: 1,
+  });
+
+  const flies = field.flyMesh;
+  assert.equal(flies.isPoints, true, 'runtime flies must be point dots, not the authored winged mesh');
+  assert.equal(flies.material.isPointsMaterial, true);
+  assert.equal('emissive' in flies.material, false, 'flies cannot carry emissive glow');
+  assert.notEqual(flies.material.lights, true, 'fly dots cannot depend on scene lights');
+  assert.ok(Math.max(flies.material.color.r, flies.material.color.g, flies.material.color.b) < 0.08,
+    'fly dots must remain near-black');
+  assert.ok(flies.material.size <= 0.05, 'flies must stay tiny even at close range');
+  assert.equal(flies.children.length, 0, 'no hidden wing or body model may remain attached');
+  assert.equal(flies.geometry.index, null);
+  assert.equal(flies.geometry.getAttribute('normal'), undefined);
+  assert.equal(flies.geometry.drawRange.count, 5);
+
+  const stats = field.getStats();
+  assert.deepEqual({
+    swarms: stats.flySwarms,
+    dots: stats.flyDots,
+    draws: stats.draws,
+    triangles: stats.triangles,
+  }, {
+    swarms: 1,
+    dots: 5,
+    draws: 1,
+    triangles: 0,
+  }, 'fly-only ecology must fit one draw and zero triangle work');
+  assert.equal(flies.userData.drawBudget, 1);
+  assert.equal(flies.userData.triangleBudget, 0);
+
+  const position = flies.geometry.getAttribute('position');
+  const firstFrame = Array.from(position.array.slice(0, stats.flyDots * 3));
+  for (let index = 0; index < stats.flyDots; index++) {
+    assert.ok(firstFrame[index * 3 + 1] > 38.92,
+      'every fly must remain visibly above the pond water surface');
+  }
+  field.update(0.05, new THREE.Vector3(-14.5, 39, -19.5), {
+    dayAmount: 1,
+    rainIntensity: 0,
+    skyExposure: 1,
+  });
+  assert.notDeepEqual(
+    Array.from(position.array.slice(0, stats.flyDots * 3)),
+    firstFrame,
+    'flies need quick visible movement rather than a slow decorative orbit',
+  );
+
+  const anchor = field.flyAnchors[0];
+  let previous = null;
+  let previousVelocity = null;
+  let pathLength = 0;
+  let directionChanges = 0;
+  let maximumRadius = 0;
+  let maximumHeightOffset = 0;
+  for (let sample = 0; sample <= 100; sample++) {
+    const time = sample * 0.03;
+    const point = pondFlyOffset(anchor, 2, time, 1, new THREE.Vector3());
+    assert.deepEqual(
+      pondFlyOffset(anchor, 2, time, 1, new THREE.Vector3()).toArray(),
+      point.toArray(),
+      'fly motion must replay deterministically',
+    );
+    maximumRadius = Math.max(maximumRadius, Math.hypot(point.x, point.z));
+    maximumHeightOffset = Math.max(maximumHeightOffset, Math.abs(point.y));
+    if (previous) {
+      const velocity = point.clone().sub(previous);
+      pathLength += velocity.length();
+      if (previousVelocity
+        && velocity.clone().normalize().dot(previousVelocity.clone().normalize()) < 0.7) {
+        directionChanges++;
+      }
+      previousVelocity = velocity;
+    }
+    previous = point;
+  }
+  assert.ok(pathLength > 3, `flies moved too slowly (${pathLength.toFixed(2)}m path)`);
+  assert.ok(directionChanges >= 8, `flies need erratic turns (${directionChanges} detected)`);
+  assert.ok(maximumRadius < 0.32, `fly loops spread too far from pond anchor (${maximumRadius})`);
+  assert.ok(maximumHeightOffset < 0.08, `fly loops bob too far vertically (${maximumHeightOffset})`);
+
   field.dispose();
   assert.equal(scene.children.length, 0);
 });

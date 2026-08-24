@@ -28,6 +28,7 @@ import { HeldItemView, createDroppedItemModel, disposeItemModel } from './viewmo
 import { PlayerAvatar, WORLD_AVATAR_LAYER } from './player-avatar.js';
 import { GraphicsPipeline } from './graphics.js';
 import { SurvivalSystem } from './survival.js';
+import { clampFogToMeshedTerrain } from './fog.js';
 
 const canvas = document.getElementById('game');
 const ui = new UI();
@@ -1702,17 +1703,21 @@ function animate(now) {
   if (state === 'playing' || state === 'inventory') updateGame(dt);
   else if (state === 'menu') effects.update(dt);
   const environmentDt = state === 'playing' || state === 'inventory' ? dt : state === 'menu' ? dt * 0.12 : 0;
-  environment.update(environmentDt, focus, settings.viewDistance);
+  environment.update(environmentDt, focus, settings.viewDistance, {
+    submerged: Boolean(player?.headUnderwater),
+  });
   if (scene?.fog && world && player) {
-    const atmosphericFar = scene.fog.far;
-    const safeTerrainFar = world.getSafeTerrainDistance(player.position);
-    const targetFar = Math.min(atmosphericFar, safeTerrainFar);
-    if (!Number.isFinite(streamingFogFar)) streamingFogFar = targetFar;
-    else if (targetFar < streamingFogFar) streamingFogFar = targetFar;
-    else streamingFogFar += (targetFar - streamingFogFar) * (1 - Math.exp(-environmentDt * 2.2));
-    scene.fog.far = Math.min(atmosphericFar, streamingFogFar);
-    const fogBand = Math.min(34, Math.max(8, scene.fog.far * 0.55));
-    scene.fog.near = Math.min(scene.fog.near, Math.max(5, scene.fog.far - fogBand));
+    const clampedFog = clampFogToMeshedTerrain({
+      atmosphericNear: scene.fog.near,
+      atmosphericFar: scene.fog.far,
+      safeTerrainFar: world.getSafeTerrainDistance(player.position),
+      previousFar: streamingFogFar,
+      deltaSeconds: environmentDt,
+      clarity: environment.fogClarity,
+    });
+    streamingFogFar = clampedFog.streamingFar;
+    scene.fog.near = clampedFog.near;
+    scene.fog.far = clampedFog.far;
   }
   const weather = environment.getWeatherState();
   const surface = world && player ? world.terrainHeight(player.position.x, player.position.z) : 0;

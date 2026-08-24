@@ -7,6 +7,7 @@ const DEFAULT_LOAD_TIMEOUT_MS = 8_000;
 const MAX_PADS = 144;
 const MAX_MIST = 72;
 const MAX_SWARMS = 24;
+const FLIES_PER_SWARM = 5;
 
 function unitHash(x, z, salt = 0) {
   let value = Math.imul(Math.floor(x) ^ salt, 0x27d4eb2d)
@@ -17,16 +18,48 @@ function unitHash(x, z, salt = 0) {
   return (value >>> 0) / 4294967296;
 }
 
-function coloredGeometry(node, rootInverse) {
+export function pondFlyOffset(anchor, flyIndex, time, motion = 1, target = new THREE.Vector3()) {
+  const index = Math.max(0, Math.floor(Number(flyIndex) || 0));
+  const cellX = Number(anchor?.cellX ?? anchor?.x) || 0;
+  const cellZ = Number(anchor?.cellZ ?? anchor?.z) || 0;
+  const phase = (Number(anchor?.phase) || 0) + index * 2.3999632297;
+  const motionScale = THREE.MathUtils.clamp(Number(motion) || 0, 0, 1);
+  const speed = 5.2 + unitHash(cellX + index * 17, cellZ - index * 11, 0x9e3779b9) * 3.8;
+  const clock = Math.max(0, Number(time) || 0) * speed * (0.58 + motionScale * 0.42) + phase;
+  const reach = (0.13 + unitHash(cellX - index * 13, cellZ + index * 19, 0x85ebca6b) * 0.13)
+    * (0.52 + motionScale * 0.48);
+  // Layered, mismatched short loops read as quick course corrections without
+  // requiring a winged mesh or nondeterministic random work every frame.
+  const turnX = clock + Math.sin(clock * 1.73 + phase * 0.61) * 0.78;
+  const turnZ = clock * 1.21 + Math.sin(clock * 2.17 - phase * 0.47) * 0.7;
+  target.set(
+    Math.sin(turnX) * reach + Math.sin(clock * 3.07 + phase) * 0.035 * motionScale,
+    Math.sin(clock * 2.63 + phase * 0.37) * 0.052 * motionScale
+      + Math.cos(clock * 0.79 - phase) * 0.018 * motionScale,
+    Math.cos(turnZ) * reach * 0.82 + Math.sin(clock * 2.41 - phase) * 0.03 * motionScale,
+  );
+  return target;
+}
+
+function coloredGeometry(node, rootInverse, options = {}) {
+  const preserveUv = Boolean(options.preserveUv);
+  const useVertexColor = options.useVertexColor !== false;
   const geometry = node.geometry.clone();
   const transform = new THREE.Matrix4().multiplyMatrices(rootInverse, node.matrixWorld);
   geometry.applyMatrix4(transform);
   if (!geometry.getAttribute('normal')) geometry.computeVertexNormals();
-  for (const name of Object.keys(geometry.attributes)) {
-    if (!['position', 'normal'].includes(name)) geometry.deleteAttribute(name);
+  if (preserveUv && !geometry.getAttribute('uv')) {
+    geometry.dispose();
+    throw new Error(`Pond detail ${node.name || 'mesh'} is missing its authored atlas UVs`);
   }
+  const retained = preserveUv ? ['position', 'normal', 'uv'] : ['position', 'normal'];
+  for (const name of Object.keys(geometry.attributes)) {
+    if (!retained.includes(name)) geometry.deleteAttribute(name);
+  }
+  if (!useVertexColor) return geometry;
   const count = geometry.getAttribute('position').count;
-  const color = node.material?.color?.isColor ? node.material.color : new THREE.Color(0xffffff);
+  const sourceMaterial = Array.isArray(node.material) ? node.material[0] : node.material;
+  const color = sourceMaterial?.color?.isColor ? sourceMaterial.color : new THREE.Color(0xffffff);
   const colors = new Float32Array(count * 3);
   for (let index = 0; index < count; index++) {
     colors[index * 3] = color.r;
@@ -37,7 +70,7 @@ function coloredGeometry(node, rootInverse) {
   return geometry;
 }
 
-function bakeAssetGeometry(root, sceneRoot = root) {
+function bakeAssetGeometry(root, sceneRoot = root, options = {}) {
   if (!root) throw new Error('Pond detail asset root is missing');
   sceneRoot?.updateWorldMatrix?.(true, true);
   root.updateWorldMatrix(true, true);
@@ -47,7 +80,7 @@ function bakeAssetGeometry(root, sceneRoot = root) {
   const parts = [];
   root.traverse((node) => {
     if (node.isMesh && node.geometry?.getAttribute?.('position')) {
-      parts.push(coloredGeometry(node, sceneInverse));
+      parts.push(coloredGeometry(node, sceneInverse, options));
     }
   });
   if (!parts.length) throw new Error(`Pond detail ${root.name || 'asset'} contains no mesh`);
@@ -66,21 +99,46 @@ function bakeAssetGeometry(root, sceneRoot = root) {
   return merged;
 }
 
-function disposeImportedScene(scene) {
-  const materials = new Set();
+function disposeMaterials(entries) {
+  const materials = new Set(entries.flatMap((entry) => (Array.isArray(entry) ? entry : [entry])).filter(Boolean));
   const textures = new Set();
-  scene?.traverse?.((node) => {
-    node.geometry?.dispose?.();
-    const entries = Array.isArray(node.material) ? node.material : [node.material];
-    entries.filter(Boolean).forEach((material) => materials.add(material));
-  });
   materials.forEach((material) => {
     Object.values(material).forEach((value) => {
       if (value?.isTexture) textures.add(value);
     });
-    material.dispose?.();
   });
   textures.forEach((texture) => texture.dispose?.());
+  materials.forEach((material) => material.dispose?.());
+}
+
+function disposeImportedScene(scene) {
+  const materials = [];
+  scene?.traverse?.((node) => {
+    node.geometry?.dispose?.();
+    if (node.material) materials.push(node.material);
+  });
+  disposeMaterials(materials);
+}
+
+function findImportedAtlas(root) {
+  let atlas = null;
+  root?.traverse?.((node) => {
+    if (atlas || !node.isMesh) return;
+    const entries = Array.isArray(node.material) ? node.material : [node.material];
+    atlas = entries.find((material) => material?.map?.isTexture)?.map || null;
+  });
+  if (!atlas) throw new Error('Lily pad asset is missing its embedded texture atlas');
+  const texture = atlas.clone();
+  texture.name = 'Runtime nearest pond lily atlas';
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.magFilter = THREE.NearestFilter;
+  texture.minFilter = THREE.NearestFilter;
+  texture.generateMipmaps = false;
+  texture.wrapS = THREE.ClampToEdgeWrapping;
+  texture.wrapT = THREE.ClampToEdgeWrapping;
+  texture.anisotropy = 1;
+  texture.needsUpdate = true;
+  return texture;
 }
 
 function createInstancedMesh(geometry, material, capacity, name, renderOrder = 0) {
@@ -96,12 +154,50 @@ function createInstancedMesh(geometry, material, capacity, name, renderOrder = 0
   return mesh;
 }
 
+function createFlyPoints() {
+  const geometry = new THREE.BufferGeometry();
+  const position = new THREE.BufferAttribute(
+    new Float32Array(MAX_SWARMS * FLIES_PER_SWARM * 3),
+    3,
+  );
+  position.setUsage(THREE.DynamicDrawUsage);
+  geometry.setAttribute('position', position);
+  geometry.setDrawRange(0, 0);
+  const material = new THREE.PointsMaterial({
+    name: 'Tiny unlit pond fly dots',
+    color: 0x12110f,
+    size: 0.045,
+    sizeAttenuation: true,
+    transparent: false,
+    depthTest: true,
+    depthWrite: true,
+    fog: true,
+    toneMapped: true,
+  });
+  const points = new THREE.Points(geometry, material);
+  points.name = 'Tiny unlit pond fly dots';
+  points.count = 0;
+  points.visible = false;
+  points.castShadow = false;
+  points.receiveShadow = false;
+  points.frustumCulled = false;
+  points.renderOrder = 5;
+  points.userData.activePointCount = 0;
+  points.userData.fliesPerSwarm = FLIES_PER_SWARM;
+  points.userData.drawBudget = 1;
+  points.userData.triangleBudget = 0;
+  points.userData.representation = 'unlit-points';
+  return points;
+}
+
 function disposeEcologyMeshes(meshes) {
+  const materials = [];
   for (const mesh of meshes) {
     mesh?.removeFromParent?.();
     mesh?.geometry?.dispose?.();
-    mesh?.material?.dispose?.();
+    if (mesh?.material) materials.push(mesh.material);
   }
+  disposeMaterials(materials);
 }
 
 function createEcologyMeshes(gltf) {
@@ -111,19 +207,24 @@ function createEcologyMeshes(gltf) {
   try {
     const lilyRoot = gltf.scene.getObjectByName('Lily_Pad_Asset');
     const mistRoot = gltf.scene.getObjectByName('Mist_Wisp_Asset');
-    const flyRoot = gltf.scene.getObjectByName('Fly_Swarm_Asset');
-    const lilyGeometry = bakeAssetGeometry(lilyRoot, gltf.scene);
+    const lilyGeometry = bakeAssetGeometry(lilyRoot, gltf.scene, {
+      preserveUv: true,
+      useVertexColor: false,
+    });
     geometries.push(lilyGeometry);
     const mistGeometry = bakeAssetGeometry(mistRoot, gltf.scene);
     geometries.push(mistGeometry);
-    const flyGeometry = bakeAssetGeometry(flyRoot, gltf.scene);
-    geometries.push(flyGeometry);
+    const lilyAtlas = findImportedAtlas(lilyRoot);
 
     const lilyMaterial = new THREE.MeshStandardMaterial({
-      name: 'Blender lily pad material',
-      vertexColors: true,
+      name: 'Nearest atlas lily pad material',
+      map: lilyAtlas,
+      vertexColors: false,
       roughness: 0.92,
       metalness: 0,
+      alphaTest: 0.5,
+      transparent: false,
+      depthWrite: true,
       side: THREE.DoubleSide,
     });
     materials.push(lilyMaterial);
@@ -139,23 +240,18 @@ function createEcologyMeshes(gltf) {
       toneMapped: true,
     });
     materials.push(mistMaterial);
-    const flyMaterial = new THREE.MeshStandardMaterial({
-      name: 'Blender pond fly material',
-      vertexColors: true,
-      roughness: 0.82,
-      metalness: 0,
-      side: THREE.DoubleSide,
-    });
-    materials.push(flyMaterial);
+    const flyMesh = createFlyPoints();
+    geometries.push(flyMesh.geometry);
+    materials.push(flyMesh.material);
 
     return {
       padMesh: createInstancedMesh(lilyGeometry, lilyMaterial, MAX_PADS, 'Blender lily pads', 3),
       mistMesh: createInstancedMesh(mistGeometry, mistMaterial, MAX_MIST, 'Blender pond mist', 4),
-      flyMesh: createInstancedMesh(flyGeometry, flyMaterial, MAX_SWARMS, 'Blender pond flies', 5),
+      flyMesh,
     };
   } catch (error) {
     geometries.forEach((geometry) => geometry.dispose?.());
-    materials.forEach((material) => material.dispose?.());
+    disposeMaterials(materials);
     throw error;
   }
 }
@@ -194,6 +290,7 @@ export class PondEcologyField {
     this._syncTimer = 0;
     this._lastFocus = new THREE.Vector3(Number.POSITIVE_INFINITY, 0, Number.POSITIVE_INFINITY);
     this._dummy = new THREE.Object3D();
+    this._flyOffset = new THREE.Vector3();
     this.padAnchors = [];
     this.mistAnchors = [];
     this.flyAnchors = [];
@@ -306,7 +403,13 @@ export class PondEcologyField {
       if (!mesh) continue;
       mesh.count = 0;
       mesh.visible = false;
-      mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.instanceMatrix) mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.isPoints) {
+        mesh.geometry.setDrawRange(0, 0);
+        mesh.userData.activePointCount = 0;
+        const position = mesh.geometry.getAttribute('position');
+        if (position) position.needsUpdate = true;
+      }
     }
   }
 
@@ -362,11 +465,16 @@ export class PondEcologyField {
         });
       }
       if (this.flyAnchors.length < flyCap) {
+        const flyAngle = pond.phase
+          + unitHash(pond.cellX, pond.cellZ, 0x3c6ef372) * Math.PI * 2;
+        const flyDistance = Math.min(pond.radiusX, pond.radiusZ)
+          * (0.08 + unitHash(pond.cellX, pond.cellZ, 0xbb67ae85) * 0.12);
         this.flyAnchors.push({
-          x: pond.centerX,
-          y: surface + 0.88,
-          z: pond.centerZ,
-          scale: 0.82 + unitHash(pond.cellX, pond.cellZ, 0x9e3779b9) * 0.36,
+          x: pond.centerX + Math.cos(flyAngle) * flyDistance,
+          y: surface + 0.36 + unitHash(pond.cellX, pond.cellZ, 0x510e527f) * 0.16,
+          z: pond.centerZ + Math.sin(flyAngle) * flyDistance,
+          cellX: pond.cellX,
+          cellZ: pond.cellZ,
           phase: pond.phase,
         });
       }
@@ -414,21 +522,24 @@ export class PondEcologyField {
     const flyVisibility = dayAmount > 0.42 && rainIntensity < 0.18 && skyExposure > 0.38;
     const flyLimit = this.reducedMotion ? Math.ceil(this.flyAnchors.length * 0.5) : this.flyAnchors.length;
     this.flyMesh.count = flyVisibility ? flyLimit : 0;
-    this.flyMesh.visible = this.flyMesh.count > 0;
-    for (let index = 0; index < this.flyMesh.count; index++) {
-      const anchor = this.flyAnchors[index];
-      const orbit = this._time * 0.54 * motion + anchor.phase;
-      this._dummy.position.set(
-        anchor.x + Math.cos(orbit) * 0.24 * motion,
-        anchor.y + Math.sin(orbit * 1.9) * 0.12 * motion,
-        anchor.z + Math.sin(orbit) * 0.2 * motion,
-      );
-      this._dummy.rotation.set(0, orbit + Math.PI * 0.5, 0);
-      this._dummy.scale.setScalar(anchor.scale);
-      this._dummy.updateMatrix();
-      this.flyMesh.setMatrixAt(index, this._dummy.matrix);
+    const flyPosition = this.flyMesh.geometry.getAttribute('position');
+    let flyPointCount = 0;
+    for (let anchorIndex = 0; anchorIndex < this.flyMesh.count; anchorIndex++) {
+      const anchor = this.flyAnchors[anchorIndex];
+      for (let flyIndex = 0; flyIndex < FLIES_PER_SWARM; flyIndex++) {
+        pondFlyOffset(anchor, flyIndex, this._time, motion, this._flyOffset);
+        flyPosition.setXYZ(
+          flyPointCount++,
+          anchor.x + this._flyOffset.x,
+          anchor.y + this._flyOffset.y,
+          anchor.z + this._flyOffset.z,
+        );
+      }
     }
-    this.flyMesh.instanceMatrix.needsUpdate = true;
+    this.flyMesh.geometry.setDrawRange(0, flyPointCount);
+    this.flyMesh.userData.activePointCount = flyPointCount;
+    this.flyMesh.visible = flyPointCount > 0;
+    flyPosition.needsUpdate = true;
   }
 
   update(dt, focus, context = {}) {
@@ -449,6 +560,7 @@ export class PondEcologyField {
   getStats() {
     const triangleCount = (mesh) => {
       if (!mesh?.geometry) return 0;
+      if (mesh.isPoints) return 0;
       const base = mesh.geometry.index
         ? mesh.geometry.index.count / 3
         : mesh.geometry.getAttribute('position').count / 3;
@@ -462,6 +574,7 @@ export class PondEcologyField {
       pads: this.padMesh?.count || 0,
       mist: this.mistMesh?.count || 0,
       flySwarms: this.flyMesh?.count || 0,
+      flyDots: this.flyMesh?.userData?.activePointCount || 0,
       draws: [this.padMesh, this.mistMesh, this.flyMesh].filter((mesh) => mesh?.visible && mesh.count > 0).length,
       triangles: triangleCount(this.padMesh) + triangleCount(this.mistMesh) + triangleCount(this.flyMesh),
       assetUrl: this.assetUrl,

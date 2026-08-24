@@ -14,6 +14,44 @@ export const PLAYER = Object.freeze({
 });
 
 const EPSILON = 0.0001;
+const MAX_CONTINUOUS_POINTER_STEP = 240;
+const MAX_STORED_YAW = Math.PI * 4096;
+
+export function continuousPointerDelta(
+  movement,
+  currentScreenPosition = null,
+  previousScreenPosition = null,
+  viewportSpan = 0,
+) {
+  const delta = Number(movement);
+  if (!Number.isFinite(delta) || delta === 0) return 0;
+
+  const current = Number(currentScreenPosition);
+  const previous = Number(previousScreenPosition);
+  const span = Math.max(0, Number(viewportSpan) || 0);
+  if (Number.isFinite(current) && Number.isFinite(previous) && span > 0) {
+    const screenDelta = current - previous;
+    const recenterThreshold = Math.max(MAX_CONTINUOUS_POINTER_STEP, span * 0.28);
+    const movementMagnitude = Math.abs(delta);
+    const screenMagnitude = Math.abs(screenDelta);
+    const scaleRatio = screenMagnitude > 0 ? movementMagnitude / screenMagnitude : 0;
+    // Some Windows/browser combinations expose the hidden cursor's jump from
+    // a monitor edge back toward its lock anchor as movementX/Y. It is a single
+    // screen-scale event, often adjusted by devicePixelRatio, rather than mouse
+    // travel. Discard only that recognisable recenter signature.
+    if (movementMagnitude >= recenterThreshold
+      && screenMagnitude >= recenterThreshold
+      && Math.sign(delta) === Math.sign(screenDelta)
+      && scaleRatio >= 0.35
+      && scaleRatio <= 2.85) return 0;
+  }
+
+  // Genuine fast turns arrive as many ordinary events. A single event above
+  // this generous high-DPI ceiling is not observable physical travel and must
+  // be discarded, not clamped into a still-visible camera jump.
+  if (Math.abs(delta) > MAX_CONTINUOUS_POINTER_STEP) return 0;
+  return delta;
+}
 
 export const FALL_DAMAGE = Object.freeze({
   // A standing jump lands at roughly 8.2 m/s. This threshold leaves normal
@@ -64,7 +102,9 @@ export class InputController {
     this.onButtonDown = null;
     this.onButtonUp = null;
     this.onKeyDown = null;
-    this.maxMouseDelta = 1400;
+    this._lastScreenX = null;
+    this._lastScreenY = null;
+    this._pointerLockJustAcquired = false;
 
     this._keyDown = (event) => {
       if (!this.enabled) return;
@@ -82,13 +122,35 @@ export class InputController {
     };
     this._keyUp = (event) => this.keys.delete(event.code);
     this._mouseMove = (event) => {
-      if (!this.locked || !this.enabled) return;
       const dx = Number(event.movementX) || 0;
       const dy = Number(event.movementY) || 0;
-      // Ignore only impossible cursor-warp events. Legitimate high-DPI flicks can
-      // exceed 180px and must remain continuous through any number of full turns.
-      if (Math.abs(dx) <= this.maxMouseDelta) this.mouseDX += dx;
-      if (Math.abs(dy) <= this.maxMouseDelta) this.mouseDY += dy;
+      const screenX = Number.isFinite(Number(event.screenX)) ? Number(event.screenX) : null;
+      const screenY = Number.isFinite(Number(event.screenY)) ? Number(event.screenY) : null;
+      const previousScreenX = this._lastScreenX;
+      const previousScreenY = this._lastScreenY;
+      this._lastScreenX = screenX;
+      this._lastScreenY = screenY;
+      if (!this.locked || !this.enabled) return;
+      const firstLockedMovement = this._pointerLockJustAcquired;
+      this._pointerLockJustAcquired = false;
+      // Pointer-lock acquisition itself can recenter the hidden cursor before
+      // a previous locked coordinate exists. Keep a normal first movement, but
+      // never turn a large synthetic acquisition event into camera rotation.
+      if (firstLockedMovement
+        && (Math.abs(dx) > MAX_CONTINUOUS_POINTER_STEP
+          || Math.abs(dy) > MAX_CONTINUOUS_POINTER_STEP)) return;
+      const viewportWidth = Math.max(
+        Number(window.innerWidth) || 0,
+        Number(window.screen?.width) || 0,
+        Number(this.canvas?.clientWidth) || 0,
+      );
+      const viewportHeight = Math.max(
+        Number(window.innerHeight) || 0,
+        Number(window.screen?.height) || 0,
+        Number(this.canvas?.clientHeight) || 0,
+      );
+      this.mouseDX += continuousPointerDelta(dx, screenX, previousScreenX, viewportWidth);
+      this.mouseDY += continuousPointerDelta(dy, screenY, previousScreenY, viewportHeight);
     };
     this._mouseDown = (event) => {
       if (!this.locked || !this.enabled) return;
@@ -106,7 +168,9 @@ export class InputController {
       this.wheel += Math.sign(event.deltaY);
     };
     this._lockChange = () => {
+      const wasLocked = this.locked;
       this.locked = document.pointerLockElement === canvas;
+      if (this.locked && !wasLocked) this._pointerLockJustAcquired = true;
       if (!this.locked) this.clear();
     };
     this._blur = () => this.clear();
@@ -253,9 +317,9 @@ export class PlayerController {
     this.yaw -= look.x * sensitivity;
     this.pitch -= look.y * sensitivity * (settings.invertY ? -1 : 1);
     this.pitch = Math.max(-Math.PI * 0.495, Math.min(Math.PI * 0.495, this.pitch));
-    // Keep long play sessions numerically stable without wrapping at ±180°.
-    // The very high threshold means a normal 360° turn is always continuous.
-    if (Math.abs(this.yaw) > Math.PI * 4096) this.yaw %= Math.PI * 2;
+    // Yaw intentionally remains unwrapped. Sine, cosine and quaternions are
+    // periodic already; changing the stored angle at a boundary creates a raw
+    // discontinuity for saves, avatars and any future interpolation consumer.
 
     if (input.isDown('Space')) this.jumpBuffer = 0.12;
     else this.jumpBuffer = Math.max(0, this.jumpBuffer - dt);
@@ -541,7 +605,9 @@ export class PlayerController {
     if (Array.isArray(state.velocity) && state.velocity.every(Number.isFinite)) {
       this.velocity.fromArray(state.velocity).clampScalar(-40, 40);
     }
-    this.yaw = Number.isFinite(state.yaw) ? state.yaw % (Math.PI * 2) : 0;
+    this.yaw = Number.isFinite(state.yaw)
+      ? (Math.abs(state.yaw) <= MAX_STORED_YAW ? state.yaw : state.yaw % (Math.PI * 2))
+      : 0;
     this.pitch = Number.isFinite(state.pitch)
       ? THREE.MathUtils.clamp(state.pitch, -Math.PI * 0.495, Math.PI * 0.495)
       : 0;
