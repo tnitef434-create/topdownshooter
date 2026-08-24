@@ -5,10 +5,13 @@ import { BLOCK } from './blocks.js';
 
 const ASSET_URL = new URL('../assets/environment/red-flower.glb', import.meta.url).href;
 const DEFAULT_LOAD_TIMEOUT_MS = 8_000;
-const MAX_FLOWERS = 150;
+const MAX_FLOWERS = 40;
 const SCAN_RADIUS = 40;
 const SCAN_CELL = 2;
-const SPAWN_CHANCE = 0.09;
+const PATCH_CELL = 24;
+const PATCH_CHANCE = 0.14;
+const FLOWER_CHANCE = 0.12;
+const MIN_SPACING_SQ = 16;
 const RESYNC_INTERVAL = 0.5;
 const TARGET_HEIGHT = 1.05;
 
@@ -232,8 +235,11 @@ export class RedFlowerField {
         if (next.length >= MAX_FLOWERS) break;
         const cellX = centerX + dx;
         const cellZ = centerZ + dz;
+        const patchX = Math.floor((cellX * SCAN_CELL) / PATCH_CELL);
+        const patchZ = Math.floor((cellZ * SCAN_CELL) / PATCH_CELL);
+        if (unitHash(patchX, patchZ, (this.world.seed ?? 0) ^ 0x6d2b79f5) >= PATCH_CHANCE) continue;
         const roll = unitHash(cellX, cellZ, this.world.seed ?? 0);
-        if (roll >= SPAWN_CHANCE) continue;
+        if (roll >= FLOWER_CHANCE) continue;
         const x = Math.floor(cellX * SCAN_CELL + unitHash(cellX, cellZ, 0x51ed) * SCAN_CELL);
         const z = Math.floor(cellZ * SCAN_CELL + unitHash(cellX, cellZ, 0x27d4) * SCAN_CELL);
         if ((x + 0.5 - focus.x) ** 2 + (z + 0.5 - focus.z) ** 2 > radiusSq) continue;
@@ -256,6 +262,7 @@ export class RedFlowerField {
           tilt: (unitHash(x, z, 0x9e37) - 0.5) * 0.12,
         };
         if (!this._flowerStillValid(flower)) continue;
+        if (next.some(existing => (existing.x - x) ** 2 + (existing.z - z) ** 2 < MIN_SPACING_SQ)) continue;
         next.push(flower);
       }
     }
