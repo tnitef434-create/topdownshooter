@@ -51,6 +51,21 @@ const HANGING_LEAVES_GENERATOR_URL = new URL(
   '../tools/generate_hanging_leaves.py',
   import.meta.url,
 );
+const BIRD_ASSET_URL = new URL(
+  '../src/public/worldloom/assets/birds/worldloom-birds.glb',
+  import.meta.url,
+);
+const BIRD_ATLAS_URL = new URL(
+  '../src/public/worldloom/assets/birds/worldloom-birds-atlas.png',
+  import.meta.url,
+);
+const BIRD_SOURCE_URL = new URL(
+  '../tools/assets/bird-textures/gpt-bird-breeds-source.png',
+  import.meta.url,
+);
+const BIRD_PROMPT_URL = new URL('../tools/assets/bird-textures/PROMPTS.md', import.meta.url);
+const BIRD_README_URL = new URL('../tools/assets/bird-textures/README.md', import.meta.url);
+const BIRD_GENERATOR_URL = new URL('../tools/generate_bird_assets.py', import.meta.url);
 const GLB_MAGIC = 0x46546c67;
 const GLB_JSON_CHUNK = 0x4e4f534a;
 const GLB_BINARY_CHUNK = 0x004e4942;
@@ -216,6 +231,205 @@ function createTestHangingLeafGltf(packScale = 1) {
   scene.updateMatrixWorld(true);
   return { scene, animations: [], atlasTexture };
 }
+
+test('Blender bird GLB keeps two articulated breeds, named clips, and strict web budgets', () => {
+  const glb = readFileSync(BIRD_ASSET_URL);
+  assert.ok(glb.length >= 64 * 1024, 'animated bird GLB is suspiciously small or empty');
+  assert.ok(glb.length <= 192 * 1024, `animated bird GLB exceeds 192KB (${glb.length} bytes)`);
+  const document = parseGlb(glb);
+  assert.equal(document.asset?.version, '2.0');
+  assert.match(document.asset?.generator || '', /Blender I\/O/i,
+    'bird asset must identify the Blender glTF exporter');
+  assert.equal(document.buffers?.length, 1);
+  assert.equal(document.buffers?.[0]?.uri, undefined,
+    'bird GLB cannot depend on an external geometry buffer');
+  assert.ok(!(document.extensionsUsed || []).includes('KHR_draco_mesh_compression'));
+  assert.doesNotMatch(JSON.stringify(document), /KHR_draco_mesh_compression/,
+    'no bird primitive may silently require a Draco decoder');
+
+  const breedPrefixes = ['Ash_Sparrow', 'Pond_Azurefin'];
+  const requiredParts = ['Body', 'Head', 'Tail', 'Wing_L', 'Wing_R', 'Leg_L', 'Leg_R'];
+  let totalTriangles = 0;
+  for (const prefix of breedPrefixes) {
+    const rootName = `${prefix}_Asset`;
+    const descendantIndices = descendantNodeIndices(document, rootName);
+    const descendantNames = new Set(descendantIndices.map((index) => document.nodes[index]?.name));
+    for (const part of requiredParts) {
+      assert.ok(descendantNames.has(`${prefix}_${part}`), `${rootName} is missing articulated ${part}`);
+    }
+    const primitives = descendantIndices
+      .map((index) => document.nodes[index])
+      .filter((node) => Number.isInteger(node?.mesh))
+      .flatMap((node) => document.meshes[node.mesh]?.primitives || []);
+    assert.equal(primitives.length, 7,
+      `${rootName} should retain one merged mesh for each animated body part`);
+    assert.ok(primitives.every((primitive) => Number.isInteger(primitive.attributes?.TEXCOORD_0)),
+      `${rootName} lost pixel-atlas UV coordinates`);
+    assert.equal(new Set(primitives.map((primitive) => primitive.material)).size, 1,
+      `${rootName} should share one bird atlas material`);
+    const triangles = primitives.reduce((total, primitive) => {
+      const accessor = document.accessors?.[primitive.indices]
+        || document.accessors?.[primitive.attributes?.POSITION];
+      return total + (accessor?.count || 0) / 3;
+    }, 0);
+    assert.ok(triangles > 200, `${rootName} contains too little authored geometry (${triangles} triangles)`);
+    assert.ok(triangles <= 384, `${rootName} exceeded its 384-triangle budget (${triangles})`);
+    totalTriangles += triangles;
+  }
+  assert.ok(totalTriangles <= 768, `two-breed pack exceeded 768 triangles (${totalTriangles})`);
+
+  const clipSuffixes = [
+    'Perch_Idle_Loop',
+    'Flight_Loop',
+    'Takeoff',
+    'Landing',
+    'Pond_Peck_Loop',
+    'Ground_Idle_Loop',
+  ];
+  const expectedClipNames = breedPrefixes
+    .flatMap((prefix) => clipSuffixes.map((suffix) => `${prefix}_${suffix}`))
+    .sort();
+  assert.deepEqual((document.animations || []).map((clip) => clip.name).sort(), expectedClipNames,
+    'each breed must retain all six named behavior clips');
+  for (const animation of document.animations || []) {
+    const prefix = breedPrefixes.find((candidate) => animation.name.startsWith(candidate));
+    assert.ok(prefix, `unexpected unscoped bird clip ${animation.name}`);
+    const animatedNodes = new Set(animation.channels.map((channel) => (
+      document.nodes?.[channel.target?.node]?.name
+    )));
+    for (const part of requiredParts) {
+      assert.ok(animatedNodes.has(`${prefix}_${part}`), `${animation.name} does not animate ${part}`);
+    }
+    assert.equal(animation.channels.length, 21,
+      `${animation.name} should contain position, rotation and scale channels for seven pivots`);
+    const duration = Math.max(...animation.samplers.map((sampler) => (
+      Number(document.accessors?.[sampler.input]?.max?.[0]) || 0
+    )));
+    assert.ok(duration >= 0.75 && duration <= 3,
+      `${animation.name} has an implausible ${duration}s authored duration`);
+  }
+});
+
+test('bird GLB embeds the exact nearest-filtered two-breed pixel atlas', () => {
+  const glb = readFileSync(BIRD_ASSET_URL);
+  const document = parseGlb(glb);
+  const atlasBuffer = readFileSync(BIRD_ATLAS_URL);
+  assert.ok(atlasBuffer.length >= 1024 && atlasBuffer.length <= 16 * 1024,
+    `bird atlas escaped its compact web budget (${atlasBuffer.length} bytes)`);
+  assert.deepEqual(pngMetadata(atlasBuffer), {
+    width: 128,
+    height: 64,
+    bitDepth: 8,
+    colorType: 6,
+  }, 'production bird atlas must remain an exact 128x64 RGBA PNG');
+  assert.equal(document.images?.length, 1, 'bird pack should embed exactly one atlas');
+  const image = document.images[0];
+  assert.equal(image.uri, undefined, 'bird GLB cannot make an extra atlas request');
+  assert.equal(image.mimeType, 'image/png');
+  assert.deepEqual(embeddedBufferView(glb, document, image.bufferView), atlasBuffer,
+    'embedded and separately served bird atlases must be byte-identical');
+
+  const material = document.materials?.find((candidate) => candidate.name === 'Worldloom_Bird_Pixel_Atlas');
+  assert.ok(material, 'bird pack lost its stable atlas material');
+  assert.equal(material.pbrMetallicRoughness?.metallicFactor, 0);
+  assert.ok(material.pbrMetallicRoughness?.roughnessFactor >= 0.85);
+  assert.equal(material.emissiveFactor, undefined, 'natural birds cannot carry emissive plumage');
+  const texture = document.textures?.[
+    material.pbrMetallicRoughness?.baseColorTexture?.index
+  ];
+  const sampler = document.samplers?.[texture?.sampler];
+  assert.equal(sampler?.magFilter, 9728, 'bird atlas must use NEAREST magnification');
+  assert.ok([9728, 9984].includes(sampler?.minFilter),
+    `bird atlas minification introduced smoothing (${sampler?.minFilter})`);
+  assert.equal(sampler?.wrapS, 33071);
+  assert.equal(sampler?.wrapT, 33071);
+
+  const decoded = decodeRgbaPng(atlasBuffer);
+  const summaries = [];
+  for (let half = 0; half < 2; half++) {
+    const colors = new Set();
+    const sums = [0, 0, 0];
+    let opaque = 0;
+    for (let y = 0; y < decoded.height; y++) {
+      for (let x = half * 64; x < (half + 1) * 64; x++) {
+        const offset = (y * decoded.width + x) * 4;
+        assert.equal(decoded.pixels[offset + 3], 255, 'production atlas tiles must stay fully opaque');
+        const rgb = decoded.pixels.subarray(offset, offset + 3);
+        colors.add(rgb.toString('hex'));
+        sums[0] += rgb[0];
+        sums[1] += rgb[1];
+        sums[2] += rgb[2];
+        opaque++;
+      }
+    }
+    assert.ok(colors.size >= 12, `breed half ${half} lost its readable pixel palette`);
+    summaries.push(sums.map((sum) => sum / opaque));
+  }
+  assert.ok(summaries[0][0] > summaries[0][2] + 40,
+    'Ash Sparrow half lost its warm chestnut color identity');
+  assert.ok(summaries[1][1] > summaries[1][0] + 5 && summaries[1][2] > summaries[1][0] + 5,
+    'Pond Azurefin half lost its cool blue/teal color identity');
+});
+
+test('bird generator preserves the GPT-image source and reproducible Blender pipeline', () => {
+  const sourceBuffer = readFileSync(BIRD_SOURCE_URL);
+  assert.ok(sourceBuffer.length >= 256 * 1024,
+    'preserved GPT-image source is suspiciously small or replaced by the production atlas');
+  assert.deepEqual(pngMetadata(sourceBuffer), {
+    width: 1254,
+    height: 1254,
+    bitDepth: 8,
+    colorType: 6,
+  }, 'GPT-image production source must remain the original transparent RGBA sheet');
+  const sourcePixels = decodeRgbaPng(sourceBuffer).pixels;
+  let transparentPixels = 0;
+  let opaquePixels = 0;
+  for (let offset = 3; offset < sourcePixels.length; offset += 4) {
+    if (sourcePixels[offset] === 0) transparentPixels++;
+    if (sourcePixels[offset] >= 250) opaquePixels++;
+  }
+  assert.ok(transparentPixels > 100_000 && opaquePixels > 100_000,
+    'GPT source must retain both transparent gutters and substantial bird artwork');
+
+  const prompt = readFileSync(BIRD_PROMPT_URL, 'utf8');
+  assert.match(prompt, /Tool:\s*built-in GPT Image generation/i);
+  assert.match(prompt, /Exact prompt:/i);
+  assert.match(prompt, /ash sparrow/i);
+  assert.match(prompt, /pond azurefin/i);
+  assert.match(prompt, /original designs, not copied/i);
+  assert.match(prompt, /transparent background/i);
+
+  const readme = readFileSync(BIRD_README_URL, 'utf8');
+  assert.match(readme, /preserved 1254[×x]1254 transparent GPT Image\s+source/i);
+  assert.match(readme, /deterministically samples each half/i);
+  assert.match(readme, /Blender 5\.2\.0 LTS/i);
+  assert.match(readme, /No downloaded model,\s*texture,\s*rig,\s*or animation is used/i);
+
+  const generator = readFileSync(BIRD_GENERATOR_URL, 'utf8');
+  assert.match(generator, /DEFAULT_SOURCE\s*=.*gpt-bird-breeds-source\.png/);
+  assert.match(generator, /ATLAS_WIDTH\s*=\s*128/);
+  assert.match(generator, /ATLAS_HEIGHT\s*=\s*64/);
+  assert.match(generator, /source_color_buckets\(/,
+    'atlas generation must still sample the preserved GPT-image pixels');
+  assert.match(generator, /random\.Random\(seed\s*\^/,
+    'texture variation must use the requested deterministic seed');
+  assert.match(generator, /texture\.interpolation\s*=\s*["']Closest["']/);
+  assert.match(generator, /["']export_draco_mesh_compression_enable["']\s*:\s*False/);
+  assert.match(generator, /["']export_animations["']\s*:\s*True/);
+  assert.match(generator, /["']export_animation_mode["']\s*:\s*["']NLA_TRACKS["']/);
+  for (const authoredName of [
+    'Ash_Sparrow_Asset',
+    'Pond_Azurefin_Asset',
+    'Perch_Idle_Loop',
+    'Flight_Loop',
+    'Takeoff',
+    'Landing',
+    'Pond_Peck_Loop',
+    'Ground_Idle_Loop',
+  ]) {
+    assert.match(generator, new RegExp(authoredName), `generator lost authored contract ${authoredName}`);
+  }
+});
 
 test('generated pond-detail GLB is valid, embedded, and kept within its web budget', () => {
   const glb = readFileSync(POND_DETAILS_URL);

@@ -667,6 +667,151 @@ try {
     `Low graphics exceeded its 40-segment hanging-leaf cap: ${JSON.stringify(hangingLeafState.low)}`);
   assert(hangingLeafState.low.draws <= 1, 'Low graphics used more than one hanging-leaf draw');
 
+  await frame.waitForFunction(() => {
+    const stats = window.__worldloomBirds?.getStats?.();
+    return stats?.ready && !stats.failed && stats.templateRoots?.length === 2;
+  }, { timeout: 10_000 });
+  const birdState = await frame.evaluate(() => {
+    const environment = window.__worldloomEnvironment;
+    const birds = window.__worldloomBirds;
+    const focus = environment.atmosphere.position.clone();
+    environment.applyGraphicsSettings({
+      graphicsQuality: 'balanced',
+      weatherEffects: true,
+      reducedMotion: false,
+    });
+    const anchors = birds.debugSyncAnchors(focus);
+    const ash = birds.debugSpawn({ habitat: 'tree', breed: 'ash_sparrow' });
+    const azure = birds.debugSpawn({ habitat: 'pond', breed: 'pond_azurefin', airborne: true });
+    const beforeAnimation = [];
+    ash?.model?.traverse?.((node) => {
+      beforeAnimation.push([
+        node.name,
+        ...node.position.toArray(),
+        ...node.quaternion.toArray(),
+        ...node.scale.toArray(),
+      ]);
+    });
+    ash?.animator?.update?.(0.16, 0);
+    let animationDelta = 0;
+    let transformIndex = 0;
+    ash?.model?.traverse?.((node) => {
+      const before = beforeAnimation[transformIndex++] || [];
+      const after = [
+        node.name,
+        ...node.position.toArray(),
+        ...node.quaternion.toArray(),
+        ...node.scale.toArray(),
+      ];
+      for (let index = 1; index < after.length; index++) {
+        animationDelta = Math.max(animationDelta, Math.abs(Number(after[index]) - Number(before[index])));
+      }
+    });
+    const materials = [];
+    for (const bird of [ash, azure]) {
+      bird?.model?.traverse?.((node) => {
+        if (!node.isMesh) return;
+        const entries = Array.isArray(node.material) ? node.material : [node.material];
+        materials.push(...entries.filter(Boolean));
+      });
+    }
+    const partSetComplete = [ash, azure].every((bird) => bird && [
+      bird.parts.body,
+      bird.parts.head,
+      bird.parts.leftWing,
+      bird.parts.rightWing,
+      bird.parts.tail,
+      bird.parts.leftLeg,
+      bird.parts.rightLeg,
+    ].every(Boolean));
+    const clipNames = [...birds.templates.values()]
+      .flatMap((template) => template.clips.map((clip) => clip.name))
+      .sort();
+    const initial = birds.getStats();
+    const ashStart = ash ? { habitat: ash.anchor?.habitat, state: ash.state } : null;
+    const azureStart = azure ? { habitat: azure.route?.destination?.habitat, state: azure.state } : null;
+    const startledBefore = initial.startled;
+    if (ash) {
+      birds._anchorTimer = 60;
+      birds.update(1 / 60, ash.root.position.clone(), {
+        active: true,
+        submerged: false,
+        dayAmount: 1,
+        rainIntensity: 0,
+        skyExposure: 1,
+        playerForward: focus.clone().set(0, 0, -1),
+      });
+    }
+    const startled = birds.getStats();
+    environment.applyGraphicsSettings({
+      graphicsQuality: 'low',
+      weatherEffects: true,
+      reducedMotion: false,
+    });
+    const low = birds.getStats();
+    environment.applyGraphicsSettings({
+      graphicsQuality: 'balanced',
+      weatherEffects: true,
+      reducedMotion: false,
+    });
+    return {
+      ready: birds.ready,
+      failed: birds.failed,
+      error: birds.error ? String(birds.error.message || birds.error) : '',
+      groupAttached: birds.group?.parent === environment.scene,
+      anchors,
+      initial,
+      low,
+      clipNames,
+      partSetComplete,
+      animationDelta,
+      pixelAtlas: materials.length > 0 && materials.every((material) => (
+        material.map?.isTexture
+        && material.map.magFilter === 1003
+        && material.map.minFilter === 1004
+        && material.map.generateMipmaps === true
+        && material.alphaTest >= 0.35
+      )),
+      ashStart,
+      azureStart,
+      startledDelta: startled.startled - startledBefore,
+      startledAshState: ash?.state || '',
+      finiteTransforms: [ash, azure].filter(Boolean).every((bird) => {
+        let finite = true;
+        bird.root.traverse((node) => {
+          finite &&= [...node.position.toArray(), ...node.quaternion.toArray(), ...node.scale.toArray()].every(Number.isFinite);
+        });
+        return finite;
+      }),
+    };
+  });
+  assert.equal(birdState.ready, true, 'The production Blender bird pack did not finish loading');
+  assert.equal(birdState.failed, false, `The production bird pack failed: ${birdState.error}`);
+  assert.equal(birdState.groupAttached, true, 'Ambient birds are detached from the live scene');
+  assert(birdState.anchors.trees > 0, `seed 64 produced no valid bird tree perches: ${JSON.stringify(birdState)}`);
+  assert(birdState.anchors.ponds > 0, `seed 64 produced no valid dry pond-bank landing: ${JSON.stringify(birdState)}`);
+  assert.equal(birdState.initial.count, 2, 'The deterministic bird fixture could not render both breeds');
+  assert.equal(birdState.initial.breeds.ash_sparrow, 1);
+  assert.equal(birdState.initial.breeds.pond_azurefin, 1);
+  assert.equal(birdState.ashStart?.habitat, 'tree', 'The Ash Sparrow did not begin on a real tree perch');
+  assert.equal(birdState.azureStart?.habitat, 'pond', 'The Pond Azurefin did not fly toward a real pond bank');
+  assert.equal(birdState.azureStart?.state, 'takeoff', 'The pond-spawned bird did not enter authored takeoff flight');
+  assert.equal(birdState.partSetComplete, true, 'A live bird is missing an articulated body part');
+  assert.equal(birdState.pixelAtlas, true, 'Live birds lost their hard nearest-filtered GPT-derived atlas');
+  assert.equal(birdState.clipNames.length, 12, 'The live bird pack did not expose all twelve Blender clips');
+  for (const clip of ['Perch_Idle_Loop', 'Flight_Loop', 'Takeoff', 'Landing', 'Pond_Peck_Loop', 'Ground_Idle_Loop']) {
+    assert(birdState.clipNames.some((name) => name.endsWith(clip)), `Live birds are missing ${clip}`);
+  }
+  assert(birdState.animationDelta > 1e-5,
+    `The loaded bird animation did not move its articulated model (${birdState.animationDelta})`);
+  assert.equal(birdState.finiteTransforms, true, 'Bird animation produced a non-finite transform');
+  assert.equal(birdState.startledDelta, 1, 'Walking close did not startle exactly the perched bird');
+  assert.equal(birdState.startledAshState, 'takeoff', 'The startled tree bird did not immediately fly away');
+  assert(birdState.initial.draws <= 14 && birdState.initial.triangles <= 700,
+    `Balanced birds exceeded their render budget: ${JSON.stringify(birdState.initial)}`);
+  assert(birdState.low.count <= 1 && birdState.low.shadowBirds === 0,
+    `Low graphics did not enforce its bird budget: ${JSON.stringify(birdState.low)}`);
+
   const clearState = await frame.evaluate(() => {
     const environment = window.__worldloomEnvironment;
     const focus = environment.atmosphere.position.clone();
@@ -1124,6 +1269,7 @@ try {
     caveLightingState,
     pondState,
     hangingLeafState,
+    birdState,
     clearState,
     stormState,
     deployPresentation,

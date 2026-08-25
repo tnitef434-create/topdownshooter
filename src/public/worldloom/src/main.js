@@ -88,6 +88,7 @@ let worldWorkScheduled = false;
 let worldWorkToken = 0;
 let saveWarningShown = false;
 let respawnInvulnerability = 0;
+const environmentViewDirection = new THREE.Vector3(0, 0, -1);
 let droppedItems = [];
 const MAX_DROPPED_ITEMS = 256;
 const passiveGameplayInput = Object.freeze({
@@ -170,6 +171,7 @@ function initRenderer() {
   environment = new Environment(scene, renderer);
   window.__worldloomPonds = environment.pondEcology;
   window.__worldloomHangingLeaves = environment.hangingLeaves;
+  window.__worldloomBirds = environment.birds;
   // World-avatar geometry is structurally absent from the gameplay and GTAO
   // camera, but remains part of the sun's shadow pass.
   environment.sunLight?.shadow?.camera?.layers.enable(WORLD_AVATAR_LAYER);
@@ -407,11 +409,12 @@ async function startWorld({ seed, mode: selectedMode, saveData = null }) {
   streamingFogFar = null;
   environment.enhanceWorldMaterials(world);
   environment.setWeatherContext(world);
-  ui.setLoading(0.075, 'Growing lily ponds and hanging forest leaves…');
+  ui.setLoading(0.075, 'Growing lily ponds, forest leaves, red flowers and rare birds…');
   await Promise.all([
     environment.preparePondEcology(),
     environment.prepareHangingLeaves(),
     environment.prepareRedFlowers(),
+    environment.prepareBirds(),
   ]);
   mode = selectedMode === 'builder' ? 'builder' : 'survival';
   worldCreatedAt = saveData?.createdAt || new Date().toISOString();
@@ -1676,7 +1679,7 @@ function updateHUD() {
       `${fps.toFixed(0)} FPS · ${renderer.info.render.calls} draws · ${renderer.info.render.triangles.toLocaleString()} tris`,
       `XYZ ${player.position.x.toFixed(1)} / ${player.position.y.toFixed(1)} / ${player.position.z.toFixed(1)}`,
       `Chunks ${stats.generated}/${stats.loaded} · queue ${stats.queued} · dirty ${stats.dirty}`,
-      `Seed ${world.seed} · ${world.biomeAt(player.position.x, player.position.z)} · ${creatures?.count || 0} creatures`,
+      `Seed ${world.seed} · ${world.biomeAt(player.position.x, player.position.z)} · ${creatures?.count || 0} creatures · ${environment?.birds?.count || 0} birds`,
       `Day ${survival.dayNumber} · food ${(survival.nourishment * 100).toFixed(0)}% · wet ${(survival.wetness * 100).toFixed(0)}% · air ${(survival.oxygen * 100).toFixed(0)}%`,
     ].join('\n')
     : '';
@@ -1708,12 +1711,15 @@ function animate(now) {
   }
 
   const focus = player?.position || new THREE.Vector3(0, 24, 0);
+  if (camera) camera.getWorldDirection(environmentViewDirection);
   if (state === 'playing' || state === 'inventory') updateGame(dt);
   else if (state === 'menu') effects.update(dt);
   const environmentDt = state === 'playing' || state === 'inventory' ? dt : state === 'menu' ? dt * 0.12 : 0;
   environment.update(environmentDt, focus, settings.viewDistance, {
+    active: state === 'playing' || state === 'inventory',
     submerged: Boolean(player?.headUnderwater),
     playerVelocity: player?.velocity,
+    playerForward: environmentViewDirection,
   });
   if (scene?.fog && world && player) {
     const clampedFog = clampFogToMeshedTerrain({
