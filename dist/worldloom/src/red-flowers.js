@@ -343,7 +343,8 @@ export class RedFlowerField {
         const key = this._blockKey(x, surface + 1, z);
         const cached = previousByKey.get(key);
         if (cached) {
-          next.push(cached);
+          if (this.mined.has(key)) continue;
+          if (this._flowerStillValid(cached)) next.push(cached);
           continue;
         }
         const flower = {
