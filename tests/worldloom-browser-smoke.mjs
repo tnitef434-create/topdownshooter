@@ -174,6 +174,28 @@ try {
   assert.match(settingsPresentation.thumbRule, /(?:#8e8e8e|rgb\(142\s*,\s*142\s*,\s*142\))/i,
     'Settings is missing its custom square WebKit scrollbar thumb');
   assert.equal(Number.parseFloat(settingsPresentation.toggleRadius), 0, 'Settings toggles reverted to pill switches');
+  const maximumViewSettings = await frame.evaluate(async () => {
+    const input = document.querySelector('#view-distance');
+    const output = document.querySelector('#view-distance-value');
+    if (!input || !output) return null;
+    input.value = '20';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    const { SaveStore } = await import('/worldloom/src/save.js');
+    return {
+      minimum: Number(input.min),
+      maximum: Number(input.max),
+      value: Number(input.value),
+      output: output.textContent?.trim() || '',
+      persisted: new SaveStore().loadSettings().viewDistance,
+    };
+  });
+  assert(maximumViewSettings, 'The view-distance control is missing');
+  assert.equal(maximumViewSettings.minimum, 2);
+  assert.equal(maximumViewSettings.maximum, 20, 'The settings UI does not expose the 20-chunk horizon');
+  assert.equal(maximumViewSettings.value, 20);
+  assert.equal(maximumViewSettings.output, '20 chunks');
+  assert.equal(maximumViewSettings.persisted, 20,
+    'The maximum view-distance selection did not survive settings persistence');
   await frame.evaluate(() => document.querySelector('#settings-close')?.click());
   await frame.waitForFunction(() => document.querySelector('#settings-panel')?.classList.contains('hidden'));
   await frame.evaluate(() => {
@@ -322,6 +344,102 @@ try {
     `Clear-weather fog has no valid transition band (${gameState.fogNear} -> ${gameState.fogFar})`);
   assert(gameState.fogClarity > 0.8,
     `The open daylight spawn did not select the clear-air fog profile (${gameState.fogClarity})`);
+
+  // Leave the browser idle while the incremental horizon builder runs. The
+  // explicit readiness contract avoids a machine-speed timeout masquerading
+  // as a graphics regression and proves the published mesh is the requested
+  // maximum-distance revision rather than an intermediate terrain shell.
+  try {
+    await frame.waitForFunction(() => (
+      window.__worldloomWorld?.distantTerrain?.ready === true
+    ), { timeout: 45_000, polling: 'raf' });
+  } catch (error) {
+    const diagnostics = await frame.evaluate(() => ({
+      world: window.__worldloomWorld?.getStats?.(),
+      horizon: window.__worldloomWorld?.distantTerrain?.getStats?.(),
+      state: document.querySelector('#hud')?.classList.contains('hidden') ? 'hidden' : 'playing',
+      visibility: document.visibilityState,
+    }));
+    throw new Error(`Distant horizon did not become ready: ${JSON.stringify(diagnostics)}`, {
+      cause: error,
+    });
+  }
+  const maxDistanceState = await frame.evaluate(() => {
+    const world = window.__worldloomWorld;
+    const player = window.__worldloomPlayer;
+    const graphics = window.__worldloomGraphics;
+    const stats = world?.getStats?.();
+    const horizon = world?.distantTerrain;
+    const mesh = horizon?.mesh;
+    const position = mesh?.geometry?.getAttribute?.('position');
+    const normal = mesh?.geometry?.getAttribute?.('normal');
+    const color = mesh?.geometry?.getAttribute?.('color');
+    const finiteAttribute = (attribute) => {
+      if (!attribute?.array?.length) return false;
+      for (const value of attribute.array) {
+        if (!Number.isFinite(value)) return false;
+      }
+      return true;
+    };
+    const safeTerrainFar = world && player
+      ? world.getSafeTerrainDistance(player.position)
+      : Number.NaN;
+    return {
+      stats,
+      cameraFar: graphics?.camera?.far ?? null,
+      fogFar: graphics?.scene?.fog?.far ?? null,
+      safeTerrainFar,
+      horizon: {
+        ready: horizon?.ready === true,
+        meshes: horizon?.group?.children?.filter?.((child) => child.isMesh)?.length ?? 0,
+        tagged: mesh?.userData?.distantTerrain === true,
+        vertices: position?.count || 0,
+        triangles: position?.count ? position.count / 3 : 0,
+        finiteGeometry: [position, normal, color].every(finiteAttribute),
+      },
+    };
+  });
+  assert.equal(maxDistanceState.stats?.visualDistance, 20);
+  assert.equal(maxDistanceState.stats?.detailDistance, 8);
+  assert.equal(maxDistanceState.stats?.streamDistance, 10);
+  assert(maxDistanceState.stats.loaded <= 441,
+    `maximum view distance loaded too many full voxel chunks: ${JSON.stringify(maxDistanceState.stats)}`);
+  assert.equal(maxDistanceState.horizon.ready, true);
+  assert.equal(maxDistanceState.horizon.meshes, 1, 'The distant horizon must remain one merged draw mesh');
+  assert.equal(maxDistanceState.horizon.tagged, true, 'The published horizon mesh lost its runtime marker');
+  assert.equal(maxDistanceState.horizon.finiteGeometry, true, 'The distant horizon contains invalid geometry data');
+  assert(maxDistanceState.horizon.vertices > 0 && maxDistanceState.horizon.triangles > 0,
+    `The distant horizon published no visible triangles: ${JSON.stringify(maxDistanceState.horizon)}`);
+  assert(Number.isFinite(maxDistanceState.cameraFar) && maxDistanceState.cameraFar >= 400,
+    `The camera clips the 20-chunk horizon at ${maxDistanceState.cameraFar}m`);
+  assert(maxDistanceState.cameraFar > maxDistanceState.fogFar,
+    `Fog extends beyond the camera plane (${maxDistanceState.fogFar} >= ${maxDistanceState.cameraFar})`);
+  assert(Number.isFinite(maxDistanceState.safeTerrainFar));
+  assert(maxDistanceState.fogFar <= maxDistanceState.safeTerrainFar + 1.5,
+    `Fog exposed terrain beyond the live safe horizon (${maxDistanceState.fogFar} > ${maxDistanceState.safeTerrainFar})`);
+
+  const restoredViewSettings = await frame.evaluate(async () => {
+    const quality = document.querySelector('#graphics-quality');
+    if (quality) {
+      quality.value = 'balanced';
+      quality.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    const { SaveStore } = await import('/worldloom/src/save.js');
+    return {
+      selectedQuality: quality?.value || '',
+      viewDistance: Number(document.querySelector('#view-distance')?.value),
+      output: document.querySelector('#view-distance-value')?.textContent?.trim() || '',
+      persisted: new SaveStore().loadSettings(),
+      world: window.__worldloomWorld?.getStats?.(),
+    };
+  });
+  assert.equal(restoredViewSettings.selectedQuality, 'balanced');
+  assert.equal(restoredViewSettings.viewDistance, 4);
+  assert.equal(restoredViewSettings.output, '4 chunks');
+  assert.equal(restoredViewSettings.persisted.graphicsQuality, 'balanced');
+  assert.equal(restoredViewSettings.persisted.viewDistance, 4);
+  assert.equal(restoredViewSettings.world.visualDistance, 4,
+    'Later browser checks did not return to the balanced streaming footprint');
 
   const caveLightingState = await frame.evaluate(async () => {
     const THREE = await import('/worldloom/vendor/three.module.min.js');
@@ -793,9 +911,11 @@ try {
   assert.equal(birdState.initial.count, 2, 'The deterministic bird fixture could not render both breeds');
   assert.equal(birdState.initial.breeds.ash_sparrow, 1);
   assert.equal(birdState.initial.breeds.pond_azurefin, 1);
+  assert.equal(birdState.initial.residentPondAnchors, 1,
+    'Seed 64 no longer assigns birds to exactly half of its two nearby ponds');
   assert.equal(birdState.ashStart?.habitat, 'tree', 'The Ash Sparrow did not begin on a real tree perch');
   assert.equal(birdState.azureStart?.habitat, 'pond', 'The Pond Azurefin did not fly toward a real pond bank');
-  assert.equal(birdState.azureStart?.state, 'takeoff', 'The pond-spawned bird did not enter authored takeoff flight');
+  assert.equal(birdState.azureStart?.state, 'cruise', 'The airborne debug bird did not enter authored cruise flight');
   assert.equal(birdState.partSetComplete, true, 'A live bird is missing an articulated body part');
   assert.equal(birdState.pixelAtlas, true, 'Live birds lost their hard nearest-filtered GPT-derived atlas');
   assert.equal(birdState.clipNames.length, 12, 'The live bird pack did not expose all twelve Blender clips');
@@ -1275,6 +1395,9 @@ try {
     deployPresentation,
     mainMenuPresentation,
     settingsPresentation,
+    maximumViewSettings,
+    maxDistanceState,
+    restoredViewSettings,
     hudPresentation,
     mobileInventory,
     closeDuration,

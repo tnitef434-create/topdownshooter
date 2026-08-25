@@ -3,6 +3,7 @@ import {
   WORLD_GENERATOR_VERSION,
   isSupportedWorldGeneratorVersion,
 } from './generator-version.js';
+import { normalizeViewDistance } from './streaming-config.js';
 
 const SAVE_KEY = 'worldloom.save.v1';
 const BACKUP_KEY = 'worldloom.save.backup.v1';
@@ -397,7 +398,7 @@ export class SaveStore {
     return {
       sensitivity: number(settings.sensitivity, DEFAULT_SETTINGS.sensitivity, 0.0004, 0.006),
       fov: number(settings.fov, DEFAULT_SETTINGS.fov, 60, 100),
-      viewDistance: Math.round(number(settings.viewDistance, DEFAULT_SETTINGS.viewDistance, 2, 9)),
+      viewDistance: normalizeViewDistance(settings.viewDistance, DEFAULT_SETTINGS.viewDistance),
       renderScale: number(settings.renderScale, DEFAULT_SETTINGS.renderScale, 0.6, 1.25),
       graphicsQuality,
       reducedMotion: Boolean(settings.reducedMotion),

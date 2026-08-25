@@ -49,10 +49,12 @@ import {
 } from '../src/public/worldloom/src/creatures.js';
 import {
   BIRD_BREEDS,
+  POND_BIRD_OCCUPANCY_CHANCE,
   BirdField,
   birdFlightPoint,
   birdFlightTangent,
   birdPondBank,
+  birdPondHasResident,
   birdSpawnAllowed,
   birdSpawnPositionIsSafe,
   birdTerrainFlightApex,
@@ -76,6 +78,20 @@ import {
   atmosphericFogRange,
   clampFogToMeshedTerrain,
 } from '../src/public/worldloom/src/fog.js';
+import {
+  CHUNK_WORLD_SIZE,
+  DETAIL_SUPPORT_CHUNKS,
+  DISTANT_HORIZON_BUFFER_CHUNKS,
+  MAX_DETAIL_DISTANCE,
+  MAX_VIEW_DISTANCE,
+  MIN_VIEW_DISTANCE,
+  cameraFarForViewDistance,
+  detailedStreamDistance,
+  detailedViewDistance,
+  distantHorizonRadius,
+  normalizeViewDistance,
+} from '../src/public/worldloom/src/streaming-config.js';
+import { DistantTerrainHorizon } from '../src/public/worldloom/src/distant-terrain.js';
 
 function validSnapshot() {
   return {
@@ -95,6 +111,61 @@ function validSnapshot() {
     world: { version: 2, chunks: [], fluids: [] },
   };
 }
+
+test('view-distance configuration keeps the visual horizon broad and voxel detail bounded', () => {
+  assert.equal(MIN_VIEW_DISTANCE, 2);
+  assert.equal(MAX_VIEW_DISTANCE, 20);
+  assert.equal(MAX_DETAIL_DISTANCE, 8);
+  assert.equal(DETAIL_SUPPORT_CHUNKS, 2);
+  assert.equal(DISTANT_HORIZON_BUFFER_CHUNKS, 3);
+  assert.equal(CHUNK_WORLD_SIZE, 16);
+
+  assert.equal(normalizeViewDistance(undefined), 4);
+  assert.equal(normalizeViewDistance(Number.NaN, 6), 6);
+  assert.equal(normalizeViewDistance(-100), MIN_VIEW_DISTANCE);
+  assert.equal(normalizeViewDistance('19.6'), MAX_VIEW_DISTANCE);
+  assert.equal(normalizeViewDistance(10.49), 10);
+  assert.equal(normalizeViewDistance(10.5), 11);
+  assert.equal(normalizeViewDistance(9, 99), 9,
+    'a valid requested distance must not inherit a malformed fallback');
+
+  assert.equal(detailedViewDistance(MIN_VIEW_DISTANCE), MIN_VIEW_DISTANCE);
+  assert.equal(detailedViewDistance(MAX_DETAIL_DISTANCE), MAX_DETAIL_DISTANCE);
+  assert.equal(detailedViewDistance(MAX_VIEW_DISTANCE), MAX_DETAIL_DISTANCE);
+  assert.equal(detailedStreamDistance(MIN_VIEW_DISTANCE), MIN_VIEW_DISTANCE + DETAIL_SUPPORT_CHUNKS);
+  assert.equal(detailedStreamDistance(MAX_VIEW_DISTANCE), MAX_DETAIL_DISTANCE + DETAIL_SUPPORT_CHUNKS);
+
+  const maximumHorizon = (MAX_VIEW_DISTANCE + DISTANT_HORIZON_BUFFER_CHUNKS) * CHUNK_WORLD_SIZE;
+  assert.equal(distantHorizonRadius(MAX_VIEW_DISTANCE), maximumHorizon);
+  assert.equal(cameraFarForViewDistance(MIN_VIEW_DISTANCE), 320,
+    'low view distance should retain the established depth precision');
+  assert.equal(cameraFarForViewDistance(MAX_VIEW_DISTANCE), maximumHorizon + 32);
+  assert.ok(cameraFarForViewDistance(MAX_VIEW_DISTANCE) > distantHorizonRadius(MAX_VIEW_DISTANCE));
+});
+
+test('saved view distance clamps to 2–20 while graphics presets remain valid defaults', () => {
+  const store = new SaveStore();
+  const sanitize = (viewDistance) => store.sanitizeSettings({
+    ...DEFAULT_SETTINGS,
+    viewDistance,
+  }).viewDistance;
+
+  assert.equal(sanitize(-50), MIN_VIEW_DISTANCE);
+  assert.equal(sanitize(1), MIN_VIEW_DISTANCE);
+  assert.equal(sanitize(2), MIN_VIEW_DISTANCE);
+  assert.equal(sanitize(19.6), MAX_VIEW_DISTANCE);
+  assert.equal(sanitize(20), MAX_VIEW_DISTANCE);
+  assert.equal(sanitize(500), MAX_VIEW_DISTANCE);
+  assert.equal(sanitize('not-a-number'), DEFAULT_SETTINGS.viewDistance);
+
+  for (const [name, preset] of Object.entries(GRAPHICS_PRESETS)) {
+    assert.ok(Number.isInteger(preset.viewDistance), `${name} view distance must be an integer`);
+    assert.ok(
+      preset.viewDistance >= MIN_VIEW_DISTANCE && preset.viewDistance <= MAX_VIEW_DISTANCE,
+      `${name} view distance ${preset.viewDistance} is outside the supported range`,
+    );
+  }
+});
 
 test('inventory reports exact capacity and cloning is transactional', () => {
   const inventory = new Inventory();
@@ -1001,6 +1072,152 @@ test('streaming prepares hidden horizon rings and favors the direction of travel
     'a nearer complete ring must still outrank forward bias in a farther ring',
   );
   world.dispose();
+});
+
+test('maximum visual distance stages admission without exceeding the full-detail chunk budget', () => {
+  const world = new World(7342, null, null);
+  const position = { x: 0.5, z: 0.5 };
+  const motion = { x: 6, z: -2 };
+  const maximumActiveChunks = (detailedStreamDistance(MAX_VIEW_DISTANCE) * 2 + 1) ** 2;
+
+  let update = world.updateStreaming(position, MAX_VIEW_DISTANCE, motion);
+  const initialRevision = world.streamRevision;
+  assert.deepEqual({
+    visualDistance: update.visualDistance,
+    detailDistance: update.detailDistance,
+    streamDistance: update.streamDistance,
+    maximumDetailDistance: update.maximumDetailDistance,
+  }, {
+    visualDistance: MAX_VIEW_DISTANCE,
+    detailDistance: MAX_DETAIL_DISTANCE,
+    streamDistance: MAX_DETAIL_DISTANCE + DETAIL_SUPPORT_CHUNKS,
+    maximumDetailDistance: MAX_DETAIL_DISTANCE,
+  });
+  assert.equal(world.renderDistance, MAX_VIEW_DISTANCE);
+  assert.equal(world.detailDistance, MAX_DETAIL_DISTANCE);
+  assert.equal(world.streamDistance, MAX_DETAIL_DISTANCE + DETAIL_SUPPORT_CHUNKS);
+  assert.equal(update.changed, true);
+  assert.equal(update.admitted, 81, 'the first maximum-distance admission should remain bounded');
+  assert.ok(update.pending > 0, 'the far detail rings should be staged over later streaming updates');
+  assert.ok(world.chunks.size <= maximumActiveChunks);
+
+  let calls = 1;
+  while (update.pending > 0 && calls < 32) {
+    update = world.updateStreaming(position, MAX_VIEW_DISTANCE, motion);
+    calls++;
+    assert.equal(update.changed, false, 'continued admission must reuse the cached streaming plan');
+    assert.equal(world.streamRevision, initialRevision,
+      'same-center updates must not rebuild the streaming plan');
+    assert.ok(update.admitted <= 48, 'later admissions must retain their per-update allocation cap');
+    assert.ok(world.chunks.size <= maximumActiveChunks,
+      `active detail chunks exceeded ${maximumActiveChunks} during staged admission`);
+  }
+
+  assert.equal(update.pending, 0, 'repeated bounded updates should eventually admit the complete detail square');
+  assert.equal(world.chunks.size, maximumActiveChunks);
+  assert.equal(world.generationQueue.length, maximumActiveChunks);
+  assert.ok(calls > 1 && calls < 32, `staged admission completed in an unexpected ${calls} calls`);
+  world.dispose();
+});
+
+test('streaming plan revision changes only when its chunk-space signature changes', () => {
+  const world = new World(7343, null, null);
+  const motion = { x: 4.2, z: 0.4 };
+  const maximumActiveChunks = (detailedStreamDistance(MAX_VIEW_DISTANCE) * 2 + 1) ** 2;
+  const first = world.updateStreaming({ x: 0.5, z: 0.5 }, MAX_VIEW_DISTANCE, motion);
+  const firstRevision = world.streamRevision;
+
+  const sameChunk = world.updateStreaming({ x: 15.75, z: 8.25 }, MAX_VIEW_DISTANCE, motion);
+  assert.equal(first.changed, true);
+  assert.equal(sameChunk.changed, false);
+  assert.equal(world.streamRevision, firstRevision,
+    'sub-chunk movement with the same direction sector must reuse the plan');
+  assert.ok(world.chunks.size <= maximumActiveChunks);
+
+  const crossed = world.updateStreaming({ x: CHUNK_WORLD_SIZE + 0.5, z: 8.25 }, MAX_VIEW_DISTANCE, motion);
+  assert.equal(crossed.changed, true);
+  assert.equal(world.streamRevision, firstRevision + 1,
+    'crossing a chunk boundary must publish exactly one new stream plan');
+  assert.ok(world.chunks.size <= maximumActiveChunks,
+    'a boundary crossing must evict stale chunks before admitting the new strip');
+  assert.equal(world.renderDistance, MAX_VIEW_DISTANCE);
+  assert.equal(world.detailDistance, MAX_DETAIL_DISTANCE);
+  assert.equal(world.streamDistance, detailedStreamDistance(MAX_VIEW_DISTANCE));
+  world.dispose();
+});
+
+test('distant terrain builds deterministically, incrementally, and swaps atomically', () => {
+  const scene = new THREE.Scene();
+  const terrain = {
+    seaLevel: 32,
+    _columnInfo(x, z) {
+      const height = Math.round(31 + Math.sin(x / 41) * 6 + Math.cos(z / 53) * 4);
+      return {
+        height,
+        biome: x < -40 ? 'forest' : x > 80 ? 'desert' : 'plains',
+        moisture: 0.45 + Math.sin(z / 90) * 0.2,
+        forestWeight: x < 0 ? 0.7 : 0.1,
+        desertWeight: x > 50 ? 0.65 : 0.05,
+        surfaceSand: x > 90,
+        rockiness: Math.max(0, (height - 34) / 24),
+        pondWaterLevel: Math.abs(x) < 8 && Math.abs(z) < 8 ? 34 : null,
+      };
+    },
+  };
+  const hashGeometry = (horizon) => {
+    const hash = createHash('sha256');
+    for (const name of ['position', 'normal', 'color']) {
+      const array = horizon.mesh.geometry.getAttribute(name).array;
+      hash.update(Buffer.from(array.buffer, array.byteOffset, array.byteLength));
+    }
+    return hash.digest('hex');
+  };
+
+  const first = new DistantTerrainHorizon(scene, terrain);
+  assert.equal(first.request(0.5, 0.5, MAX_VIEW_DISTANCE, MAX_DETAIL_DISTANCE), false);
+  const originalPending = first.pendingWork;
+  first.process(1, Number.POSITIVE_INFINITY);
+  assert.ok(first.pendingWork < originalPending && first.pending,
+    'one row should advance without publishing the complete horizon');
+  while (first.pending) first.process(16, Number.POSITIVE_INFINITY);
+  assert.equal(first.ready, true);
+  assert.equal(first.mesh.castShadow, false);
+  assert.equal(first.mesh.receiveShadow, false);
+  assert.equal(first.mesh.userData.distantTerrain, true);
+  const firstStats = first.getStats();
+  assert.equal(firstStats.outerRadius, distantHorizonRadius(MAX_VIEW_DISTANCE));
+  assert.equal(firstStats.innerRadius, CHUNK_WORLD_SIZE * 3);
+  assert.ok(firstStats.vertices > 0 && firstStats.vertices <= 210_000);
+  assert.ok(firstStats.triangles > 0 && firstStats.triangles <= 70_000);
+  for (const name of ['position', 'normal', 'color']) {
+    const values = first.mesh.geometry.getAttribute(name).array;
+    assert.ok(values.every(Number.isFinite), `${name} contains a non-finite distant-terrain value`);
+  }
+  assert.equal(first.getSafeDistanceFor(0.5, 0.5, 8), 0,
+    'the visual horizon cannot bridge an unfinished detailed centre hole');
+  assert.ok(first.getSafeDistanceFor(0.5, 0.5, 80) >= 350,
+    'a complete detailed seam should unlock the twenty-chunk visual horizon');
+  const firstHash = hashGeometry(first);
+
+  const replay = new DistantTerrainHorizon(null, terrain);
+  replay.request(0.5, 0.5, MAX_VIEW_DISTANCE, MAX_DETAIL_DISTANCE);
+  replay.process(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY);
+  assert.equal(hashGeometry(replay), firstHash, 'the same world request must reproduce exact horizon buffers');
+  assert.equal(first.request(15.75, 8.25, MAX_VIEW_DISTANCE, MAX_DETAIL_DISTANCE), true,
+    'movement inside the snapped chunk must be a cache hit');
+
+  const oldMesh = first.mesh;
+  assert.equal(first.request(16.5, 8.25, MAX_VIEW_DISTANCE, MAX_DETAIL_DISTANCE), false);
+  assert.equal(first.mesh, oldMesh, 'a replacement build must retain the published horizon');
+  assert.equal(first.ready, false);
+  first.process(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY);
+  assert.notEqual(first.mesh, oldMesh, 'the replacement must publish atomically after completion');
+  assert.equal(first.ready, true);
+  assert.deepEqual(first.getStats().center, [16, 0]);
+
+  replay.dispose();
+  first.dispose();
+  assert.equal(scene.children.includes(first.group), false);
 });
 
 test('mature overgrown trees use ivy bark textures without protruding lower-trunk leaf blocks', () => {
@@ -2030,14 +2247,14 @@ test('creature combat is telegraphed, threatening, and player swings recover eve
   system.dispose();
 });
 
-test('rare bird admission and breed selection are deterministic and habitat-aware', () => {
+test('bird admission, pond residency, and breed selection are deterministic and habitat-aware', () => {
   assert.deepEqual(Object.keys(BIRD_BREEDS).sort(), ['ash_sparrow', 'pond_azurefin']);
   assert.notEqual(BIRD_BREEDS.ash_sparrow.rootName, BIRD_BREEDS.pond_azurefin.rootName);
 
   const field = new BirdField(null);
   const chance = field.profile.birdSpawnChance;
-  assert.ok(chance >= 0.03 && chance <= 0.2,
-    `default bird admission should stay rare, received ${(chance * 100).toFixed(1)}%`);
+  assert.ok(chance >= 0.2 && chance <= 0.3,
+    `default bird admission should be noticeably increased, received ${(chance * 100).toFixed(1)}%`);
   const admissions = (seed) => Array.from({ length: 8_192 }, (_, serial) => (
     birdUnitHash(seed, serial, 0xa24baed5) < chance
   ));
@@ -2048,6 +2265,32 @@ test('rare bird admission and breed selection are deterministic and habitat-awar
   assert.ok(Math.abs(admittedRatio - chance) < 0.025,
     `seeded rare admissions drifted away from the configured chance (${admittedRatio})`);
   field.dispose();
+
+  assert.equal(POND_BIRD_OCCUPANCY_CHANCE, 0.5);
+  const pondResidency = [];
+  let changedWorldResidency = 0;
+  for (let x = -64; x < 64; x++) {
+    for (let z = -64; z < 64; z++) {
+      const pond = { cellX: x, cellZ: z };
+      const firstResident = birdPondHasResident(0x51ed270b, pond);
+      assert.equal(birdPondHasResident(0x51ed270b, pond), firstResident,
+        'the same world and pond must retain residency across reloads');
+      pondResidency.push(firstResident);
+      if (birdPondHasResident(0x7f4a7c15, pond) !== firstResident) changedWorldResidency++;
+    }
+  }
+  const pondResidentRatio = pondResidency.filter(Boolean).length / pondResidency.length;
+  assert.ok(Math.abs(pondResidentRatio - 0.5) < 0.02,
+    `pond residency drifted away from 50% (${pondResidentRatio})`);
+  assert.ok(changedWorldResidency > pondResidency.length * 0.35,
+    'different worlds should materially change which ponds receive residents');
+  assert.equal(birdPondHasResident(123, {}), false);
+  assert.equal(birdPondHasResident(123, { cellX: 1 }), false);
+  assert.equal([
+    { cellX: -1, cellZ: -1 },
+    { cellX: -1, cellZ: 0 },
+  ].filter((pond) => birdPondHasResident(64, pond)).length, 1,
+  'the browser fixture should retain one resident pond');
 
   const counts = {
     tree: { ash_sparrow: 0, pond_azurefin: 0 },
@@ -2157,6 +2400,7 @@ test('bird tree and pond anchors validate live support, dry space, and streamed 
   const bank = birdPondBank(pondWorld, pond, 77);
   assert.ok(bank, 'a live pond with a dry bank should expose a landing');
   assert.equal(bank.habitat, 'pond');
+  assert.equal(bank.residentEligible, birdPondHasResident(77, pond));
   assert.equal(BLOCKS[bank.supportBlock]?.solid, true);
   assert.equal(BLOCKS[pondWorld.getBlock(
     Math.floor(bank.position.x), Math.floor(bank.position.y), Math.floor(bank.position.z),

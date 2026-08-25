@@ -16,6 +16,13 @@ import {
   LEGACY_WORLD_GENERATOR_VERSION,
   WORLD_GENERATOR_VERSION,
 } from './generator-version.js';
+import {
+  MAX_DETAIL_DISTANCE,
+  detailedStreamDistance,
+  detailedViewDistance,
+  normalizeViewDistance,
+} from './streaming-config.js';
+import { DistantTerrainHorizon } from './distant-terrain.js';
 
 export {
   LEGACY_WORLD_GENERATOR_VERSION,
@@ -42,15 +49,17 @@ const POND_MAX_RADIUS = 7.25;
 const CAVE_CELL_SIZE = 34;
 const FISSURE_CELL_SIZE = 78;
 const CAVE_NODE_CACHE_LIMIT = 4_096;
-// The atmospheric fog reaches a little beyond the selected view distance. Keep
-// two fully meshed rings behind it so a fast turn or a chunk-boundary crossing
-// reveals terrain instead of the clear color while the next strip streams in.
-const HORIZON_BUFFER_CHUNKS = 2;
 // Keep a modest amount of generated voxel data after a chunk leaves the view
 // radius. Walking back across a recently visited boundary then only needs a new
 // GPU mesh instead of repeating terrain, cave and decoration generation. At the
 // tallest view distance this is still only a few megabytes of Uint8Array data.
 const DORMANT_CHUNK_CACHE_LIMIT = 96;
+// Small and balanced footprints still materialize in one cheap pass. Larger
+// settings admit complete near rings first, then allocate a bounded number of
+// far chunks per streaming tick instead of producing a one-frame memory spike.
+const EAGER_STREAM_TARGET_LIMIT = 289;
+const INITIAL_STREAM_ADMISSION = 81;
+const STREAM_ADMISSION_BATCH = 48;
 const MAX_FLUID_LEVEL = 7;
 const MAX_FLUID_QUEUE = 32_768;
 const FLUID_DIRECTIONS = Object.freeze([
@@ -302,8 +311,15 @@ export class World {
     this._preloadChunksRemaining = 13;
     this.centerChunk = { cx: 0, cz: 0 };
     this.renderDistance = 5;
-    this.streamDistance = this.renderDistance + HORIZON_BUFFER_CHUNKS;
+    this.detailDistance = detailedViewDistance(this.renderDistance);
+    this.streamDistance = detailedStreamDistance(this.renderDistance);
     this.streamDirection = { x: 0, z: -1, strength: 0 };
+    this.streamRevision = 0;
+    this._streamPlanSignature = '';
+    this._streamPlanTargets = [];
+    this._streamTargetKeys = new Set();
+    this._streamPriorityByKey = new Map();
+    this._streamPlanCursor = 0;
     this._streamTick = 0;
     this._editMeshSerial = 0;
     this._columnCache = new Map();
@@ -419,6 +435,7 @@ export class World {
       generatedTotal: 0,
       rebuiltTotal: 0,
     };
+    this.distantTerrain = new DistantTerrainHorizon(this.scene, this);
     this._refreshStats();
   }
 
@@ -1485,11 +1502,13 @@ export class World {
     const pz = Number(position?.z ?? position?.[2] ?? 0);
     const centerX = floorDiv(Number.isFinite(px) ? px : 0, CHUNK_SIZE);
     const centerZ = floorDiv(Number.isFinite(pz) ? pz : 0, CHUNK_SIZE);
-    // View distance limits resident chunks, not world size. Generated coordinates
-    // remain effectively unbounded, while this cap prevents a settings mistake
-    // from scheduling an unbounded amount of work in one streaming update.
-    const distance = THREE.MathUtils.clamp(Math.floor(Number(renderDistance) || 5), 2, 16);
-    const streamDistance = Math.min(18, distance + HORIZON_BUFFER_CHUNKS);
+    // View distance is the visual horizon. Expensive interactive voxel chunks
+    // retain a separate bounded radius; a lightweight distant terrain proxy
+    // carries settings above that cap without generating far caves, fluids,
+    // foliage and collision meshes merely to fill a distant silhouette.
+    const distance = normalizeViewDistance(renderDistance, this.renderDistance);
+    const detailDistance = detailedViewDistance(distance);
+    const streamDistance = detailedStreamDistance(distance);
     const motionX = Number(motion?.x ?? motion?.[0] ?? 0);
     const motionZ = Number(motion?.z ?? motion?.[2] ?? 0);
     const motionLength = Math.hypot(motionX, motionZ);
@@ -1502,50 +1521,87 @@ export class World {
     }
     this.centerChunk = { cx: centerX, cz: centerZ };
     this.renderDistance = distance;
+    this.detailDistance = detailDistance;
     this.streamDistance = streamDistance;
+    if (distance > detailDistance) {
+      this.distantTerrain?.request(px, pz, distance, detailDistance);
+    } else if (this.distantTerrain?.mesh || this.distantTerrain?.pending) {
+      this.distantTerrain.clear();
+    }
 
-    const wanted = [];
-    const wantedKeys = new Set();
-    for (const chunk of this.chunks.values()) chunk.wanted = false;
-    for (let dz = -streamDistance; dz <= streamDistance; dz++) {
-      for (let dx = -streamDistance; dx <= streamDistance; dx++) {
-        const cx = centerX + dx;
-        const cz = centerZ + dz;
-        const key = chunkKey(cx, cz);
-        const ring = Math.max(Math.abs(dx), Math.abs(dz));
-        const radial = dx * dx + dz * dz;
-        const forward = dx * this.streamDirection.x + dz * this.streamDirection.z;
-        const lateral = Math.abs(dx * this.streamDirection.z - dz * this.streamDirection.x);
-        // Whole nearer rings always win, which guarantees mesh support on every
-        // side. Within a ring, moving-forward chunks win deterministically so
-        // the player has two chunk widths of prepared terrain in front of them.
-        const priority = ring * 1_000
-          + radial * 3
-          + this.streamDirection.strength * (lateral * 2 - forward * 12)
-          + (dx + streamDistance) * 0.001
-          + (dz + streamDistance) * 0.000001;
-        wantedKeys.add(key);
-        wanted.push({ cx, cz, priority });
+    const directionSector = this.streamDirection.strength > 0.04
+      ? ((Math.round(Math.atan2(this.streamDirection.z, this.streamDirection.x) / (Math.PI / 4)) % 8) + 8) % 8
+      : -1;
+    const signature = `${centerX},${centerZ}:${streamDistance}:${directionSector}`;
+    const planChanged = signature !== this._streamPlanSignature;
+    if (planChanged) {
+      const wanted = [];
+      const wantedKeys = new Set();
+      for (let dz = -streamDistance; dz <= streamDistance; dz++) {
+        for (let dx = -streamDistance; dx <= streamDistance; dx++) {
+          const cx = centerX + dx;
+          const cz = centerZ + dz;
+          const key = chunkKey(cx, cz);
+          const ring = Math.max(Math.abs(dx), Math.abs(dz));
+          const radial = dx * dx + dz * dz;
+          const forward = dx * this.streamDirection.x + dz * this.streamDirection.z;
+          const lateral = Math.abs(dx * this.streamDirection.z - dz * this.streamDirection.x);
+          // Whole nearer rings always win, which guarantees mesh support on
+          // every side. Motion only orders cells within the same complete ring.
+          const priority = ring * 1_000
+            + radial * 3
+            + this.streamDirection.strength * (lateral * 2 - forward * 12)
+            + (dx + streamDistance) * 0.001
+            + (dz + streamDistance) * 0.000001;
+          wantedKeys.add(key);
+          wanted.push({ cx, cz, key, priority });
+        }
+      }
+      wanted.sort((a, b) => a.priority - b.priority);
+      this._streamPlanSignature = signature;
+      this._streamPlanTargets = wanted;
+      this._streamTargetKeys = wantedKeys;
+      this._streamPriorityByKey = new Map(wanted.map((target) => [target.key, target.priority]));
+      this._streamPlanCursor = 0;
+      this.streamRevision++;
+
+      // Retain generated voxel arrays in the dormant LRU, but remove meshes and
+      // active scheduling state outside the new square immediately. This keeps
+      // the active footprint structurally bounded even at the maximum setting.
+      for (const [key, chunk] of [...this.chunks]) {
+        if (!wantedKeys.has(key)) {
+          this._removeChunk(key, chunk);
+          continue;
+        }
+        chunk.wanted = true;
+        chunk.streamPriority = this._streamPriorityByKey.get(key) ?? Number.POSITIVE_INFINITY;
+        for (const mesh of [chunk.opaqueMesh, chunk.glassMesh, chunk.waterMesh, chunk.glowMesh]) {
+          if (mesh) mesh.visible = true;
+        }
       }
     }
-    wanted.sort((a, b) => a.priority - b.priority);
-    for (const target of wanted) {
-      const chunk = this.ensureChunk(target.cx, target.cz);
+
+    const eager = this._streamPlanTargets.length <= EAGER_STREAM_TARGET_LIMIT;
+    const admissionLimit = eager
+      ? Number.POSITIVE_INFINITY
+      : this.chunks.size === 0
+        ? INITIAL_STREAM_ADMISSION
+        : STREAM_ADMISSION_BATCH;
+    let admitted = 0;
+    while (this._streamPlanCursor < this._streamPlanTargets.length) {
+      const target = this._streamPlanTargets[this._streamPlanCursor];
+      let chunk = this.chunks.get(target.key);
+      if (!chunk && admitted >= admissionLimit) break;
+      if (!chunk) {
+        chunk = this.ensureChunk(target.cx, target.cz);
+        admitted++;
+      }
       chunk.wanted = true;
       chunk.streamPriority = target.priority;
+      this._streamPlanCursor++;
     }
 
-    const unloadDistance = streamDistance + 1;
-    for (const [key, chunk] of [...this.chunks]) {
-      if (Math.abs(chunk.cx - centerX) > unloadDistance || Math.abs(chunk.cz - centerZ) > unloadDistance) {
-        this._removeChunk(key, chunk);
-      } else {
-        if (chunk.opaqueMesh) chunk.opaqueMesh.visible = chunk.wanted;
-        if (chunk.glassMesh) chunk.glassMesh.visible = chunk.wanted;
-        if (chunk.waterMesh) chunk.waterMesh.visible = chunk.wanted;
-        if (chunk.glowMesh) chunk.glowMesh.visible = chunk.wanted;
-      }
-    }
+    const wantedKeys = this._streamTargetKeys;
     this.generationQueue = this.generationQueue
       .filter((key) => this.chunks.has(key) && wantedKeys.has(key))
       .sort((a, b) => {
@@ -1555,13 +1611,24 @@ export class World {
           - (cb?.streamPriority ?? Number.POSITIVE_INFINITY);
       });
     this.queuedChunks = new Set(this.generationQueue);
-    this.fluidQueue = this.fluidQueue.slice(this.fluidQueueHead).filter((key) => {
-      const { x, y, z } = parseVoxelKey(key);
-      return this._fluidCellAvailable(x, y, z);
-    });
-    this.fluidQueueHead = 0;
-    this.fluidQueued = new Set(this.fluidQueue);
+    if (planChanged) {
+      this.fluidQueue = this.fluidQueue.slice(this.fluidQueueHead).filter((key) => {
+        const { x, y, z } = parseVoxelKey(key);
+        return this._fluidCellAvailable(x, y, z);
+      });
+      this.fluidQueueHead = 0;
+      this.fluidQueued = new Set(this.fluidQueue);
+    }
     this._refreshStats();
+    return {
+      changed: planChanged,
+      admitted,
+      pending: this._streamPlanTargets.length - this._streamPlanCursor,
+      visualDistance: distance,
+      detailDistance,
+      streamDistance,
+      maximumDetailDistance: MAX_DETAIL_DISTANCE,
+    };
   }
 
   _writeGenerated(chunk, worldX, y, worldZ, id, replace = null) {
@@ -2019,6 +2086,18 @@ export class World {
     return processed;
   }
 
+  hasPendingStreamingWork() {
+    return Boolean(
+      this.generationQueue.length
+      || this.stats.dirty > 0
+      || this.distantTerrain?.pending,
+    );
+  }
+
+  processDistantTerrain(maxRows = 2, maxMilliseconds = 2.4) {
+    return this.distantTerrain?.process(maxRows, maxMilliseconds) || 0;
+  }
+
   _replaceMesh(chunk, property, geometry, material, name) {
     const previous = chunk[property];
     if (previous) {
@@ -2212,7 +2291,13 @@ export class World {
     const localX = localCoordinate(worldX, centerX);
     const localZ = localCoordinate(worldZ, centerZ);
     const nearestChunkEdge = Math.min(localX, CHUNK_SIZE - localX, localZ, CHUNK_SIZE - localZ);
-    return Math.max(8, completeRadius * CHUNK_SIZE + nearestChunkEdge - 2);
+    const detailedSafe = Math.max(8, completeRadius * CHUNK_SIZE + nearestChunkEdge - 2);
+    const distantSafe = this.distantTerrain?.getSafeDistanceFor(
+      worldX,
+      worldZ,
+      detailedSafe,
+    ) || 0;
+    return Math.max(detailedSafe, distantSafe);
   }
 
   _removeChunk(key, chunk, keepGeneratedData = true) {
@@ -2397,18 +2482,35 @@ export class World {
     this.stats.edits = editCount;
     this.stats.flowingWater = this.fluidLevels.size;
     this.stats.fluidQueue = this.fluidQueue.length - this.fluidQueueHead;
+    this.stats.planned = this._streamPlanTargets.length;
+    this.stats.pendingAdmission = Math.max(
+      0,
+      this._streamPlanTargets.length - this._streamPlanCursor,
+    );
   }
 
   getStats() {
     this._refreshStats();
-    return { ...this.stats };
+    return {
+      ...this.stats,
+      visualDistance: this.renderDistance,
+      detailDistance: this.detailDistance,
+      streamDistance: this.streamDistance,
+      streamRevision: this.streamRevision,
+      distantTerrain: this.distantTerrain?.getStats?.() || null,
+    };
   }
 
   dispose() {
+    this.distantTerrain?.dispose?.();
+    this.distantTerrain = null;
     for (const [key, chunk] of [...this.chunks]) this._removeChunk(key, chunk, false);
     this.dormantChunks.clear();
     this.generationQueue.length = 0;
     this.queuedChunks.clear();
+    this._streamPlanTargets.length = 0;
+    this._streamTargetKeys.clear();
+    this._streamPriorityByKey.clear();
     this.fluidQueue.length = 0;
     this.fluidQueueHead = 0;
     this.fluidQueued.clear();

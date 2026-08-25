@@ -8,6 +8,8 @@ dist/worldloom/*
 dist/worldloom/src/*
 !dist/worldloom/src/hanging-leaves.js
 !dist/worldloom/src/birds.js
+!dist/worldloom/src/distant-terrain.js
+!dist/worldloom/src/streaming-config.js
 !dist/worldloom/assets/
 dist/worldloom/assets/*
 !dist/worldloom/assets/environment/

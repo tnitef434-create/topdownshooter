@@ -29,6 +29,7 @@ import { PlayerAvatar, WORLD_AVATAR_LAYER } from './player-avatar.js';
 import { GraphicsPipeline, caveLightingDepth, cavePostProcessAmount } from './graphics.js';
 import { SurvivalSystem } from './survival.js';
 import { clampFogToMeshedTerrain } from './fog.js';
+import { cameraFarForViewDistance } from './streaming-config.js';
 
 const canvas = document.getElementById('game');
 const ui = new UI();
@@ -63,7 +64,8 @@ let miningSoundTimer = 0;
 let suppressMining = 0;
 let saveTimer = 0;
 let streamingTimer = 0;
-let streamWorkFlip = false;
+let streamWorkPhase = 0;
+let stagingWorkPhase = 0;
 let streamingFogFar = null;
 let hudTimer = 0;
 let fps = 60;
@@ -159,7 +161,12 @@ function initRenderer() {
   renderer.setClearColor(0x6aaecf);
 
   scene = new THREE.Scene();
-  camera = new THREE.PerspectiveCamera(settings.fov, 1, 0.045, 320);
+  camera = new THREE.PerspectiveCamera(
+    settings.fov,
+    1,
+    0.045,
+    cameraFarForViewDistance(settings.viewDistance),
+  );
   camera.layers.set(0);
   camera.rotation.order = 'YXZ';
   atlas = createTextureAtlas();
@@ -359,6 +366,7 @@ function bindUI() {
 function applySettings(next) {
   if (!renderer || !camera) return;
   camera.fov = Number(next.fov || DEFAULT_SETTINGS.fov);
+  camera.far = cameraFarForViewDistance(next.viewDistance);
   camera.updateProjectionMatrix();
   audio.setSettings(next);
   environment?.applyGraphicsSettings(next);
@@ -406,6 +414,7 @@ async function startWorld({ seed, mode: selectedMode, saveData = null }) {
   // Generator selection must happen before edits are loaded: loadEdits removes
   // entries equal to deterministic base terrain, which differs between v1 and v2.
   world = new World(seed, scene, atlas, { generatorVersion });
+  window.__worldloomWorld = world;
   streamingFogFar = null;
   environment.enhanceWorldMaterials(world);
   environment.setWeatherContext(world);
@@ -546,10 +555,11 @@ async function startWorld({ seed, mode: selectedMode, saveData = null }) {
     playerAvatar?.dispose();
     playerAvatar = null;
     window.__worldloomPlayerAvatar = null;
-  window.__worldloomPlayer = null;
+    window.__worldloomPlayer = null;
     clearDroppedItems();
     world?.dispose();
     world = null;
+    window.__worldloomWorld = null;
     player = null;
     environment.updateLocalLights(null, null);
     environment.setWeatherContext(null);
@@ -995,6 +1005,7 @@ function leaveToTitle() {
   worldWorkToken++;
   worldWorkScheduled = false;
   world = null;
+  window.__worldloomWorld = null;
   player = null;
   stationContext = null;
   nearbyTreeLevel = 0;
@@ -1454,7 +1465,7 @@ function scheduleWorldWork() {
     const timedOut = Boolean(deadline?.didTimeout);
     const startedAt = performance.now();
     const inputPendingAtStart = navigator.scheduling?.isInputPending?.() === true;
-    const stagingRadiusTarget = Math.min(4, Math.max(2, Math.floor(settings.viewDistance || 4)));
+    const stagingRadiusTarget = Math.min(6, Math.max(2, Math.floor(world.detailDistance || 4)));
     const stagingBoost = Boolean(
       state === 'playing'
       && initialClickHint
@@ -1482,7 +1493,7 @@ function scheduleWorldWork() {
     let passes = 0;
     while (
       passes < passLimit
-      && (world.generationQueue.length || world.stats.dirty > 0)
+      && world.hasPendingStreamingWork()
     ) {
       if (stagingBoost && input?.locked) break;
       if (passes > 0 && navigator.scheduling?.isInputPending?.() === true) break;
@@ -1503,30 +1514,42 @@ function scheduleWorldWork() {
         player.position.z,
         nextRenderedRadius + 1,
       );
-      if (stagingBoost && nextSupportReady) {
+      if (stagingBoost) stagingWorkPhase = (stagingWorkPhase + 1) % 3;
+      if (stagingBoost && world.distantTerrain?.pending && stagingWorkPhase === 0) {
+        // Build the cheap visual horizon alongside the detailed near rings so
+        // a patient title-screen player does not wait for every cave chunk
+        // before the clear-air distance can open.
+        world.processDistantTerrain(1, sliceBudget);
+      } else if (stagingBoost && nextSupportReady) {
         // Finish the newly supported ring first: this increases the safe fog
         // distance immediately instead of meshing far chunks out of order.
         world.rebuildDirty(1, sliceBudget);
       } else if (stagingBoost && world.generationQueue.length) {
         world.processQueue(1, sliceBudget);
       } else {
-        streamWorkFlip = !streamWorkFlip;
-        if (streamWorkFlip && world.generationQueue.length) {
+        streamWorkPhase = (streamWorkPhase + 1) % 3;
+        if (streamWorkPhase === 0 && world.generationQueue.length) {
+          world.processQueue(1, sliceBudget);
+        } else if (streamWorkPhase === 1 && world.stats.dirty > 0) {
+          world.rebuildDirty(1, sliceBudget);
+        } else if (streamWorkPhase === 2 && world.distantTerrain?.pending) {
+          world.processDistantTerrain(1, sliceBudget);
+        } else if (world.generationQueue.length) {
           world.processQueue(1, sliceBudget);
         } else if (world.stats.dirty > 0) {
           world.rebuildDirty(1, sliceBudget);
-        } else if (world.generationQueue.length) {
-          world.processQueue(1, sliceBudget);
+        } else if (world.distantTerrain?.pending) {
+          world.processDistantTerrain(1, sliceBudget);
         }
       }
       passes++;
     }
-    if (world.generationQueue.length || world.stats.dirty > 0) scheduleWorldWork();
+    if (world.hasPendingStreamingWork()) scheduleWorldWork();
   };
   if (typeof window.requestIdleCallback === 'function') {
     // The timeout guarantees a very small bounded slice even on busy
     // high-refresh-rate render loops that expose no long idle window.
-    const stagingRadiusTarget = Math.min(4, Math.max(2, Math.floor(settings.viewDistance || 4)));
+    const stagingRadiusTarget = Math.min(6, Math.max(2, Math.floor(world.detailDistance || 4)));
     const staging = state === 'playing'
       && initialClickHint
       && !input?.locked
@@ -1678,7 +1701,7 @@ function updateHUD() {
     ? [
       `${fps.toFixed(0)} FPS · ${renderer.info.render.calls} draws · ${renderer.info.render.triangles.toLocaleString()} tris`,
       `XYZ ${player.position.x.toFixed(1)} / ${player.position.y.toFixed(1)} / ${player.position.z.toFixed(1)}`,
-      `Chunks ${stats.generated}/${stats.loaded} · queue ${stats.queued} · dirty ${stats.dirty}`,
+      `Chunks ${stats.generated}/${stats.loaded} · queue ${stats.queued} · horizon ${stats.distantTerrain?.ready ? 'ready' : stats.distantTerrain?.pending ? 'building' : 'detail only'}`,
       `Seed ${world.seed} · ${world.biomeAt(player.position.x, player.position.z)} · ${creatures?.count || 0} creatures · ${environment?.birds?.count || 0} birds`,
       `Day ${survival.dayNumber} · food ${(survival.nourishment * 100).toFixed(0)}% · wet ${(survival.wetness * 100).toFixed(0)}% · air ${(survival.oxygen * 100).toFixed(0)}%`,
     ].join('\n')
