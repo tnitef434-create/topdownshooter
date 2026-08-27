@@ -128,6 +128,14 @@ function seedFromText(value) {
   return normalizeSeed(hash || Date.now());
 }
 
+function yieldLoadingWork() {
+  // scheduler.yield keeps input, progress painting and the parent portal alive
+  // without paying a full display-frame delay after every couple of chunks.
+  // Older browsers still receive a macrotask break through setTimeout.
+  if (typeof globalThis.scheduler?.yield === 'function') return globalThis.scheduler.yield();
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 function setState(next) {
   state = next;
   input.enabled = ['playing', 'paused', 'inventory'].includes(next);
@@ -178,6 +186,7 @@ function initRenderer() {
   environment = new Environment(scene, renderer);
   window.__worldloomPonds = environment.pondEcology;
   window.__worldloomHangingLeaves = environment.hangingLeaves;
+  window.__worldloomGroundLeaves = environment.groundLeaves;
   window.__worldloomBirds = environment.birds;
   window.__worldloomSummitCrosses = environment.summitCrosses;
   // World-avatar geometry is structurally absent from the gameplay and GTAO
@@ -423,6 +432,7 @@ async function startWorld({ seed, mode: selectedMode, saveData = null }) {
   await Promise.all([
     environment.preparePondEcology(),
     environment.prepareHangingLeaves(),
+    environment.prepareGroundLeaves(),
     environment.prepareRedFlowers(),
     environment.prepareBirds(),
     environment.prepareSummitCrosses(),
@@ -461,23 +471,24 @@ async function startWorld({ seed, mode: selectedMode, saveData = null }) {
   creatures = new CreatureSystem(scene, world);
   creatures.onPlayerDamage = (amount, sourcePosition, creature, combat) => damagePlayer(amount, sourcePosition, combat);
 
-  world.updateStreaming(player.position, settings.viewDistance, player.velocity);
-  // Prepare a compact seven-by-seven playable core plus its one-chunk generation
-  // support ring. The fog clamp below never reveals farther terrain until each
-  // complete mesh ring is ready, so repeat loads stay quick without sky voids.
-  // The remaining buffered footprint continues through bounded idle slices.
-  const preloadRenderedRadius = 3;
-  const preloadSupportRadius = preloadRenderedRadius + 1;
-  const preloadTarget = Math.min(
-    world.generationQueue.length,
-    (preloadSupportRadius * 2 + 1) ** 2,
+  const initialStream = world.updateStreaming(
+    player.position,
+    settings.viewDistance,
+    player.velocity,
+    { preloadAll: true },
   );
+  // Materialize the complete active footprint before the loading screen opens.
+  // This includes the two hidden support rings around the configured detailed
+  // view: they become a ready-made travel buffer instead of generation/meshing
+  // work landing on the first few chunk boundaries the player crosses.
+  const preloadRenderedRadius = initialStream.streamDistance;
+  const preloadTarget = (preloadRenderedRadius * 2 + 1) ** 2;
   let preloadGenerated = 0;
   let generationSlice = 0;
   let generationProgressMarker = '';
   let generationProgressAt = performance.now();
   while (preloadGenerated < preloadTarget) {
-    preloadGenerated += world.processQueue(1, 7.5);
+    preloadGenerated += world.processQueue(1, 12, { completeChunks: true });
     generationSlice++;
     const headChunk = world.chunks.get(world.generationQueue[0]);
     const marker = `${preloadGenerated}:${world.generationQueue.length}:${headChunk?.key || ''}:${headChunk?.generationPhase || ''}:${headChunk?.generationCursor || 0}`;
@@ -487,11 +498,19 @@ async function startWorld({ seed, mode: selectedMode, saveData = null }) {
     } else if (performance.now() - generationProgressAt > 30_000) {
       throw new Error('Starting terrain generation stopped making progress.');
     }
-    const progress = 0.1 + (preloadGenerated / Math.max(1, preloadTarget)) * 0.5;
-    ui.setLoading(progress, preloadGenerated < 1 ? 'Raising the mountain chains…' : preloadGenerated < Math.min(12, preloadTarget) ? 'Carving rivers and caverns…' : 'Preparing the nearby wilds…');
-    if (generationSlice % 6 === 0) await new Promise((resolve) => requestAnimationFrame(resolve));
+    const progress = 0.1 + (preloadGenerated / Math.max(1, preloadTarget)) * 0.42;
+    ui.setLoading(
+      progress,
+      preloadGenerated < 1
+        ? 'Raising the mountain chains…'
+        : `Carving rivers, caves and wilds · ${preloadGenerated} / ${preloadTarget} chunks`,
+    );
+    if (generationSlice % 2 === 0) await yieldLoadingWork();
   }
-  if (preloadGenerated < preloadTarget) {
+  if (
+    preloadGenerated < preloadTarget
+    || !world.isNeighborhoodGenerated(player.position.x, player.position.z, preloadRenderedRadius)
+  ) {
     throw new Error('The starting terrain could not be generated safely.');
   }
   let meshSlice = 0;
@@ -499,7 +518,7 @@ async function startWorld({ seed, mode: selectedMode, saveData = null }) {
   let meshProgressMarker = '';
   let meshProgressAt = performance.now();
   while (!world.isNeighborhoodRendered(player.position.x, player.position.z, preloadRenderedRadius)) {
-    world.rebuildDirty(1, 7.5);
+    world.rebuildDirty(1, 12, { completeChunks: true });
     meshSlice++;
     const coverage = world.getStreamingCoverage();
     const partialChunk = [...world.chunks.values()].find((chunk) => chunk.meshJob);
@@ -511,13 +530,34 @@ async function startWorld({ seed, mode: selectedMode, saveData = null }) {
       throw new Error('Starting terrain meshing stopped making progress.');
     }
     ui.setLoading(
-      0.6 + Math.min(1, coverage.rendered / Math.max(1, preloadMeshTarget)) * 0.36,
-      coverage.rendered < 9 ? 'Painting the nearby ground…' : 'Opening a safe horizon…',
+      0.52 + Math.min(1, coverage.rendered / Math.max(1, preloadMeshTarget)) * 0.42,
+      `Painting the complete playable horizon · ${coverage.rendered} / ${preloadMeshTarget} chunks`,
     );
-    if (meshSlice % 6 === 0) await new Promise((resolve) => requestAnimationFrame(resolve));
+    if (meshSlice % 2 === 0) await yieldLoadingWork();
   }
   if (!world.isNeighborhoodRendered(player.position.x, player.position.z, preloadRenderedRadius)) {
     throw new Error('The starting horizon could not be prepared safely.');
+  }
+  const initialHorizonWork = world.distantTerrain?.pendingWork || 0;
+  let horizonSlice = 0;
+  let horizonProgressAt = performance.now();
+  let horizonProgressMarker = `${initialHorizonWork}`;
+  while (world.distantTerrain?.pending) {
+    world.processDistantTerrain(6, 12);
+    horizonSlice++;
+    const remaining = world.distantTerrain.pendingWork;
+    const marker = `${remaining}:${world.distantTerrain.getStats?.().publishedBuilds || 0}`;
+    if (marker !== horizonProgressMarker) {
+      horizonProgressMarker = marker;
+      horizonProgressAt = performance.now();
+    } else if (performance.now() - horizonProgressAt > 30_000) {
+      throw new Error('The distant starting horizon stopped making progress.');
+    }
+    const completed = initialHorizonWork > 0
+      ? 1 - remaining / initialHorizonWork
+      : 1;
+    ui.setLoading(0.94 + Math.min(1, completed) * 0.05, 'Finishing the far landscape…');
+    if (horizonSlice % 2 === 0) await yieldLoadingWork();
   }
   // Loading has just proven this complete radius. Open directly to that safe
   // boundary; only later background-grown rings use the gentle outward fade.
@@ -1796,6 +1836,10 @@ function animate(now) {
     hudTimer = 0;
     if (world && ['playing', 'paused', 'inventory'].includes(state)) updateHUD();
   }
+  // The CSS loading screen is opaque. Do not spend GPU/SwiftShader time
+  // repeatedly drawing a half-built 441-chunk scene behind it; publish the
+  // fully prepared world once when gameplay begins.
+  if (state === 'loading') return;
   if (graphicsPipeline) graphicsPipeline.render(dt);
   else renderer.render(scene, camera);
 }

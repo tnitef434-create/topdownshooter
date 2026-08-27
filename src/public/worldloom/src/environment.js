@@ -4,6 +4,7 @@ import { CRACK_STAGES, createCrackAtlasTexture } from './crack-texture.js';
 import { GRAPHICS_PRESETS } from './save.js';
 import { PondEcologyField } from './pond-ecology.js';
 import { HangingLeavesField } from './hanging-leaves.js';
+import { GroundLeafField } from './ground-leaves.js';
 import { RedFlowerField } from './red-flowers.js';
 import { BirdField } from './birds.js';
 import { SummitCrossField } from './summit-crosses.js';
@@ -863,31 +864,19 @@ class RainField {
 }
 
 const MAX_FALLING_LEAVES = 180;
+const FALLING_LEAF_TEXTURE_URL = new URL(
+  '../assets/environment/falling-leaf-particle.png',
+  import.meta.url,
+).href;
 
 function makeLeafTexture() {
-  const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = 32;
-  const context = canvas.getContext('2d');
-  context.translate(16, 16);
-  context.rotate(-0.55);
-  const gradient = context.createLinearGradient(-9, 0, 9, 0);
-  gradient.addColorStop(0, '#8a6d32');
-  gradient.addColorStop(0.48, '#d8b24f');
-  gradient.addColorStop(1, '#567a39');
-  context.fillStyle = gradient;
-  context.beginPath();
-  context.moveTo(-11, 0);
-  context.quadraticCurveTo(0, -7, 11, 0);
-  context.quadraticCurveTo(0, 7, -11, 0);
-  context.fill();
-  context.strokeStyle = 'rgba(244,225,151,.72)';
-  context.lineWidth = 1;
-  context.beginPath();
-  context.moveTo(-9, 0);
-  context.lineTo(9, 0);
-  context.stroke();
-  const texture = new THREE.CanvasTexture(canvas);
+  const texture = new THREE.TextureLoader().load(FALLING_LEAF_TEXTURE_URL);
+  texture.name = 'GPT-derived falling ash leaf';
   texture.colorSpace = THREE.SRGBColorSpace;
+  texture.magFilter = THREE.NearestFilter;
+  texture.minFilter = THREE.NearestFilter;
+  texture.generateMipmaps = false;
+  texture.anisotropy = 1;
   return texture;
 }
 
@@ -955,20 +944,21 @@ class FallingLeaves {
   }
 
   _seedNearTrees(focus) {
-    if (!this.world?.getBlock) return;
+    if (!this.world?.getTreesNear) return;
+    const trees = this.world.getTreesNear(focus.x, focus.z, 16)
+      .filter((tree) => tree.hasFallingLeaves && !tree.isPine
+        && this.world.isPositionReady?.(tree.rootX, tree.rootZ));
+    if (!trees.length) return;
     const attempts = this.reducedMotion ? 5 : 13;
     for (let attempt = 0; attempt < attempts; attempt++) {
+      const tree = trees[Math.floor(Math.random() * trees.length)];
       const angle = Math.random() * Math.PI * 2;
-      const radius = 2 + Math.random() * 14;
-      const x = Math.floor(focus.x + Math.cos(angle) * radius);
-      const z = Math.floor(focus.z + Math.sin(angle) * radius);
-      const ground = Math.floor(this.world.terrainHeight?.(x, z) ?? focus.y - 1);
-      for (let y = ground + 3; y <= Math.min(ground + 10, Number(this.world.worldHeight) - 1); y++) {
-        if (this.world.getBlock(x, y, z) !== BLOCK.ASH_LEAVES) continue;
-        this._spawn(x, y - Math.random() * 1.4, z);
-        if (!this.reducedMotion && Math.random() > 0.68) this._spawn(x, y, z);
-        break;
-      }
+      const radius = 0.3 + Math.random() * 2.1;
+      const x = tree.rootX + Math.cos(angle) * radius;
+      const z = tree.rootZ + Math.sin(angle) * radius;
+      const y = tree.crownY + 0.4 + Math.random() * 1.5;
+      this._spawn(x, y, z);
+      if (!this.reducedMotion && Math.random() > 0.68) this._spawn(x, y + 0.5, z);
     }
   }
 
@@ -1322,6 +1312,7 @@ export class Environment {
     scene.add(this.clouds);
     this.rain = new RainField(scene);
     this.fallingLeaves = new FallingLeaves(scene);
+    this.groundLeaves = new GroundLeafField(scene);
     this.lightning = new LightningField(scene);
     this.pondEcology = new PondEcologyField(scene, this.graphicsUniforms);
     this.hangingLeaves = new HangingLeavesField(scene, this.graphicsUniforms);
@@ -1347,6 +1338,7 @@ export class Environment {
     this.weatherWorld = world || null;
     this.rain.setWorld(this.weatherWorld);
     this.fallingLeaves.setWorld(this.weatherWorld);
+    this.groundLeaves.setWorld(this.weatherWorld);
     this.lightning.setWorld(this.weatherWorld);
     this.pondEcology.setWorld(this.weatherWorld);
     this.hangingLeaves.setWorld(this.weatherWorld);
@@ -1361,6 +1353,10 @@ export class Environment {
 
   prepareHangingLeaves() {
     return this.hangingLeaves.prepare();
+  }
+
+  prepareGroundLeaves() {
+    return this.groundLeaves.prepare();
   }
 
   prepareRedFlowers() {
@@ -1419,6 +1415,7 @@ export class Environment {
     this.shadowExtent = Number(profile.shadowExtent) || 46;
     this.rain.setQuality(profile, this.weatherEnabled, settings.reducedMotion);
     this.fallingLeaves.setQuality(profile, true, settings.reducedMotion);
+    this.groundLeaves.setQuality(profile);
     this.lightning.setQuality(this.weatherEnabled && profile.atmosphereDetail >= 0.6, settings.reducedMotion);
     this.pondEcology.setQuality(profile, settings.reducedMotion);
     this.hangingLeaves.setQuality(profile, settings.reducedMotion);
@@ -1971,6 +1968,7 @@ export class Environment {
     });
     this.rain.update(dt, focus, this.rainIntensity);
     this.fallingLeaves.update(dt, focus, this.graphicsUniforms.windStrength.value, this.rainIntensity);
+    this.groundLeaves.update(dt, focus);
     this.pondEcology.update(dt, focus, {
       rainIntensity: this.rainIntensity,
       dayAmount: this.dayAmount,
@@ -2135,11 +2133,11 @@ export class BlockEffects {
       this.crackTarget = targetKey;
       this.crackStage = -1;
     }
-    // Crossed texture cards and authored props do not fill their voxel. A
-    // full one-block selection/crack cube therefore appeared as a floating
-    // pale box around ferns, flowers and mushrooms. Their crosshair label and
-    // harvesting animation remain sufficient feedback without that artifact.
-    this.outline.visible = usesCubeOverlay;
+    // The target label already identifies the block precisely. The pale idle
+    // wireframe was especially distracting when the ray passed through plants
+    // and selected the turf beneath them, so target outlines remain disabled
+    // for every shape. Mining cracks still provide spatial feedback on solids.
+    this.outline.visible = false;
     this.outline.position.set(x + 0.5, y + 0.5, z + 0.5);
     this.crack.visible = usesCubeOverlay && progress > 0.01;
     this.crack.position.copy(this.outline.position);
@@ -2156,7 +2154,7 @@ export class BlockEffects {
     }
     this.crack.material.opacity = 0.66 + Math.max(0, nextStage) * 0.028;
     this.crack.scale.setScalar(1 + Math.max(0, nextStage) * 0.0007);
-    this.outline.material.opacity = 0.9 - Math.min(0.3, progress * 0.3);
+    this.outline.material.opacity = 0;
     // Invalid placement is already explained by the interaction toast. Keeping
     // a red cube on every invalid target looked like a permanent world artifact,
     // so the spatial preview exists only when it represents a real placement.

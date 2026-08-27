@@ -40,6 +40,7 @@ const CHUNK_VOLUME = CHUNK_SIZE * CHUNK_SIZE * WORLD_HEIGHT;
 const COLUMN_CACHE_LIMIT = 32_768;
 const TREE_CELL_SIZE = 5;
 const TREE_HANGING_LEAVES_SALT = 0xd3a2646c;
+const TREE_FALLING_LEAVES_SALT = 0x8f6c4a21;
 const MOUNTAIN_SUMMIT_CELL_SIZE = 64;
 const MOUNTAIN_SUMMIT_CACHE_LIMIT = 768;
 const MOUNTAIN_CROSS_MODEL_HEIGHT = 7;
@@ -1513,7 +1514,7 @@ export class World {
     return chunk;
   }
 
-  updateStreaming(position, renderDistance = this.renderDistance, motion = null) {
+  updateStreaming(position, renderDistance = this.renderDistance, motion = null, options = null) {
     const px = Number(position?.x ?? position?.[0] ?? 0);
     const pz = Number(position?.z ?? position?.[2] ?? 0);
     const centerX = floorDiv(Number.isFinite(px) ? px : 0, CHUNK_SIZE);
@@ -1597,7 +1598,11 @@ export class World {
       }
     }
 
-    const eager = this._streamPlanTargets.length <= EAGER_STREAM_TARGET_LIMIT;
+    // Normal travel admits very large footprints in bounded batches. The
+    // loading screen can explicitly materialize the complete plan at once so
+    // no allocation/generation debt survives into the first playable frame.
+    const preloadAll = options?.preloadAll === true;
+    const eager = preloadAll || this._streamPlanTargets.length <= EAGER_STREAM_TARGET_LIMIT;
     const admissionLimit = eager
       ? Number.POSITIVE_INFINITY
       : this.chunks.size === 0
@@ -1732,6 +1737,14 @@ export class World {
         cellZ,
         this._noiseSeeds.trees ^ TREE_HANGING_LEAVES_SALT,
       )) < 0.25,
+      // Only broad-leaf ash trees shed the green-and-gold leaf particles. The
+      // same deterministic flag drives the Blender ground litter, so a tree
+      // can never have leaves on the floor without being a falling-leaf tree.
+      hasFallingLeaves: !isPine && hashUnit(hash2D(
+        cellX,
+        cellZ,
+        this._noiseSeeds.trees ^ TREE_FALLING_LEAVES_SALT,
+      )) < 0.46,
     });
   }
 
@@ -2199,7 +2212,7 @@ export class World {
     }
   }
 
-  processQueue(maxChunks = 1, maxMilliseconds = 2.4) {
+  processQueue(maxChunks = 1, maxMilliseconds = 2.4, options = null) {
     const limit = Math.max(0, Math.floor(maxChunks));
     let processed = 0;
     let slices = 0;
@@ -2213,7 +2226,8 @@ export class World {
       }
       slices++;
       const warmingSpawn = this._preloadChunksRemaining > 0;
-      const completed = warmingSpawn
+      const completeChunks = warmingSpawn || options?.completeChunks === true;
+      const completed = completeChunks
         ? (this._generateChunk(chunk), true)
         : this._stepChunkGeneration(chunk, 128, maxMilliseconds);
       if (completed) {
@@ -2288,6 +2302,7 @@ export class World {
     const limit = Math.max(0, Math.floor(maxChunks));
     if (limit === 0) return 0;
     const editsOnly = options?.editsOnly === true;
+    const completeChunks = options?.completeChunks === true;
     const { cx, cz } = this.centerChunk;
     const dirty = [...this.chunks.values()]
       .filter((chunk) => (
@@ -2326,7 +2341,7 @@ export class World {
       }
       const revision = chunk.meshJobRevision;
       let complete = false;
-      if (chunk.editMeshPriority > 0) {
+      if (chunk.editMeshPriority > 0 || completeChunks) {
         const now = () => (
           typeof performance !== 'undefined' && typeof performance.now === 'function'
             ? performance.now()

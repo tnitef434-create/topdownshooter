@@ -280,7 +280,12 @@ export class SummitCrossField {
     // Full terrain streams two support chunks beyond the detail radius. Keep
     // every visible cross inside that stable surface rather than floating over
     // the lightweight far-horizon proxy.
-    const radius = clamp((clamp(viewDistance, 2, 20) + 2) * 16, MIN_RADIUS, MAX_RADIUS);
+    const detailedChunks = Number.isFinite(Number(this.world.detailDistance))
+      ? clamp(Number(this.world.detailDistance), 2, 8)
+      : clamp(viewDistance, 2, 20);
+    // Streaming uses a square chunk footprint, so include its corner distance
+    // without scanning all the way to the much larger visual horizon proxy.
+    const radius = clamp((detailedChunks + 2) * 16 * Math.SQRT2, MIN_RADIUS, MAX_RADIUS);
     this.crosses = (this.world.getMountainCrossesNear?.(focus.x, focus.z, radius) || [])
       .filter((cross) => this._crossStillSupported(cross))
       .slice(0, MAX_CROSSES);

@@ -23,6 +23,7 @@ import {
   hangingLeafCollisionPush,
   timeCorrectedDamping,
 } from '../src/public/worldloom/src/hanging-leaves.js';
+import { GroundLeafField } from '../src/public/worldloom/src/ground-leaves.js';
 import { SummitCrossField } from '../src/public/worldloom/src/summit-crosses.js';
 
 function meshSummary(root) {
@@ -52,6 +53,27 @@ const HANGING_LEAVES_GENERATOR_URL = new URL(
   '../tools/generate_hanging_leaves.py',
   import.meta.url,
 );
+const GROUND_LEAVES_URL = new URL(
+  '../src/public/worldloom/assets/environment/ground-leaf-litter.glb',
+  import.meta.url,
+);
+const GROUND_LEAVES_ATLAS_URL = new URL(
+  '../src/public/worldloom/assets/environment/ground-leaf-litter-atlas.png',
+  import.meta.url,
+);
+const FALLING_LEAF_PARTICLE_URL = new URL(
+  '../src/public/worldloom/assets/environment/falling-leaf-particle.png',
+  import.meta.url,
+);
+const GROUND_LEAVES_SOURCE_URL = new URL(
+  '../tools/assets/ground-leaf-textures/gpt-ground-leaves-source.png',
+  import.meta.url,
+);
+const GROUND_LEAVES_PROMPT_URL = new URL(
+  '../tools/assets/ground-leaf-textures/PROMPT.md',
+  import.meta.url,
+);
+const GROUND_LEAVES_GENERATOR_URL = new URL('../tools/generate_ground_leaves.py', import.meta.url);
 const SUMMIT_CROSS_URL = new URL(
   '../src/public/worldloom/assets/environment/summit-cross.glb',
   import.meta.url,
@@ -246,6 +268,31 @@ function createTestHangingLeafGltf(packScale = 1) {
   return { scene, animations: [], atlasTexture };
 }
 
+function createTestGroundLeafGltf() {
+  const scene = new THREE.Scene();
+  const root = new THREE.Group();
+  root.name = 'Ground_Leaf_Litter_Asset';
+  scene.add(root);
+  const atlasTexture = new THREE.DataTexture(
+    new Uint8Array([77, 125, 81, 255]),
+    1,
+    1,
+    THREE.RGBAFormat,
+  );
+  atlasTexture.name = 'Fake embedded GPT ground-leaf atlas';
+  atlasTexture.colorSpace = THREE.SRGBColorSpace;
+  atlasTexture.needsUpdate = true;
+  const patch = new THREE.Mesh(
+    new THREE.PlaneGeometry(2, 2),
+    new THREE.MeshStandardMaterial({ map: atlasTexture, side: THREE.DoubleSide }),
+  );
+  patch.name = 'Ground_Leaf_Litter_Patch';
+  patch.rotation.x = -Math.PI * 0.5;
+  root.add(patch);
+  scene.updateMatrixWorld(true);
+  return { scene, animations: [], atlasTexture };
+}
+
 function createTestSummitCrossGltf() {
   const scene = new THREE.Scene();
   const root = new THREE.Group();
@@ -379,9 +426,14 @@ test('summit-cross field instances the Blender model and removes unsupported mon
     crossbeamHeight: 5.12,
   });
   let supported = true;
+  let requestedRadius = 0;
   const world = {
     streamRevision: 1,
-    getMountainCrossesNear: () => [cross],
+    detailDistance: 8,
+    getMountainCrossesNear: (x, z, radius) => {
+      requestedRadius = radius;
+      return [cross];
+    },
     isPositionReady: () => true,
     getBlock: (x, y, z) => (
       x === cross.rootX && y === cross.summitHeight && z === cross.rootZ && supported
@@ -391,7 +443,9 @@ test('summit-cross field instances the Blender model and removes unsupported mon
   };
   field.setWorld(world);
   field.setQuality({ shadows: true });
-  field.update(0, new THREE.Vector3(10, 72, 12), 4);
+  field.update(0, new THREE.Vector3(10, 72, 12), 20);
+  assert.equal(requestedRadius, 160,
+    'maximum visual distance must not scan mountain props beyond the detailed stream radius');
   assert.deepEqual(field.getStats(), {
     ready: true,
     failed: false,
@@ -960,6 +1014,141 @@ test('pond flies are tiny unlit dots with deterministic fast short-loop motion',
   assert.ok(maximumRadius < 0.32, `fly loops spread too far from pond anchor (${maximumRadius})`);
   assert.ok(maximumHeightOffset < 0.08, `fly loops bob too far vertically (${maximumHeightOffset})`);
 
+  field.dispose();
+  assert.equal(scene.children.length, 0);
+});
+
+test('Blender ground-leaf litter is a self-contained one-draw GPT-textured asset', () => {
+  const glb = readFileSync(GROUND_LEAVES_URL);
+  assert.ok(glb.length >= 4 * 1024, 'ground-leaf GLB is suspiciously small or empty');
+  assert.ok(glb.length <= 128 * 1024, `ground-leaf GLB exceeds 128KB (${glb.length} bytes)`);
+  const document = parseGlb(glb);
+  assert.match(document.asset?.generator || '', /Blender I\/O/i);
+  assert.ok(!(document.extensionsUsed || []).includes('KHR_draco_mesh_compression'));
+  assert.equal(document.buffers?.length, 1);
+  assert.equal(document.buffers?.[0]?.uri, undefined);
+  const root = (document.nodes || []).find((node) => node.name === 'Ground_Leaf_Litter_Asset');
+  assert.equal(root?.extras?.asset_role, 'falling_leaf_tree_ground_litter');
+  assert.equal(root?.extras?.runtime_draw_budget, 1);
+  assert.equal(root?.extras?.gpt_texture_source, 'gpt-ground-leaves-source.png');
+  assert.equal(root?.extras?.matching_particle_texture, 'falling-leaf-particle.png');
+  const leafNodes = descendantNodeIndices(document, 'Ground_Leaf_Litter_Asset')
+    .map((index) => document.nodes[index]);
+  const primitives = leafNodes
+    .filter((node) => Number.isInteger(node.mesh))
+    .flatMap((node) => document.meshes[node.mesh]?.primitives || []);
+  assert.equal(primitives.length, 1, 'ground litter must remain one instanced draw');
+  assert.ok(Number.isInteger(primitives[0].attributes?.TEXCOORD_0));
+  const triangleAccessor = document.accessors?.[primitives[0].indices]
+    || document.accessors?.[primitives[0].attributes?.POSITION];
+  assert.equal((triangleAccessor?.count || 0) / 3, 20,
+    'the Blender patch must retain its ten two-triangle leaves');
+
+  const atlasBuffer = readFileSync(GROUND_LEAVES_ATLAS_URL);
+  assert.deepEqual(pngMetadata(atlasBuffer), {
+    width: 128, height: 128, bitDepth: 8, colorType: 6,
+  });
+  assert.equal(document.images?.length, 1);
+  assert.deepEqual(
+    embeddedBufferView(glb, document, document.images[0].bufferView),
+    atlasBuffer,
+    'the GLB must embed the exact reproducible GPT-derived atlas',
+  );
+  const material = document.materials?.[primitives[0].material];
+  assert.equal(material?.doubleSided, true);
+  const texture = document.textures?.[material?.pbrMetallicRoughness?.baseColorTexture?.index];
+  const sampler = document.samplers?.[texture?.sampler];
+  assert.equal(sampler?.magFilter, 9728);
+  assert.ok([9728, 9984].includes(sampler?.minFilter));
+
+  const particleBuffer = readFileSync(FALLING_LEAF_PARTICLE_URL);
+  assert.deepEqual(pngMetadata(particleBuffer), {
+    width: 32, height: 32, bitDepth: 8, colorType: 6,
+  });
+  const atlas = decodeRgbaPng(atlasBuffer);
+  const particle = decodeRgbaPng(particleBuffer);
+  let particleOpaque = 0;
+  for (let y = 0; y < particle.height; y++) {
+    for (let x = 0; x < particle.width; x++) {
+      const particleOffset = (y * particle.width + x) * 4;
+      // Blender image coordinates are bottom-up; tile zero occupies the
+      // bottom-left atlas cell after PNG encoding.
+      const atlasY = atlas.height - particle.height + y;
+      const atlasOffset = (atlasY * atlas.width + x) * 4;
+      assert.deepEqual(
+        particle.pixels.subarray(particleOffset, particleOffset + 4),
+        atlas.pixels.subarray(atlasOffset, atlasOffset + 4),
+        'the airborne particle must be copied from the same ground-leaf atlas tile',
+      );
+      particleOpaque += Number(particle.pixels[particleOffset + 3] > 0);
+    }
+  }
+  assert.ok(particleOpaque >= 32, 'falling-leaf particle lost its readable silhouette');
+});
+
+test('ground-leaf Blender generator preserves GPT provenance and hard pixel filtering', () => {
+  assert.ok(readFileSync(GROUND_LEAVES_SOURCE_URL).length > 32 * 1024,
+    'project-local GPT source is missing or suspiciously small');
+  const prompt = readFileSync(GROUND_LEAVES_PROMPT_URL, 'utf8');
+  assert.match(prompt, /built-in\s+GPT image tool/i);
+  assert.match(prompt, /no halos; no outlines/i);
+  const source = readFileSync(GROUND_LEAVES_GENERATOR_URL, 'utf8');
+  assert.match(source, /Ground_Leaf_Litter_Asset/);
+  assert.match(source, /gpt-ground-leaves-source\.png/);
+  assert.match(source, /falling-leaf-particle\.png/);
+  assert.match(source, /texture\.interpolation\s*=\s*["']Closest["']/);
+  assert.match(source, /["']export_draco_mesh_compression_enable["']\s*:\s*False/);
+});
+
+test('ground leaves instance only below live deterministic falling-leaf trees', async () => {
+  const scene = new THREE.Scene();
+  const field = new GroundLeafField(scene, {
+    loaderFactory: () => ({ loadAsync: () => Promise.resolve(createTestGroundLeafGltf()) }),
+  });
+  await field.prepare();
+  assert.equal(field.ready, true);
+  assert.equal(field.mesh?.isInstancedMesh, true);
+  assert.equal(field.mesh.material.map.magFilter, THREE.NearestFilter);
+  assert.equal(field.mesh.material.map.minFilter, THREE.NearestFilter);
+  assert.equal(field.mesh.material.map.generateMipmaps, false);
+  const tree = Object.freeze({
+    id: 'falling-ash',
+    rootX: 0,
+    rootY: 4,
+    rootZ: 0,
+    crownY: 7,
+    isPine: false,
+    hasFallingLeaves: true,
+  });
+  let canopyPresent = true;
+  const world = {
+    seed: 64,
+    streamRevision: 0,
+    getTreesNear: () => [tree],
+    isPositionReady: () => true,
+    terrainHeight: () => 3,
+    getBlock: (x, y, z) => {
+      if (canopyPresent && y === tree.crownY
+        && Math.abs(x - tree.rootX) + Math.abs(z - tree.rootZ) === 1) return BLOCK.ASH_LEAVES;
+      if (y === 3) return BLOCK.TURF;
+      return BLOCK.AIR;
+    },
+  };
+  field.setWorld(world);
+  field.setQuality({ hangingLeafRadius: 24, hangingLeafTreeCap: 1 });
+  field.update(0, new THREE.Vector3(0.5, 4.2, 0.5));
+  const initial = field.getStats();
+  assert.equal(initial.sourceTrees, 1);
+  assert.equal(initial.patches, 1);
+  assert.equal(initial.draws, 1);
+  assert.equal(initial.gptTexture, true);
+  assert.equal(initial.nearestTexture, true);
+
+  canopyPresent = false;
+  world.streamRevision++;
+  field.update(0, new THREE.Vector3(0.5, 4.2, 0.5));
+  assert.equal(field.getStats().patches, 0,
+    'removing the falling-leaf canopy must remove its floor litter on the next world revision');
   field.dispose();
   assert.equal(scene.children.length, 0);
 });

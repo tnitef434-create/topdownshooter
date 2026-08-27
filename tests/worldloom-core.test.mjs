@@ -646,6 +646,20 @@ test('hanging-leaf metadata selects an independent quarter of accepted trees', (
   world.dispose();
 });
 
+test('falling-leaf metadata selects only ash trees for matching forest-floor litter', () => {
+  const world = new World(91234, null, null);
+  const trees = world.getTreesNear(0, 0, 192);
+  const ash = trees.filter((tree) => !tree.isPine);
+  const selected = ash.filter((tree) => tree.hasFallingLeaves);
+  assert.ok(ash.length > 600, 'falling-leaf fixture should sample enough ash trees');
+  assert.equal(trees.filter((tree) => tree.isPine && tree.hasFallingLeaves).length, 0,
+    'pine trees must not receive broad ash-leaf particles or litter');
+  const ratio = selected.length / ash.length;
+  assert.ok(ratio >= 0.4 && ratio <= 0.52,
+    `expected roughly 46% of ash trees to shed leaves, received ${(ratio * 100).toFixed(2)}%`);
+  world.dispose();
+});
+
 test('tree descriptor refactor preserves fixed-seed decorated chunk bytes', () => {
   const fixtures = [
     { seed: 64, cx: 0, cz: 0, hash: 'cf4226f33b9feb5055fa7aa15994074221cb55be455d96da3bddae3e4c3745b3' },
@@ -1205,6 +1219,29 @@ test('maximum visual distance stages admission without exceeding the full-detail
   assert.equal(world.chunks.size, maximumActiveChunks);
   assert.equal(world.generationQueue.length, maximumActiveChunks);
   assert.ok(calls > 1 && calls < 32, `staged admission completed in an unexpected ${calls} calls`);
+  world.dispose();
+});
+
+test('loading-stage streaming admits and fully generates the complete active footprint', () => {
+  const world = new World(73420, null, null);
+  const position = { x: 0.5, z: 0.5 };
+  const maximumActiveChunks = (detailedStreamDistance(MAX_VIEW_DISTANCE) * 2 + 1) ** 2;
+  const update = world.updateStreaming(
+    position,
+    MAX_VIEW_DISTANCE,
+    { x: 0, z: 0 },
+    { preloadAll: true },
+  );
+
+  assert.equal(update.pending, 0, 'loading must not leave planned chunks waiting for later admission');
+  assert.equal(update.admitted, maximumActiveChunks);
+  assert.equal(world.chunks.size, maximumActiveChunks);
+  assert.equal(world.generationQueue.length, maximumActiveChunks);
+
+  const completed = world.processQueue(2, 0.5, { completeChunks: true });
+  assert.equal(completed, 2, 'loading mode must finish whole chunks instead of retaining sliced jobs');
+  assert.equal(world.generationQueue.length, maximumActiveChunks - 2);
+  assert.equal([...world.chunks.values()].filter((chunk) => chunk.generated).length, 2);
   world.dispose();
 });
 
@@ -1932,7 +1969,7 @@ test('dense tree foliage provides shade without applying cave darkness', () => {
     'a sealed surface shelter must not inherit outdoor bounce light');
 });
 
-test('selection effects never show the red placement cube without a placeable stack', () => {
+test('selection effects never show an idle wireframe or red placement cube', () => {
   const effects = Object.create(BlockEffects.prototype);
   Object.assign(effects, {
     outline: {
@@ -1962,7 +1999,8 @@ test('selection effects never show the red placement cube without a placeable st
   };
   effects.setTarget(hit, 0, false, false);
   assert.equal(effects.preview.visible, false);
-  assert.equal(effects.outline.visible, true, 'the normal target outline remains available');
+  assert.equal(effects.outline.visible, false,
+    'the idle target wireframe must stay hidden while the label identifies the block');
   effects.setTarget(hit, 0, false, true);
   assert.equal(effects.preview.visible, false, 'invalid placement must not create a persistent red artifact');
   effects.setTarget(hit, 0, true, true);
@@ -1971,7 +2009,7 @@ test('selection effects never show the red placement cube without a placeable st
   assert.equal(effects.preview.visible, false);
 });
 
-test('selection effects do not wrap silhouette vegetation in a full voxel cube', () => {
+test('selection effects reserve cube overlays for active solid-block mining cracks', () => {
   const effects = Object.create(BlockEffects.prototype);
   Object.assign(effects, {
     outline: {
@@ -2010,7 +2048,7 @@ test('selection effects do not wrap silhouette vegetation in a full voxel cube',
     block: { x: 9, y: 2, z: 3, id: BLOCK.SAND },
     adjacent: { x: 9, y: 3, z: 3 },
   }, 0.55, false, false);
-  assert.equal(effects.outline.visible, true, 'solid blocks must retain their target outline');
+  assert.equal(effects.outline.visible, false, 'solid blocks must not regain the idle wireframe');
   assert.equal(effects.crack.visible, true, 'solid blocks must retain their breaking cracks');
 });
 

@@ -230,13 +230,16 @@ try {
     if (seed) seed.value = '64';
     document.querySelector('#new-world-button')?.click();
   });
+  const maximumWorldLoadStarted = Date.now();
   await frame.waitForFunction(() => !document.querySelector('#hud')?.classList.contains('hidden'), {
-    timeout: 60_000,
+    timeout: 180_000,
   });
+  const maximumWorldLoadMilliseconds = Date.now() - maximumWorldLoadStarted;
+  console.log(`maximum-distance preload: ${maximumWorldLoadMilliseconds}ms`);
   await delay(1_500);
   await frame.waitForFunction(() => (
     window.__worldloomSummitCrosses?.getStats?.().crosses > 0
-  ), { timeout: 15_000 });
+  ), { timeout: 45_000 });
 
   const hudPresentation = await frame.evaluate(() => {
     const inspectPlate = (selector) => {
@@ -269,6 +272,7 @@ try {
   const gameState = await frame.evaluate(() => {
     const graphics = window.__worldloomGraphics;
     const environment = window.__worldloomEnvironment;
+    const world = window.__worldloomWorld;
     const terrain = graphics?.scene?.children
       ?.filter((child) => child.name?.startsWith('Terrain '))
       .map((mesh) => ({
@@ -303,7 +307,8 @@ try {
     const localX = (camera?.position?.x || 0) - centerChunkX * 16;
     const localZ = (camera?.position?.z || 0) - centerChunkZ * 16;
     const nearestChunkEdge = Math.min(localX, 16 - localX, localZ, 16 - localZ);
-    const safeTerrainFar = Math.max(8, completeTerrainRadius * 16 + nearestChunkEdge - 2);
+    const detailedSafeTerrainFar = Math.max(8, completeTerrainRadius * 16 + nearestChunkEdge - 2);
+    const safeTerrainFar = world?.getSafeTerrainDistance?.(camera?.position) ?? detailedSafeTerrainFar;
     return {
       webgl2: Boolean(document.querySelector('#game')?.getContext('webgl2')),
       timeIcon: Boolean(document.querySelector('.time-chip__sun')),
@@ -365,6 +370,7 @@ try {
       fogNear: graphics?.scene?.fog?.near ?? null,
       fogFar: graphics?.scene?.fog?.far ?? null,
       fogClarity: environment?.fogClarity ?? null,
+      streaming: world?.getStats?.() || null,
     };
   });
   assert.equal(gameState.webgl2, true, 'WebGL 2 did not initialize');
@@ -398,8 +404,14 @@ try {
     'The layer fix removed the local avatar from sunlight shadows');
   assert(gameState.terrain.some((mesh) => mesh.visible && mesh.vertices > 0),
     `No visible terrain geometry reached the first playable frame: ${JSON.stringify(gameState.terrain)}`);
-  assert(gameState.completeTerrainRadius >= 3,
-    `The playable frame opened before its safe seven-by-seven terrain core was ready: ${JSON.stringify(gameState.terrain)}`);
+  assert(gameState.completeTerrainRadius >= gameState.streaming.streamDistance,
+    `The playable frame opened before its full stream footprint was ready: ${JSON.stringify(gameState.streaming)}`);
+  assert.equal(gameState.streaming.pendingAdmission, 0,
+    'The loading screen left chunks waiting for post-spawn admission');
+  assert.equal(gameState.streaming.queued, 0,
+    'The loading screen left terrain generation queued for gameplay');
+  assert(maximumWorldLoadMilliseconds < 180_000,
+    `The complete 441-chunk maximum-distance preload exceeded its safety cap (${maximumWorldLoadMilliseconds}ms)`);
   assert(Number.isFinite(gameState.fogFar) && gameState.fogFar <= gameState.safeTerrainFar + 1.5,
     `Fog exposed unmeshed horizon space (fog ${gameState.fogFar}, safe ${gameState.safeTerrainFar})`);
   assert(Number.isFinite(gameState.fogNear) && gameState.fogNear >= 28,
@@ -883,6 +895,41 @@ try {
   assert(hangingLeafState.low.segments <= 40,
     `Low graphics exceeded its 40-segment hanging-leaf cap: ${JSON.stringify(hangingLeafState.low)}`);
   assert(hangingLeafState.low.draws <= 1, 'Low graphics used more than one hanging-leaf draw');
+
+  await frame.waitForFunction(() => {
+    const stats = window.__worldloomGroundLeaves?.getStats?.();
+    return stats?.ready && !stats.failed && stats.patches > 0;
+  }, { timeout: 10_000 });
+  const groundLeafState = await frame.evaluate(() => {
+    const environment = window.__worldloomEnvironment;
+    const leaves = window.__worldloomGroundLeaves;
+    const focus = environment.atmosphere.position.clone();
+    environment.applyGraphicsSettings({
+      graphicsQuality: 'balanced',
+      weatherEffects: true,
+      reducedMotion: false,
+    });
+    leaves._syncTimer = 0;
+    leaves.update(0, focus);
+    return {
+      ...leaves.getStats(),
+      oneMesh: leaves.group.children.filter((child) => child === leaves.mesh).length === 1,
+      hardAlpha: leaves.mesh?.material?.alphaTest === 0.5
+        && leaves.mesh?.material?.transparent === false,
+      pixelAtlas: leaves.mesh?.material?.map?.magFilter === 1003
+        && leaves.mesh?.material?.map?.minFilter === 1003
+        && leaves.mesh?.material?.map?.generateMipmaps === false,
+    };
+  });
+  assert.equal(groundLeafState.ready, true, 'Blender ground leaves did not finish loading');
+  assert.equal(groundLeafState.failed, false, `Blender ground leaves failed: ${groundLeafState.error}`);
+  assert.match(groundLeafState.assetUrl, /ground-leaf-litter\.glb(?:$|[?#])/i);
+  assert.equal(groundLeafState.oneMesh, true, 'ground litter exceeded its one-mesh design');
+  assert.equal(groundLeafState.hardAlpha, true, 'ground leaves regained a transparent edge halo');
+  assert.equal(groundLeafState.pixelAtlas, true, 'ground leaves lost nearest-only GPT pixel filtering');
+  assert(groundLeafState.sourceTrees > 0 && groundLeafState.patches > 0,
+    `seed 64 produced no litter under falling-leaf trees: ${JSON.stringify(groundLeafState)}`);
+  assert.equal(groundLeafState.draws, 1);
 
   await frame.waitForFunction(() => {
     const stats = window.__worldloomBirds?.getStats?.();
@@ -1528,6 +1575,7 @@ try {
     caveLightingState,
     pondState,
     hangingLeafState,
+    groundLeafState,
     birdState,
     clearState,
     stormState,
@@ -1540,6 +1588,7 @@ try {
     restoredViewSettings,
     hudPresentation,
     mobileInventory,
+    maximumWorldLoadMilliseconds,
     closeDuration,
     resilience: 'audio and storage failures recovered',
     inventoryDrag: 'multiple block stacks move between slots and persist as visible loose world items',
