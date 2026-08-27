@@ -11,8 +11,12 @@ import { atmosphericFogRange } from './fog.js';
 
 const LIGHT_BLOCKS = new Set([BLOCK.TORCH, BLOCK.LUMEN_CRYSTAL, BLOCK.KILN, BLOCK.FURNACE]);
 const FOLIAGE_BLOCKS = new Set([BLOCK.ASH_LEAVES, BLOCK.PINE_NEEDLES]);
+const SILHOUETTE_TARGET_SHAPES = new Set(['cross', 'cross-short', 'grass-tuft', 'prop']);
 const CLOUD_WORLD_REPEAT = 310;
 const CAVE_SKYLIGHT_RADIUS = 16;
+const SUN_HORIZON_COLOR = new THREE.Color('#ffb56f');
+const SUN_LOW_COLOR = new THREE.Color('#ffd395');
+const SUN_NOON_COLOR = new THREE.Color('#fff1c4');
 const CAVE_SKYLIGHT_DIRECTIONS = Object.freeze(Array.from({ length: 12 }, (_, index) => {
   const angle = (index / 12) * Math.PI * 2;
   return Object.freeze([Math.cos(angle), Math.sin(angle)]);
@@ -297,7 +301,28 @@ export function outdoorBounceIntensity(dayAmount, skyExposure, overcastAmount) {
   const day = THREE.MathUtils.clamp(Number(dayAmount) || 0, 0, 1);
   const sky = THREE.MathUtils.clamp(Number(skyExposure) || 0, 0, 1);
   const overcast = THREE.MathUtils.clamp(Number(overcastAmount) || 0, 0, 1);
-  return (0.012 + day * 0.18) * (0.02 + sky * 0.98) * (1 - overcast * 0.38);
+  return (0.016 + day * 0.2) * (0.02 + sky * 0.98) * (1 - overcast * 0.34);
+}
+
+export function daylightBalance(dayAmount, solarElevation, skyAccess = 1) {
+  const day = THREE.MathUtils.clamp(Number(dayAmount) || 0, 0, 1);
+  const elevation = THREE.MathUtils.clamp(Number(solarElevation) || 0, 0, 1);
+  const sky = THREE.MathUtils.clamp(Number(skyAccess) || 0, 0, 1);
+  const goldenHour = 1 - THREE.MathUtils.smoothstep(elevation, 0.14, 0.72);
+  return {
+    goldenHour,
+    sunIntensity: (0.015 + day * 3.82) * (0.98 + goldenHour * 0.08),
+    hemisphereIntensity: (0.16 + day * 0.58) * sky,
+    environmentIntensity: (0.03 + day * 0.32) * sky,
+  };
+}
+
+export function sunlightColorForElevation(solarElevation, target = new THREE.Color()) {
+  const elevation = THREE.MathUtils.clamp(Number(solarElevation) || 0, 0, 1);
+  const horizonToLow = THREE.MathUtils.smoothstep(elevation, 0.015, 0.22);
+  const lowToNoon = THREE.MathUtils.smoothstep(elevation, 0.24, 0.78);
+  target.copy(SUN_HORIZON_COLOR).lerp(SUN_LOW_COLOR, horizonToLow);
+  return target.lerp(SUN_NOON_COLOR, lowToNoon);
 }
 
 export function weatherLightingState(phase, overcastAmount = 0, rainIntensity = 0) {
@@ -339,6 +364,7 @@ function makeAtmosphereMaterial() {
       sunDirection: { value: new THREE.Vector3(0, 1, 0) },
       sunColor: { value: new THREE.Color('#fff1c2') },
       sunVisibility: { value: 1 },
+      sunElevation: { value: 1 },
       twilight: { value: 0 },
       dayAmount: { value: 1 },
       atmosphereDetail: { value: 0.72 },
@@ -358,6 +384,7 @@ function makeAtmosphereMaterial() {
       uniform vec3 sunDirection;
       uniform vec3 sunColor;
       uniform float sunVisibility;
+      uniform float sunElevation;
       uniform float twilight;
       uniform float dayAmount;
       uniform float atmosphereDetail;
@@ -378,10 +405,13 @@ function makeAtmosphereMaterial() {
         sky = mix(sky, zenithColor, upperBlend);
 
         float sunDot = max(dot(direction, normalize(sunDirection)), 0.0);
-        float sunHalo = pow(sunDot, 18.0) * (0.16 + twilight * 0.28);
-        float sunCore = pow(sunDot, 620.0) * 1.4;
-        float horizonGlow = exp(-abs(height) * 9.0) * twilight * 0.28;
-        sky += sunColor * (sunHalo + sunCore + horizonGlow) * sunVisibility;
+        float lowSun = 1.0 - smoothstep(0.14, 0.72, sunElevation);
+        float forwardScatter = pow(sunDot, 8.0) * (0.018 + lowSun * 0.075) * dayAmount;
+        float sunHalo = pow(sunDot, 18.0) * (0.18 + twilight * 0.3 + lowSun * 0.09);
+        float sunCore = pow(sunDot, 620.0) * 1.65;
+        float horizonGlow = exp(-abs(height) * 9.0)
+          * (twilight * 0.24 + lowSun * 0.055) * dayAmount;
+        sky += sunColor * (forwardScatter + sunHalo + sunCore + horizonGlow) * sunVisibility;
 
         // Tiny ordered-looking noise prevents visible color bands in dark skies.
         float grain = hash21(gl_FragCoord.xy) - 0.5;
@@ -470,12 +500,23 @@ function enhanceWaterMaterial(material, sharedUniforms) {
   material.onBeforeCompile = (shader) => {
     shader.uniforms.worldloomTime = sharedUniforms.time;
     shader.uniforms.worldloomDayAmount = sharedUniforms.dayAmount;
+    shader.uniforms.worldloomSunDirection = sharedUniforms.sunDirection;
+    shader.uniforms.worldloomSunColor = sharedUniforms.sunColor;
+    shader.uniforms.worldloomSunVisibility = sharedUniforms.sunVisibility;
     injectWorldPosition(shader, `
       float worldloomWaveMask = step(0.55, objectNormal.y);
       float worldloomWave = sin((position.x + modelMatrix[3].x) * 0.73 + worldloomTime * 1.45)
         + sin((position.z + modelMatrix[3].z) * 0.91 - worldloomTime * 1.13);
       transformed.y += worldloomWave * 0.018 * worldloomWaveMask;
     `);
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <common>',
+      `#include <common>
+        uniform vec3 worldloomSunDirection;
+        uniform vec3 worldloomSunColor;
+        uniform float worldloomSunVisibility;
+      `,
+    );
     shader.fragmentShader = shader.fragmentShader.replace(
       '#include <map_fragment>',
       `#include <map_fragment>
@@ -496,9 +537,19 @@ function enhanceWaterMaterial(material, sharedUniforms) {
         diffuseColor.rgb += vec3(0.16, 0.34, 0.42) * worldloomFresnel * (0.35 + worldloomDayAmount * 0.30);
       `,
     );
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <lights_fragment_end>',
+      `#include <lights_fragment_end>
+        vec3 worldloomSunView = normalize((viewMatrix * vec4(worldloomSunDirection, 0.0)).xyz);
+        vec3 worldloomHalfVector = normalize(worldloomSunView + geometryViewDir);
+        float worldloomSunGlint = pow(max(dot(normalize(normal), worldloomHalfVector), 0.0), 112.0);
+        reflectedLight.directSpecular += worldloomSunColor * worldloomSunGlint
+          * worldloomSunVisibility * (0.42 + worldloomDayAmount * 0.78);
+      `,
+    );
     material.userData.worldloomShader = shader;
   };
-  material.customProgramCacheKey = () => 'worldloom-animated-water-v2';
+  material.customProgramCacheKey = () => 'worldloom-animated-water-v3-sun-glint';
   material.needsUpdate = true;
 }
 
@@ -555,12 +606,9 @@ function makeWorldEnvironmentMap(renderer) {
     gradient.addColorStop(1, '#182117');
     context.fillStyle = gradient;
     context.fillRect(0, 0, canvas.width, canvas.height);
-    const sunGlow = context.createRadialGradient(374, 86, 2, 374, 86, 56);
-    sunGlow.addColorStop(0, 'rgba(255,250,220,1)');
-    sunGlow.addColorStop(0.12, 'rgba(255,223,158,.85)');
-    sunGlow.addColorStop(1, 'rgba(255,196,110,0)');
-    context.fillStyle = sunGlow;
-    context.fillRect(300, 12, 148, 148);
+    // Keep IBL direction-neutral. The old baked hotspot stayed fixed while the
+    // real sun crossed the sky, creating a second false highlight on water and
+    // glass. Their authored glints now follow the live sun direction instead.
     const texture = new THREE.CanvasTexture(canvas);
     texture.colorSpace = THREE.SRGBColorSpace;
     texture.mapping = THREE.EquirectangularReflectionMapping;
@@ -1168,16 +1216,21 @@ export class Environment {
     this.fogClarity = 0;
     this.skyColor = new THREE.Color();
     this.fogColor = new THREE.Color();
-    this.daySky = new THREE.Color('#70bce8');
+    this.daySky = new THREE.Color('#5fb8eb');
     this.dawnSky = new THREE.Color('#e79b72');
     this.nightSky = new THREE.Color('#08152c');
-    this.dayFog = new THREE.Color('#acd6df');
+    this.dayFog = new THREE.Color('#8fc7dc');
     this.dawnFog = new THREE.Color('#d89a7c');
     this.nightFog = new THREE.Color('#101b32');
     this._colorA = new THREE.Color();
     this._colorB = new THREE.Color();
-    this._sunDawn = new THREE.Color('#ffd0a0');
-    this._sunDay = new THREE.Color('#fff5d6');
+    this._sunColor = new THREE.Color('#fff1c4');
+    this._hemisphereNight = new THREE.Color('#385070');
+    this._hemisphereDay = new THREE.Color('#b9d9ec');
+    this._groundNight = new THREE.Color('#171d18');
+    this._groundDay = new THREE.Color('#556438');
+    this._bounceNight = new THREE.Color('#6f7d82');
+    this._bounceDay = new THREE.Color('#deddb8');
     this._cloudNight = new THREE.Color('#68748d');
     this._cloudDay = new THREE.Color('#fff7df');
     this._cloudDawn = new THREE.Color('#f3a37e');
@@ -1185,10 +1238,14 @@ export class Environment {
     this._stormFog = new THREE.Color('#5d7178');
     this._sunDirection = new THREE.Vector3();
     this._shadowFocus = new THREE.Vector3();
+    this.solarElevation = 0;
     this.graphicsUniforms = {
       time: { value: 0 },
       dayAmount: { value: 1 },
       windStrength: { value: 1 },
+      sunDirection: { value: new THREE.Vector3(0, 1, 0) },
+      sunColor: { value: new THREE.Color('#fff1c4') },
+      sunVisibility: { value: 1 },
     };
 
     scene.background = this.skyColor;
@@ -1208,15 +1265,15 @@ export class Environment {
     this.atmosphere.renderOrder = -1000;
     scene.add(this.atmosphere);
 
-    this.hemisphere = new THREE.HemisphereLight(0xbfe8ff, 0x334124, 1.55);
+    this.hemisphere = new THREE.HemisphereLight(0xb9d9ec, 0x556438, 0.74);
     scene.add(this.hemisphere);
     // Soft sky bounce keeps downward-facing leaf and bark faces readable under
     // a canopy. Its intensity follows measured sky access, so sealed rooms and
     // deep caves still fall to black while outdoor shade retains natural detail.
-    this.bounceLight = new THREE.AmbientLight(0xc4d5ca, 0.12);
+    this.bounceLight = new THREE.AmbientLight(0xdeddb8, 0.16);
     this.bounceLight.name = 'Diffuse outdoor sky bounce';
     scene.add(this.bounceLight);
-    this.sunLight = new THREE.DirectionalLight(0xfff3d1, 2.45);
+    this.sunLight = new THREE.DirectionalLight(0xffd395, 3.2);
     this.sunLight.castShadow = true;
     this.sunLight.shadow.mapSize.set(2048, 2048);
     this.sunLight.shadow.camera.left = -38;
@@ -1395,7 +1452,11 @@ export class Environment {
       cloud.userData.targetVisible = index < cloudCount;
     });
     this.atmosphere.material.uniforms.atmosphereDetail.value = profile.atmosphereDetail;
-    if (this.renderer) this.renderer.toneMappingExposure = quality === 'low' ? 0.96 : quality === 'ultra' ? 1.04 : 1.01;
+    if (this.renderer) {
+      this.renderer.toneMappingExposure = quality === 'low'
+        ? 0.98
+        : quality === 'ultra' ? 0.99 : quality === 'high' ? 1 : 1.01;
+    }
     this.localLights.forEach((light, index) => {
       if (index >= this.localLightLimit) light.visible = false;
       light.castShadow = Boolean(profile.shadows && index < this.localShadowLightLimit);
@@ -1777,6 +1838,7 @@ export class Environment {
     this._updateSkyExposure(dt, focus);
     const angle = this.time * Math.PI * 2 - Math.PI * 0.5;
     const solar = Math.sin(angle);
+    this.solarElevation = Math.max(0, solar);
     this.dayAmount = THREE.MathUtils.smoothstep(solar, -0.18, 0.22);
     this.graphicsUniforms.dayAmount.value = this.dayAmount;
     const twilight = 1 - THREE.MathUtils.smoothstep(Math.abs(solar), 0.04, 0.42);
@@ -1813,17 +1875,23 @@ export class Environment {
     skyUniforms.lowerColor.value.copy(this.fogColor).multiplyScalar(0.52 + this.dayAmount * 0.25);
     skyUniforms.twilight.value = twilight;
     skyUniforms.dayAmount.value = this.dayAmount;
+    skyUniforms.sunElevation.value = this.solarElevation;
     const sunVisibility = lightingState.sunVisibility;
     skyUniforms.sunVisibility.value = sunVisibility;
 
     // Keep skylight subordinate to the directional sources so form is defined
     // by light and shadow instead of the previous flat ambient wash.
     const skyAccess = THREE.MathUtils.smoothstep(this.skyExposure, 0.005, 0.92);
-    this.hemisphere.intensity = (0.2 + this.dayAmount * 0.72)
-      * (1 - this.overcastAmount * 0.34)
-      * skyAccess;
-    this.hemisphere.color.setRGB(0.34 + this.dayAmount * 0.44, 0.42 + this.dayAmount * 0.45, 0.66 + this.dayAmount * 0.34);
-    this.hemisphere.groundColor.setRGB(0.055 + this.dayAmount * 0.09, 0.07 + this.dayAmount * 0.11, 0.095 + this.dayAmount * 0.035);
+    const daylight = daylightBalance(this.dayAmount, this.solarElevation, skyAccess);
+    this.hemisphere.intensity = daylight.hemisphereIntensity
+      * (1 - this.overcastAmount * 0.3);
+    this.hemisphere.color.copy(this._hemisphereNight)
+      .lerp(this._hemisphereDay, this.dayAmount)
+      .lerp(this._stormFog, this.overcastAmount * 0.22);
+    this.hemisphere.groundColor.copy(this._groundNight)
+      .lerp(this._groundDay, this.dayAmount)
+      .lerp(this._stormSky, this.overcastAmount * 0.16);
+    this.bounceLight.color.copy(this._bounceNight).lerp(this._bounceDay, this.dayAmount);
     this.bounceLight.intensity = outdoorBounceIntensity(
       this.dayAmount,
       this.skyExposure,
@@ -1837,21 +1905,23 @@ export class Environment {
     // Moon shadows are intentionally disabled for performance on every preset,
     // so the local probe must always gate moonlight inside sealed caves.
     const moonAccess = directionalSkyAccess(false, this.skyExposure);
-    this.sunLight.intensity = (0.015 + this.dayAmount * 3.65)
+    this.sunLight.intensity = daylight.sunIntensity
       * (0.025 + sunVisibility * 0.975)
       * directAccess;
-    this.sunLight.color.copy(this._sunDawn).lerp(this._sunDay, this.dayAmount);
+    sunlightColorForElevation(this.solarElevation, this._sunColor);
+    this.sunLight.color.copy(this._sunColor);
     this.moonLight.intensity = Math.pow(1 - this.dayAmount, 1.55) * 0.24 * moonAccess;
     if ('environmentIntensity' in this.scene) {
-      this.scene.environmentIntensity = (0.035 + this.dayAmount * 0.43)
-        * (1 - this.overcastAmount * 0.46)
-        * skyAccess;
+      this.scene.environmentIntensity = daylight.environmentIntensity
+        * (1 - this.overcastAmount * 0.46);
     }
     if (this.renderer) {
-      const baseExposure = this.graphicsQuality === 'low' ? 0.96 : this.graphicsQuality === 'ultra' ? 1.04 : 1.01;
+      const baseExposure = this.graphicsQuality === 'low'
+        ? 0.98
+        : this.graphicsQuality === 'ultra' ? 0.99 : this.graphicsQuality === 'high' ? 1 : 1.01;
       const eyeAdaptation = 1 + THREE.MathUtils.smoothstep(1 - this.skyExposure, 0.45, 1) * 0.12;
       const targetExposure = baseExposure
-        * (0.96 + (1 - this.dayAmount) * 0.12 - this.overcastAmount * 0.08)
+        * (0.99 + (1 - this.dayAmount) * 0.1 - this.overcastAmount * 0.07)
         * eyeAdaptation;
       this.renderer.toneMappingExposure += (targetExposure - this.renderer.toneMappingExposure) * (1 - Math.exp(-dt / 1.8));
     }
@@ -1863,6 +1933,9 @@ export class Environment {
     this.sun.material.opacity = THREE.MathUtils.smoothstep(solar, -0.16, 0.03) * sunVisibility;
     this.moon.material.opacity = THREE.MathUtils.smoothstep(-solar, -0.12, 0.05) * 0.88 * sunVisibility;
     this._sunDirection.copy(sunPosition).normalize();
+    this.graphicsUniforms.sunDirection.value.copy(this._sunDirection);
+    this.graphicsUniforms.sunColor.value.copy(this.sunLight.color);
+    this.graphicsUniforms.sunVisibility.value = sunVisibility * this.dayAmount;
     const shadowMapSize = Math.max(1, this.sunLight.shadow.mapSize.x);
     const shadowTexel = (this.shadowExtent * 2) / shadowMapSize;
     this._shadowFocus.set(
@@ -2056,14 +2129,19 @@ export class BlockEffects {
       return;
     }
     const { x, y, z, id } = hit.block;
+    const usesCubeOverlay = !SILHOUETTE_TARGET_SHAPES.has(BLOCKS[id]?.shape);
     const targetKey = `${x},${y},${z}`;
     if (targetKey !== this.crackTarget) {
       this.crackTarget = targetKey;
       this.crackStage = -1;
     }
-    this.outline.visible = true;
+    // Crossed texture cards and authored props do not fill their voxel. A
+    // full one-block selection/crack cube therefore appeared as a floating
+    // pale box around ferns, flowers and mushrooms. Their crosshair label and
+    // harvesting animation remain sufficient feedback without that artifact.
+    this.outline.visible = usesCubeOverlay;
     this.outline.position.set(x + 0.5, y + 0.5, z + 0.5);
-    this.crack.visible = progress > 0.01;
+    this.crack.visible = usesCubeOverlay && progress > 0.01;
     this.crack.position.copy(this.outline.position);
     const nextStage = progress > 0.01 ? Math.min(CRACK_STAGES - 1, Math.floor(progress * CRACK_STAGES)) : -1;
     if (nextStage !== this.crackStage) {

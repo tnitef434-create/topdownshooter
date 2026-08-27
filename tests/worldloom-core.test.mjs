@@ -20,11 +20,13 @@ import {
 import {
   BlockEffects,
   caveEntranceSkylight,
+  daylightBalance,
   directionalSkyAccess,
   Environment,
   nearestPeriodicCloudCoordinate,
   outdoorBounceIntensity,
   skylightTransmission,
+  sunlightColorForElevation,
   weatherLightingState,
 } from '../src/public/worldloom/src/environment.js';
 import {
@@ -1785,11 +1787,24 @@ test('covered voxel faces preserve mouth detail before reaching deep-cave black'
     'low mode retains most sunlight while a cave entrance is still visible');
 });
 
-test('volumetric sunlight is depth-ready, projected safely, and limited to high-end presets', () => {
+test('sunlight tiers keep medium affordable while scaling warm shafts through cinematic mode', () => {
   assert.equal(GRAPHICS_PRESETS.low.godRayStrength, 0);
-  assert.equal(GRAPHICS_PRESETS.balanced.godRayStrength, 0);
-  assert.ok(GRAPHICS_PRESETS.high.godRayStrength > 0);
+  assert.ok(GRAPHICS_PRESETS.balanced.godRayStrength > 0);
+  assert.ok(GRAPHICS_PRESETS.high.godRayStrength > GRAPHICS_PRESETS.balanced.godRayStrength);
   assert.ok(GRAPHICS_PRESETS.ultra.godRayStrength > GRAPHICS_PRESETS.high.godRayStrength);
+  assert.equal(GRAPHICS_PRESETS.balanced.ambientOcclusion, false,
+    'medium shafts must not silently add the expensive GTAO pipeline');
+  assert.equal(GRAPHICS_PRESETS.balanced.bloomStrength, 0,
+    'medium keeps the multi-blur bloom pass out of its frame budget');
+  assert.ok(GRAPHICS_PRESETS.balanced.godRayScale < GRAPHICS_PRESETS.high.godRayScale);
+  assert.ok(GRAPHICS_PRESETS.high.godRayScale < GRAPHICS_PRESETS.ultra.godRayScale);
+  for (const preset of [GRAPHICS_PRESETS.balanced, GRAPHICS_PRESETS.high, GRAPHICS_PRESETS.ultra]) {
+    const tint = new THREE.Color(preset.godRayTint);
+    assert.ok(tint.r > tint.g && tint.g > tint.b,
+      `${preset.label} shafts must carry a genuinely warm optical tint`);
+    assert.ok(preset.godRaySourceRadius < 0.4,
+      `${preset.label} shaft source became a flat full-screen haze`);
+  }
 
   const camera = new THREE.PerspectiveCamera(75, 16 / 9, 0.1, 320);
   camera.position.set(0, 2, 0);
@@ -1813,8 +1828,23 @@ test('volumetric sunlight is depth-ready, projected safely, and limited to high-
   };
   const clearHigh = volumetricSunIntensity(GRAPHICS_PRESETS.high, clearEnvironment, front);
   const clearUltra = volumetricSunIntensity(GRAPHICS_PRESETS.ultra, clearEnvironment, front);
+  const clearBalanced = volumetricSunIntensity(GRAPHICS_PRESETS.balanced, clearEnvironment, front);
   assert.ok(clearHigh > 0.1 && clearUltra > clearHigh);
-  assert.equal(volumetricSunIntensity(GRAPHICS_PRESETS.balanced, clearEnvironment, front), 0);
+  assert.ok(clearBalanced > 0 && clearBalanced < clearHigh);
+  const goldenHigh = volumetricSunIntensity(
+    GRAPHICS_PRESETS.high,
+    { ...clearEnvironment, dayAmount: 0.44, sunElevation: 0.04 },
+    front,
+  );
+  assert.ok(goldenHigh > clearHigh,
+    'visible golden-hour shafts should not be weaker than noon shafts');
+  const canopyHigh = volumetricSunIntensity(
+    GRAPHICS_PRESETS.high,
+    { ...clearEnvironment, skyExposure: 0.5, sunElevation: 0.3 },
+    front,
+  );
+  assert.ok(canopyHigh > 0 && canopyHigh < goldenHigh,
+    'partial canopy exposure should retain occlusion-rich shafts without matching open sky');
   assert.equal(volumetricSunIntensity(GRAPHICS_PRESETS.high, { ...clearEnvironment, rainAmount: 1 }, front), 0);
   assert.equal(volumetricSunIntensity(GRAPHICS_PRESETS.high, { ...clearEnvironment, caveAmount: 1 }, front), 0);
   assert.equal(volumetricSunIntensity(GRAPHICS_PRESETS.high, { ...clearEnvironment, skyExposure: 0 }, front), 0);
@@ -1826,10 +1856,33 @@ test('volumetric sunlight is depth-ready, projected safely, and limited to high-
   pass.setDepthTexture({ isDepthTexture: true });
   const diagnostics = pass.getDiagnostics();
   assert.equal(diagnostics.depthBound, true);
-  assert.equal(diagnostics.width, 420);
-  assert.equal(diagnostics.height, 210);
+  assert.equal(diagnostics.maskSource, 'depth+beauty');
+  assert.equal(diagnostics.width, 440);
+  assert.equal(diagnostics.height, 220);
   assert.equal(diagnostics.samples, 24);
+  assert.equal(diagnostics.sourceRadius, 0.42);
   pass.dispose();
+});
+
+test('clear daylight uses a warm key, restrained cool fill, and elevation-aware color temperature', () => {
+  const horizon = sunlightColorForElevation(0);
+  const low = sunlightColorForElevation(0.28);
+  const noon = sunlightColorForElevation(1);
+  assert.ok(horizon.r > horizon.g && horizon.g > horizon.b,
+    'horizon sunlight must stay golden rather than grey-white');
+  assert.ok((horizon.r / horizon.b) > (low.r / low.b));
+  assert.ok((low.r / low.b) > (noon.r / noon.b),
+    'sunlight should smoothly approach a warm-neutral noon temperature');
+
+  const openDay = daylightBalance(1, 0.35, 1);
+  const canopyDay = daylightBalance(1, 0.35, 0.46);
+  assert.ok(openDay.goldenHour > 0.5);
+  assert.ok(openDay.sunIntensity > (openDay.hemisphereIntensity + openDay.environmentIntensity) * 3,
+    'clear daylight needs a materially dominant directional key');
+  assert.ok(canopyDay.hemisphereIntensity > 0.3 && canopyDay.environmentIntensity > 0.14,
+    'canopy fill must stay readable while open-sky cyan wash is reduced');
+  assert.ok(outdoorBounceIntensity(1, 0.46, 0) > 0.09,
+    'warm canopy bounce regressed below its readability floor');
 });
 
 test('an opaque player-built roof removes ambient sky exposure with gradual eye adaptation', () => {
@@ -1916,6 +1969,49 @@ test('selection effects never show the red placement cube without a placeable st
   assert.equal(effects.preview.visible, true, 'an explicitly selected placeable stack may preview placement');
   effects.setTarget(null);
   assert.equal(effects.preview.visible, false);
+});
+
+test('selection effects do not wrap silhouette vegetation in a full voxel cube', () => {
+  const effects = Object.create(BlockEffects.prototype);
+  Object.assign(effects, {
+    outline: {
+      visible: false,
+      position: new THREE.Vector3(),
+      material: { opacity: 0 },
+    },
+    crack: {
+      visible: false,
+      position: new THREE.Vector3(),
+      material: { opacity: 0 },
+      scale: new THREE.Vector3(1, 1, 1),
+    },
+    preview: {
+      visible: false,
+      position: new THREE.Vector3(),
+      material: { color: new THREE.Color(), opacity: 0 },
+    },
+    crackTexture: { offset: { x: 0 }, updateMatrix() {} },
+    crackStage: -1,
+    crackTarget: '',
+    burst() {},
+  });
+
+  [BLOCK.FERN, BLOCK.WILDFLOWER, BLOCK.GLOW_MUSHROOM, BLOCK.SHORT_GRASS, BLOCK.RED_FLOWER]
+    .forEach((id, index) => {
+      effects.setTarget({
+        block: { x: index, y: 2, z: 3, id },
+        adjacent: { x: index, y: 3, z: 3 },
+      }, 0.55, false, false);
+      assert.equal(effects.outline.visible, false, `${BLOCKS[id].name} received a full cube outline`);
+      assert.equal(effects.crack.visible, false, `${BLOCKS[id].name} received a full cube crack overlay`);
+    });
+
+  effects.setTarget({
+    block: { x: 9, y: 2, z: 3, id: BLOCK.SAND },
+    adjacent: { x: 9, y: 3, z: 3 },
+  }, 0.55, false, false);
+  assert.equal(effects.outline.visible, true, 'solid blocks must retain their target outline');
+  assert.equal(effects.crack.visible, true, 'solid blocks must retain their breaking cracks');
 });
 
 test('a compact roof and four walls make a player-built shelter fully dark', () => {

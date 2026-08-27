@@ -21,11 +21,18 @@ const browser = await puppeteer.launch({
 });
 
 const pageErrors = [];
+const shaderErrors = [];
 
 try {
   const page = await browser.newPage();
   await page.setViewport({ width: 1280, height: 800, deviceScaleFactor: 1 });
   page.on('pageerror', (error) => pageErrors.push(`portal: ${error.stack || error.message}`));
+  page.on('console', (message) => {
+    const value = message.text();
+    if (message.type() === 'error' && /WebGLProgram|Shader Error|VALIDATE_STATUS|GL_INVALID/i.test(value)) {
+      shaderErrors.push(value);
+    }
+  });
 
   await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
   await page.waitForSelector('#btn-deploy-main', { timeout: 15_000 });
@@ -541,6 +548,7 @@ try {
       caveAmount: 0,
       skyExposure: 1,
       sunVisibility: 1,
+      sunElevation: 0.3,
       sunWorldPosition: centeredSun,
     });
     graphics.render(1 / 60);
@@ -548,6 +556,18 @@ try {
     const passOrder = graphics.composer.passes.map((pass) => pass.name || pass.constructor.name);
     const depthIdentity = graphics.volumetricSunPass?.depthTexture === graphics.gtaoPass?.depthTexture;
     graphics.applyProfile(GRAPHICS_PRESETS.balanced);
+    graphics.setEnvironment({
+      dayAmount: 1,
+      rainAmount: 0,
+      caveAmount: 0,
+      skyExposure: 1,
+      sunVisibility: 1,
+      sunElevation: 0.3,
+      sunWorldPosition: centeredSun,
+    });
+    graphics.render(1 / 60);
+    const balancedGodRays = graphics.getDiagnostics();
+    const balancedPassOrder = graphics.composer.passes.map((pass) => pass.name || pass.constructor.name);
     return {
       nearMouth,
       deepTunnel,
@@ -564,7 +584,9 @@ try {
       pcfSoftShadowType: THREE.PCFSoftShadowMap,
       pcfShadowType: THREE.PCFShadowMap,
       highGodRays,
+      balancedGodRays,
       passOrder,
+      balancedPassOrder,
       depthIdentity,
     };
   });
@@ -596,11 +618,31 @@ try {
     'Volumetric sunlight lost its reduced-resolution performance guard');
   assert.equal(caveLightingState.depthIdentity, true,
     'Volumetric sunlight duplicated or lost GTAO depth instead of reusing it');
+  assert.equal(caveLightingState.highGodRays.volumetricSunState.tint, '#ffd28a',
+    'High sunlight lost its authored golden optical tint');
+  assert(caveLightingState.highGodRays.colorGrade.saturation > 1.05,
+    'High mode no longer applies its sunlight-aware color separation');
   const gtaoIndex = caveLightingState.passOrder.indexOf('GTAOPass');
   const shaftsIndex = caveLightingState.passOrder.indexOf('WorldloomVolumetricSunPass');
   const bloomIndex = caveLightingState.passOrder.indexOf('UnrealBloomPass');
   assert(gtaoIndex >= 0 && shaftsIndex > gtaoIndex && bloomIndex > shaftsIndex,
     `Volumetric pass order is invalid: ${caveLightingState.passOrder.join(' -> ')}`);
+  assert.equal(caveLightingState.balancedGodRays.volumetricSun, true,
+    'Balanced/medium mode did not enable its lightweight sunlight shafts');
+  assert.equal(caveLightingState.balancedGodRays.volumetricSunState.active, true,
+    'Balanced clear-sky shafts are not active');
+  assert.equal(caveLightingState.balancedGodRays.volumetricSunState.depthBound, false,
+    'Balanced unexpectedly paid for the GTAO depth pipeline');
+  assert.equal(caveLightingState.balancedGodRays.volumetricSunState.maskSource, 'beauty-fallback');
+  assert(caveLightingState.balancedGodRays.volumetricSunState.intensity
+    < caveLightingState.highGodRays.volumetricSunState.intensity,
+  'Balanced shafts no longer remain below the High cinematic tier');
+  assert.equal(caveLightingState.balancedPassOrder.includes('GTAOPass'), false,
+    'Balanced added the expensive GTAO pass');
+  assert.equal(caveLightingState.balancedPassOrder.includes('UnrealBloomPass'), false,
+    'Balanced added the expensive multi-blur bloom pass');
+  assert.equal(caveLightingState.balancedPassOrder.filter((name) => name === 'WorldloomVolumetricSunPass').length, 1,
+    `Balanced shaft pass was lost or duplicated: ${caveLightingState.balancedPassOrder.join(' -> ')}`);
 
   await frame.waitForFunction(() => {
     const stats = window.__worldloomPonds?.getStats?.();
@@ -1009,6 +1051,12 @@ try {
       sunOpacity: environment.sun.material.opacity,
       sunVisibility: environment.atmosphere.material.uniforms.sunVisibility.value,
       sunlight: environment.sunLight.intensity,
+      sunColor: environment.sunLight.color.toArray(),
+      hemisphereColor: environment.hemisphere.color.toArray(),
+      hemisphereIntensity: environment.hemisphere.intensity,
+      bounceIntensity: environment.bounceLight.intensity,
+      environmentIntensity: environment.scene.environmentIntensity,
+      solarElevation: environment.solarElevation,
       sky: environment.scene.background.toArray(),
       exposure: environment.renderer?.toneMappingExposure,
     };
@@ -1018,6 +1066,14 @@ try {
   assert.equal(clearState.sunOpacity, 1, 'The clear-weather sun disc is not fully visible');
   assert.equal(clearState.sunVisibility, 1, 'The clear-weather atmosphere still masks the sun');
   assert(clearState.sunlight > 2.5, `Clear daytime direct light is too dim: ${clearState.sunlight}`);
+  assert(clearState.sunColor[0] > clearState.sunColor[1]
+    && clearState.sunColor[1] > clearState.sunColor[2],
+  `Clear sun is grey instead of warm-neutral: ${JSON.stringify(clearState.sunColor)}`);
+  assert(clearState.hemisphereColor[2] > clearState.hemisphereColor[0],
+    `Sky fill lost its cooler separation: ${JSON.stringify(clearState.hemisphereColor)}`);
+  assert(clearState.sunlight > (
+    clearState.hemisphereIntensity + clearState.bounceIntensity + clearState.environmentIntensity
+  ) * 2.7, `Directional sun no longer dominates the fill: ${JSON.stringify(clearState)}`);
   assert(clearState.sky[2] > clearState.sky[0] && clearState.sky[2] > 0.65,
     `Clear daytime sky is not strongly blue: ${JSON.stringify(clearState.sky)}`);
 
@@ -1027,7 +1083,8 @@ try {
       const graphics = window.__worldloomGraphics;
       const ponds = window.__worldloomPonds;
       const hangingLeaves = window.__worldloomHangingLeaves;
-      const focus = window.__worldloomEnvironment.atmosphere.position;
+      const environment = window.__worldloomEnvironment;
+      const focus = environment.atmosphere.position;
       const ashStrands = hangingLeaves?.strands?.filter((strand) => !strand.isPine) || [];
       const visibleStrands = ashStrands.length ? ashStrands : hangingLeaves?.strands || [];
       const nearestStrand = visibleStrands.reduce((nearest, strand) => (
@@ -1081,23 +1138,39 @@ try {
         setRotation: camera.quaternion.setFromEuler,
         setEnvironment: graphics.setEnvironment,
         profile: graphics.profile,
+        environmentQuality: environment.graphicsQuality,
       };
+      environment.time = 0.31;
+      environment.weatherPhase = 'clear';
+      environment.rainTarget = 0;
+      environment.rainIntensity = 0;
+      environment.overcastAmount = 0;
+      environment.applyGraphicsSettings({
+        graphicsQuality: 'ultra',
+        weatherEffects: true,
+        reducedMotion: false,
+      });
+      environment.update(0, focus, 8);
+      const sunDirection = environment._sunDirection.clone();
+      const horizontalSun = sunDirection.clone().setY(0).normalize();
+      const cinematicCamera = target.clone().addScaledVector(horizontalSun, -7);
+      cinematicCamera.y = world.terrainHeight(cinematicCamera.x, cinematicCamera.z) + 1.7;
       camera.position.set(
-        candidates[0].position.x,
-        candidates[0].position.y,
-        candidates[0].position.z,
+        cinematicCamera.x,
+        cinematicCamera.y,
+        cinematicCamera.z,
       );
-      camera.lookAt(target.x, target.y + (nearestStrand ? -0.2 : 0.2), target.z);
+      camera.lookAt(camera.position.clone().addScaledVector(sunDirection, 100));
       camera.updateMatrixWorld(true);
-      const forward = target.clone().sub(camera.position).normalize();
-      graphics.applyProfile(GRAPHICS_PRESETS.high);
+      graphics.applyProfile(GRAPHICS_PRESETS.ultra);
       graphics.setEnvironment({
         dayAmount: 1,
         rainAmount: 0,
         caveAmount: 0,
         skyExposure: 1,
         sunVisibility: 1,
-        sunWorldPosition: camera.position.clone().addScaledVector(forward, 120),
+        sunElevation: environment.solarElevation,
+        sunWorldPosition: environment.sun.position,
       });
       camera.position.set = function holdPondView() { return this; };
       camera.quaternion.setFromEuler = function holdPondView() { return this; };
@@ -1117,6 +1190,11 @@ try {
         camera.quaternion.setFromEuler = original.setRotation;
         window.__worldloomGraphics.setEnvironment = original.setEnvironment;
         window.__worldloomGraphics.applyProfile(original.profile);
+        window.__worldloomEnvironment.applyGraphicsSettings({
+          graphicsQuality: original.environmentQuality,
+          weatherEffects: true,
+          reducedMotion: false,
+        });
         camera.position.fromArray(original.position);
         camera.quaternion.fromArray(original.quaternion);
         delete window.__worldloomSmokeCameraRestore;
@@ -1442,6 +1520,7 @@ try {
   assert.equal(failureReturnState.open, false, `WebGL recovery return failed: ${JSON.stringify(failureReturnState)}`);
   await failurePage.close();
 
+  assert.deepEqual(shaderErrors, [], `WebGL shader/program errors:\n${shaderErrors.join('\n\n')}`);
   assert.deepEqual(pageErrors, [], `Unhandled browser errors:\n${pageErrors.join('\n\n')}`);
   console.log(JSON.stringify({
     ok: true,

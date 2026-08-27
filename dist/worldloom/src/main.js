@@ -1788,6 +1788,7 @@ function animate(now) {
     caveAmount: cavePostProcessAmount(visualCaveDepth, environment.skyExposure),
     skyExposure: environment.skyExposure,
     sunVisibility: environment.sun?.material?.opacity || 0,
+    sunElevation: environment.solarElevation,
     sunWorldPosition: environment.sun?.position || null,
   });
   hudTimer += dt;
