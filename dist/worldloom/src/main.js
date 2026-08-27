@@ -991,6 +991,13 @@ function resumeGame() {
 function leaveToTitle() {
   if (!world) return;
   saveGame(false);
+  if (window.parent !== window) {
+    window.parent.postMessage(
+      { source: 'worldloom', type: 'request-close' },
+      window.location.origin,
+    );
+    return;
+  }
   transitioning = true;
   document.exitPointerLock?.();
   setState('menu');

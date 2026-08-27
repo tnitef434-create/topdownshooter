@@ -13,7 +13,9 @@ import { BLOCK, BLOCKS } from '../src/public/worldloom/src/blocks.js';
 import {
   World,
   LEGACY_WORLD_GENERATOR_VERSION,
+  MOUNTAIN_CROSS_SPAWN_CHANCE,
   WORLD_GENERATOR_VERSION,
+  mountainCrossSpawnRoll,
 } from '../src/public/worldloom/src/world.js';
 import {
   BlockEffects,
@@ -547,7 +549,7 @@ test('tree descriptors are seed-stable, query-stable and sorted nearest first', 
   differentWorld.dispose();
 });
 
-test('mountain sectors receive one deterministic wooden cross on their true summit', () => {
+test('eligible mountain sectors receive deterministic crosses on a one-in-four roll', () => {
   const center = { x: 0, z: 0 };
   const radius = 384;
   const firstWorld = new World(64, null, null);
@@ -558,7 +560,7 @@ test('mountain sectors receive one deterministic wooden cross on their true summ
   });
   const first = firstWorld.getMountainCrossesNear(center.x, center.z, radius);
 
-  assert.ok(first.length >= 16, 'the mountain fixture should expose many distinct summit monuments');
+  assert.ok(first.length >= 3, 'the mountain fixture should expose several quarter-chance summit monuments');
   assert.deepEqual(firstWorld.getMountainCrossesNear(center.x, center.z, radius), first,
     'repeating the summit query changed its descriptors or order');
   assert.deepEqual(secondWorld.getMountainCrossesNear(center.x, center.z, radius), first,
@@ -580,6 +582,9 @@ test('mountain sectors receive one deterministic wooden cross on their true summ
     && cross.asset === 'summit-cross.glb'
     && cross.modelHeight === 7
     && cross.crossbeamHeight === 5.12
+    && cross.spawnChance === MOUNTAIN_CROSS_SPAWN_CHANCE
+    && cross.spawnRoll === mountainCrossSpawnRoll(cross.cellX, cross.cellZ, firstWorld.seed)
+    && cross.spawnRoll < MOUNTAIN_CROSS_SPAWN_CHANCE
   )), 'summit descriptors must be immutable, elevated and structurally complete');
   for (const cross of first) {
     assert.equal(firstWorld.terrainHeight(cross.rootX, cross.rootZ), cross.summitHeight,
@@ -590,6 +595,22 @@ test('mountain sectors receive one deterministic wooden cross on their true summ
   secondWorld.dispose();
   differentWorld.dispose();
   legacyWorld.dispose();
+});
+
+test('mountain cross spawn rolls remain statistically locked to twenty-five percent', () => {
+  let selected = 0;
+  let sampled = 0;
+  for (const seed of [64, 91234, 0x5f3759df, 0xa511e9b3]) {
+    for (let cellZ = -32; cellZ < 32; cellZ++) {
+      for (let cellX = -32; cellX < 32; cellX++) {
+        sampled++;
+        if (mountainCrossSpawnRoll(cellX, cellZ, seed) < MOUNTAIN_CROSS_SPAWN_CHANCE) selected++;
+      }
+    }
+  }
+  const ratio = selected / sampled;
+  assert.ok(ratio >= 0.24 && ratio <= 0.26,
+    `expected a deterministic 25% cross roll, received ${(ratio * 100).toFixed(2)}%`);
 });
 
 test('summit descriptors reserve open air for the Blender model instead of voxel plus signs', () => {

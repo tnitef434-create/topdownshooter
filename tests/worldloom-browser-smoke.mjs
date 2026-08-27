@@ -84,6 +84,26 @@ try {
     return loader?.getAttribute('aria-busy') === 'false' && loader?.classList.contains('is-hidden');
   }, { timeout: 30_000 });
 
+  const portalFramePresentation = await page.evaluate(() => {
+    const toolbar = document.querySelector('.worldloom-site-toolbar');
+    const frame = document.querySelector('#worldloom-frame');
+    const screen = document.querySelector('#worldloom-site-screen');
+    const frameBounds = frame?.getBoundingClientRect();
+    return {
+      toolbarDisplay: toolbar ? getComputedStyle(toolbar).display : null,
+      frameTop: frameBounds?.top ?? null,
+      frameBottom: frameBounds?.bottom ?? null,
+      viewportHeight: innerHeight,
+      screenRows: screen ? getComputedStyle(screen).gridTemplateRows : '',
+    };
+  });
+  assert.equal(portalFramePresentation.toolbarDisplay, 'none',
+    'The obsolete TacticStrike/Worldloom portal bar is still visible');
+  assert(Math.abs(portalFramePresentation.frameTop) <= 1,
+    `Worldloom still leaves a top-bar gap at ${portalFramePresentation.frameTop}px`);
+  assert(Math.abs(portalFramePresentation.frameBottom - portalFramePresentation.viewportHeight) <= 1,
+    'Worldloom iframe does not fill the viewport after removing the portal bar');
+
   const frameHandle = await page.$('#worldloom-frame');
   const frame = await frameHandle?.contentFrame();
   assert(frame, 'Worldloom iframe did not become available');
@@ -284,6 +304,7 @@ try {
       vitality: document.querySelector('[aria-label="Vitality"]')?.getAttribute('aria-valuenow'),
       nourishment: document.querySelector('[aria-label="Nourishment"]')?.getAttribute('aria-valuenow'),
       objective: document.querySelector('#objective-text')?.textContent || '',
+      portalReturnLabel: document.querySelector('#title-button')?.textContent?.trim() || '',
       renderer: Boolean(graphics),
       environment: Boolean(window.__worldloomEnvironment),
       summitCrosses: (() => {
@@ -345,6 +366,8 @@ try {
   assert.equal(gameState.vitality, '100');
   assert.equal(gameState.nourishment, '90');
   assert.notEqual(gameState.objective.trim(), '');
+  assert.match(gameState.portalReturnLabel, /return to TacticStrike/i,
+    'The pause menu has no replacement route back after removing the portal bar');
   assert.equal(gameState.renderer, true);
   assert.equal(gameState.environment, true);
   assert.equal(gameState.summitCrosses.ready, true,
@@ -1246,7 +1269,10 @@ try {
   assert(Math.abs(resumedPosition[0] - exactResumeTarget[0]) < 1e-6, 'Continue snapped the saved X coordinate');
   assert(Math.abs(resumedPosition[2] - exactResumeTarget[1]) < 1e-6, 'Continue snapped the saved Z coordinate');
 
-  await page.evaluate(() => document.querySelector('#btn-close-worldloom')?.click());
+  // Pointer-lock release normally opens the pause menu. Directly invoke its
+  // authored exit action here because headless Chrome does not hold pointer
+  // lock, then verify the child-to-parent save-and-close handshake.
+  await reopenedFrame.evaluate(() => document.querySelector('#title-button')?.click());
   await page.waitForFunction(() => !document.body.classList.contains('is-worldloom-open'), { timeout: 3_000 });
 
   const inventoryPage = await browser.newPage();
@@ -1427,6 +1453,7 @@ try {
     clearState,
     stormState,
     deployPresentation,
+    portalFramePresentation,
     mainMenuPresentation,
     settingsPresentation,
     maximumViewSettings,

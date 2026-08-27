@@ -3791,7 +3791,7 @@ footer {
   inset: 0;
   z-index: 30000;
   display: grid;
-  grid-template-rows: 48px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   visibility: hidden;
   background: #030806;
   opacity: 0;
@@ -3807,9 +3807,7 @@ footer {
 }
 
 .worldloom-site-toolbar {
-  position: relative;
-  z-index: 3;
-  display: flex;
+  display: none;
   align-items: center;
   justify-content: space-between;
   gap: 18px;
@@ -3887,7 +3885,7 @@ footer {
 
 .worldloom-frame-loading {
   position: absolute;
-  inset: 48px 0 0;
+  inset: 0;
   z-index: 2;
   display: flex;
   flex-direction: column;

@@ -44,6 +44,7 @@ const MOUNTAIN_SUMMIT_CELL_SIZE = 64;
 const MOUNTAIN_SUMMIT_CACHE_LIMIT = 768;
 const MOUNTAIN_CROSS_MODEL_HEIGHT = 7;
 const MOUNTAIN_CROSS_CROSSBEAM_HEIGHT = 5.12;
+export const MOUNTAIN_CROSS_SPAWN_CHANCE = 0.25;
 const PLANT_CELL_SIZE = 3;
 const CACTUS_CELL_SIZE = 7;
 const POND_CELL_SIZE = 56;
@@ -120,6 +121,14 @@ const SHORT_GRASS = resolveBlock(['SHORT_GRASS'], AIR);
 
 function floorDiv(value, divisor) {
   return Math.floor(value / divisor);
+}
+
+export function mountainCrossSpawnRoll(cellX, cellZ, seed = 0) {
+  return hash2D(
+    Math.floor(Number.isFinite(Number(cellX)) ? Number(cellX) : 0),
+    Math.floor(Number.isFinite(Number(cellZ)) ? Number(cellZ) : 0),
+    (normalizeSeed(seed) ^ 0x243f6a88) >>> 0,
+  );
 }
 
 function localCoordinate(value, chunkCoordinate) {
@@ -1823,6 +1832,13 @@ export class World {
       }
     }
 
+    // A mountain can be a valid summit without always carrying a monument.
+    // Roll once per 64-block mountain sector from the world seed so the same
+    // save is stable across streaming order and reloads, while only one in four
+    // eligible mountains receives the authored cross.
+    const spawnRoll = mountainCrossSpawnRoll(cellX, cellZ, this.seed);
+    if (spawnRoll >= MOUNTAIN_CROSS_SPAWN_CHANCE) return remember(null);
+
     const axis = hash2D(
       best.x,
       best.z,
@@ -1840,6 +1856,8 @@ export class World {
       asset: 'summit-cross.glb',
       modelHeight: MOUNTAIN_CROSS_MODEL_HEIGHT,
       crossbeamHeight: MOUNTAIN_CROSS_CROSSBEAM_HEIGHT,
+      spawnChance: MOUNTAIN_CROSS_SPAWN_CHANCE,
+      spawnRoll,
     }));
   }
 

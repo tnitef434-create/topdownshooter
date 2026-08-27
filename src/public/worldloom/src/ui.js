@@ -115,6 +115,10 @@ export class UI {
   _bindStatic() {
     const inventoryTip = document.querySelector('.inventory-tip');
     if (inventoryTip) inventoryTip.textContent = 'Drag stacks to move them · drag beyond the window to drop them into the world';
+    const titleButton = $('title-button');
+    if (titleButton && window.parent !== window) {
+      titleButton.textContent = 'Save & return to TacticStrike';
+    }
     $('new-world-button')?.addEventListener('click', () => {
       const seedValue = $('seed-input')?.value.trim() || `${Date.now()}`;
       const mode = document.querySelector('input[name="mode"]:checked')?.value || 'survival';
@@ -123,7 +127,7 @@ export class UI {
     this.elements.continueButton?.addEventListener('click', () => this.onContinue?.());
     $('resume-button')?.addEventListener('click', () => this.onResume?.());
     $('save-button')?.addEventListener('click', () => this.onSave?.());
-    $('title-button')?.addEventListener('click', () => this.onTitle?.());
+    titleButton?.addEventListener('click', () => this.onTitle?.());
     $('inventory-close')?.addEventListener('click', () => {
       if (this.onInventoryClose) this.onInventoryClose();
       else this.setInventory(false);

@@ -1895,6 +1895,8 @@ function setupUIListeners() {
       worldloomFrameLoading?.classList.add('is-hidden');
     } else if (message.type === 'save-ack') {
       pendingWorldloomSaves.get(message.requestId)?.(message.saved);
+    } else if (message.type === 'request-close') {
+      btnCloseWorldloom?.click();
     } else if (message.type === 'error' && worldloomFrameLoading) {
       showWorldloomRecovery(message.message || 'Worldloom could not start safely. Retry or return to TacticStrike.');
     }
