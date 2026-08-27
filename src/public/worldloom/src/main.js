@@ -90,6 +90,8 @@ let worldWorkScheduled = false;
 let worldWorkToken = 0;
 let saveWarningShown = false;
 let respawnInvulnerability = 0;
+let deathSequenceToken = 0;
+let deathTransitionTimer = null;
 const environmentViewDirection = new THREE.Vector3(0, 0, -1);
 let droppedItems = [];
 const MAX_DROPPED_ITEMS = 256;
@@ -352,6 +354,7 @@ function bindUI() {
     if (data) startWorld({ seed: data.seed, mode: data.mode || 'survival', saveData: data });
   };
   ui.onResume = resumeGame;
+  ui.onRespawn = finishDeathRespawn;
   ui.onSave = () => saveGame(true);
   ui.onTitle = () => leaveToTitle();
   ui.onInventoryMove = (from, to) => {
@@ -401,6 +404,7 @@ async function startWorld({ seed, mode: selectedMode, saveData = null }) {
   if (transitioning) return;
   transitioning = true;
   try {
+  cancelDeathSequence();
   document.exitPointerLock?.();
   setState('loading');
   ui.setLoading(0.04, saveData ? 'Remembering the old paths…' : 'Finding a place for the first dawn…');
@@ -469,7 +473,11 @@ async function startWorld({ seed, mode: selectedMode, saveData = null }) {
   player.flying = mode === 'builder' ? Boolean(saveData?.player?.flying ?? true) : false;
   connectPlayerAudio();
   creatures = new CreatureSystem(scene, world);
-  creatures.onPlayerDamage = (amount, sourcePosition, creature, combat) => damagePlayer(amount, sourcePosition, combat);
+  creatures.onPlayerDamage = (amount, sourcePosition, creature, combat) => damagePlayer(
+    amount,
+    sourcePosition,
+    { ...combat, deathReason: `${creature?.name || 'A wild creature'} defeated you.` },
+  );
 
   const initialStream = world.updateStreaming(
     player.position,
@@ -691,16 +699,16 @@ function connectPlayerAudio() {
     audio.step('dirt', Math.min(1.4, 0.55 + impact * 0.025));
     const damage = mode === 'builder' ? 0 : fallDamageForImpact(impact);
     if (damage > 0) {
-      damagePlayer(damage);
-      ui.toast(`Hard landing · ${Math.round(damage * 100)} damage`, 'error', 1100);
+      const lethal = damagePlayer(damage, null, { deathReason: 'You hit the ground too hard.' });
+      if (!lethal) ui.toast(`Hard landing · ${Math.round(damage * 100)} damage`, 'error', 1100);
     }
   };
   player.onSplash = () => audio.splash();
   player.onDamage = () => {
-    ui.damageFlash();
+    ui.damageFlash(0.14);
     audio.playerHurt(0.8);
   };
-  player.onVoid = () => respawnPlayer('The worldroot carried you back from the void');
+  player.onVoid = () => beginPlayerDeath('You fell beyond the worldroot.');
 }
 
 function materialFor(blockId) {
@@ -1039,6 +1047,7 @@ function leaveToTitle() {
     return;
   }
   transitioning = true;
+  cancelDeathSequence();
   document.exitPointerLock?.();
   setState('menu');
   creatures?.dispose();
@@ -1255,7 +1264,7 @@ function trySleepAtBed(hit) {
   saveGame(false);
 }
 
-function respawnPlayer(message = 'The weave carried you home') {
+function performRespawn() {
   if (!player || !world) return;
   player.health = 1;
   settleSpawnOrWorld(spawnPoint);
@@ -1263,9 +1272,54 @@ function respawnPlayer(message = 'The weave carried you home') {
   respawnInvulnerability = 2.5;
   hazardDamageTimer = 1.2;
   survivalDamage = 0;
-  ui.damageFlash();
-  ui.toast(message, 'success', 3800);
   saveTimer = Math.max(saveTimer, 55);
+}
+
+function cancelDeathSequence() {
+  deathSequenceToken++;
+  clearTimeout(deathTransitionTimer);
+  deathTransitionTimer = null;
+  ui.hideDeath();
+}
+
+function beginPlayerDeath(reason = 'The wilds overcame you.') {
+  if (!player || !world || state === 'dead' || state === 'loading') return false;
+  const sequence = ++deathSequenceToken;
+  clearTimeout(deathTransitionTimer);
+  deathTransitionTimer = null;
+  attackGesture = false;
+  suppressMining = 0;
+  resetMining();
+  effects?.setTarget(null);
+  audio.playerDeath();
+  setState('dead');
+  document.exitPointerLock?.();
+  ui.showDeath(reason);
+  // Make the persisted state safe immediately. The opaque death layer hides the
+  // teleport, while closing the tab during this screen can never save health 0
+  // inside lava, the void, or the lethal landing position.
+  performRespawn();
+  return sequence === deathSequenceToken;
+}
+
+function finishDeathRespawn() {
+  if (state !== 'dead' || !player || !world || deathTransitionTimer) return;
+  const sequence = deathSequenceToken;
+  ui.beginRespawn();
+  audio.playerRespawn();
+  // This callback originates from a real button click, so request pointer lock
+  // while the browser still considers it a user gesture.
+  input.requestLock();
+  deathTransitionTimer = setTimeout(() => {
+    deathTransitionTimer = null;
+    if (sequence !== deathSequenceToken || state !== 'dead') return;
+    setState('playing');
+    ui.hideDeath();
+    initialClickHint = !input.locked;
+    hasHeldPointer = Boolean(input.locked);
+    ui.toast('The weave carried you back to your bound shelter', 'success', 3200);
+    saveGame(false);
+  }, 520);
 }
 
 function placeSelectedBlock() {
@@ -1365,8 +1419,8 @@ function useSelectedItem() {
     audio.pickup();
     if (item.id === ITEM.COOKED_MEAT) flags.cookedMeal = true;
     if (result.sick) {
-      damagePlayer(0.1);
-      ui.toast('Raw meat made you ill', 'error', 1700);
+      const lethal = damagePlayer(0.1, null, { deathReason: 'Illness overcame you.' });
+      if (!lethal) ui.toast('Raw meat made you ill', 'error', 1700);
     } else {
       ui.toast(`${item.name} restored nourishment`, 'success', 1400);
     }
@@ -1488,10 +1542,12 @@ function placementIsValid(hit) {
 }
 
 function damagePlayer(amount, sourcePosition, combat = null) {
-  if (!player || mode === 'builder' || respawnInvulnerability > 0) return;
-  player.health = Math.max(0, player.health - amount);
-  ui.damageFlash();
-  audio.playerHurt(Math.min(1.8, 0.55 + Number(amount) * 3));
+  if (!player || mode === 'builder' || respawnInvulnerability > 0 || state === 'dead') return false;
+  const applied = Math.max(0, Math.min(1, Number(amount) || 0));
+  if (applied <= 0) return false;
+  player.health = Math.max(0, player.health - applied);
+  ui.damageFlash(applied);
+  audio.playerHurt(Math.min(1.8, 0.55 + applied * 3));
   if (sourcePosition) {
     const away = player.position.clone().sub(sourcePosition).setY(0).normalize();
     const knockback = Math.max(1.5, Math.min(7.5, Number(combat?.knockback) || 4.5));
@@ -1499,8 +1555,10 @@ function damagePlayer(amount, sourcePosition, combat = null) {
     player.velocity.y = Math.max(player.velocity.y, 2.5 + knockback * 0.18);
   }
   if (player.health <= 0) {
-    respawnPlayer('The weave carried you back to your bound shelter');
+    beginPlayerDeath(combat?.deathReason || 'The wilds overcame you.');
+    return true;
   }
+  return false;
 }
 
 function scheduleWorldWork() {
@@ -1628,6 +1686,7 @@ function updateGame(dt) {
     interactive ? input : passiveGameplayInput,
     { ...settings, ...survival.getModifiers() },
   );
+  if (state === 'dead') return;
   hazardDamageTimer = Math.max(0, hazardDamageTimer - dt);
   const bodyBlock = world.getBlock(
     Math.floor(player.position.x),
@@ -1636,7 +1695,8 @@ function updateGame(dt) {
   );
   if (bodyBlock === BLOCK.LAVA && hazardDamageTimer <= 0) {
     hazardDamageTimer = 0.62;
-    damagePlayer(0.18);
+    const lethal = damagePlayer(0.18, null, { deathReason: 'The lava consumed you.' });
+    if (lethal) return;
     player.velocity.y = Math.max(player.velocity.y, 3.2);
     ui.toast('The lava burns!', 'error', 850);
   }
@@ -1663,6 +1723,7 @@ function updateGame(dt) {
     effects.setTarget(null);
   }
   creatures?.update(dt, player, environment.dayAmount);
+  if (state === 'dead') return;
   updateDroppedItems(dt);
 
   const surface = world.terrainHeight(player.position.x, player.position.z);
@@ -1687,7 +1748,14 @@ function updateGame(dt) {
     const applied = Math.min(0.16, survivalDamage);
     survivalDamage -= applied;
     survivalDamageTimer = 0.72;
-    damagePlayer(applied);
+    const deathReason = survivalTick.drowning
+      ? 'You ran out of air.'
+      : survivalTick.starving
+        ? 'You succumbed to hunger.'
+        : survivalTick.coldExposure
+          ? 'The cold overcame you.'
+          : 'Your strength gave out.';
+    if (damagePlayer(applied, null, { deathReason })) return;
   }
   if (survivalTick.regeneration > 0 && player.health < 1) {
     player.health = Math.min(1, player.health + survivalTick.regeneration);

@@ -18,6 +18,66 @@ const CAVE_SKYLIGHT_RADIUS = 16;
 const SUN_HORIZON_COLOR = new THREE.Color('#ffb56f');
 const SUN_LOW_COLOR = new THREE.Color('#ffd395');
 const SUN_NOON_COLOR = new THREE.Color('#fff1c4');
+export const WEATHER_FRONT_CHANCE = 0.62;
+export const WEATHER_DURATION_RANGES = Object.freeze({
+  initialClear: Object.freeze([70, 430]),
+  dryClear: Object.freeze([110, 540]),
+  building: Object.freeze([18, 52]),
+  rain: Object.freeze([48, 250]),
+  afterStorm: Object.freeze([125, 620]),
+});
+
+function secureRandomUnit() {
+  const cryptoApi = globalThis.crypto;
+  if (cryptoApi?.getRandomValues) {
+    const value = new Uint32Array(1);
+    cryptoApi.getRandomValues(value);
+    return value[0] / 0x100000000;
+  }
+  return Math.random();
+}
+
+function normalizedWeatherRoll(value) {
+  return Math.max(0, Math.min(0.999999999, Number(value) || 0));
+}
+
+export function sampleWeatherDuration(kind, randomValue = 0.5) {
+  const [minimum, maximum] = WEATHER_DURATION_RANGES[kind] || WEATHER_DURATION_RANGES.dryClear;
+  return minimum + (maximum - minimum) * normalizedWeatherRoll(randomValue);
+}
+
+export function weatherFrontWillBuild(randomValue = 0.5) {
+  return normalizedWeatherRoll(randomValue) < WEATHER_FRONT_CHANCE;
+}
+
+/**
+ * Sprite billboards need to retain their apparent angular size, but celestial
+ * bodies must live behind every piece of terrain. Pinning only clip-space Z to
+ * the far plane preserves X/Y projection while the normal depth test produces
+ * exact mountain, tree and building silhouettes across the disc.
+ */
+export function pinCelestialSpriteToFarPlane(material) {
+  if (!material) return material;
+  const previousCompile = material.onBeforeCompile;
+  const previousCacheKey = material.customProgramCacheKey?.bind(material);
+  material.depthTest = true;
+  material.depthWrite = false;
+  material.depthFunc = THREE.LessEqualDepth;
+  material.onBeforeCompile = function onBeforeCompile(shader, renderer) {
+    previousCompile?.call(this, shader, renderer);
+    const projection = 'gl_Position = projectionMatrix * mvPosition;';
+    if (shader.vertexShader.includes(projection)) {
+      shader.vertexShader = shader.vertexShader.replace(
+        projection,
+        `${projection}\n\tgl_Position.z = gl_Position.w;`,
+      );
+    }
+  };
+  material.customProgramCacheKey = () => `${previousCacheKey?.() || ''}|worldloom-celestial-depth-v1`;
+  material.userData.worldloomCelestialFarDepth = true;
+  material.needsUpdate = true;
+  return material;
+}
 const CAVE_SKYLIGHT_DIRECTIONS = Object.freeze(Array.from({ length: 12 }, (_, index) => {
   const angle = (index / 12) * Math.PI * 2;
   return Object.freeze([Math.cos(angle), Math.sin(angle)]);
@@ -1186,11 +1246,12 @@ export class Environment {
     this.localCloudCoverage = 0;
     this.localCloudCount = 0;
     this.nearestCloudDistance = Number.POSITIVE_INFINITY;
+    this.weatherRandom = secureRandomUnit;
     this.weatherPhase = 'clear';
     this.stormIntensity = 0.72;
     this.weatherBuildAge = 0;
     this.pendingStormDuration = 100;
-    this.weatherTimer = 6 + Math.random() * 14;
+    this.weatherTimer = sampleWeatherDuration('initialClear', this._weatherRoll());
     this.weatherWorld = null;
     this.onLightning = null;
     this.weatherEnabled = true;
@@ -1284,24 +1345,35 @@ export class Environment {
       renderer.shadowMap.type = THREE.PCFShadowMap;
     }
 
-    const sunMat = new THREE.SpriteMaterial({
+    const sunMat = pinCelestialSpriteToFarPlane(new THREE.SpriteMaterial({
       map: makeDiscTexture('rgba(255,252,220,1)', 'rgba(255,194,94,0.25)'),
       transparent: true,
+      depthTest: true,
       depthWrite: false,
       fog: false,
       blending: THREE.AdditiveBlending,
-    });
+    }));
     this.sun = new THREE.Sprite(sunMat);
     this.sun.scale.set(13, 13, 1);
     scene.add(this.sun);
 
-    const moonMat = new THREE.SpriteMaterial({
-      map: makeDiscTexture('rgba(222,235,255,0.95)', 'rgba(102,150,255,0.16)'),
+    const moonTexture = new THREE.TextureLoader().load('assets/environment/realistic-moon.png');
+    moonTexture.colorSpace = THREE.SRGBColorSpace;
+    moonTexture.minFilter = THREE.LinearMipmapLinearFilter;
+    moonTexture.magFilter = THREE.LinearFilter;
+    moonTexture.generateMipmaps = true;
+    moonTexture.anisotropy = Math.min(8, renderer?.capabilities?.getMaxAnisotropy?.() || 1);
+    const moonMat = pinCelestialSpriteToFarPlane(new THREE.SpriteMaterial({
+      map: moonTexture,
+      color: 0xdce6f4,
       transparent: true,
+      alphaTest: 0.012,
+      depthTest: true,
       depthWrite: false,
       fog: false,
-      blending: THREE.AdditiveBlending,
-    });
+      toneMapped: false,
+      blending: THREE.NormalBlending,
+    }));
     this.moon = new THREE.Sprite(moonMat);
     this.moon.scale.set(8, 8, 1);
     scene.add(this.moon);
@@ -1335,6 +1407,7 @@ export class Environment {
   }
 
   setWeatherContext(world) {
+    const worldChanged = world !== this.weatherWorld;
     this.weatherWorld = world || null;
     this.rain.setWorld(this.weatherWorld);
     this.fallingLeaves.setWorld(this.weatherWorld);
@@ -1345,6 +1418,28 @@ export class Environment {
     this.redFlowers.setWorld(this.weatherWorld);
     this.birds.setWorld(this.weatherWorld);
     this.summitCrosses.setWorld(this.weatherWorld);
+    if (worldChanged) this._resetWeatherCycle(Boolean(this.weatherWorld));
+  }
+
+  _weatherRoll() {
+    const random = typeof this.weatherRandom === 'function'
+      ? this.weatherRandom()
+      : secureRandomUnit();
+    return normalizedWeatherRoll(random);
+  }
+
+  _resetWeatherCycle(active = true) {
+    this.weatherRandom = secureRandomUnit;
+    this.weatherPhase = 'clear';
+    this.weatherBuildAge = 0;
+    this.rainTarget = 0;
+    this.rainIntensity = 0;
+    this.overcastAmount = 0;
+    this.stormIntensity = 0.48 + this._weatherRoll() * 0.5;
+    this.pendingStormDuration = sampleWeatherDuration('rain', this._weatherRoll());
+    this.cloudCoverTarget = 0.22 + this._weatherRoll() * 0.28;
+    this.cloudCover = active ? this.cloudCoverTarget : 0.32;
+    this.weatherTimer = sampleWeatherDuration('initialClear', this._weatherRoll());
   }
 
   preparePondEcology() {
@@ -1660,7 +1755,7 @@ export class Environment {
           // Rain has ended. Keep the clearing phase while the grey dome and
           // cloud density ease back to a sunny baseline instead of snapping.
           if (this.cloudCoverTarget >= 0.8) {
-            this.cloudCoverTarget = 0.22 + Math.random() * 0.28;
+            this.cloudCoverTarget = 0.22 + this._weatherRoll() * 0.28;
           }
         }
       } else if (this.weatherTimer <= 0) {
@@ -1668,7 +1763,7 @@ export class Environment {
           this.weatherPhase = 'clearing';
           this.rainTarget = 0;
           this.cloudCoverTarget = Math.max(0.9, this.cloudCover);
-          this.weatherTimer = 105 + Math.random() * 210;
+          this.weatherTimer = sampleWeatherDuration('afterStorm', this._weatherRoll());
         } else if (this.weatherPhase === 'building') {
           if (
             this.weatherBuildAge >= 10
@@ -1678,18 +1773,29 @@ export class Environment {
           ) {
             this.weatherPhase = 'rain';
             this.rainTarget = this.stormIntensity;
-            this.weatherTimer = this.pendingStormDuration || (65 + Math.random() * 145);
+            this.weatherTimer = this.pendingStormDuration
+              || sampleWeatherDuration('rain', this._weatherRoll());
           } else {
-            this.weatherTimer = 2.5;
+            this.weatherTimer = 1.6 + this._weatherRoll() * 3.4;
           }
         } else {
-          this.weatherPhase = 'building';
-          this.stormIntensity = 0.48 + Math.random() * 0.5;
-          this.pendingStormDuration = 65 + Math.random() * 145;
-          this.weatherBuildAge = 0;
-          this.cloudCoverTarget = 0.84 + Math.random() * 0.16;
-          this.rainTarget = 0;
-          this.weatherTimer = 14 + Math.random() * 12;
+          // A dry interval ending is a weather opportunity, not a scripted
+          // promise of rain. Some fronts dissipate off-screen and schedule a
+          // fresh dry spell, so new worlds no longer receive the same storm at
+          // nearly the same elapsed time.
+          if (!weatherFrontWillBuild(this._weatherRoll())) {
+            this.weatherPhase = 'clear';
+            this.cloudCoverTarget = 0.22 + this._weatherRoll() * 0.28;
+            this.weatherTimer = sampleWeatherDuration('dryClear', this._weatherRoll());
+          } else {
+            this.weatherPhase = 'building';
+            this.stormIntensity = 0.48 + this._weatherRoll() * 0.5;
+            this.pendingStormDuration = sampleWeatherDuration('rain', this._weatherRoll());
+            this.weatherBuildAge = 0;
+            this.cloudCoverTarget = 0.84 + this._weatherRoll() * 0.16;
+            this.rainTarget = 0;
+            this.weatherTimer = sampleWeatherDuration('building', this._weatherRoll());
+          }
         }
       }
     } else if (!this.weatherEnabled) {

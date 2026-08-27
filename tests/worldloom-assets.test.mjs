@@ -102,6 +102,15 @@ const BIRD_SOURCE_URL = new URL(
 const BIRD_PROMPT_URL = new URL('../tools/assets/bird-textures/PROMPTS.md', import.meta.url);
 const BIRD_README_URL = new URL('../tools/assets/bird-textures/README.md', import.meta.url);
 const BIRD_GENERATOR_URL = new URL('../tools/generate_bird_assets.py', import.meta.url);
+const MOON_TEXTURE_URL = new URL(
+  '../src/public/worldloom/assets/environment/realistic-moon.png',
+  import.meta.url,
+);
+const MOON_SOURCE_URL = new URL(
+  '../tools/assets/moon-textures/gpt-realistic-moon-source.png',
+  import.meta.url,
+);
+const MOON_PROMPT_URL = new URL('../tools/assets/moon-textures/PROMPT.md', import.meta.url);
 const GLB_MAGIC = 0x46546c67;
 const GLB_JSON_CHUNK = 0x4e4f534a;
 const GLB_BINARY_CHUNK = 0x004e4942;
@@ -1547,4 +1556,30 @@ test('first-person Wayfarer arms keep their colour panels to one draw each', () 
   assert.equal(gripMeshes[0].material.colorWrite, true,
     'self-hiding the world avatar must not remove held items and their grip arm');
   held.dispose();
+});
+
+test('GPT moon texture is a detailed transparent runtime asset with preserved provenance', () => {
+  const runtime = readFileSync(MOON_TEXTURE_URL);
+  const source = readFileSync(MOON_SOURCE_URL);
+  const prompt = readFileSync(MOON_PROMPT_URL, 'utf8');
+  assert.deepEqual(pngMetadata(runtime), {
+    width: 1024,
+    height: 1024,
+    bitDepth: 8,
+    colorType: 6,
+  });
+  assert.deepEqual(pngMetadata(source), {
+    width: 1254,
+    height: 1254,
+    bitDepth: 8,
+    colorType: 6,
+  });
+  const decoded = decodeRgbaPng(runtime);
+  const alphaAt = (x, y) => decoded.pixels[(y * decoded.width + x) * 4 + 3];
+  assert.equal(alphaAt(0, 0), 0, 'the moon sprite must not carry an opaque square backdrop');
+  assert.ok(alphaAt(512, 512) >= 248, 'the centre of the moon disc must remain opaque and detailed');
+  assert.ok(runtime.length >= 500 * 1024, 'runtime texture is suspiciously small for a detailed 1024px moon');
+  assert.match(prompt, /built-in GPT Image tool/);
+  assert.match(prompt, /scientifically plausible crater\s+fields/);
+  assert.match(prompt, /no\s+baked atmospheric glow/);
 });

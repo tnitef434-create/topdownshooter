@@ -269,6 +269,75 @@ try {
     assert.equal(plate.backdropFilter, 'none', `${plateName} reintroduced glass blur`);
   }
 
+  const nonLethalDamage = await frame.evaluate(() => {
+    const player = window.__worldloomPlayer;
+    player.health = 1;
+    player.onLand?.(15.2);
+    const vignette = document.querySelector('#damage-vignette');
+    const style = getComputedStyle(vignette);
+    return {
+      health: player.health,
+      flash: vignette?.classList.contains('flash') || false,
+      borderWidth: Number.parseFloat(style.borderTopWidth),
+      borderColor: style.borderTopColor,
+      deathHidden: document.querySelector('#death-screen')?.classList.contains('hidden'),
+    };
+  });
+  assert(nonLethalDamage.health < 1 && nonLethalDamage.health > 0,
+    'real fall damage did not pass through the central player damage gateway');
+  assert.equal(nonLethalDamage.flash, true, 'damage did not trigger the edge-feedback animation');
+  assert(nonLethalDamage.borderWidth >= 5, 'damage feedback is not a visible perimeter border');
+  assert.match(nonLethalDamage.borderColor, /rgba?\(255\D+47\D+34/i,
+    `damage border is not authored red: ${nonLethalDamage.borderColor}`);
+  assert.equal(nonLethalDamage.deathHidden, true, 'nonlethal damage incorrectly opened the death screen');
+
+  await frame.evaluate(() => {
+    const player = window.__worldloomPlayer;
+    player.health = 0.04;
+    player.onLand?.(100);
+  });
+  await frame.waitForFunction(() => !document.querySelector('#death-screen')?.classList.contains('hidden'));
+  await frame.waitForFunction(() => document.querySelector('#respawn-button')?.disabled === false, {
+    timeout: 3_000,
+  });
+  const deathPresentation = await frame.evaluate(() => {
+    const screen = document.querySelector('#death-screen');
+    const player = window.__worldloomPlayer;
+    return {
+      title: document.querySelector('#death-title')?.textContent?.trim(),
+      reason: document.querySelector('#death-reason')?.textContent?.trim(),
+      role: screen?.getAttribute('role'),
+      modal: screen?.getAttribute('aria-modal'),
+      healthAlreadySafe: player?.health,
+      finitePosition: player?.position?.toArray?.().every(Number.isFinite),
+      zeroVelocity: player?.velocity?.lengthSq?.() === 0,
+      hudSoftHidden: document.querySelector('#hud')?.classList.contains('soft-hidden'),
+    };
+  });
+  assert.equal(deathPresentation.title, 'You Died');
+  assert.match(deathPresentation.reason, /ground too hard/i);
+  assert.equal(deathPresentation.role, 'dialog');
+  assert.equal(deathPresentation.modal, 'true');
+  assert.equal(deathPresentation.healthAlreadySafe, 1,
+    'lethal state was not made save-safe underneath the death screen');
+  assert.equal(deathPresentation.finitePosition, true);
+  assert.equal(deathPresentation.zeroVelocity, true);
+  assert.equal(deathPresentation.hudSoftHidden, true);
+  await frame.evaluate(() => document.querySelector('#respawn-button')?.click());
+  await frame.waitForFunction(() => document.querySelector('#death-screen')?.classList.contains('hidden'), {
+    timeout: 3_000,
+  });
+  const respawnedState = await frame.evaluate(() => ({
+    health: window.__worldloomPlayer?.health,
+    position: window.__worldloomPlayer?.position?.toArray?.(),
+    hudSoftHidden: document.querySelector('#hud')?.classList.contains('soft-hidden'),
+    saveHealth: JSON.parse(localStorage.getItem('worldloom.save.v1') || 'null')?.player?.health,
+  }));
+  assert.equal(respawnedState.health, 1);
+  assert(respawnedState.position.every(Number.isFinite));
+  assert.equal(respawnedState.hudSoftHidden, false);
+  assert.equal(respawnedState.saveHealth, 1, 'post-death save retained lethal health');
+
   const gameState = await frame.evaluate(() => {
     const graphics = window.__worldloomGraphics;
     const environment = window.__worldloomEnvironment;
@@ -319,6 +388,22 @@ try {
       portalReturnLabel: document.querySelector('#title-button')?.textContent?.trim() || '',
       renderer: Boolean(graphics),
       environment: Boolean(window.__worldloomEnvironment),
+      weather: {
+        phase: environment?.weatherPhase,
+        timer: environment?.weatherTimer,
+        rain: environment?.rainIntensity,
+      },
+      moon: {
+        source: environment?.moon?.material?.map?.image?.currentSrc
+          || environment?.moon?.material?.map?.image?.src
+          || '',
+        depthTest: environment?.moon?.material?.depthTest,
+        depthWrite: environment?.moon?.material?.depthWrite,
+        depthFunc: environment?.moon?.material?.depthFunc,
+        alphaTest: environment?.moon?.material?.alphaTest,
+        normalBlending: environment?.moon?.material?.blending === 1,
+        farDepth: environment?.moon?.material?.userData?.worldloomCelestialFarDepth === true,
+      },
       summitCrosses: (() => {
         const field = window.__worldloomSummitCrosses;
         const stats = field?.getStats?.() || null;
@@ -383,6 +468,17 @@ try {
     'The pause menu has no replacement route back after removing the portal bar');
   assert.equal(gameState.renderer, true);
   assert.equal(gameState.environment, true);
+  assert.equal(gameState.weather.phase, 'clear', 'a new map inherited or immediately scripted storm weather');
+  assert.equal(gameState.weather.rain, 0);
+  assert(gameState.weather.timer >= 65 && gameState.weather.timer <= 430,
+    `new-world weather timer is outside its broad random window: ${gameState.weather.timer}`);
+  assert.match(gameState.moon.source, /realistic-moon\.png(?:$|[?#])/i);
+  assert.equal(gameState.moon.depthTest, true);
+  assert.equal(gameState.moon.depthWrite, false);
+  assert.equal(gameState.moon.depthFunc, 3, 'moon must use LessEqual terrain depth testing');
+  assert.equal(gameState.moon.normalBlending, true, 'moon texture should not be an additive white glow');
+  assert.equal(gameState.moon.farDepth, true, 'moon is not pinned behind mountain depth');
+  assert(gameState.moon.alphaTest > 0, 'transparent moon texture lacks an alpha cutoff');
   assert.equal(gameState.summitCrosses.ready, true,
     `The Blender summit cross did not load: ${gameState.summitCrosses.error}`);
   assert.equal(gameState.summitCrosses.failed, false);

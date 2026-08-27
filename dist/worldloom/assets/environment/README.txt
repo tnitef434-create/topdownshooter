@@ -37,3 +37,12 @@ turf.
 Regenerate from the repository root with:
 
   "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe" --background --factory-startup --python tools/generate_red_flower.py -- --output src/public/worldloom/assets/environment/red-flower.glb --preview outputs/red-flower-qa.png
+
+Realistic moon
+==============
+
+realistic-moon.png is a 1024x1024 transparent RGBA texture generated with the
+built-in GPT Image tool. The original 1254px source and complete prompt are
+preserved in tools/assets/moon-textures. The runtime image was downscaled with
+Lanczos filtering; atmospheric glow and terrain occlusion are intentionally
+handled by the renderer rather than baked into the texture.

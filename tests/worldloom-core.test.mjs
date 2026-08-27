@@ -25,8 +25,13 @@ import {
   Environment,
   nearestPeriodicCloudCoordinate,
   outdoorBounceIntensity,
+  pinCelestialSpriteToFarPlane,
+  sampleWeatherDuration,
   skylightTransmission,
   sunlightColorForElevation,
+  WEATHER_DURATION_RANGES,
+  WEATHER_FRONT_CHANCE,
+  weatherFrontWillBuild,
   weatherLightingState,
 } from '../src/public/worldloom/src/environment.js';
 import {
@@ -1483,6 +1488,71 @@ test('fog clamp never reveals terrain beyond the complete meshed horizon', () =>
     'storm/cave/night/underwater clarity must retain the exact legacy safety band');
   assert.equal(legacyLoading.far, loading.far,
     'both clear and dense fog must become fully opaque before the same unmeshed horizon');
+});
+
+test('celestial sprites retain their projected size while testing terrain at far-plane depth', () => {
+  const material = pinCelestialSpriteToFarPlane(new THREE.SpriteMaterial({
+    depthTest: false,
+    depthWrite: true,
+  }));
+  const shader = {
+    vertexShader: 'void main() {\n\tgl_Position = projectionMatrix * mvPosition;\n}',
+  };
+  material.onBeforeCompile(shader, null);
+  assert.equal(material.depthTest, true);
+  assert.equal(material.depthWrite, false);
+  assert.equal(material.depthFunc, THREE.LessEqualDepth);
+  assert.equal(material.userData.worldloomCelestialFarDepth, true);
+  assert.match(shader.vertexShader, /gl_Position\.z\s*=\s*gl_Position\.w/,
+    'mountains must win the depth test without changing the sprite projection');
+  assert.match(material.customProgramCacheKey(), /worldloom-celestial-depth-v1/);
+});
+
+test('weather windows span broad ranges and front opportunities can remain dry', () => {
+  for (const [kind, [minimum, maximum]] of Object.entries(WEATHER_DURATION_RANGES)) {
+    assert.equal(sampleWeatherDuration(kind, 0), minimum, `${kind} must include its minimum`);
+    const upper = sampleWeatherDuration(kind, 1);
+    assert.ok(upper < maximum && upper > maximum - 0.001,
+      `${kind} must approach its maximum without leaving the range`);
+  }
+  assert.ok(WEATHER_DURATION_RANGES.initialClear[1] - WEATHER_DURATION_RANGES.initialClear[0] >= 300,
+    'new worlds need a broad first-weather window rather than a disguised two-minute script');
+  assert.equal(weatherFrontWillBuild(0), true);
+  assert.equal(weatherFrontWillBuild(WEATHER_FRONT_CHANCE - 0.001), true);
+  assert.equal(weatherFrontWillBuild(WEATHER_FRONT_CHANCE), false);
+  assert.equal(weatherFrontWillBuild(0.99), false);
+});
+
+test('a clear weather opportunity can skip rain and schedule another varied dry spell', () => {
+  const rolls = [0.94, 0.31, 0.73];
+  const environment = weatherHarness('clear', {
+    weatherTimer: 0,
+    cloudCover: 0.34,
+    cloudCoverTarget: 0.34,
+    weatherRandom: () => rolls.shift() ?? 0.5,
+  });
+  environment._updateWeather(0.1);
+  assert.equal(environment.weatherPhase, 'clear');
+  assert.equal(environment.rainTarget, 0);
+  assert.ok(environment.weatherTimer >= WEATHER_DURATION_RANGES.dryClear[0]);
+  assert.ok(environment.weatherTimer <= WEATHER_DURATION_RANGES.dryClear[1]);
+});
+
+test('a successful weather opportunity samples independent buildup and storm durations', () => {
+  const rolls = [0.08, 0.35, 0.67, 0.44, 0.81];
+  const environment = weatherHarness('clear', {
+    weatherTimer: 0,
+    cloudCover: 0.34,
+    cloudCoverTarget: 0.34,
+    weatherRandom: () => rolls.shift() ?? 0.5,
+  });
+  environment._updateWeather(0.1);
+  assert.equal(environment.weatherPhase, 'building');
+  assert.ok(environment.weatherTimer >= WEATHER_DURATION_RANGES.building[0]);
+  assert.ok(environment.weatherTimer <= WEATHER_DURATION_RANGES.building[1]);
+  assert.ok(environment.pendingStormDuration >= WEATHER_DURATION_RANGES.rain[0]);
+  assert.ok(environment.pendingStormDuration <= WEATHER_DURATION_RANGES.rain[1]);
+  assert.equal(environment.rainTarget, 0, 'clouds must still gather before precipitation begins');
 });
 
 test('rain intensity is clamped to zero whenever the local sky has no storm clouds', () => {

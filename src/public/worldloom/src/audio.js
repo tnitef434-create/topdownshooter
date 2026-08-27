@@ -539,6 +539,26 @@ export class AudioSystem {
     this.duckMusic(0.58, 0.42);
   }
 
+  playerDeath() {
+    if (!this._ready()) return;
+    const now = this.context.currentTime;
+    this._noiseBurst(now, 0.7, 260, 0.12, 'lowpass');
+    [156, 117, 78].forEach((frequency, index) => {
+      this._tone(now + index * 0.13, frequency, 0.48, 0.07, 'triangle', 0.58);
+    });
+    this.duckMusic(0.18, 1.8);
+  }
+
+  playerRespawn() {
+    if (!this._ready()) return;
+    const now = this.context.currentTime;
+    [330, 440, 660, 880].forEach((frequency, index) => {
+      this._tone(now + index * 0.075, frequency, 0.3, 0.035, 'sine', 1.08);
+    });
+    this._noiseBurst(now, 0.36, 1800, 0.025, 'highpass');
+    this.duckMusic(0.62, 0.75);
+  }
+
   itemDrop() {
     if (!this._ready()) return;
     const now = this.context.currentTime;
