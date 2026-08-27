@@ -23,11 +23,14 @@ import {
   daylightBalance,
   directionalSkyAccess,
   Environment,
+  fallingLeafColumnBlocked,
+  fallingLeafSupportY,
   nearestPeriodicCloudCoordinate,
   outdoorBounceIntensity,
   pinCelestialSpriteToFarPlane,
   sampleWeatherDuration,
   skylightTransmission,
+  stepFallingLeafVertical,
   sunlightColorForElevation,
   WEATHER_DURATION_RANGES,
   WEATHER_FRONT_CHANCE,
@@ -41,7 +44,11 @@ import {
   projectLightToScreen,
   volumetricSunIntensity,
 } from '../src/public/worldloom/src/graphics.js';
-import { coverDepthSkylight, plantCoverSkylight } from '../src/public/worldloom/src/mesher.js';
+import {
+  buildChunkGeometry,
+  coverDepthSkylight,
+  plantCoverSkylight,
+} from '../src/public/worldloom/src/mesher.js';
 import { VolumetricSunPass } from '../src/public/worldloom/src/volumetric-sun-pass.js';
 import {
   InputController,
@@ -510,7 +517,89 @@ test('highland pine and walk-through shortgrass form deterministic natural patch
   assert.ok(grassCount > 8 && grassCount < 192, 'shortgrass should cluster without carpeting every block');
   assert.ok(pineCount > 20, 'the second tree species should be visibly represented');
   assert.equal(BLOCKS[BLOCK.SHORT_GRASS].solid, false, 'shortgrass must remain walk-through');
+  assert.equal(BLOCKS[BLOCK.SHORT_GRASS].renderMode, 'meadow-model');
+  assert.equal(BLOCKS[BLOCK.WILDFLOWER].renderMode, 'meadow-model');
   world.dispose();
+});
+
+test('opaque Blender meadow plants emit no legacy terrain-atlas cross geometry', () => {
+  const size = 2;
+  const height = 2;
+  const blocks = new Uint8Array(size * size * height);
+  const indexAt = (x, y, z) => x + size * (z + size * y);
+  blocks[indexAt(0, 1, 0)] = BLOCK.WILDFLOWER;
+  blocks[indexAt(1, 1, 1)] = BLOCK.SHORT_GRASS;
+  const world = {
+    chunkSize: size,
+    worldHeight: height,
+    getBlock: (x, y, z) => (
+      x >= 0 && x < size && y >= 0 && y < height && z >= 0 && z < size
+        ? blocks[indexAt(x, y, z)]
+        : BLOCK.AIR
+    ),
+  };
+  const geometry = buildChunkGeometry(world, { cx: 0, cz: 0, blocks });
+  assert.equal(geometry.faces, 0,
+    'the terrain mesher still emitted crossed cards behind the opaque Blender plants');
+  assert.equal(geometry.opaque?.getAttribute('position')?.count || 0, 0);
+  geometry.opaque?.dispose?.();
+  geometry.glass?.dispose?.();
+  geometry.water?.dispose?.();
+  geometry.glow?.dispose?.();
+});
+
+test('falling leaves resolve real supports while ignoring canopy foliage', () => {
+  const cells = new Map([
+    ['0:8:0', BLOCK.STONE],
+    ['1:10:0', BLOCK.ASH_LEAVES],
+    ['1:2:0', BLOCK.TURF],
+    ['2:5:0', BLOCK.WATER],
+    ['3:5:0', BLOCK.BED],
+    ['4:7:0', BLOCK.STONE],
+    ['4:8:0', BLOCK.STONE],
+  ]);
+  const world = {
+    worldHeight: 16,
+    terrainHeight: () => 2,
+    getBlock: (x, y, z) => cells.get(`${x}:${y}:${z}`) ?? BLOCK.AIR,
+    getFluidSurfaceY: (x, y) => (x === 2 && y === 5 ? 5.62 : null),
+  };
+  assert.ok(Math.abs(fallingLeafSupportY(world, 0.2, 0.2, 12) - 9.025) < 1e-6,
+    'an edited stone roof was not treated as the leaf support');
+  assert.ok(Math.abs(fallingLeafSupportY(world, 1.2, 0.2, 12) - 3.025) < 1e-6,
+    'canopy leaves must be skipped so airborne particles reach the ground');
+  assert.ok(Math.abs(fallingLeafSupportY(world, 2.2, 0.2, 12) - 5.645) < 1e-6,
+    'water must use its real partial fluid surface');
+  assert.ok(Math.abs(fallingLeafSupportY(world, 3.2, 0.2, 12) - 5.485) < 1e-6,
+    'slab-height authored floors must receive falling leaves');
+  assert.equal(fallingLeafColumnBlocked(world, 4.2, 8.5, 0.2), true,
+    'a leaf inside a stacked solid column was not rejected as a side collision');
+  assert.equal(Number.isNaN(fallingLeafSupportY(world, 4.2, 0.2, 8.5)), true,
+    'an internal face between stacked solids was incorrectly accepted as a floor');
+  assert.equal(fallingLeafColumnBlocked(world, 1.2, 10.5, 0.2), false,
+    'canopy foliage should not block a falling leaf horizontally');
+});
+
+test('slow falling leaves remain airborne beyond the old TTL and still land', () => {
+  let y = 12;
+  let flightAge = 0;
+  let landed = false;
+  for (let step = 0; step < 120; step++) {
+    const result = stepFallingLeafVertical(y, -0.35, 3.025, 0.1, flightAge);
+    y = result.y;
+    flightAge = result.flightAge;
+    landed = result.landed;
+  }
+  assert.equal(landed, false, 'the regression fixture should still be airborne after twelve seconds');
+  assert.ok(y > 3.025, 'the leaf disappeared or snapped before crossing the floor');
+  for (let step = 0; step < 200 && !landed; step++) {
+    const result = stepFallingLeafVertical(y, -0.35, 3.025, 0.1, flightAge);
+    y = result.y;
+    flightAge = result.flightAge;
+    landed = result.landed;
+  }
+  assert.equal(landed, true, 'the slow leaf never completed its descent');
+  assert.ok(Math.abs(y - 3.025) < 1e-6, 'the leaf did not settle flush on its support');
 });
 
 test('tree descriptors are seed-stable, query-stable and sorted nearest first', () => {

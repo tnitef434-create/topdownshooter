@@ -24,6 +24,11 @@ import {
   timeCorrectedDamping,
 } from '../src/public/worldloom/src/hanging-leaves.js';
 import { GroundLeafField } from '../src/public/worldloom/src/ground-leaves.js';
+import {
+  MeadowPlantField,
+  meadowPlantScale,
+  scanMeadowPlantChunk,
+} from '../src/public/worldloom/src/meadow-plants.js';
 import { SummitCrossField } from '../src/public/worldloom/src/summit-crosses.js';
 
 function meshSummary(root) {
@@ -111,6 +116,37 @@ const MOON_SOURCE_URL = new URL(
   import.meta.url,
 );
 const MOON_PROMPT_URL = new URL('../tools/assets/moon-textures/PROMPT.md', import.meta.url);
+const MEADOW_PLANTS_URL = new URL(
+  '../src/public/worldloom/assets/environment/meadow-plants.glb',
+  import.meta.url,
+);
+const MEADOW_PLANTS_ATLAS_URL = new URL(
+  '../src/public/worldloom/assets/environment/meadow-plants-atlas.png',
+  import.meta.url,
+);
+const MEADOW_SUNFLOWER_SOURCE_URL = new URL(
+  '../tools/assets/meadow-plant-textures/gpt-sunflower-atlas-source.png',
+  import.meta.url,
+);
+const MEADOW_GRASS_SOURCE_URL = new URL(
+  '../tools/assets/meadow-plant-textures/gpt-short-grass-atlas-source.png',
+  import.meta.url,
+);
+const MEADOW_PROMPTS_URL = new URL(
+  '../tools/assets/meadow-plant-textures/PROMPTS.md',
+  import.meta.url,
+);
+const MEADOW_GENERATOR_URL = new URL('../tools/generate_meadow_plants.py', import.meta.url);
+const DIST_MEADOW_PLANTS_URL = new URL(
+  '../dist/worldloom/assets/environment/meadow-plants.glb',
+  import.meta.url,
+);
+const DIST_MEADOW_PLANTS_ATLAS_URL = new URL(
+  '../dist/worldloom/assets/environment/meadow-plants-atlas.png',
+  import.meta.url,
+);
+const DIST_MEADOW_RUNTIME_URL = new URL('../dist/worldloom/src/meadow-plants.js', import.meta.url);
+const MEADOW_RUNTIME_URL = new URL('../src/public/worldloom/src/meadow-plants.js', import.meta.url);
 const GLB_MAGIC = 0x46546c67;
 const GLB_JSON_CHUNK = 0x4e4f534a;
 const GLB_BINARY_CHUNK = 0x004e4942;
@@ -298,6 +334,33 @@ function createTestGroundLeafGltf() {
   patch.name = 'Ground_Leaf_Litter_Patch';
   patch.rotation.x = -Math.PI * 0.5;
   root.add(patch);
+  scene.updateMatrixWorld(true);
+  return { scene, animations: [], atlasTexture };
+}
+
+function createTestMeadowPlantGltf() {
+  const scene = new THREE.Scene();
+  const pack = new THREE.Group();
+  pack.name = 'Meadow_Plant_Asset_Pack';
+  scene.add(pack);
+  const atlasTexture = new THREE.DataTexture(
+    new Uint8Array([108, 156, 72, 255]),
+    1,
+    1,
+    THREE.RGBAFormat,
+  );
+  atlasTexture.name = 'Fake embedded GPT meadow-plant atlas';
+  atlasTexture.colorSpace = THREE.SRGBColorSpace;
+  atlasTexture.needsUpdate = true;
+  const material = new THREE.MeshStandardMaterial({ map: atlasTexture });
+  const sunflower = new THREE.Group();
+  sunflower.name = 'Sunflower_Asset';
+  sunflower.add(new THREE.Mesh(new THREE.BoxGeometry(0.5, 1.1, 0.24), material));
+  pack.add(sunflower);
+  const shortGrass = new THREE.Group();
+  shortGrass.name = 'Short_Grass_Asset';
+  shortGrass.add(new THREE.Mesh(new THREE.PlaneGeometry(0.6, 0.3), material));
+  pack.add(shortGrass);
   scene.updateMatrixWorld(true);
   return { scene, animations: [], atlasTexture };
 }
@@ -1582,4 +1645,211 @@ test('GPT moon texture is a detailed transparent runtime asset with preserved pr
   assert.match(prompt, /built-in GPT Image tool/);
   assert.match(prompt, /scientifically plausible crater\s+fields/);
   assert.match(prompt, /no\s+baked atmospheric glow/);
+});
+
+test('Blender meadow pack uses two opaque GPT-textured meshes without alpha outlines', () => {
+  const glb = readFileSync(MEADOW_PLANTS_URL);
+  const atlas = readFileSync(MEADOW_PLANTS_ATLAS_URL);
+  const document = parseGlb(glb);
+  assert.ok(glb.length >= 24 * 1024, 'meadow-plant GLB is suspiciously small or empty');
+  assert.ok(glb.length <= 96 * 1024, `meadow-plant GLB exceeds 96KB (${glb.length} bytes)`);
+  assert.deepEqual(pngMetadata(atlas), {
+    width: 128,
+    height: 64,
+    bitDepth: 8,
+    colorType: 2,
+  });
+  const pack = document.nodes?.find((node) => node.name === 'Meadow_Plant_Asset_Pack');
+  const sunflower = document.nodes?.find((node) => node.name === 'Sunflower_Asset');
+  const grass = document.nodes?.find((node) => node.name === 'Short_Grass_Asset');
+  assert.equal(pack?.extras?.asset_role, 'worldloom_meadow_plant_pack');
+  assert.equal(pack?.extras?.alpha_contract, 'opaque_geometry_only');
+  assert.equal(pack?.extras?.runtime_draw_budget, 2);
+  assert.equal(sunflower?.extras?.asset_role, 'meadow_sunflower');
+  assert.equal(sunflower?.extras?.representation, 'opaque_textured_voxel_cuboids');
+  assert.ok(
+    sunflower.extras.authored_height_metres * meadowPlantScale('sunflower', 1) <= 1,
+    'the visible sunflower bloom exceeds its one-block interaction volume',
+  );
+  assert.equal(grass?.extras?.asset_role, 'meadow_short_grass');
+  assert.equal(grass?.extras?.representation, 'opaque_tapered_blade_quads');
+  assert.equal(grass?.extras?.triangle_count, 20);
+  assert.ok(grass?.extras?.triangle_count <= 24, 'dense short grass exceeded its geometry budget');
+
+  const rootNames = ['Sunflower_Asset', 'Short_Grass_Asset'];
+  const primitives = rootNames.flatMap((name) => descendantNodeIndices(document, name))
+    .flatMap((index) => {
+      const mesh = document.meshes?.[document.nodes[index]?.mesh];
+      return mesh?.primitives || [];
+    });
+  assert.equal(primitives.length, 2, 'the meadow pack must bake to exactly two instanced draws');
+  assert.ok(primitives.every((primitive) => (
+    Number.isInteger(primitive.attributes?.POSITION)
+    && Number.isInteger(primitive.attributes?.NORMAL)
+    && Number.isInteger(primitive.attributes?.TEXCOORD_0)
+  )), 'both Blender models must preserve authored UV geometry');
+  assert.equal(new Set(primitives.map((primitive) => primitive.material)).size, 1,
+    'sunflower and grass must share one embedded atlas material');
+  const material = document.materials?.[primitives[0].material];
+  assert.equal(material?.alphaMode, undefined, 'meadow plants must stay glTF OPAQUE');
+  assert.equal(material?.pbrMetallicRoughness?.baseColorFactor, undefined);
+  assert.equal(material?.doubleSided, true, 'opaque grass blades must render from both directions');
+  assert.equal(document.images?.length, 1);
+  assert.equal(document.textures?.length, 1);
+  assert.equal(document.materials?.length, 1);
+  const texture = document.textures?.[material?.pbrMetallicRoughness?.baseColorTexture?.index];
+  const sampler = document.samplers?.[texture?.sampler];
+  assert.equal(sampler?.magFilter, 9728, 'embedded GPT atlas must magnify with nearest filtering');
+  assert.ok([9728, 9984].includes(sampler?.minFilter), 'embedded GPT atlas must minify without linear blur');
+  const image = document.images?.[texture?.source];
+  assert.deepEqual(embeddedBufferView(glb, document, image.bufferView), atlas,
+    'the GLB must embed the exact audited opaque runtime atlas');
+  assert.equal(Boolean(document.extensionsUsed?.includes('KHR_draco_mesh_compression')), false);
+});
+
+test('production meadow plant files stay byte-identical to their tracked dist copies', () => {
+  assert.deepEqual(readFileSync(DIST_MEADOW_PLANTS_URL), readFileSync(MEADOW_PLANTS_URL));
+  assert.deepEqual(readFileSync(DIST_MEADOW_PLANTS_ATLAS_URL), readFileSync(MEADOW_PLANTS_ATLAS_URL));
+  assert.deepEqual(readFileSync(DIST_MEADOW_RUNTIME_URL), readFileSync(MEADOW_RUNTIME_URL));
+});
+
+test('meadow GPT sources, prompts and Blender generator preserve reproducible provenance', () => {
+  assert.deepEqual(pngMetadata(readFileSync(MEADOW_SUNFLOWER_SOURCE_URL)), {
+    width: 1254,
+    height: 1254,
+    bitDepth: 8,
+    colorType: 2,
+  });
+  assert.deepEqual(pngMetadata(readFileSync(MEADOW_GRASS_SOURCE_URL)), {
+    width: 1254,
+    height: 1254,
+    bitDepth: 8,
+    colorType: 2,
+  });
+  const prompts = readFileSync(MEADOW_PROMPTS_URL, 'utf8');
+  const generator = readFileSync(MEADOW_GENERATOR_URL, 'utf8');
+  assert.match(prompts, /built-in GPT\s+Image tool/);
+  assert.match(prompts, /exactly four equal full-bleed quadrants/g);
+  assert.match(prompts, /no outlines/g);
+  assert.match(generator, /opaque_tapered_blade_quads/);
+  assert.match(generator, /triangle_count > 24/);
+  assert.match(generator, /export_draco_mesh_compression_enable/);
+});
+
+test('meadow field instances live block data with hard opaque runtime materials', async () => {
+  const fixture = createTestMeadowPlantGltf();
+  const scene = new THREE.Scene();
+  const field = new MeadowPlantField(scene, {
+    loaderFactory: () => ({ loadAsync: async () => fixture }),
+    loadTimeoutMs: 200,
+  });
+  const blocks = new Uint8Array(16 * 16 * 4);
+  const indexAt = (x, y, z) => x + 16 * (z + 16 * y);
+  blocks[indexAt(1, 1, 1)] = BLOCK.WILDFLOWER;
+  blocks[indexAt(2, 1, 2)] = BLOCK.SHORT_GRASS;
+  blocks[indexAt(3, 1, 2)] = BLOCK.SHORT_GRASS;
+  const chunk = {
+    key: '0,0',
+    cx: 0,
+    cz: 0,
+    blocks,
+    generated: true,
+    wanted: true,
+    revision: 1,
+  };
+  assert.deepEqual(scanMeadowPlantChunk(chunk), {
+    sunflowers: [{ x: 1, y: 1, z: 1 }],
+    shortGrass: [{ x: 2, y: 1, z: 2 }, { x: 3, y: 1, z: 2 }],
+  });
+  field.setWorld({ seed: 64, chunks: new Map([['0,0', chunk]]) });
+  await field.prepare();
+  field.update(1, new THREE.Vector3(0, 1, 0));
+  assert.deepEqual(field.getStats(), {
+    ready: true,
+    failed: false,
+    loading: false,
+    error: '',
+    sunflowers: 1,
+    shortGrass: 2,
+    draws: 2,
+    cachedChunks: 1,
+    assetUrl: field.assetUrl,
+  });
+  for (const mesh of [field.sunflower, field.shortGrass]) {
+    assert.equal(mesh.material.transparent, false);
+    assert.equal(mesh.material.alphaTest, 0);
+    assert.equal(mesh.material.depthWrite, true);
+    assert.equal(mesh.material.normalMap, null);
+    assert.equal(mesh.material.map.magFilter, THREE.NearestFilter);
+    assert.equal(mesh.material.map.minFilter, THREE.NearestFilter);
+    assert.equal(mesh.material.map.generateMipmaps, false);
+  }
+  blocks[indexAt(1, 1, 1)] = BLOCK.AIR;
+  chunk.revision++;
+  field.update(0.5, new THREE.Vector3(0, 1, 0));
+  assert.equal(field.sunflower.count, 0, 'mined sunflower remained in the Blender instance field');
+  assert.equal(field.shortGrass.count, 2);
+  field.dispose();
+  assert.equal(field.group.parent, null);
+});
+
+test('meadow asset failure keeps both plants visible through opaque fallback geometry', async () => {
+  const blocks = new Uint8Array(16 * 16 * 3);
+  const indexAt = (x, y, z) => x + 16 * (z + 16 * y);
+  blocks[indexAt(1, 1, 1)] = BLOCK.WILDFLOWER;
+  blocks[indexAt(2, 1, 2)] = BLOCK.SHORT_GRASS;
+  const chunk = {
+    key: '0,0', cx: 0, cz: 0, blocks, generated: true, wanted: true, revision: 1,
+  };
+  const field = new MeadowPlantField(new THREE.Scene(), {
+    loaderFactory: () => ({ loadAsync: async () => { throw new Error('404 meadow pack'); } }),
+    loadTimeoutMs: 200,
+  });
+  field.setWorld({ seed: 64, chunks: new Map([['0,0', chunk]]) });
+  await field.prepare();
+  field.update(1, new THREE.Vector3(0, 1, 0));
+  const stats = field.getStats();
+  assert.equal(stats.ready, true, 'a cosmetic asset failure disabled the visible fallback');
+  assert.equal(stats.failed, true);
+  assert.equal(stats.sunflowers, 1);
+  assert.equal(stats.shortGrass, 1);
+  for (const mesh of [field.sunflower, field.shortGrass]) {
+    assert.equal(mesh.visible, true);
+    assert.equal(mesh.material.transparent, false);
+    assert.equal(mesh.material.alphaTest, 0);
+    assert.equal(mesh.material.depthWrite, true);
+  }
+  field.dispose();
+});
+
+test('a meadow GLB resolving after timeout is observed and disposes its imported resources', async () => {
+  const fixture = createTestMeadowPlantGltf();
+  let geometryDisposals = 0;
+  let textureDisposals = 0;
+  fixture.scene.traverse((node) => {
+    if (!node.geometry?.dispose) return;
+    const dispose = node.geometry.dispose.bind(node.geometry);
+    node.geometry.dispose = () => {
+      geometryDisposals++;
+      dispose();
+    };
+  });
+  const disposeAtlas = fixture.atlasTexture.dispose.bind(fixture.atlasTexture);
+  fixture.atlasTexture.dispose = () => {
+    textureDisposals++;
+    disposeAtlas();
+  };
+  const field = new MeadowPlantField(new THREE.Scene(), {
+    loaderFactory: () => ({
+      loadAsync: () => new Promise((resolve) => setTimeout(() => resolve(fixture), 35)),
+    }),
+    loadTimeoutMs: 10,
+  });
+  await field.prepare();
+  assert.equal(field.ready, true);
+  assert.equal(field.failed, true);
+  await new Promise((resolve) => setTimeout(resolve, 55));
+  assert.ok(geometryDisposals >= 2, 'the late GLB geometries leaked after the timeout');
+  assert.ok(textureDisposals >= 1, 'the late GLB texture leaked after the timeout');
+  field.dispose();
 });

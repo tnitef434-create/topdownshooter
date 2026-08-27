@@ -6,6 +6,7 @@ import { PondEcologyField } from './pond-ecology.js';
 import { HangingLeavesField } from './hanging-leaves.js';
 import { GroundLeafField } from './ground-leaves.js';
 import { RedFlowerField } from './red-flowers.js';
+import { MeadowPlantField } from './meadow-plants.js';
 import { BirdField } from './birds.js';
 import { SummitCrossField } from './summit-crosses.js';
 import { atmosphericFogRange } from './fog.js';
@@ -924,10 +925,78 @@ class RainField {
 }
 
 const MAX_FALLING_LEAVES = 180;
+const FALLING_LEAF_MAX_FLIGHT_SECONDS = 45;
+export const FALLING_LEAF_STATE = Object.freeze({
+  inactive: 0,
+  falling: 1,
+  settled: 2,
+});
 const FALLING_LEAF_TEXTURE_URL = new URL(
   '../assets/environment/falling-leaf-particle.png',
   import.meta.url,
 ).href;
+
+export function fallingLeafSupportY(world, x, z, maxY, fallback = Number.NaN) {
+  if (!world?.getBlock) return fallback;
+  const blockX = Math.floor(Number(x) || 0);
+  const blockZ = Math.floor(Number(z) || 0);
+  const ceiling = Number(maxY);
+  if (!Number.isFinite(ceiling)) return fallback;
+  const worldHeight = Math.max(1, Number(world.worldHeight) || 96);
+  const scanTop = Math.max(0, Math.min(worldHeight - 1, Math.floor(ceiling + 0.001)));
+  for (let y = scanTop; y >= 0; y--) {
+    const id = world.getBlock(blockX, y, blockZ);
+    if (FOLIAGE_BLOCKS.has(id)) continue;
+    const definition = BLOCKS[id];
+    if (!definition?.solid && !definition?.liquid && !definition?.hazard) continue;
+    const liquidSurface = definition.liquid
+      ? world.getFluidSurfaceY?.(blockX, y, blockZ)
+      : null;
+    const surface = (liquidSurface ?? (y + blockShapeHeight(id))) + 0.025;
+    // A surface above the leaf means the particle is embedded in this column.
+    // Do not continue downward and mistake a face inside stacked solids for an
+    // exposed floor; horizontal collision resolution will keep the leaf out.
+    if (surface > ceiling + 0.04) return fallback;
+    if (surface <= ceiling + 0.04) return surface;
+  }
+  const terrain = Number(world.terrainHeight?.(blockX, blockZ)) + 1.025;
+  return Number.isFinite(terrain) && terrain <= ceiling + 0.04 ? terrain : fallback;
+}
+
+export function fallingLeafColumnBlocked(world, x, y, z) {
+  if (!world?.getBlock) return false;
+  const blockX = Math.floor(Number(x) || 0);
+  const blockY = Math.floor(Number(y) || 0);
+  const blockZ = Math.floor(Number(z) || 0);
+  const id = world.getBlock(blockX, blockY, blockZ);
+  if (FOLIAGE_BLOCKS.has(id)) return false;
+  const definition = BLOCKS[id];
+  if (!definition?.solid && !definition?.liquid && !definition?.hazard) return false;
+  const liquidSurface = definition.liquid
+    ? world.getFluidSurfaceY?.(blockX, blockY, blockZ)
+    : null;
+  const surface = (liquidSurface ?? (blockY + blockShapeHeight(id))) + 0.025;
+  return Number.isFinite(surface) && surface > Number(y) + 0.04;
+}
+
+export function stepFallingLeafVertical(y, velocityY, supportY, dt, flightAge = 0) {
+  const elapsed = Math.max(0, Number(dt) || 0);
+  const previousY = Number(y) || 0;
+  const support = Number(supportY);
+  const nextAge = Math.max(0, Number(flightAge) || 0) + elapsed;
+  const nextY = previousY + (Number(velocityY) || 0) * elapsed;
+  const crossedSupport = Number.isFinite(support)
+    && previousY >= support - 0.04
+    && nextY <= support;
+  const safetyLanding = Number.isFinite(support)
+    && nextAge >= FALLING_LEAF_MAX_FLIGHT_SECONDS;
+  const landed = crossedSupport || safetyLanding;
+  return {
+    y: landed ? support : nextY,
+    flightAge: nextAge,
+    landed,
+  };
+}
 
 function makeLeafTexture() {
   const texture = new THREE.TextureLoader().load(FALLING_LEAF_TEXTURE_URL);
@@ -949,7 +1018,9 @@ class FallingLeaves {
     this.cursor = 0;
     this.positions = new Float32Array(MAX_FALLING_LEAVES * 3);
     this.velocities = new Float32Array(MAX_FALLING_LEAVES * 3);
-    this.life = new Float32Array(MAX_FALLING_LEAVES);
+    this.state = new Uint8Array(MAX_FALLING_LEAVES);
+    this.flightAge = new Float32Array(MAX_FALLING_LEAVES);
+    this.settleTime = new Float32Array(MAX_FALLING_LEAVES);
     this.phase = new Float32Array(MAX_FALLING_LEAVES);
     this.positions.fill(-9999);
     const geometry = new THREE.BufferGeometry();
@@ -978,7 +1049,9 @@ class FallingLeaves {
     this.world = world || null;
     this.points.visible = Boolean(world);
     if (!world) {
-      this.life.fill(0);
+      this.state.fill(FALLING_LEAF_STATE.inactive);
+      this.flightAge.fill(0);
+      this.settleTime.fill(0);
       this.positions.fill(-9999);
       this.points.geometry.attributes.position.needsUpdate = true;
     }
@@ -991,16 +1064,41 @@ class FallingLeaves {
   }
 
   _spawn(x, y, z) {
-    const index = this.cursor++ % MAX_FALLING_LEAVES;
+    let index = -1;
+    for (let attempt = 0; attempt < MAX_FALLING_LEAVES; attempt++) {
+      const candidate = this.cursor++ % MAX_FALLING_LEAVES;
+      if (this.state[candidate] === FALLING_LEAF_STATE.inactive) {
+        index = candidate;
+        break;
+      }
+    }
+    if (index < 0) return false;
     const offset = index * 3;
-    this.positions[offset] = x + Math.random();
-    this.positions[offset + 1] = y + 0.2 + Math.random() * 0.8;
-    this.positions[offset + 2] = z + Math.random();
+    let spawnX = 0;
+    let spawnY = 0;
+    let spawnZ = 0;
+    let foundOpenSpawn = false;
+    for (let attempt = 0; attempt < 6; attempt++) {
+      spawnX = x + Math.random();
+      spawnY = y + 0.2 + Math.random() * 0.8;
+      spawnZ = z + Math.random();
+      if (!fallingLeafColumnBlocked(this.world, spawnX, spawnY, spawnZ)) {
+        foundOpenSpawn = true;
+        break;
+      }
+    }
+    if (!foundOpenSpawn) return false;
+    this.positions[offset] = spawnX;
+    this.positions[offset + 1] = spawnY;
+    this.positions[offset + 2] = spawnZ;
     this.velocities[offset] = 0.08 + Math.random() * 0.18;
     this.velocities[offset + 1] = -(0.35 + Math.random() * 0.5);
     this.velocities[offset + 2] = (Math.random() - 0.5) * 0.16;
-    this.life[index] = 5 + Math.random() * 7;
+    this.state[index] = FALLING_LEAF_STATE.falling;
+    this.flightAge[index] = 0;
+    this.settleTime[index] = 0;
     this.phase[index] = Math.random() * Math.PI * 2;
+    return true;
   }
 
   _seedNearTrees(focus) {
@@ -1022,8 +1120,8 @@ class FallingLeaves {
     }
   }
 
-  update(dt, focus, windStrength = 1, rainIntensity = 0) {
-    this.points.visible = Boolean(this.enabled && this.world);
+  update(dt, focus, windStrength = 1, rainIntensity = 0, active = true) {
+    this.points.visible = Boolean(this.enabled && this.world && active);
     if (!this.points.visible) return;
     this.spawnTimer -= dt;
     if (this.spawnTimer <= 0) {
@@ -1031,17 +1129,49 @@ class FallingLeaves {
       this._seedNearTrees(focus);
     }
     for (let index = 0; index < MAX_FALLING_LEAVES; index++) {
-      if (this.life[index] <= 0) continue;
+      if (this.state[index] === FALLING_LEAF_STATE.inactive) continue;
       const offset = index * 3;
-      this.life[index] -= dt;
+      if (this.state[index] === FALLING_LEAF_STATE.settled) {
+        this.settleTime[index] -= dt;
+        if (this.settleTime[index] <= 0) {
+          this.state[index] = FALLING_LEAF_STATE.inactive;
+          this.positions[offset + 1] = -9999;
+        }
+        continue;
+      }
       this.phase[index] += dt * (1.4 + windStrength);
-      this.positions[offset] += (this.velocities[offset] + Math.sin(this.phase[index]) * 0.24 * windStrength) * dt;
-      this.positions[offset + 1] += this.velocities[offset + 1] * dt;
-      this.positions[offset + 2] += (this.velocities[offset + 2] + Math.cos(this.phase[index] * 0.73) * 0.14 * windStrength) * dt;
-      const ground = this.world.terrainHeight?.(this.positions[offset], this.positions[offset + 2]) ?? -100;
-      if (this.life[index] <= 0 || this.positions[offset + 1] <= ground + 1.02) {
-        this.life[index] = 0;
-        this.positions[offset + 1] = -9999;
+      const currentY = this.positions[offset + 1];
+      const nextX = this.positions[offset]
+        + (this.velocities[offset] + Math.sin(this.phase[index]) * 0.24 * windStrength) * dt;
+      if (!fallingLeafColumnBlocked(this.world, nextX, currentY, this.positions[offset + 2])) {
+        this.positions[offset] = nextX;
+      }
+      const nextZ = this.positions[offset + 2]
+        + (this.velocities[offset + 2] + Math.cos(this.phase[index] * 0.73) * 0.14 * windStrength) * dt;
+      if (!fallingLeafColumnBlocked(this.world, this.positions[offset], currentY, nextZ)) {
+        this.positions[offset + 2] = nextZ;
+      }
+      const support = fallingLeafSupportY(
+        this.world,
+        this.positions[offset],
+        this.positions[offset + 2],
+        this.positions[offset + 1],
+      );
+      const vertical = stepFallingLeafVertical(
+        this.positions[offset + 1],
+        this.velocities[offset + 1],
+        support,
+        dt,
+        this.flightAge[index],
+      );
+      this.positions[offset + 1] = vertical.y;
+      this.flightAge[index] = vertical.flightAge;
+      if (vertical.landed) {
+        this.state[index] = FALLING_LEAF_STATE.settled;
+        this.settleTime[index] = 0.8 + Math.random() * 1.2;
+        this.velocities[offset] = 0;
+        this.velocities[offset + 1] = 0;
+        this.velocities[offset + 2] = 0;
       }
     }
     this.points.material.opacity = 0.8 * (1 - rainIntensity * 0.4);
@@ -1389,6 +1519,7 @@ export class Environment {
     this.pondEcology = new PondEcologyField(scene, this.graphicsUniforms);
     this.hangingLeaves = new HangingLeavesField(scene, this.graphicsUniforms);
     this.redFlowers = new RedFlowerField(scene);
+    this.meadowPlants = new MeadowPlantField(scene);
     this.birds = new BirdField(scene);
     this.summitCrosses = new SummitCrossField(scene);
     this.localLights = Array.from({ length: 8 }, (_, index) => {
@@ -1416,6 +1547,7 @@ export class Environment {
     this.pondEcology.setWorld(this.weatherWorld);
     this.hangingLeaves.setWorld(this.weatherWorld);
     this.redFlowers.setWorld(this.weatherWorld);
+    this.meadowPlants.setWorld(this.weatherWorld);
     this.birds.setWorld(this.weatherWorld);
     this.summitCrosses.setWorld(this.weatherWorld);
     if (worldChanged) this._resetWeatherCycle(Boolean(this.weatherWorld));
@@ -1456,6 +1588,10 @@ export class Environment {
 
   prepareRedFlowers() {
     return this.redFlowers.prepare();
+  }
+
+  prepareMeadowPlants() {
+    return this.meadowPlants.prepare();
   }
 
   prepareBirds() {
@@ -1514,6 +1650,7 @@ export class Environment {
     this.lightning.setQuality(this.weatherEnabled && profile.atmosphereDetail >= 0.6, settings.reducedMotion);
     this.pondEcology.setQuality(profile, settings.reducedMotion);
     this.hangingLeaves.setQuality(profile, settings.reducedMotion);
+    this.meadowPlants.setQuality(profile);
     this.birds.setQuality(profile, settings.reducedMotion);
     this.summitCrosses.setQuality(profile);
     this.graphicsUniforms.windStrength.value = settings.reducedMotion ? 0.22 : 1;
@@ -2073,7 +2210,13 @@ export class Environment {
       light.intensity = light.userData.baseIntensity * flicker;
     });
     this.rain.update(dt, focus, this.rainIntensity);
-    this.fallingLeaves.update(dt, focus, this.graphicsUniforms.windStrength.value, this.rainIntensity);
+    this.fallingLeaves.update(
+      dt,
+      focus,
+      this.graphicsUniforms.windStrength.value,
+      this.rainIntensity,
+      context.active !== false,
+    );
     this.groundLeaves.update(dt, focus);
     this.pondEcology.update(dt, focus, {
       rainIntensity: this.rainIntensity,
@@ -2082,6 +2225,7 @@ export class Environment {
     });
     this.hangingLeaves.update(dt, focus, context);
     this.redFlowers.update(dt, focus);
+    this.meadowPlants.update(dt, focus);
     this.summitCrosses.update(dt, focus, viewDistance);
     this.birds.update(dt, focus, {
       ...context,

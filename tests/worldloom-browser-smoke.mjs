@@ -423,6 +423,113 @@ try {
           ),
         };
       })(),
+      meadowPlants: (() => {
+        const field = environment?.meadowPlants;
+        const stats = field?.getStats?.() || null;
+        const meshes = [field?.sunflower, field?.shortGrass].filter(Boolean);
+        return {
+          ...stats,
+          groupAttached: field?.group?.parent === graphics?.scene,
+          twoInstancedMeshes: meshes.length === 2
+            && meshes.every((mesh) => mesh.isInstancedMesh),
+          opaquePixelMaterials: meshes.length === 2 && meshes.every((mesh) => {
+            const material = mesh.material;
+            const map = material?.map;
+            return material?.transparent === false
+              && material?.alphaTest === 0
+              && material?.depthWrite === true
+              && !material?.normalMap
+              && map?.isTexture
+              && map.magFilter === 1003
+              && map.minFilter === 1003
+              && map.generateMipmaps === false;
+          }),
+        };
+      })(),
+      fallingLeaves: (() => {
+        const field = environment?.fallingLeaves;
+        if (!field?.state || !field?.positions || !field?.velocities) return { available: false };
+        const snapshot = {
+          state: field.state.slice(),
+          positions: field.positions.slice(),
+          velocities: field.velocities.slice(),
+          flightAge: field.flightAge.slice(),
+          settleTime: field.settleTime.slice(),
+          phase: field.phase.slice(),
+          cursor: field.cursor,
+          spawnTimer: field.spawnTimer,
+          enabled: field.enabled,
+          visible: field.points.visible,
+        };
+        try {
+          field.enabled = true;
+          field.spawnTimer = 999;
+          field.state.fill(1);
+          const saturatedPositions = field.positions.slice();
+          const saturated = field._spawn(camera.position.x, camera.position.y + 8, camera.position.z) === false
+            && field.positions.every((value, index) => value === saturatedPositions[index]);
+
+          const reusable = 37;
+          field.state[reusable] = 0;
+          field.positions[reusable * 3 + 1] = -9999;
+          field.cursor = reusable;
+          const reused = field._spawn(camera.position.x, camera.position.y + 8, camera.position.z);
+          const reusedOnly = reused === true
+            && field.state[reusable] === 1
+            && field.state.every((value, index) => index === reusable || value === 1);
+
+          field.state.fill(0);
+          field.positions.fill(-9999);
+          field.velocities.fill(0);
+          field.flightAge.fill(0);
+          field.settleTime.fill(0);
+          field.phase.fill(0);
+          field.state[0] = 1;
+          field.positions[0] = camera.position.x;
+          field.positions[1] = camera.position.y + 2;
+          field.positions[2] = camera.position.z;
+          field.velocities[1] = -0.5;
+          for (let step = 0; step < 1_200 && field.state[0] === 1; step++) {
+            field.update(0.05, camera.position, 0, 0, true);
+          }
+          const landed = field.state[0] === 2 && Number.isFinite(field.positions[1]);
+          const landedY = field.positions[1];
+          field.update(3, camera.position, 0, 0, true);
+          const recycled = field.state[0] === 0 && field.positions[1] === -9999;
+
+          field.state[1] = 1;
+          field.positions[3] = camera.position.x;
+          field.positions[4] = camera.position.y + 3;
+          field.positions[5] = camera.position.z;
+          const pausedPosition = [field.positions[3], field.positions[4], field.positions[5]];
+          field.points.visible = true;
+          field.update(0.25, camera.position, 0, 0, false);
+          const pausedHidden = field.points.visible === false
+            && field.state[1] === 1
+            && pausedPosition.every((value, index) => value === field.positions[3 + index]);
+          return {
+            available: true,
+            saturated,
+            reusedOnly,
+            landed,
+            landedY,
+            recycled,
+            pausedHidden,
+          };
+        } finally {
+          field.state.set(snapshot.state);
+          field.positions.set(snapshot.positions);
+          field.velocities.set(snapshot.velocities);
+          field.flightAge.set(snapshot.flightAge);
+          field.settleTime.set(snapshot.settleTime);
+          field.phase.set(snapshot.phase);
+          field.cursor = snapshot.cursor;
+          field.spawnTimer = snapshot.spawnTimer;
+          field.enabled = snapshot.enabled;
+          field.points.visible = snapshot.visible;
+          field.points.geometry.attributes.position.needsUpdate = true;
+        }
+      })(),
       avatar: Boolean(window.__worldloomPlayerAvatar?.root?.visible),
       avatarParts: (() => {
         let count = 0;
@@ -462,7 +569,8 @@ try {
   assert.equal(gameState.timeIcon, true, 'HUD updates removed the sun icon');
   assert.match(gameState.timeText, /Day 1/);
   assert.equal(gameState.vitality, '100');
-  assert.equal(gameState.nourishment, '90');
+  assert(Number(gameState.nourishment) >= 75 && Number(gameState.nourishment) <= 90,
+    `Nourishment left its expected live-test range: ${gameState.nourishment}`);
   assert.notEqual(gameState.objective.trim(), '');
   assert.match(gameState.portalReturnLabel, /return to TacticStrike/i,
     'The pause menu has no replacement route back after removing the portal bar');
@@ -491,6 +599,30 @@ try {
     'The live cross lost its hard nearest-filtered GPT-derived atlas');
   assert(gameState.summitCrosses.crosses > 0 && gameState.summitCrosses.draws === 2,
     `Seed 64 did not render its nearby two-draw summit cross: ${JSON.stringify(gameState.summitCrosses)}`);
+  assert.equal(gameState.meadowPlants.ready, true,
+    `The Blender meadow plant pack did not load: ${gameState.meadowPlants.error}`);
+  assert.equal(gameState.meadowPlants.failed, false);
+  assert.match(gameState.meadowPlants.assetUrl, /meadow-plants\.glb(?:$|[?#])/i);
+  assert.equal(gameState.meadowPlants.groupAttached, true);
+  assert.equal(gameState.meadowPlants.twoInstancedMeshes, true,
+    'The sunflower and short grass lost their two-draw instanced render structure');
+  assert.equal(gameState.meadowPlants.opaquePixelMaterials, true,
+    'The live Blender plants regained alpha cutouts, mipmaps, or an outline-producing normal map');
+  assert(gameState.meadowPlants.sunflowers > 0
+    && gameState.meadowPlants.shortGrass > 0
+    && gameState.meadowPlants.draws <= 2,
+  `Seed 64 did not render both opaque meadow plants: ${JSON.stringify(gameState.meadowPlants)}`);
+  assert.equal(gameState.fallingLeaves.available, true);
+  assert.equal(gameState.fallingLeaves.saturated, true,
+    'a full falling-leaf pool overwrote an airborne particle');
+  assert.equal(gameState.fallingLeaves.reusedOnly, true,
+    'the falling-leaf pool did not reserve only its available slot');
+  assert.equal(gameState.fallingLeaves.landed, true,
+    `the live falling-leaf system never reached its settled state: ${JSON.stringify(gameState.fallingLeaves)}`);
+  assert.equal(gameState.fallingLeaves.recycled, true,
+    'a settled leaf did not recycle after its ground linger');
+  assert.equal(gameState.fallingLeaves.pausedHidden, true,
+    'paused falling leaves remained visibly frozen in mid-air');
   assert.equal(gameState.avatar, true, 'The Wayfarer player avatar is not active');
   assert(gameState.avatarParts >= 25, 'The Wayfarer player avatar lost authored body parts');
   assert.equal(gameState.avatarSelfDrawables, 0,

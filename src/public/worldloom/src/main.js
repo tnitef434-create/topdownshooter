@@ -438,6 +438,7 @@ async function startWorld({ seed, mode: selectedMode, saveData = null }) {
     environment.prepareHangingLeaves(),
     environment.prepareGroundLeaves(),
     environment.prepareRedFlowers(),
+    environment.prepareMeadowPlants(),
     environment.prepareBirds(),
     environment.prepareSummitCrosses(),
   ]);

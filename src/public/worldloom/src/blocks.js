@@ -406,6 +406,7 @@ export const BLOCKS = Object.freeze([
     liquid: false,
     alphaTest: 0.2,
     shape: 'cross',
+    renderMode: 'meadow-model',
   }),
   defineBlock(BLOCK.CACTUS, {
     name: 'Ribbed Cactus',
@@ -542,6 +543,7 @@ export const BLOCKS = Object.freeze([
     selectable: false,
     alphaTest: 0.28,
     shape: 'grass-tuft',
+    renderMode: 'meadow-model',
   }),
   defineBlock(BLOCK.OVERGROWN_ASH_LOG, {
     name: 'Ivy-Grown Ash Log',

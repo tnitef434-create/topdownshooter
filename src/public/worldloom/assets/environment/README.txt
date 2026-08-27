@@ -46,3 +46,17 @@ built-in GPT Image tool. The original 1254px source and complete prompt are
 preserved in tools/assets/moon-textures. The runtime image was downscaled with
 Lanczos filtering; atmospheric glow and terrain occlusion are intentionally
 handled by the renderer rather than baked into the texture.
+
+Opaque meadow plants
+====================
+
+meadow-plants.glb contains Blender-authored Sunflower_Asset and
+Short_Grass_Asset roots driven by the fully opaque meadow-plants-atlas.png.
+Both use real silhouettes instead of transparent crossed cards, preventing the
+bright mip/normal-map outlines produced by the old terrain-atlas plants. The
+two original built-in GPT Image sheets and exact prompts are preserved under
+tools/assets/meadow-plant-textures.
+
+Regenerate from the repository root with:
+
+  "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe" --background --factory-startup --python tools/generate_meadow_plants.py -- --atlas src/public/worldloom/assets/environment/meadow-plants-atlas.png --output src/public/worldloom/assets/environment/meadow-plants.glb --preview outputs/meadow-plants-qa.png
