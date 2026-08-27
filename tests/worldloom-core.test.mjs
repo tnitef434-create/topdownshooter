@@ -577,8 +577,9 @@ test('mountain sectors receive one deterministic wooden cross on their true summ
     && cross.rootY === cross.summitHeight + 1
     && cross.summitHeight >= firstWorld.seaLevel + 24
     && ['x', 'z'].includes(cross.axis)
-    && cross.height === 5
-    && cross.armY === 3
+    && cross.asset === 'summit-cross.glb'
+    && cross.modelHeight === 7
+    && cross.crossbeamHeight === 5.12
   )), 'summit descriptors must be immutable, elevated and structurally complete');
   for (const cross of first) {
     assert.equal(firstWorld.terrainHeight(cross.rootX, cross.rootZ), cross.summitHeight,
@@ -591,45 +592,24 @@ test('mountain sectors receive one deterministic wooden cross on their true summ
   legacyWorld.dispose();
 });
 
-test('generated summit crosses are mineable and removed beams stay removed after reload', () => {
+test('summit descriptors reserve open air for the Blender model instead of voxel plus signs', () => {
   const world = new World(64, null, null);
   const cross = world.getMountainCrossesNear(0, 0, 384)[0];
   assert.ok(cross, 'the fixture needs a generated summit cross');
-  const arm = {
-    x: cross.rootX + (cross.axis === 'x' ? 1 : 0),
-    y: cross.rootY + cross.armY,
-    z: cross.rootZ + (cross.axis === 'z' ? 1 : 0),
-  };
-  const oppositeArm = {
-    x: cross.rootX - (cross.axis === 'x' ? 1 : 0),
-    y: arm.y,
-    z: cross.rootZ - (cross.axis === 'z' ? 1 : 0),
-  };
-  for (const position of [
-    { x: cross.rootX, z: cross.rootZ },
-    arm,
-    oppositeArm,
-  ]) world.ensurePositionGenerated(position.x, position.z);
-
-  for (let dy = 0; dy < cross.height; dy++) {
-    assert.equal(world.getBlock(cross.rootX, cross.rootY + dy, cross.rootZ), cross.uprightBlock,
-      `summit cross upright is incomplete at height ${dy}`);
+  world.ensurePositionGenerated(cross.rootX, cross.rootZ);
+  for (let dy = 0; dy < 5; dy++) {
+    assert.equal(world.getBlock(cross.rootX, cross.rootY + dy, cross.rootZ), BLOCK.AIR,
+      `old voxel upright leaked into the Blender model at height ${dy}`);
   }
-  assert.equal(world.getBlock(arm.x, arm.y, arm.z), cross.armBlock);
-  assert.equal(world.getBlock(oppositeArm.x, oppositeArm.y, oppositeArm.z), cross.armBlock);
-  assert.equal(BLOCKS[cross.uprightBlock].toolCategory, 'axe');
-  assert.equal(BLOCKS[cross.armBlock].toolCategory, 'axe');
-
-  assert.equal(world.setBlock(arm.x, arm.y, arm.z, BLOCK.AIR), true);
-  const edits = world.serializeEdits();
+  const oldArmY = cross.rootY + 3;
+  for (const offset of [-1, 1]) {
+    const x = cross.rootX + (cross.axis === 'x' ? offset : 0);
+    const z = cross.rootZ + (cross.axis === 'z' ? offset : 0);
+    world.ensurePositionGenerated(x, z);
+    assert.equal(world.getBlock(x, oldArmY, z), BLOCK.AIR,
+      'old voxel crossbeam leaked beneath the authored Blender cross');
+  }
   world.dispose();
-
-  const continued = new World(64, null, null);
-  assert.equal(continued.loadEdits(edits), true);
-  continued.ensurePositionGenerated(arm.x, arm.z);
-  assert.equal(continued.getBlock(arm.x, arm.y, arm.z), BLOCK.AIR,
-    'a mined summit-cross beam respawned after reload');
-  continued.dispose();
 });
 
 test('hanging-leaf metadata selects an independent quarter of accepted trees', () => {

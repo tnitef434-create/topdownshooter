@@ -23,6 +23,7 @@ import {
   hangingLeafCollisionPush,
   timeCorrectedDamping,
 } from '../src/public/worldloom/src/hanging-leaves.js';
+import { SummitCrossField } from '../src/public/worldloom/src/summit-crosses.js';
 
 function meshSummary(root) {
   const meshes = [];
@@ -51,6 +52,19 @@ const HANGING_LEAVES_GENERATOR_URL = new URL(
   '../tools/generate_hanging_leaves.py',
   import.meta.url,
 );
+const SUMMIT_CROSS_URL = new URL(
+  '../src/public/worldloom/assets/environment/summit-cross.glb',
+  import.meta.url,
+);
+const SUMMIT_CROSS_ATLAS_URL = new URL(
+  '../src/public/worldloom/assets/environment/summit-cross-wood-atlas.png',
+  import.meta.url,
+);
+const SUMMIT_CROSS_SOURCE_URL = new URL(
+  '../tools/assets/summit-cross-textures/gpt-summit-cross-wood-source.png',
+  import.meta.url,
+);
+const SUMMIT_CROSS_GENERATOR_URL = new URL('../tools/generate_summit_cross.py', import.meta.url);
 const BIRD_ASSET_URL = new URL(
   '../src/public/worldloom/assets/birds/worldloom-birds.glb',
   import.meta.url,
@@ -231,6 +245,194 @@ function createTestHangingLeafGltf(packScale = 1) {
   scene.updateMatrixWorld(true);
   return { scene, animations: [], atlasTexture };
 }
+
+function createTestSummitCrossGltf() {
+  const scene = new THREE.Scene();
+  const root = new THREE.Group();
+  root.name = 'Summit_Cross_Asset';
+  scene.add(root);
+  const atlasTexture = new THREE.DataTexture(
+    new Uint8Array([91, 58, 29, 255]),
+    1,
+    1,
+    THREE.RGBAFormat,
+  );
+  atlasTexture.name = 'Fake embedded GPT summit-cross wood atlas';
+  atlasTexture.colorSpace = THREE.SRGBColorSpace;
+  atlasTexture.needsUpdate = true;
+  const wood = new THREE.Mesh(
+    new THREE.BoxGeometry(0.52, 7, 0.38),
+    new THREE.MeshStandardMaterial({ map: atlasTexture, roughness: 0.91 }),
+  );
+  wood.name = 'Summit_Cross_Wood';
+  wood.position.y = 3.5;
+  root.add(wood);
+  const iron = new THREE.Mesh(
+    new THREE.BoxGeometry(0.15, 0.15, 0.08),
+    new THREE.MeshStandardMaterial({ color: 0x18130f }),
+  );
+  iron.name = 'Summit_Cross_Iron_Pegs';
+  iron.position.y = 5.12;
+  root.add(iron);
+  scene.updateMatrixWorld(true);
+  return { scene, animations: [], atlasTexture };
+}
+
+test('Blender summit-cross GLB is a self-contained traditional Latin cross within web budgets', () => {
+  const glb = readFileSync(SUMMIT_CROSS_URL);
+  assert.ok(glb.length >= 8 * 1024, 'summit-cross GLB is suspiciously small or empty');
+  assert.ok(glb.length <= 128 * 1024, `summit-cross GLB exceeds 128KB (${glb.length} bytes)`);
+  const document = parseGlb(glb);
+  assert.match(document.asset?.generator || '', /Blender I\/O/i,
+    'summit cross must identify the Blender glTF exporter');
+  assert.equal(document.buffers?.length, 1);
+  assert.equal(document.buffers?.[0]?.uri, undefined,
+    'summit cross cannot depend on an external geometry buffer');
+  assert.ok(!(document.extensionsUsed || []).includes('KHR_draco_mesh_compression'));
+  assert.doesNotMatch(JSON.stringify(document), /KHR_draco_mesh_compression/);
+
+  const root = (document.nodes || []).find((node) => node.name === 'Summit_Cross_Asset');
+  assert.ok(root, 'summit cross lost its stable runtime root');
+  assert.equal(root.extras?.asset_role, 'mountain_summit_latin_cross');
+  assert.equal(root.extras?.height_metres, 7);
+  assert.equal(root.extras?.crossbeam_height_metres, 5.12);
+  assert.equal(root.extras?.runtime_draw_budget, 2);
+  assert.equal(root.extras?.gpt_texture_source, 'gpt-summit-cross-wood-source.png');
+  assert.equal(root.extras?.triangle_count, 176);
+  const descendantNames = new Set(descendantNodeIndices(document, 'Summit_Cross_Asset')
+    .map((index) => document.nodes[index]?.name));
+  assert.ok(descendantNames.has('Summit_Cross_Wood'));
+  assert.ok(descendantNames.has('Summit_Cross_Iron_Pegs'));
+  assert.equal(document.meshes?.length, 2, 'cross must stay within its two-draw material budget');
+  const primitives = (document.meshes || []).flatMap((mesh) => mesh.primitives || []);
+  assert.equal(primitives.length, 2);
+  assert.ok(primitives.every((primitive) => Number.isInteger(primitive.attributes?.TEXCOORD_0)),
+    'both authored materials must retain stable UV coordinates');
+  const triangles = primitives.reduce((total, primitive) => {
+    const accessor = document.accessors?.[primitive.indices]
+      || document.accessors?.[primitive.attributes?.POSITION];
+    return total + (accessor?.count || 0) / 3;
+  }, 0);
+  assert.equal(triangles, 176);
+});
+
+test('summit-cross GLB embeds the exact nearest-filtered GPT-derived pixel atlas', () => {
+  const glb = readFileSync(SUMMIT_CROSS_URL);
+  const document = parseGlb(glb);
+  const atlas = readFileSync(SUMMIT_CROSS_ATLAS_URL);
+  assert.deepEqual(pngMetadata(atlas), {
+    width: 128,
+    height: 64,
+    bitDepth: 8,
+    colorType: 6,
+  });
+  assert.equal(document.images?.length, 1);
+  assert.equal(document.images[0]?.uri, undefined);
+  assert.equal(document.images[0]?.mimeType, 'image/png');
+  assert.deepEqual(embeddedBufferView(glb, document, document.images[0].bufferView), atlas,
+    'embedded and separately served summit-cross atlases must be byte-identical');
+  const material = document.materials?.find((entry) => entry.name === 'Summit_Cross_Hand_Hewn_Wood');
+  assert.equal(material?.extras?.source_texture, 'gpt-summit-cross-wood-source.png');
+  assert.equal(material?.pbrMetallicRoughness?.metallicFactor, 0);
+  assert.ok(material?.pbrMetallicRoughness?.roughnessFactor >= 0.9);
+  const texture = document.textures?.[material?.pbrMetallicRoughness?.baseColorTexture?.index];
+  const sampler = document.samplers?.[texture?.sampler];
+  assert.equal(sampler?.magFilter, 9728);
+  assert.ok([9728, 9984].includes(sampler?.minFilter));
+});
+
+test('Blender summit-cross generator preserves its GPT source and reproducible export contract', () => {
+  const generator = readFileSync(SUMMIT_CROSS_GENERATOR_URL, 'utf8');
+  const source = readFileSync(SUMMIT_CROSS_SOURCE_URL);
+  assert.ok(source.length >= 256 * 1024, 'GPT-image wood source is missing or unexpectedly tiny');
+  for (const name of ['Summit_Cross_Asset', 'Summit_Cross_Wood', 'Summit_Cross_Iron_Pegs']) {
+    assert.match(generator, new RegExp(name));
+  }
+  assert.match(generator, /gpt-summit-cross-wood-source\.png/);
+  assert.match(generator, /root\["height_metres"\]\s*=\s*7\.0/);
+  assert.match(generator, /root\["crossbeam_height_metres"\]\s*=\s*5\.12/);
+  assert.match(generator, /texture\.interpolation\s*=\s*["']Closest["']/);
+  assert.match(generator, /["']export_draco_mesh_compression_enable["']\s*:\s*False/);
+  assert.match(generator, /["']export_texcoords["']\s*:\s*True/);
+});
+
+test('summit-cross field instances the Blender model and removes unsupported monuments', async () => {
+  const scene = new THREE.Scene();
+  const field = new SummitCrossField(scene, {
+    loaderFactory: () => ({ loadAsync: () => Promise.resolve(createTestSummitCrossGltf()) }),
+  });
+  await field.prepare();
+  assert.equal(field.ready, true);
+  assert.equal(field.meshes?.wood?.isInstancedMesh, true);
+  assert.equal(field.meshes?.iron?.isInstancedMesh, true);
+  assert.equal(field.meshes?.wood?.material?.map?.magFilter, THREE.NearestFilter);
+  assert.equal(field.meshes?.wood?.material?.map?.minFilter, THREE.NearestFilter);
+  const cross = Object.freeze({
+    id: '0,0',
+    rootX: 10,
+    rootY: 71,
+    rootZ: 12,
+    summitHeight: 70,
+    axis: 'x',
+    asset: 'summit-cross.glb',
+    modelHeight: 7,
+    crossbeamHeight: 5.12,
+  });
+  let supported = true;
+  const world = {
+    streamRevision: 1,
+    getMountainCrossesNear: () => [cross],
+    isPositionReady: () => true,
+    getBlock: (x, y, z) => (
+      x === cross.rootX && y === cross.summitHeight && z === cross.rootZ && supported
+        ? BLOCK.STONE
+        : BLOCK.AIR
+    ),
+  };
+  field.setWorld(world);
+  field.setQuality({ shadows: true });
+  field.update(0, new THREE.Vector3(10, 72, 12), 4);
+  assert.deepEqual(field.getStats(), {
+    ready: true,
+    failed: false,
+    loading: false,
+    error: '',
+    crosses: 1,
+    draws: 2,
+    triangles: 24,
+    assetUrl: field.assetUrl,
+    gptTexture: true,
+    nearestTexture: true,
+  });
+  assert.ok([...field.meshes.wood.instanceMatrix.array].every(Number.isFinite));
+  assert.ok([...field.meshes.iron.instanceMatrix.array].every(Number.isFinite));
+  const matrix = new THREE.Matrix4();
+  field.meshes.wood.getMatrixAt(0, matrix);
+  const position = new THREE.Vector3().setFromMatrixPosition(matrix);
+  assert.ok(position.distanceTo(new THREE.Vector3(10.5, 70.82, 12.5)) < 1e-6);
+
+  supported = false;
+  world.streamRevision++;
+  field.update(0.5, new THREE.Vector3(10, 72, 12), 4);
+  assert.equal(field.getStats().crosses, 0,
+    'breaking or unloading mountain support must hide the decorative model');
+  field.dispose();
+  assert.equal(scene.children.length, 0);
+});
+
+test('summit-cross asset failures remain bounded cosmetic failures', async () => {
+  const field = new SummitCrossField(new THREE.Scene(), {
+    assetUrl: '/missing-summit-cross.glb',
+    loadTimeoutMs: 100,
+    loaderFactory: () => ({ loadAsync: () => Promise.reject(new Error('404 summit cross')) }),
+  });
+  await assert.doesNotReject(() => field.prepare());
+  assert.equal(field.ready, false);
+  assert.equal(field.getStats().failed, true);
+  assert.match(field.getStats().error, /404 summit cross/);
+  assert.equal(field.getStats().loading, false);
+  field.dispose();
+});
 
 test('Blender bird GLB keeps two articulated breeds, named clips, and strict web budgets', () => {
   const glb = readFileSync(BIRD_ASSET_URL);

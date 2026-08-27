@@ -42,8 +42,8 @@ const TREE_CELL_SIZE = 5;
 const TREE_HANGING_LEAVES_SALT = 0xd3a2646c;
 const MOUNTAIN_SUMMIT_CELL_SIZE = 64;
 const MOUNTAIN_SUMMIT_CACHE_LIMIT = 768;
-const MOUNTAIN_CROSS_HEIGHT = 5;
-const MOUNTAIN_CROSS_ARM_Y = 3;
+const MOUNTAIN_CROSS_MODEL_HEIGHT = 7;
+const MOUNTAIN_CROSS_CROSSBEAM_HEIGHT = 5.12;
 const PLANT_CELL_SIZE = 3;
 const CACTUS_CELL_SIZE = 7;
 const POND_CELL_SIZE = 56;
@@ -117,7 +117,6 @@ const PINE_NEEDLES = resolveBlock(['PINE_NEEDLES'], LEAVES);
 const OVERGROWN_ASH_LOG = resolveBlock(['OVERGROWN_ASH_LOG'], LOG);
 const OVERGROWN_PINE_LOG = resolveBlock(['OVERGROWN_PINE_LOG'], PINE_LOG);
 const SHORT_GRASS = resolveBlock(['SHORT_GRASS'], AIR);
-const WOODEN_PLANKS = resolveBlock(['ASH_PLANKS', 'PLANKS'], LOG);
 
 function floorDiv(value, divisor) {
   return Math.floor(value / divisor);
@@ -1763,7 +1762,7 @@ export class World {
       this._mountainSummitCache.set(key, value || false);
       return value || null;
     };
-    if (!this.summitCrossesEnabled || LOG === AIR || WOODEN_PLANKS === AIR) {
+    if (!this.summitCrossesEnabled) {
       return remember(null);
     }
 
@@ -1810,7 +1809,7 @@ export class World {
       || info.riverStrength > 0.2
       || info.pondId
       || info.caveMouth
-      || info.height + MOUNTAIN_CROSS_HEIGHT >= WORLD_HEIGHT
+      || info.height + MOUNTAIN_CROSS_MODEL_HEIGHT >= WORLD_HEIGHT
     ) return remember(null);
 
     // Reject a high shoulder when the mountain is still rising just outside
@@ -1838,10 +1837,9 @@ export class World {
       rootZ: best.z,
       summitHeight: info.height,
       axis,
-      uprightBlock: PINE_LOG !== AIR ? PINE_LOG : LOG,
-      armBlock: WOODEN_PLANKS,
-      height: MOUNTAIN_CROSS_HEIGHT,
-      armY: MOUNTAIN_CROSS_ARM_Y,
+      asset: 'summit-cross.glb',
+      modelHeight: MOUNTAIN_CROSS_MODEL_HEIGHT,
+      crossbeamHeight: MOUNTAIN_CROSS_CROSSBEAM_HEIGHT,
     }));
   }
 
@@ -1867,46 +1865,6 @@ export class World {
       || a.id.localeCompare(b.id)
     ));
     return crosses;
-  }
-
-  _decorateMountainCrosses(chunk) {
-    if (!this.summitCrossesEnabled || LOG === AIR || WOODEN_PLANKS === AIR) return;
-    const minX = chunk.cx * CHUNK_SIZE - 1;
-    const minZ = chunk.cz * CHUNK_SIZE - 1;
-    const maxX = (chunk.cx + 1) * CHUNK_SIZE;
-    const maxZ = (chunk.cz + 1) * CHUNK_SIZE;
-    const minCellX = floorDiv(minX, MOUNTAIN_SUMMIT_CELL_SIZE);
-    const minCellZ = floorDiv(minZ, MOUNTAIN_SUMMIT_CELL_SIZE);
-    const maxCellX = floorDiv(maxX, MOUNTAIN_SUMMIT_CELL_SIZE);
-    const maxCellZ = floorDiv(maxZ, MOUNTAIN_SUMMIT_CELL_SIZE);
-    const replacePlantOrAir = (id) => id === AIR || (!isSolid(id) && !isLiquid(id));
-
-    for (let cellZ = minCellZ; cellZ <= maxCellZ; cellZ++) {
-      for (let cellX = minCellX; cellX <= maxCellX; cellX++) {
-        const cross = this._mountainSummitCrossForCell(cellX, cellZ);
-        if (!cross) continue;
-        for (let dy = 0; dy < cross.height; dy++) {
-          this._writeGenerated(
-            chunk,
-            cross.rootX,
-            cross.rootY + dy,
-            cross.rootZ,
-            cross.uprightBlock,
-            replacePlantOrAir,
-          );
-        }
-        for (const offset of [-1, 1]) {
-          this._writeGenerated(
-            chunk,
-            cross.rootX + (cross.axis === 'x' ? offset : 0),
-            cross.rootY + cross.armY,
-            cross.rootZ + (cross.axis === 'z' ? offset : 0),
-            cross.armBlock,
-            replacePlantOrAir,
-          );
-        }
-      }
-    }
   }
 
   _decorateTrees(chunk) {
@@ -2181,11 +2139,6 @@ export class World {
     }
     if (chunk.generationPhase === 'plants') {
       this._decorateSurfacePlants(chunk);
-      chunk.generationPhase = 'summit-crosses';
-      if (now() >= deadline) return false;
-    }
-    if (chunk.generationPhase === 'summit-crosses') {
-      this._decorateMountainCrosses(chunk);
       chunk.generationPhase = 'cave-life';
       if (now() >= deadline) return false;
     }

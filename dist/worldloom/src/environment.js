@@ -6,6 +6,7 @@ import { PondEcologyField } from './pond-ecology.js';
 import { HangingLeavesField } from './hanging-leaves.js';
 import { RedFlowerField } from './red-flowers.js';
 import { BirdField } from './birds.js';
+import { SummitCrossField } from './summit-crosses.js';
 import { atmosphericFogRange } from './fog.js';
 
 const LIGHT_BLOCKS = new Set([BLOCK.TORCH, BLOCK.LUMEN_CRYSTAL, BLOCK.KILN, BLOCK.FURNACE]);
@@ -1269,6 +1270,7 @@ export class Environment {
     this.hangingLeaves = new HangingLeavesField(scene, this.graphicsUniforms);
     this.redFlowers = new RedFlowerField(scene);
     this.birds = new BirdField(scene);
+    this.summitCrosses = new SummitCrossField(scene);
     this.localLights = Array.from({ length: 8 }, (_, index) => {
       const light = new THREE.PointLight(0xffb45f, 0, 10, 2);
       light.name = `Nearby voxel light ${index + 1}`;
@@ -1293,6 +1295,7 @@ export class Environment {
     this.hangingLeaves.setWorld(this.weatherWorld);
     this.redFlowers.setWorld(this.weatherWorld);
     this.birds.setWorld(this.weatherWorld);
+    this.summitCrosses.setWorld(this.weatherWorld);
   }
 
   preparePondEcology() {
@@ -1309,6 +1312,10 @@ export class Environment {
 
   prepareBirds() {
     return this.birds.prepare();
+  }
+
+  prepareSummitCrosses() {
+    return this.summitCrosses.prepare();
   }
 
   forceWeather(kind = 'rain', intensity = 0.78, duration = 120) {
@@ -1359,6 +1366,7 @@ export class Environment {
     this.pondEcology.setQuality(profile, settings.reducedMotion);
     this.hangingLeaves.setQuality(profile, settings.reducedMotion);
     this.birds.setQuality(profile, settings.reducedMotion);
+    this.summitCrosses.setQuality(profile);
     this.graphicsUniforms.windStrength.value = settings.reducedMotion ? 0.22 : 1;
 
     if (this.renderer?.shadowMap) {
@@ -1897,6 +1905,7 @@ export class Environment {
     });
     this.hangingLeaves.update(dt, focus, context);
     this.redFlowers.update(dt, focus);
+    this.summitCrosses.update(dt, focus, viewDistance);
     this.birds.update(dt, focus, {
       ...context,
       dayAmount: this.dayAmount,

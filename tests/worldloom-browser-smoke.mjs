@@ -207,6 +207,9 @@ try {
     timeout: 60_000,
   });
   await delay(1_500);
+  await frame.waitForFunction(() => (
+    window.__worldloomSummitCrosses?.getStats?.().crosses > 0
+  ), { timeout: 15_000 });
 
   const hudPresentation = await frame.evaluate(() => {
     const inspectPlate = (selector) => {
@@ -283,6 +286,25 @@ try {
       objective: document.querySelector('#objective-text')?.textContent || '',
       renderer: Boolean(graphics),
       environment: Boolean(window.__worldloomEnvironment),
+      summitCrosses: (() => {
+        const field = window.__worldloomSummitCrosses;
+        const stats = field?.getStats?.() || null;
+        return {
+          ...stats,
+          groupAttached: field?.group?.parent === graphics?.scene,
+          twoInstancedMeshes: Boolean(
+            field?.meshes?.wood?.isInstancedMesh
+            && field?.meshes?.iron?.isInstancedMesh
+            && field.group?.children?.length === 2
+          ),
+          pixelAtlas: Boolean(
+            field?.meshes?.wood?.material?.map?.isTexture
+            && field.meshes.wood.material.map.magFilter === 1003
+            && field.meshes.wood.material.map.minFilter === 1003
+            && field.meshes.wood.material.map.generateMipmaps === false
+          ),
+        };
+      })(),
       avatar: Boolean(window.__worldloomPlayerAvatar?.root?.visible),
       avatarParts: (() => {
         let count = 0;
@@ -325,6 +347,18 @@ try {
   assert.notEqual(gameState.objective.trim(), '');
   assert.equal(gameState.renderer, true);
   assert.equal(gameState.environment, true);
+  assert.equal(gameState.summitCrosses.ready, true,
+    `The Blender summit cross did not load: ${gameState.summitCrosses.error}`);
+  assert.equal(gameState.summitCrosses.failed, false);
+  assert.match(gameState.summitCrosses.assetUrl, /summit-cross\.glb(?:$|[?#])/i);
+  assert.equal(gameState.summitCrosses.groupAttached, true);
+  assert.equal(gameState.summitCrosses.twoInstancedMeshes, true,
+    'The summit cross exceeded or lost its two-draw instanced render structure');
+  assert.equal(gameState.summitCrosses.gptTexture, true);
+  assert.equal(gameState.summitCrosses.pixelAtlas, true,
+    'The live cross lost its hard nearest-filtered GPT-derived atlas');
+  assert(gameState.summitCrosses.crosses > 0 && gameState.summitCrosses.draws === 2,
+    `Seed 64 did not render its nearby two-draw summit cross: ${JSON.stringify(gameState.summitCrosses)}`);
   assert.equal(gameState.avatar, true, 'The Wayfarer player avatar is not active');
   assert(gameState.avatarParts >= 25, 'The Wayfarer player avatar lost authored body parts');
   assert.equal(gameState.avatarSelfDrawables, 0,
