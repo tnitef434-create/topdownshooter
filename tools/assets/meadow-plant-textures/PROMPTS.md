@@ -1,44 +1,43 @@
-# GPT Image production-source prompts
+# GPT Image v2 concept-reference prompts
 
-The two source sheets in this directory were generated with the built-in GPT
-Image tool on 2026-08-27. The prompt records below are preserved verbatim. The
-opaque 128×64 runtime derivative is
-`src/public/worldloom/assets/environment/meadow-plants-atlas.png`.
+The two v2 images in this directory were generated with the built-in GPT Image
+tool on 2026-08-27. The prompts below are preserved verbatim. Both PNGs are
+concept-only visual references: the game never samples them at runtime. The
+shipped plant colours and silhouettes are deterministic, hand-authored
+crossed vertex-colour voxel reliefs in `tools/generate_meadow_plants.py`.
 
-## Sunflower source
+## Sunflower concept reference
 
-Source: `gpt-sunflower-atlas-source.png`
+Source: `gpt-pixel-sunflower-reference-v2.png`
 
 ```text
 Use case: stylized-concept
-Asset type: source texture sheet for a Blender-authored voxel survival-game sunflower
-Primary request: create a square pixel-art material atlas made of exactly four equal full-bleed quadrants for an original yellow sunflower
-Scene/backdrop: no scene; the entire square is filled by the four material swatches
-Subject: top-left warm golden-yellow petal mosaic; top-right rich dark-brown sunflower seed-head mosaic; bottom-left natural medium-green stem mosaic; bottom-right deep and light-green leaf mosaic
-Style/medium: premium handcrafted 16-bit pixel-art material texture, Minecraft-compatible visual language but fully original, crisp square pixels, restrained natural variation
-Composition/framing: exact 2 by 2 grid of equal square swatches; each swatch reaches its quadrant edges
-Lighting/mood: neutral flat texture lighting with subtle material depth only
-Color palette: natural golden yellow, ochre, umber, forest green, fresh leaf green
-Materials/textures: small readable pixel clusters, no gradients across quadrants, no illustrations or objects
-Constraints: opaque image; exactly four equal quadrants; perfectly straight boundaries; no gutters, no frames, no separators, no text, no logos, no watermark, no transparent pixels, no outlines, no shadows around swatches
-Avoid: a rendered sunflower, petals as silhouettes, black contour lines, white edges, antialiasing halos, photographic detail, blurry pixels
+Asset type: visual reference sprite for a Blender-authored voxel-relief survival-game plant
+Input images: Image 1 is a style reference only for pixel scale, chunky voxel silhouette, and restrained flat palette; do not copy its red flower design
+Primary request: create one original yellow sunflower as an unmistakably hard-edged 16 by 16 pixel sprite that can be transcribed one pixel at a time into voxel relief geometry
+Scene/backdrop: genuinely transparent background, no ground and no scene
+Subject: one front-facing sunflower with a dark brown square seed head, chunky golden-yellow petals, a short green stem, and two blocky leaves; stem reaches the bottom edge
+Style/medium: deliberately low-resolution game sprite, exactly aligned to a 16 by 16 square-pixel grid, same large block scale and simple palette discipline as Image 1
+Composition/framing: single centered full plant, almost fills the 16 by 16 grid, readable silhouette
+Color palette: at most 8 flat colours total: dark and mid brown, dark/mid/light yellow, dark/mid/light green
+Constraints: every edge follows the 16 by 16 grid; large square pixels; no subpixel details; no smooth curves; no gradients; no antialiasing; no outlines; no texture noise; no shadows; no lighting; no 3D render; no text; no logo; no watermark
+Avoid: realistic sunflower photography, painterly pixels, tiny high-resolution mosaic, red petals, soft edges, diagonal antialiased edges
 ```
 
-## Short-grass source
+## Short-grass concept reference
 
-Source: `gpt-short-grass-atlas-source.png`
+Source: `gpt-pixel-grass-reference-v2.png`
 
 ```text
 Use case: stylized-concept
-Asset type: source texture sheet for a Blender-authored voxel survival-game short-grass tuft
-Primary request: create a square pixel-art material atlas made of exactly four equal full-bleed quadrants for original natural meadow short grass
-Scene/backdrop: no scene; the entire square is filled by the four material swatches
-Subject: top-left deep shadow-green blade mosaic; top-right fresh mid-green blade mosaic; bottom-left sunlit yellow-green blade mosaic; bottom-right muted dry olive-green blade mosaic
-Style/medium: premium handcrafted 16-bit pixel-art material texture, Minecraft-compatible visual language but fully original, crisp square pixels, realistic restrained variation
-Composition/framing: exact 2 by 2 grid of equal square swatches; each swatch reaches its quadrant edges
-Lighting/mood: neutral flat texture lighting with subtle material depth only
-Color palette: deep forest green, meadow green, soft lime-green, muted olive
-Materials/textures: small readable blade-like pixel clusters within each quadrant, seamless-feeling surface samples
-Constraints: opaque image; exactly four equal quadrants; perfectly straight boundaries; no gutters, no frames, no separators, no text, no logos, no watermark, no transparent pixels, no outlines, no shadows around swatches
-Avoid: a rendered grass clump, individual grass silhouettes, black contour lines, white edges, antialiasing halos, photographic detail, blurry pixels
+Asset type: visual reference sprite for a Blender-authored voxel-relief survival-game plant
+Input images: Image 1 is a style reference only for pixel scale, chunky voxel silhouette, and restrained flat palette; do not copy its flower shape
+Primary request: create one original short meadow grass tuft as an unmistakably hard-edged 16 by 16 pixel sprite that can be transcribed one pixel at a time into voxel relief geometry
+Scene/backdrop: genuinely transparent background, no ground and no scene
+Subject: a dense low tuft of several upright and slightly angled blocky grass blades, with a broad base and irregular heights, no flower
+Style/medium: deliberately low-resolution game sprite, exactly aligned to a 16 by 16 square-pixel grid, same large block scale and simple palette discipline as Image 1
+Composition/framing: single centered tuft occupying the lower two-thirds of the grid, strong readable silhouette
+Color palette: at most 5 flat greens: deep forest, dark meadow, mid green, light green, muted olive
+Constraints: every edge follows the 16 by 16 grid; large square pixels; no subpixel details; no smooth curves; no gradients; no antialiasing; no outlines; no texture noise; no shadows; no lighting; no 3D render; no text; no logo; no watermark
+Avoid: realistic grass, thin smooth blades, painterly pixels, tiny high-resolution mosaic, flowers, soft edges, diagonal antialiased edges
 ```

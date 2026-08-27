@@ -20,7 +20,6 @@ dist/worldloom/assets/environment/*
 !dist/worldloom/assets/environment/hanging-tree-leaves.glb
 !dist/worldloom/assets/environment/summit-cross-wood-atlas.png
 !dist/worldloom/assets/environment/summit-cross.glb
-!dist/worldloom/assets/environment/meadow-plants-atlas.png
 !dist/worldloom/assets/environment/meadow-plants.glb
 !dist/worldloom/assets/birds/
 dist/worldloom/assets/birds/*

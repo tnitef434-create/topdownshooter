@@ -47,16 +47,21 @@ preserved in tools/assets/moon-textures. The runtime image was downscaled with
 Lanczos filtering; atmospheric glow and terrain occlusion are intentionally
 handled by the renderer rather than baked into the texture.
 
-Opaque meadow plants
-====================
+Hard-pixel meadow plants
+========================
 
-meadow-plants.glb contains Blender-authored Sunflower_Asset and
-Short_Grass_Asset roots driven by the fully opaque meadow-plants-atlas.png.
-Both use real silhouettes instead of transparent crossed cards, preventing the
-bright mip/normal-map outlines produced by the old terrain-atlas plants. The
-two original built-in GPT Image sheets and exact prompts are preserved under
-tools/assets/meadow-plant-textures.
+meadow-plants.glb contains the Blender-authored Sunflower_Asset and
+Short_Grass_Asset roots. The asset pack uses deterministic, hand-authored
+vertex-colour voxel geometry matching the established red-flower.glb style:
+the sunflower is a crossed 16x16 voxel relief and the grass is a crossed 8x8
+voxel relief with 29 occupied 0.048m logical pixels. Flat per-face colours are
+carried by COLOR_0; the runtime meshes contain no UVs, image textures, alpha
+cards, or normal maps.
+
+The two v2 GPT Image PNGs and their exact prompts are preserved under
+tools/assets/meadow-plant-textures as concept-only references. They are never
+sampled, packed, or loaded by the game at runtime.
 
 Regenerate from the repository root with:
 
-  "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe" --background --factory-startup --python tools/generate_meadow_plants.py -- --atlas src/public/worldloom/assets/environment/meadow-plants-atlas.png --output src/public/worldloom/assets/environment/meadow-plants.glb --preview outputs/meadow-plants-qa.png
+  "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe" --background --factory-startup --python tools/generate_meadow_plants.py -- --output src/public/worldloom/assets/environment/meadow-plants.glb --preview outputs/meadow-plants-qa.png

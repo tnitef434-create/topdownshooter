@@ -1,72 +1,116 @@
-"""Generate Worldloom's opaque Blender meadow-plant pack.
+"""Generate Worldloom's hard-pixel sunflower and short-grass asset pack.
 
 Run from the repository root with Blender 5.2:
 
   "C:\\Program Files\\Blender Foundation\\Blender 5.2\\blender.exe" --background \
     --factory-startup --python tools/generate_meadow_plants.py -- \
-    --atlas src/public/worldloom/assets/environment/meadow-plants-atlas.png \
     --output src/public/worldloom/assets/environment/meadow-plants.glb \
     --preview outputs/meadow-plants-qa.png
 
-The 128x64 production atlas is already a hard-edged, opaque derivative of the
-preserved GPT Image source sheets. This generator never creates alpha cards:
-the sunflower is assembled from textured cuboids and the short grass uses ten
-tapered, opaque blade quads whose silhouette comes from geometry.
+The red meadow flower is the visual contract for these assets. The sunflower
+is a hand-authored 16x16 sprite rebuilt as two crossed voxel reliefs. The
+short grass is made from whole, grid-snapped voxel stacks. Both use a small
+flat vertex-colour palette: there are no UVs, texture maps, alpha cards,
+smooth curves, or antialiased silhouettes in the shipped model.
 """
 
 from __future__ import annotations
 
 import argparse
-import math
-import random
 import sys
 from pathlib import Path
 from typing import Sequence
 
 import bpy
-from mathutils import Matrix, Vector
+from mathutils import Vector
 
 
-GENERATOR_VERSION = "1.0.0"
+GENERATOR_VERSION = "2.0.0"
 DEFAULT_SEED = 270827
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_ATLAS = (
-    REPOSITORY_ROOT
-    / "src/public/worldloom/assets/environment/meadow-plants-atlas.png"
-)
 DEFAULT_OUTPUT = (
     REPOSITORY_ROOT
     / "src/public/worldloom/assets/environment/meadow-plants.glb"
 )
-DEFAULT_PREVIEW = REPOSITORY_ROOT / "outputs/meadow-plants-qa.png"
 
-ATLAS_WIDTH = 128
-ATLAS_HEIGHT = 64
-ATLAS_COLUMNS = 4
-ATLAS_ROWS = 2
+SUNFLOWER_PIXEL_METRES = 0.0575
+SUNFLOWER_DEPTH_RATIO = 0.62
+GRASS_VOXEL_METRES = 0.048
+GRASS_DEPTH_RATIO = 0.62
 
-# Atlas cells are named from the top-left, matching the source-sheet records.
-SUNFLOWER_PETAL = (0, 0)
-SUNFLOWER_CENTRE = (1, 0)
-SUNFLOWER_STEM = (0, 1)
-SUNFLOWER_LEAF = (1, 1)
-SHORT_GRASS_TILES = ((2, 0), (3, 0), (2, 1), (3, 1))
+# A literal 16x16 sunflower sprite. The same construction is used by
+# generate_red_flower.py: every occupied character becomes an extruded square
+# pixel and the relief is crossed at 90 degrees so it reads from every angle.
+SUNFLOWER_GRID = (
+    ".....DHHHD......",
+    "...DYYHHHYYD....",
+    "..DYYDDDDDYYD...",
+    ".DYYDBBBBBBDYY..",
+    "DYYDBbbbbbbBDYYD",
+    "DYYBbbSssSbbBYYD",
+    "DYYBbsSSSSsbBYYD",
+    "DYYBbsSSSSsbBYYD",
+    ".DYYBbbSSbbBYYD.",
+    "..DYYBBBBBYYD...",
+    "....DYYgYYD.....",
+    "..GG...gg...GG..",
+    ".GllG..gg..GllG.",
+    "..GllG.gg.GllG..",
+    "....Gg.gg.gG....",
+    "......gg........",
+)
+
+# S/s reuse the two brown values, keeping the authored base palette to the
+# same eight colours used by the red flower.
+SUNFLOWER_PALETTE_SRGB = {
+    "D": (0.55, 0.31, 0.035),
+    "Y": (0.94, 0.65, 0.055),
+    "H": (1.00, 0.83, 0.18),
+    "B": (0.18, 0.075, 0.018),
+    "b": (0.39, 0.17, 0.035),
+    "S": (0.39, 0.17, 0.035),
+    "s": (0.18, 0.075, 0.018),
+    "G": (0.075, 0.25, 0.075),
+    "g": (0.15, 0.43, 0.11),
+    "l": (0.34, 0.61, 0.18),
+}
+
+GRASS_GRID = (
+    "...L....",
+    ".G.l..L.",
+    ".g.g..l.",
+    "Gg.g.Gg.",
+    "gg.g.gg.",
+    ".ggglgg.",
+    "..gggg..",
+    "...dd...",
+)
+
+GRASS_PALETTE_SRGB = {
+    "d": (0.055, 0.19, 0.055),
+    "G": (0.085, 0.28, 0.065),
+    "g": (0.13, 0.39, 0.085),
+    "l": (0.22, 0.50, 0.12),
+    "L": (0.35, 0.60, 0.17),
+}
+
+FACE_SHADE = {
+    "top": 1.18,
+    "bottom": 0.62,
+    "south": 1.0,
+    "north": 0.86,
+    "east": 0.84,
+    "west": 0.94,
+}
 
 
 def blender_arguments() -> list[str]:
-    """Return only the conventional arguments following Blender's ``--``."""
     return sys.argv[sys.argv.index("--") + 1 :] if "--" in sys.argv else []
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Build Worldloom's opaque sunflower and short-grass GLB pack.",
-    )
-    parser.add_argument(
-        "--atlas",
-        type=Path,
-        default=DEFAULT_ATLAS,
-        help="Existing opaque 128x64 production atlas to embed in the GLB.",
+        description="Build Worldloom's vertex-colour voxel meadow plants.",
     )
     parser.add_argument(
         "--output",
@@ -84,18 +128,15 @@ def parse_args() -> argparse.Namespace:
         "--seed",
         type=int,
         default=DEFAULT_SEED,
-        help="Deterministic short-grass blade layout seed.",
+        help="Recorded deterministic asset-layout seed.",
     )
     args = parser.parse_args(blender_arguments())
-    args.atlas = args.atlas.expanduser().resolve()
     args.output = args.output.expanduser().resolve().with_suffix(".glb")
     args.preview = (
         args.preview.expanduser().resolve().with_suffix(".png")
         if args.preview
         else None
     )
-    if not args.atlas.is_file():
-        parser.error(f"--atlas does not exist: {args.atlas}")
     return args
 
 
@@ -112,6 +153,7 @@ def reset_scene() -> None:
         bpy.data.images,
         bpy.data.cameras,
         bpy.data.lights,
+        bpy.data.worlds,
     ):
         for block in list(store):
             store.remove(block)
@@ -120,90 +162,56 @@ def reset_scene() -> None:
     scene.unit_settings.scale_length = 1.0
 
 
-def principled_input(node: bpy.types.Node, *names: str):
-    for name in names:
-        socket = node.inputs.get(name)
-        if socket is not None:
-            return socket
-    return None
+def srgb_to_linear(channel: float) -> float:
+    if channel <= 0.04045:
+        return channel / 12.92
+    return ((channel + 0.055) / 1.055) ** 2.4
 
 
-def load_atlas(path: Path) -> bpy.types.Image:
-    atlas = bpy.data.images.load(str(path), check_existing=False)
-    atlas.name = "Worldloom_Meadow_Plants_Atlas_128x64"
-    atlas.colorspace_settings.name = "sRGB"
-    width, height = int(atlas.size[0]), int(atlas.size[1])
-    if (width, height) != (ATLAS_WIDTH, ATLAS_HEIGHT):
-        raise ValueError(
-            f"Meadow atlas must be {ATLAS_WIDTH}x{ATLAS_HEIGHT}, got {width}x{height}",
-        )
-    pixels = atlas.pixels[:]
-    minimum_alpha = min(pixels[index] for index in range(3, len(pixels), 4))
-    if minimum_alpha < 0.999:
-        raise ValueError(
-            f"Meadow atlas must be fully opaque; minimum alpha was {minimum_alpha:.4f}",
-        )
-    atlas.pack()
-    atlas["source_file"] = path.name
-    atlas["source_sunflower"] = "gpt-sunflower-atlas-source.png"
-    atlas["source_short_grass"] = "gpt-short-grass-atlas-source.png"
-    atlas["pixel_filter"] = "nearest"
-    atlas["alpha_contract"] = "fully_opaque"
-    return atlas
+def linear_colour(rgb: tuple[float, float, float]) -> tuple[float, float, float, float]:
+    return tuple(srgb_to_linear(channel) for channel in rgb) + (1.0,)
 
 
-def create_material(atlas: bpy.types.Image) -> bpy.types.Material:
-    material = bpy.data.materials.new("Worldloom_Opaque_Meadow_Plant_Atlas")
+def shade(
+    colour: tuple[float, float, float, float],
+    factor: float,
+) -> tuple[float, float, float, float]:
+    return (
+        min(1.0, colour[0] * factor),
+        min(1.0, colour[1] * factor),
+        min(1.0, colour[2] * factor),
+        colour[3],
+    )
+
+
+def create_material() -> bpy.types.Material:
+    material = bpy.data.materials.new("Worldloom_Pixel_Voxel_Plants")
     material.use_nodes = True
-    material.use_backface_culling = False
+    material.use_backface_culling = True
     material.diffuse_color = (1.0, 1.0, 1.0, 1.0)
     nodes = material.node_tree.nodes
     links = material.node_tree.links
     principled = nodes.get("Principled BSDF")
-    base = principled_input(principled, "Base Color") if principled else None
-    roughness = principled_input(principled, "Roughness") if principled else None
-    metallic = principled_input(principled, "Metallic") if principled else None
-    alpha = principled_input(principled, "Alpha") if principled else None
-    if roughness:
-        roughness.default_value = 0.94
-    if metallic:
-        metallic.default_value = 0.0
-    if alpha:
-        alpha.default_value = 1.0
-    texture = nodes.new("ShaderNodeTexImage")
-    texture.name = "Nearest_Opaque_Meadow_Plant_Atlas"
-    texture.image = atlas
-    texture.interpolation = "Closest"
-    texture.extension = "CLIP"
-    if base:
-        links.new(texture.outputs["Color"], base)
-    # Intentionally do not connect texture alpha. Every silhouette is authored
-    # in geometry, leaving the exported material in glTF OPAQUE mode.
-    material["source_texture"] = atlas.get("source_file", "")
-    material["runtime_filter"] = "nearest"
-    material["alpha_mode"] = "opaque_geometry"
-    material["double_sided_for_blades"] = True
+    if principled:
+        base = principled.inputs.get("Base Color")
+        roughness = principled.inputs.get("Roughness")
+        metallic = principled.inputs.get("Metallic")
+        alpha = principled.inputs.get("Alpha")
+        if base:
+            base.default_value = (1.0, 1.0, 1.0, 1.0)
+            colour_node = nodes.new("ShaderNodeVertexColor")
+            colour_node.layer_name = "Col"
+            links.new(colour_node.outputs["Color"], base)
+        if roughness:
+            roughness.default_value = 0.95
+        if metallic:
+            metallic.default_value = 0.0
+        if alpha:
+            alpha.default_value = 1.0
+    material["colour_contract"] = "flat_per_face_vertex_colours"
+    material["texture_contract"] = "none"
+    material["alpha_contract"] = "opaque_geometry"
     return material
-
-
-def atlas_region(column: int, row_from_top: int) -> tuple[float, float, float, float]:
-    inset_u = 0.5 / ATLAS_WIDTH
-    inset_v = 0.5 / ATLAS_HEIGHT
-    u0 = column / ATLAS_COLUMNS + inset_u
-    u1 = (column + 1) / ATLAS_COLUMNS - inset_u
-    v0 = 1.0 - (row_from_top + 1) / ATLAS_ROWS + inset_v
-    v1 = 1.0 - row_from_top / ATLAS_ROWS - inset_v
-    return u0, v0, u1, v1
-
-
-def remap_uvs(obj: bpy.types.Object, region: tuple[int, int]) -> None:
-    uv_layer = obj.data.uv_layers.active
-    if uv_layer is None:
-        raise RuntimeError(f"{obj.name} lost its generated UV map")
-    u0, v0, u1, v1 = atlas_region(*region)
-    for loop in uv_layer.data:
-        loop.uv.x = u0 + loop.uv.x * (u1 - u0)
-        loop.uv.y = v0 + loop.uv.y * (v1 - v0)
 
 
 def create_empty(name: str, parent: bpy.types.Object | None = None) -> bpy.types.Object:
@@ -215,246 +223,292 @@ def create_empty(name: str, parent: bpy.types.Object | None = None) -> bpy.types
     return empty
 
 
-def create_box(
+def create_coloured_mesh(
     name: str,
-    dimensions: tuple[float, float, float],
-    location: tuple[float, float, float],
-    rotation: tuple[float, float, float],
+    vertices: list[tuple[float, float, float]],
+    faces: list[tuple[int, int, int, int]],
+    face_colours: list[tuple[float, float, float, float]],
     material: bpy.types.Material,
-    region: tuple[int, int],
 ) -> bpy.types.Object:
-    bpy.ops.mesh.primitive_cube_add(
-        size=1.0,
-        calc_uvs=True,
-        location=location,
-        rotation=rotation,
+    if len(faces) != len(face_colours):
+        raise ValueError(f"{name} face/colour count mismatch")
+    mesh = bpy.data.meshes.new(f"{name}_Mesh")
+    mesh.from_pydata(vertices, [], faces)
+    mesh.materials.append(material)
+    mesh.validate(clean_customdata=False)
+    mesh.update(calc_edges=True)
+    colour_attribute = mesh.color_attributes.new(
+        name="Col",
+        type="BYTE_COLOR",
+        domain="CORNER",
     )
-    obj = bpy.context.object
-    obj.name = name
-    obj.dimensions = dimensions
-    bpy.context.view_layer.objects.active = obj
-    bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
-    obj.data.materials.append(material)
-    remap_uvs(obj, region)
+    for polygon in mesh.polygons:
+        polygon.use_smooth = False
+        colour = face_colours[polygon.index]
+        for loop_index in polygon.loop_indices:
+            colour_attribute.data[loop_index].color = colour
+    mesh.calc_loop_triangles()
+    obj = bpy.data.objects.new(name, mesh)
+    bpy.context.scene.collection.objects.link(obj)
     return obj
 
 
-def join_objects(
-    objects: list[bpy.types.Object],
-    name: str,
-    material: bpy.types.Material,
-) -> bpy.types.Object:
-    if not objects:
-        raise ValueError(f"Cannot create empty joined mesh {name}")
-    bpy.ops.object.select_all(action="DESELECT")
-    for obj in objects:
-        obj.select_set(True)
-    bpy.context.view_layer.objects.active = objects[0]
-    bpy.ops.object.join()
-    joined = bpy.context.object
-    joined.name = name
-    joined.data.name = f"{name}_Mesh"
-    # Joining transformed cuboids retains the active object's transform. Bake
-    # that transform so the authored asset root remains exactly at ground zero.
-    joined.data.transform(joined.matrix_world)
-    joined.matrix_world = Matrix.Identity(4)
-    for polygon in joined.data.polygons:
-        polygon.material_index = 0
-    while len(joined.data.materials) > 1:
-        joined.data.materials.pop(index=len(joined.data.materials) - 1)
-    if not joined.data.materials:
-        joined.data.materials.append(material)
-    elif joined.data.materials[0] != material:
-        joined.data.materials[0] = material
-    joined.data.validate(clean_customdata=False)
-    joined.data.update(calc_edges=True)
-    joined.data.calc_loop_triangles()
-    return joined
-
-
-def mesh_height(obj: bpy.types.Object) -> float:
-    if not obj.data.vertices:
-        return 0.0
-    heights = [(obj.matrix_world @ vertex.co).z for vertex in obj.data.vertices]
-    return max(heights) - min(heights)
+def append_face(
+    vertices: list[tuple[float, float, float]],
+    faces: list[tuple[int, int, int, int]],
+    face_colours: list[tuple[float, float, float, float]],
+    corners: Sequence[tuple[float, float, float]],
+    colour: tuple[float, float, float, float],
+) -> None:
+    first = len(vertices)
+    vertices.extend(corners)
+    faces.append((first, first + 1, first + 2, first + 3))
+    face_colours.append(colour)
 
 
 def build_sunflower(
     pack: bpy.types.Object,
     material: bpy.types.Material,
 ) -> bpy.types.Object:
+    rows = len(SUNFLOWER_GRID)
+    columns = len(SUNFLOWER_GRID[0])
+    if rows != 16 or columns != 16 or any(len(row) != columns for row in SUNFLOWER_GRID):
+        raise ValueError("Sunflower source must remain an exact 16x16 logical grid")
+    palette = {
+        key: linear_colour(rgb)
+        for key, rgb in SUNFLOWER_PALETTE_SRGB.items()
+    }
+    occupied = {
+        (column, rows - 1 - row_index): character
+        for row_index, row in enumerate(SUNFLOWER_GRID)
+        for column, character in enumerate(row)
+        if character != "."
+    }
+    vertices: list[tuple[float, float, float]] = []
+    faces: list[tuple[int, int, int, int]] = []
+    face_colours: list[tuple[float, float, float, float]] = []
+    pixel = SUNFLOWER_PIXEL_METRES
+    depth = pixel * SUNFLOWER_DEPTH_RATIO
+
+    def emit_relief(quarter_turns: int) -> None:
+        def rotate(point: tuple[float, float, float]) -> tuple[float, float, float]:
+            x, y, z = point
+            for _ in range(quarter_turns):
+                x, y = -y, x
+            return x, y, z
+
+        direction_map = {
+            0: {
+                "top": "top", "bottom": "bottom", "south": "south",
+                "north": "north", "east": "east", "west": "west",
+            },
+            1: {
+                "top": "top", "bottom": "bottom", "south": "west",
+                "north": "east", "east": "south", "west": "north",
+            },
+        }[quarter_turns]
+
+        for (column, level), character in sorted(occupied.items()):
+            colour = palette[character]
+            x0 = (column - columns / 2.0) * pixel
+            x1 = x0 + pixel
+            z0 = level * pixel
+            z1 = z0 + pixel
+            front = depth / 2.0
+            back = -depth / 2.0
+            corners = {
+                "ftb": rotate((x0, front, z0)),
+                "ftt": rotate((x0, front, z1)),
+                "fbr": rotate((x1, front, z0)),
+                "ftr": rotate((x1, front, z1)),
+                "btb": rotate((x0, back, z0)),
+                "btt": rotate((x0, back, z1)),
+                "bbr": rotate((x1, back, z0)),
+                "btr": rotate((x1, back, z1)),
+            }
+            if (column, level + 1) not in occupied:
+                append_face(
+                    vertices, faces, face_colours,
+                    (corners["ftt"], corners["ftr"], corners["btr"], corners["btt"]),
+                    shade(colour, FACE_SHADE[direction_map["top"]]),
+                )
+            if (column, level - 1) not in occupied:
+                append_face(
+                    vertices, faces, face_colours,
+                    (corners["ftb"], corners["btb"], corners["bbr"], corners["fbr"]),
+                    shade(colour, FACE_SHADE[direction_map["bottom"]]),
+                )
+            if (column - 1, level) not in occupied:
+                append_face(
+                    vertices, faces, face_colours,
+                    (corners["ftb"], corners["ftt"], corners["btt"], corners["btb"]),
+                    shade(colour, FACE_SHADE[direction_map["west"]]),
+                )
+            if (column + 1, level) not in occupied:
+                append_face(
+                    vertices, faces, face_colours,
+                    (corners["fbr"], corners["bbr"], corners["btr"], corners["ftr"]),
+                    shade(colour, FACE_SHADE[direction_map["east"]]),
+                )
+            append_face(
+                vertices, faces, face_colours,
+                (corners["ftb"], corners["fbr"], corners["ftr"], corners["ftt"]),
+                shade(colour, FACE_SHADE[direction_map["south"]]),
+            )
+            append_face(
+                vertices, faces, face_colours,
+                (corners["btb"], corners["btt"], corners["btr"], corners["bbr"]),
+                shade(colour, FACE_SHADE[direction_map["north"]]),
+            )
+
+    emit_relief(0)
+    emit_relief(1)
+    mesh = create_coloured_mesh(
+        "Sunflower_Voxel_Mesh",
+        vertices,
+        faces,
+        face_colours,
+        material,
+    )
     root = create_empty("Sunflower_Asset", pack)
-    parts: list[bpy.types.Object] = []
-
-    parts.append(create_box(
-        "Sunflower_Stem",
-        (0.09, 0.09, 0.66),
-        (0.0, 0.0, 0.33),
-        (0.0, 0.0, 0.0),
-        material,
-        SUNFLOWER_STEM,
-    ))
-    parts.append(create_box(
-        "Sunflower_Left_Leaf",
-        (0.12, 0.065, 0.34),
-        (-0.13, 0.015, 0.36),
-        (0.0, -0.88, 0.0),
-        material,
-        SUNFLOWER_LEAF,
-    ))
-    parts.append(create_box(
-        "Sunflower_Right_Leaf",
-        (0.12, 0.065, 0.32),
-        (0.13, 0.01, 0.49),
-        (0.0, 0.91, 0.0),
-        material,
-        SUNFLOWER_LEAF,
-    ))
-
-    bloom_z = 0.78
-    for petal_index in range(12):
-        angle = petal_index * math.tau / 12.0
-        radius = 0.21 if petal_index % 2 == 0 else 0.195
-        parts.append(create_box(
-            f"Sunflower_Petal_{petal_index + 1:02d}",
-            (0.115, 0.075, 0.22),
-            (
-                math.sin(angle) * radius,
-                0.02,
-                bloom_z + math.cos(angle) * radius,
-            ),
-            (0.0, angle, 0.0),
-            material,
-            SUNFLOWER_PETAL,
-        ))
-
-    parts.append(create_box(
-        "Sunflower_Seed_Head",
-        (0.33, 0.11, 0.33),
-        (0.0, -0.025, bloom_z),
-        (0.0, 0.0, 0.0),
-        material,
-        SUNFLOWER_CENTRE,
-    ))
-    # Nine shallow front voxels give the seed head readable depth without a
-    # high-poly cylinder or an outline texture.
-    seed_index = 0
-    for row in (-1, 0, 1):
-        for column in (-1, 0, 1):
-            seed_index += 1
-            depth = 0.035 + 0.008 * ((row + column) & 1)
-            parts.append(create_box(
-                f"Sunflower_Seed_Voxel_{seed_index:02d}",
-                (0.082, depth, 0.082),
-                (column * 0.087, -0.09 - depth * 0.5, bloom_z + row * 0.087),
-                (0.0, 0.0, 0.0),
-                material,
-                SUNFLOWER_CENTRE,
-            ))
-
-    mesh = join_objects(parts, "Sunflower_Voxel_Mesh", material)
     mesh.parent = root
-    mesh.data.calc_loop_triangles()
     triangle_count = len(mesh.data.loop_triangles)
-    authored_height = mesh_height(mesh)
-    if triangle_count > 480:
-        raise RuntimeError(f"Sunflower exceeds 480 triangles: {triangle_count}")
+    if triangle_count > 1_800:
+        raise RuntimeError(f"Sunflower exceeds 1800 triangles: {triangle_count}")
     root["asset_role"] = "meadow_sunflower"
-    root["representation"] = "opaque_textured_voxel_cuboids"
-    root["authored_height_metres"] = round(authored_height, 4)
+    root["representation"] = "crossed_16x16_vertex_color_voxel_relief"
+    root["logical_grid"] = "16x16"
+    root["logical_pixel_metres"] = SUNFLOWER_PIXEL_METRES
+    root["authored_height_metres"] = round(rows * pixel, 4)
+    root["palette_colours"] = 8
     root["runtime_draw_budget"] = 1
     root["triangle_count"] = triangle_count
-    root["petal_cuboids"] = 12
-    root["seed_detail_cuboids"] = 9
-    root["source_texture"] = "gpt-sunflower-atlas-source.png"
+    root["source_reference"] = "gpt-pixel-sunflower-reference-v2.png"
+    root["texture_contract"] = "no_uv_no_texture"
     return root
 
 
 def build_short_grass(
     pack: bpy.types.Object,
     material: bpy.types.Material,
-    seed: int,
 ) -> bpy.types.Object:
-    root = create_empty("Short_Grass_Asset", pack)
-    rng = random.Random(seed)
-    blade_count = 10
+    rows = len(GRASS_GRID)
+    columns = len(GRASS_GRID[0])
+    if rows != 8 or columns != 8 or any(len(row) != columns for row in GRASS_GRID):
+        raise ValueError("Short grass source must remain an exact 8x8 logical grid")
+    palette = {
+        key: linear_colour(rgb)
+        for key, rgb in GRASS_PALETTE_SRGB.items()
+    }
+    occupied = {
+        (column, rows - 1 - row_index): character
+        for row_index, row in enumerate(GRASS_GRID)
+        for column, character in enumerate(row)
+        if character != "."
+    }
     vertices: list[tuple[float, float, float]] = []
     faces: list[tuple[int, int, int, int]] = []
-    regions: list[tuple[int, int]] = []
+    face_colours: list[tuple[float, float, float, float]] = []
+    pixel = GRASS_VOXEL_METRES
+    depth = pixel * GRASS_DEPTH_RATIO
 
-    # A fixed low-discrepancy footprint keeps the tuft full from every view.
-    placements = (
-        (-0.27, -0.16), (-0.09, -0.22), (0.12, -0.21), (0.28, -0.08),
-        (-0.24, 0.05), (-0.07, 0.00), (0.10, 0.04), (0.25, 0.13),
-        (-0.12, 0.20), (0.08, 0.22),
+    def emit_relief(quarter_turns: int) -> None:
+        def rotate(point: tuple[float, float, float]) -> tuple[float, float, float]:
+            x, y, z = point
+            for _ in range(quarter_turns):
+                x, y = -y, x
+            return x, y, z
+
+        direction_map = {
+            0: {
+                "top": "top", "bottom": "bottom", "south": "south",
+                "north": "north", "east": "east", "west": "west",
+            },
+            1: {
+                "top": "top", "bottom": "bottom", "south": "west",
+                "north": "east", "east": "south", "west": "north",
+            },
+        }[quarter_turns]
+        for (column, level), character in sorted(occupied.items()):
+            colour = palette[character]
+            x0 = (column - columns / 2.0) * pixel
+            x1 = x0 + pixel
+            z0 = level * pixel
+            z1 = z0 + pixel
+            front = depth / 2.0
+            back = -depth / 2.0
+            corners = {
+                "ftb": rotate((x0, front, z0)),
+                "ftt": rotate((x0, front, z1)),
+                "fbr": rotate((x1, front, z0)),
+                "ftr": rotate((x1, front, z1)),
+                "btb": rotate((x0, back, z0)),
+                "btt": rotate((x0, back, z1)),
+                "bbr": rotate((x1, back, z0)),
+                "btr": rotate((x1, back, z1)),
+            }
+            if (column, level + 1) not in occupied:
+                append_face(
+                    vertices, faces, face_colours,
+                    (corners["ftt"], corners["ftr"], corners["btr"], corners["btt"]),
+                    shade(colour, FACE_SHADE[direction_map["top"]]),
+                )
+            if (column, level - 1) not in occupied:
+                append_face(
+                    vertices, faces, face_colours,
+                    (corners["ftb"], corners["btb"], corners["bbr"], corners["fbr"]),
+                    shade(colour, FACE_SHADE[direction_map["bottom"]]),
+                )
+            if (column - 1, level) not in occupied:
+                append_face(
+                    vertices, faces, face_colours,
+                    (corners["ftb"], corners["ftt"], corners["btt"], corners["btb"]),
+                    shade(colour, FACE_SHADE[direction_map["west"]]),
+                )
+            if (column + 1, level) not in occupied:
+                append_face(
+                    vertices, faces, face_colours,
+                    (corners["fbr"], corners["bbr"], corners["btr"], corners["ftr"]),
+                    shade(colour, FACE_SHADE[direction_map["east"]]),
+                )
+            append_face(
+                vertices, faces, face_colours,
+                (corners["ftb"], corners["fbr"], corners["ftr"], corners["ftt"]),
+                shade(colour, FACE_SHADE[direction_map["south"]]),
+            )
+            append_face(
+                vertices, faces, face_colours,
+                (corners["btb"], corners["btt"], corners["btr"], corners["bbr"]),
+                shade(colour, FACE_SHADE[direction_map["north"]]),
+            )
+
+    emit_relief(0)
+    emit_relief(1)
+
+    mesh = create_coloured_mesh(
+        "Short_Grass_Voxel_Mesh",
+        vertices,
+        faces,
+        face_colours,
+        material,
     )
-    for blade_index, (center_x, center_y) in enumerate(placements):
-        angle = blade_index * math.pi * (3.0 - math.sqrt(5.0)) + rng.uniform(-0.18, 0.18)
-        side_x = math.cos(angle)
-        side_y = math.sin(angle)
-        height = 0.20 + rng.uniform(0.035, 0.10)
-        base_width = 0.075 + rng.uniform(0.008, 0.026)
-        tip_width = base_width * rng.uniform(0.12, 0.24)
-        lean = rng.uniform(0.025, 0.075)
-        lean_x = -side_y * lean
-        lean_y = side_x * lean
-        first = len(vertices)
-        vertices.extend((
-            (
-                center_x - side_x * base_width * 0.5,
-                center_y - side_y * base_width * 0.5,
-                0.0,
-            ),
-            (
-                center_x + side_x * base_width * 0.5,
-                center_y + side_y * base_width * 0.5,
-                0.0,
-            ),
-            (
-                center_x + lean_x + side_x * tip_width * 0.5,
-                center_y + lean_y + side_y * tip_width * 0.5,
-                height,
-            ),
-            (
-                center_x + lean_x - side_x * tip_width * 0.5,
-                center_y + lean_y - side_y * tip_width * 0.5,
-                height,
-            ),
-        ))
-        faces.append((first, first + 1, first + 2, first + 3))
-        regions.append(SHORT_GRASS_TILES[blade_index % len(SHORT_GRASS_TILES)])
-
-    mesh_data = bpy.data.meshes.new("Short_Grass_Blade_Mesh")
-    mesh_data.from_pydata(vertices, [], faces)
-    mesh_data.materials.append(material)
-    mesh_data.update(calc_edges=True)
-    uv_layer = mesh_data.uv_layers.new(name="UVMap")
-    for blade_index, polygon in enumerate(mesh_data.polygons):
-        u0, v0, u1, v1 = atlas_region(*regions[blade_index])
-        coordinates = ((u0, v0), (u1, v0), (u1, v1), (u0, v1))
-        for loop_index, uv in zip(polygon.loop_indices, coordinates):
-            uv_layer.data[loop_index].uv = uv
-        polygon.use_smooth = False
-    mesh_data.validate(clean_customdata=False)
-    mesh_data.calc_loop_triangles()
-    grass = bpy.data.objects.new("Short_Grass_Blade_Mesh", mesh_data)
-    bpy.context.scene.collection.objects.link(grass)
-    grass.parent = root
-
-    triangle_count = len(mesh_data.loop_triangles)
-    authored_height = mesh_height(grass)
-    if not 8 <= blade_count <= 12:
-        raise RuntimeError(f"Short grass must use 8-12 blade quads, got {blade_count}")
-    if triangle_count > 24:
-        raise RuntimeError(f"Short grass exceeds 24 triangles: {triangle_count}")
+    root = create_empty("Short_Grass_Asset", pack)
+    mesh.parent = root
+    triangle_count = len(mesh.data.loop_triangles)
+    maximum_height = rows * pixel
+    if triangle_count > 680:
+        raise RuntimeError(f"Short grass exceeds 680 triangles: {triangle_count}")
     root["asset_role"] = "meadow_short_grass"
-    root["representation"] = "opaque_tapered_blade_quads"
-    root["authored_height_metres"] = round(authored_height, 4)
+    root["representation"] = "crossed_8x8_vertex_color_voxel_relief"
+    root["logical_grid"] = "8x8"
+    root["voxel_size_metres"] = GRASS_VOXEL_METRES
+    root["authored_height_metres"] = round(maximum_height, 4)
+    root["palette_colours"] = len(GRASS_PALETTE_SRGB)
+    root["occupied_pixels"] = len(occupied)
     root["runtime_draw_budget"] = 1
-    root["blade_quads"] = blade_count
     root["triangle_count"] = triangle_count
-    root["double_sided"] = True
-    root["source_texture"] = "gpt-short-grass-atlas-source.png"
+    root["source_reference"] = "gpt-pixel-grass-reference-v2.png"
+    root["texture_contract"] = "no_uv_no_texture"
     return root
 
 
@@ -468,14 +522,13 @@ def build_pack(
     pack["generator_version"] = GENERATOR_VERSION
     pack["seed"] = seed
     pack["runtime_draw_budget"] = 2
-    pack["atlas"] = "meadow-plants-atlas.png"
-    pack["atlas_dimensions"] = "128x64"
-    pack["texture_filter"] = "nearest"
+    pack["representation"] = "hard_pixel_vertex_colour_voxels"
+    pack["material_contract"] = "opaque_flat_vertex_colours"
     pack["alpha_contract"] = "opaque_geometry_only"
-    pack["sunflower_source"] = "gpt-sunflower-atlas-source.png"
-    pack["short_grass_source"] = "gpt-short-grass-atlas-source.png"
+    pack["texture_contract"] = "no_uv_no_texture"
+    pack["visual_reference"] = "red-flower.glb"
     sunflower = build_sunflower(pack, material)
-    grass = build_short_grass(pack, material, seed)
+    grass = build_short_grass(pack, material)
     return pack, sunflower, grass
 
 
@@ -493,19 +546,20 @@ def export_glb(output: Path) -> None:
         "export_lights": False,
         "export_extras": True,
         "export_materials": "EXPORT",
-        "export_texcoords": True,
+        "export_texcoords": False,
         "export_normals": True,
         "export_tangents": False,
-        "export_colors": False,
+        "export_vertex_color": "NAME",
+        "export_vertex_color_name": "Col",
+        "export_all_vertex_colors": False,
         "export_draco_mesh_compression_enable": False,
     }
     supported = {
         prop.identifier
         for prop in bpy.ops.export_scene.gltf.get_rna_type().properties
     }
-    result = bpy.ops.export_scene.gltf(
-        **{key: value for key, value in requested.items() if key in supported},
-    )
+    options = {key: value for key, value in requested.items() if key in supported}
+    result = bpy.ops.export_scene.gltf(**options)
     if "FINISHED" not in result:
         raise RuntimeError(f"glTF export did not finish: {sorted(result)}")
 
@@ -527,49 +581,55 @@ def render_preview(
             break
         except (TypeError, ValueError):
             continue
-    scene.render.resolution_x = 900
-    scene.render.resolution_y = 700
+    scene.render.resolution_x = 960
+    scene.render.resolution_y = 720
     scene.render.resolution_percentage = 100
     scene.render.image_settings.file_format = "PNG"
     scene.render.image_settings.color_mode = "RGBA"
     scene.render.film_transparent = False
     scene.render.filepath = str(path)
-    scene.world.color = (0.045, 0.075, 0.035)
+    world = bpy.data.worlds.new("QA_Meadow_Pixel_World")
+    scene.world = world
+    world.use_nodes = True
+    background = world.node_tree.nodes.get("Background")
+    if background:
+        background.inputs[0].default_value = (0.035, 0.065, 0.025, 1.0)
+        background.inputs[1].default_value = 0.75
 
-    # Preview transforms are intentionally applied only after export.
+    # Preview transforms are applied only after export.
     sunflower.location.x = -0.58
-    grass.location.x = 0.68
-    grass.scale = (1.35, 1.35, 1.35)
+    grass.location.x = 0.62
+    grass.scale = (1.5, 1.5, 1.5)
 
-    bpy.ops.mesh.primitive_plane_add(size=4.5, location=(0.0, 0.0, -0.008))
+    bpy.ops.mesh.primitive_plane_add(size=4.5, location=(0.0, 0.0, -0.006))
     ground = bpy.context.object
     ground.name = "QA_Meadow_Ground"
     ground_material = bpy.data.materials.new("QA_Meadow_Ground_Material")
-    ground_material.diffuse_color = (0.16, 0.31, 0.09, 1.0)
+    ground_material.diffuse_color = (0.13, 0.29, 0.07, 1.0)
     ground_material.roughness = 1.0
     ground.data.materials.append(ground_material)
 
-    camera_data = bpy.data.cameras.new("QA_Meadow_Plant_Camera")
-    camera = bpy.data.objects.new("QA_Meadow_Plant_Camera", camera_data)
+    camera_data = bpy.data.cameras.new("QA_Meadow_Pixel_Camera")
+    camera_data.lens = 58
+    camera = bpy.data.objects.new("QA_Meadow_Pixel_Camera", camera_data)
     scene.collection.objects.link(camera)
-    camera.location = (2.45, -4.4, 2.05)
-    camera_data.lens = 62
+    camera.location = (1.95, -3.2, 1.48)
     look_at(camera, (0.0, 0.0, 0.48))
     scene.camera = camera
 
     key_data = bpy.data.lights.new("QA_Warm_Sun", type="AREA")
-    key_data.energy = 900
-    key_data.size = 4.0
-    key_data.color = (1.0, 0.78, 0.48)
+    key_data.energy = 880
+    key_data.size = 3.5
+    key_data.color = (1.0, 0.76, 0.43)
     key = bpy.data.objects.new("QA_Warm_Sun", key_data)
     scene.collection.objects.link(key)
     key.location = (-3.0, -3.4, 5.0)
-    look_at(key, (0.0, 0.0, 0.5))
+    look_at(key, (0.0, 0.0, 0.45))
 
     fill_data = bpy.data.lights.new("QA_Sky_Fill", type="AREA")
-    fill_data.energy = 460
+    fill_data.energy = 440
     fill_data.size = 4.5
-    fill_data.color = (0.56, 0.72, 1.0)
+    fill_data.color = (0.58, 0.72, 1.0)
     fill = bpy.data.objects.new("QA_Sky_Fill", fill_data)
     scene.collection.objects.link(fill)
     fill.location = (3.2, 1.2, 3.6)
@@ -580,15 +640,14 @@ def render_preview(
 def main() -> None:
     args = parse_args()
     reset_scene()
-    atlas = load_atlas(args.atlas)
-    material = create_material(atlas)
+    material = create_material()
     pack, sunflower, grass = build_pack(material, args.seed)
     export_glb(args.output)
     if args.preview:
         render_preview(args.preview, sunflower, grass)
     print(
         "MEADOW_PLANTS_OK "
-        f"output={args.output} atlas={args.atlas} "
+        f"output={args.output} "
         f"sunflower_height={sunflower.get('authored_height_metres', 0)} "
         f"sunflower_triangles={sunflower.get('triangle_count', 0)} "
         f"grass_height={grass.get('authored_height_metres', 0)} "

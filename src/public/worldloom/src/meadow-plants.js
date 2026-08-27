@@ -49,27 +49,6 @@ function disposeImportedScene(scene) {
   disposeMaterials(materials);
 }
 
-function embeddedAtlas(root) {
-  let atlas = null;
-  root?.traverse?.((node) => {
-    if (atlas || !node.isMesh) return;
-    const materials = Array.isArray(node.material) ? node.material : [node.material];
-    atlas = materials.find((material) => material?.map?.isTexture)?.map || null;
-  });
-  if (!atlas) throw new Error('Meadow-plant asset is missing its embedded GPT atlas');
-  const texture = atlas.clone();
-  texture.name = 'Runtime nearest GPT meadow-plant atlas';
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.magFilter = THREE.NearestFilter;
-  texture.minFilter = THREE.NearestFilter;
-  texture.generateMipmaps = false;
-  texture.wrapS = THREE.ClampToEdgeWrapping;
-  texture.wrapT = THREE.ClampToEdgeWrapping;
-  texture.anisotropy = 1;
-  texture.needsUpdate = true;
-  return texture;
-}
-
 function bakeGeometry(root, label) {
   if (!root) throw new Error(`${label} asset root is missing`);
   root.updateWorldMatrix(true, true);
@@ -80,8 +59,12 @@ function bakeGeometry(root, label) {
     const geometry = node.geometry.clone();
     geometry.applyMatrix4(new THREE.Matrix4().multiplyMatrices(rootInverse, node.matrixWorld));
     if (!geometry.getAttribute('normal')) geometry.computeVertexNormals();
+    if (!geometry.getAttribute('color')) {
+      geometry.dispose();
+      throw new Error(`${label} asset is missing its hard-pixel vertex colours`);
+    }
     for (const name of Object.keys(geometry.attributes)) {
-      if (!['position', 'normal', 'uv'].includes(name)) geometry.deleteAttribute(name);
+      if (!['position', 'normal', 'color'].includes(name)) geometry.deleteAttribute(name);
     }
     parts.push(geometry);
   });
@@ -112,7 +95,7 @@ function createInstancedPlantMeshes(
     sunflowerMaterial,
     MAX_SUNFLOWERS,
   );
-  sunflower.name = 'Blender GPT sunflowers';
+  sunflower.name = 'Blender hard-pixel sunflowers';
   sunflower.count = 0;
   sunflower.visible = false;
   sunflower.castShadow = true;
@@ -126,7 +109,7 @@ function createInstancedPlantMeshes(
     grassMaterial,
     MAX_SHORT_GRASS,
   );
-  shortGrass.name = 'Blender GPT short grass';
+  shortGrass.name = 'Blender hard-pixel short grass';
   shortGrass.count = 0;
   shortGrass.visible = false;
   shortGrass.castShadow = false;
@@ -142,23 +125,21 @@ function createPlantMeshes(gltf) {
   gltf.scene.updateWorldMatrix(true, true);
   const sunflowerRoot = gltf.scene.getObjectByName('Sunflower_Asset');
   const grassRoot = gltf.scene.getObjectByName('Short_Grass_Asset');
-  const texture = embeddedAtlas(gltf.scene);
   let sunflowerGeometry = null;
   let grassGeometry = null;
   try {
     sunflowerGeometry = bakeGeometry(sunflowerRoot, 'Sunflower');
     grassGeometry = bakeGeometry(grassRoot, 'Short grass');
   } catch (error) {
-    texture.dispose();
     sunflowerGeometry?.dispose?.();
     grassGeometry?.dispose?.();
     throw error;
   }
 
   const sunflowerMaterial = new THREE.MeshStandardMaterial({
-    name: 'Opaque GPT sunflower material',
-    map: texture,
-    roughness: 0.94,
+    name: 'Hard-pixel vertex-colour sunflower material',
+    vertexColors: true,
+    roughness: 0.95,
     metalness: 0,
     transparent: false,
     alphaTest: 0,
@@ -167,14 +148,14 @@ function createPlantMeshes(gltf) {
     flatShading: true,
   });
   const grassMaterial = new THREE.MeshStandardMaterial({
-    name: 'Opaque GPT short-grass material',
-    map: texture,
-    roughness: 0.96,
+    name: 'Hard-pixel vertex-colour short-grass material',
+    vertexColors: true,
+    roughness: 0.95,
     metalness: 0,
     transparent: false,
     alphaTest: 0,
     depthWrite: true,
-    side: THREE.DoubleSide,
+    side: THREE.FrontSide,
     flatShading: true,
   });
   return createInstancedPlantMeshes(
@@ -185,25 +166,135 @@ function createPlantMeshes(gltf) {
   );
 }
 
+function colouredVoxelBox(size, position, hex) {
+  const geometry = new THREE.BoxGeometry(size.x, size.y, size.z);
+  geometry.deleteAttribute('uv');
+  geometry.translate(position.x, position.y, position.z);
+  const colour = new THREE.Color(hex);
+  const count = geometry.getAttribute('position').count;
+  const colours = new Float32Array(count * 3);
+  for (let index = 0; index < count; index++) {
+    colours[index * 3] = colour.r;
+    colours[index * 3 + 1] = colour.g;
+    colours[index * 3 + 2] = colour.b;
+  }
+  geometry.setAttribute('color', new THREE.BufferAttribute(colours, 3));
+  return geometry;
+}
+
+function mergeVoxelGeometry(parts, label) {
+  const merged = mergeGeometries(parts, false);
+  parts.forEach((geometry) => geometry.dispose());
+  if (!merged) throw new Error(`${label} fallback voxel geometry could not be created`);
+  merged.computeBoundingBox();
+  merged.computeBoundingSphere();
+  return merged;
+}
+
+function fallbackSunflowerGeometry() {
+  const grid = [
+    '.....DHHHD......',
+    '...DYYHHHYYD....',
+    '..DYYDDDDDYYD...',
+    '.DYYDBBBBBBDYY..',
+    'DYYDBbbbbbbBDYYD',
+    'DYYBbbSssSbbBYYD',
+    'DYYBbsSSSSsbBYYD',
+    'DYYBbsSSSSsbBYYD',
+    '.DYYBbbSSbbBYYD.',
+    '..DYYBBBBBYYD...',
+    '....DYYgYYD.....',
+    '..GG...gg...GG..',
+    '.GllG..gg..GllG.',
+    '..GllG.gg.GllG..',
+    '....Gg.gg.gG....',
+    '......gg........',
+  ];
+  const palette = {
+    D: 0x8c4f09,
+    Y: 0xefa60e,
+    H: 0xffd42e,
+    B: 0x2e1305,
+    b: 0x632b09,
+    S: 0x632b09,
+    s: 0x2e1305,
+    G: 0x134013,
+    g: 0x266e1c,
+    l: 0x579c2e,
+  };
+  const pixel = 0.0575;
+  const depth = pixel * 0.62;
+  const parts = [];
+  for (let row = 0; row < grid.length; row++) {
+    for (let column = 0; column < grid[row].length; column++) {
+      const character = grid[row][column];
+      if (character === '.') continue;
+      const horizontal = (column - grid[row].length / 2 + 0.5) * pixel;
+      const vertical = (grid.length - row - 0.5) * pixel;
+      parts.push(colouredVoxelBox(
+        new THREE.Vector3(pixel, pixel, depth),
+        new THREE.Vector3(horizontal, vertical, 0),
+        palette[character],
+      ));
+      parts.push(colouredVoxelBox(
+        new THREE.Vector3(depth, pixel, pixel),
+        new THREE.Vector3(0, vertical, horizontal),
+        palette[character],
+      ));
+    }
+  }
+  return mergeVoxelGeometry(parts, 'Sunflower');
+}
+
+function fallbackGrassGeometry() {
+  const grid = [
+    '...L....',
+    '.G.l..L.',
+    '.g.g..l.',
+    'Gg.g.Gg.',
+    'gg.g.gg.',
+    '.ggglgg.',
+    '..gggg..',
+    '...dd...',
+  ];
+  const palette = {
+    d: 0x0e300e,
+    G: 0x164711,
+    g: 0x216316,
+    l: 0x38801f,
+    L: 0x59992b,
+  };
+  const pixel = 0.048;
+  const depth = pixel * 0.62;
+  const parts = [];
+  for (let row = 0; row < grid.length; row++) {
+    for (let column = 0; column < grid[row].length; column++) {
+      const character = grid[row][column];
+      if (character === '.') continue;
+      const horizontal = (column - grid[row].length / 2 + 0.5) * pixel;
+      const vertical = (grid.length - row - 0.5) * pixel;
+      parts.push(colouredVoxelBox(
+        new THREE.Vector3(pixel, pixel, depth),
+        new THREE.Vector3(horizontal, vertical, 0),
+        palette[character],
+      ));
+      parts.push(colouredVoxelBox(
+        new THREE.Vector3(depth, pixel, pixel),
+        new THREE.Vector3(0, vertical, horizontal),
+        palette[character],
+      ));
+    }
+  }
+  return mergeVoxelGeometry(parts, 'Short grass');
+}
+
 function createFallbackPlantMeshes() {
-  const stem = new THREE.BoxGeometry(0.1, 0.66, 0.1);
-  stem.translate(0, 0.33, 0);
-  const bloom = new THREE.BoxGeometry(0.46, 0.38, 0.14);
-  bloom.translate(0, 0.78, 0);
-  const sunflowerGeometry = mergeGeometries([stem, bloom], false);
-  stem.dispose();
-  bloom.dispose();
-  if (!sunflowerGeometry) throw new Error('Fallback sunflower geometry could not be created');
-  sunflowerGeometry.computeBoundingBox();
-  sunflowerGeometry.computeBoundingSphere();
-  const grassGeometry = new THREE.ConeGeometry(0.3, 0.3, 5, 1, false);
-  grassGeometry.translate(0, 0.15, 0);
-  grassGeometry.computeBoundingBox();
-  grassGeometry.computeBoundingSphere();
+  const sunflowerGeometry = fallbackSunflowerGeometry();
+  const grassGeometry = fallbackGrassGeometry();
   const sunflowerMaterial = new THREE.MeshStandardMaterial({
-    name: 'Opaque fallback sunflower material',
-    color: 0xe9bd35,
-    roughness: 0.96,
+    name: 'Hard-pixel fallback sunflower material',
+    vertexColors: true,
+    roughness: 0.95,
     metalness: 0,
     transparent: false,
     alphaTest: 0,
@@ -211,9 +302,9 @@ function createFallbackPlantMeshes() {
     flatShading: true,
   });
   const grassMaterial = new THREE.MeshStandardMaterial({
-    name: 'Opaque fallback short-grass material',
-    color: 0x477f2d,
-    roughness: 0.98,
+    name: 'Hard-pixel fallback short-grass material',
+    vertexColors: true,
+    roughness: 0.95,
     metalness: 0,
     transparent: false,
     alphaTest: 0,
@@ -239,8 +330,8 @@ function disposeMeshes(meshes) {
 
 export function meadowPlantScale(kind, roll) {
   const variation = clamp(roll, 0, 1);
-  // The authored sunflower is 1.1m high. Its 0.90 maximum scale keeps every
-  // visible petal inside the one-block interaction volume used for mining.
+  // The 0.92m, 16-pixel authored sunflower remains within the one-block
+  // interaction volume while retaining mild deterministic size variation.
   return kind === 'sunflower' ? 0.78 + variation * 0.12 : 0.84 + variation * 0.32;
 }
 

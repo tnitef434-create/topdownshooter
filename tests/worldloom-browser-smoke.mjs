@@ -240,6 +240,10 @@ try {
   await frame.waitForFunction(() => (
     window.__worldloomSummitCrosses?.getStats?.().crosses > 0
   ), { timeout: 45_000 });
+  await frame.waitForFunction(() => {
+    const stats = window.__worldloomEnvironment?.meadowPlants?.getStats?.();
+    return stats?.ready && stats.sunflowers > 0 && stats.shortGrass > 0;
+  }, { timeout: 45_000 });
 
   const hudPresentation = await frame.evaluate(() => {
     const inspectPlate = (selector) => {
@@ -432,17 +436,17 @@ try {
           groupAttached: field?.group?.parent === graphics?.scene,
           twoInstancedMeshes: meshes.length === 2
             && meshes.every((mesh) => mesh.isInstancedMesh),
-          opaquePixelMaterials: meshes.length === 2 && meshes.every((mesh) => {
+          opaqueVoxelMaterials: meshes.length === 2 && meshes.every((mesh) => {
             const material = mesh.material;
-            const map = material?.map;
             return material?.transparent === false
               && material?.alphaTest === 0
               && material?.depthWrite === true
-              && !material?.normalMap
-              && map?.isTexture
-              && map.magFilter === 1003
-              && map.minFilter === 1003
-              && map.generateMipmaps === false;
+              && material?.vertexColors === true
+              && material?.flatShading === true
+              && material?.map === null
+              && material?.normalMap === null
+              && Boolean(mesh.geometry?.getAttribute?.('color'))
+              && mesh.geometry?.getAttribute?.('uv') === undefined;
           }),
         };
       })(),
@@ -606,8 +610,8 @@ try {
   assert.equal(gameState.meadowPlants.groupAttached, true);
   assert.equal(gameState.meadowPlants.twoInstancedMeshes, true,
     'The sunflower and short grass lost their two-draw instanced render structure');
-  assert.equal(gameState.meadowPlants.opaquePixelMaterials, true,
-    'The live Blender plants regained alpha cutouts, mipmaps, or an outline-producing normal map');
+  assert.equal(gameState.meadowPlants.opaqueVoxelMaterials, true,
+    'The live Blender plants lost their opaque flat-shaded vertex-color voxel contract');
   assert(gameState.meadowPlants.sunflowers > 0
     && gameState.meadowPlants.shortGrass > 0
     && gameState.meadowPlants.draws <= 2,
