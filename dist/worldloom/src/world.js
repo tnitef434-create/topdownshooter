@@ -40,6 +40,10 @@ const CHUNK_VOLUME = CHUNK_SIZE * CHUNK_SIZE * WORLD_HEIGHT;
 const COLUMN_CACHE_LIMIT = 32_768;
 const TREE_CELL_SIZE = 5;
 const TREE_HANGING_LEAVES_SALT = 0xd3a2646c;
+const MOUNTAIN_SUMMIT_CELL_SIZE = 64;
+const MOUNTAIN_SUMMIT_CACHE_LIMIT = 768;
+const MOUNTAIN_CROSS_HEIGHT = 5;
+const MOUNTAIN_CROSS_ARM_Y = 3;
 const PLANT_CELL_SIZE = 3;
 const CACTUS_CELL_SIZE = 7;
 const POND_CELL_SIZE = 56;
@@ -113,6 +117,7 @@ const PINE_NEEDLES = resolveBlock(['PINE_NEEDLES'], LEAVES);
 const OVERGROWN_ASH_LOG = resolveBlock(['OVERGROWN_ASH_LOG'], LOG);
 const OVERGROWN_PINE_LOG = resolveBlock(['OVERGROWN_PINE_LOG'], PINE_LOG);
 const SHORT_GRASS = resolveBlock(['SHORT_GRASS'], AIR);
+const WOODEN_PLANKS = resolveBlock(['ASH_PLANKS', 'PLANKS'], LOG);
 
 function floorDiv(value, divisor) {
   return Math.floor(value / divisor);
@@ -293,6 +298,7 @@ export class World {
       ? LEGACY_WORLD_GENERATOR_VERSION
       : WORLD_GENERATOR_VERSION;
     this.pondsEnabled = this.generatorVersion >= WORLD_GENERATOR_VERSION;
+    this.summitCrossesEnabled = this.generatorVersion >= WORLD_GENERATOR_VERSION;
     this.scene = scene ?? null;
     this.atlas = atlas ?? null;
     this.chunkSize = CHUNK_SIZE;
@@ -325,6 +331,7 @@ export class World {
     this._columnCache = new Map();
     this._caveNodeCache = new Map();
     this._pondCellCache = new Map();
+    this._mountainSummitCache = new Map();
     // Only player-created and simulated water needs metadata. Natural sea and
     // river blocks are implicit level-zero sources supplied by world generation.
     this.fluidLevels = new Map();
@@ -355,6 +362,7 @@ export class World {
       grassPatches: (this.seed ^ 0x6d703ef3) >>> 0,
       ponds: (this.seed ^ 0xd1b54a35) >>> 0,
       cavePools: (this.seed ^ 0x93c467e3) >>> 0,
+      summitCrosses: (this.seed ^ 0x243f6a88) >>> 0,
     };
 
     const texture = textureFromAtlas(atlas);
@@ -1743,6 +1751,164 @@ export class World {
     return trees;
   }
 
+  _mountainSummitCrossForCell(cellX, cellZ) {
+    cellX = Math.floor(Number.isFinite(Number(cellX)) ? Number(cellX) : 0);
+    cellZ = Math.floor(Number.isFinite(Number(cellZ)) ? Number(cellZ) : 0);
+    const key = `${cellX},${cellZ}`;
+    if (this._mountainSummitCache.has(key)) {
+      return this._mountainSummitCache.get(key) || null;
+    }
+    const remember = (value) => {
+      trimCache(this._mountainSummitCache, MOUNTAIN_SUMMIT_CACHE_LIMIT);
+      this._mountainSummitCache.set(key, value || false);
+      return value || null;
+    };
+    if (!this.summitCrossesEnabled || LOG === AIR || WOODEN_PLANKS === AIR) {
+      return remember(null);
+    }
+
+    const originX = cellX * MOUNTAIN_SUMMIT_CELL_SIZE;
+    const originZ = cellZ * MOUNTAIN_SUMMIT_CELL_SIZE;
+    let best = null;
+    const consider = (x, z) => {
+      const terrain = this._macroTerrainAt(x, z);
+      const rank = hash2D(x, z, this._noiseSeeds.summitCrosses);
+      if (
+        !best
+        || terrain.height > best.terrain.height
+        || (terrain.height === best.terrain.height && rank < best.rank)
+      ) best = { x, z, terrain, rank };
+    };
+
+    // A sparse scan locates the high part of each 64-block mountain sector;
+    // the full-resolution refinement then puts the monument on the actual
+    // voxel summit. This is deterministic and much cheaper than exhaustively
+    // sampling every surface column while chunks stream around the player.
+    for (let z = originZ + 4; z < originZ + MOUNTAIN_SUMMIT_CELL_SIZE; z += 8) {
+      for (let x = originX + 4; x < originX + MOUNTAIN_SUMMIT_CELL_SIZE; x += 8) {
+        consider(x, z);
+      }
+    }
+    if (!best) return remember(null);
+    const coarse = best;
+    for (let z = coarse.z - 6; z <= coarse.z + 6; z++) {
+      for (let x = coarse.x - 6; x <= coarse.x + 6; x++) consider(x, z);
+    }
+
+    // Refinement is allowed to cross the sector edge, but only the sector that
+    // owns the final coordinate may publish it. A ridge crossing a grid line
+    // therefore receives one cross instead of a duplicate on either side.
+    if (
+      floorDiv(best.x, MOUNTAIN_SUMMIT_CELL_SIZE) !== cellX
+      || floorDiv(best.z, MOUNTAIN_SUMMIT_CELL_SIZE) !== cellZ
+    ) return remember(null);
+
+    const info = this._columnInfo(best.x, best.z);
+    if (
+      info.height < SEA_LEVEL + 24
+      || info.rockiness < 0.56
+      || info.riverStrength > 0.2
+      || info.pondId
+      || info.caveMouth
+      || info.height + MOUNTAIN_CROSS_HEIGHT >= WORLD_HEIGHT
+    ) return remember(null);
+
+    // Reject a high shoulder when the mountain is still rising just outside
+    // the refinement window. Broad, equal-height summit plateaus remain valid.
+    for (let dz = -12; dz <= 12; dz += 3) {
+      for (let dx = -12; dx <= 12; dx += 3) {
+        if (Math.abs(dx) <= 6 && Math.abs(dz) <= 6) continue;
+        if (this._macroTerrainAt(best.x + dx, best.z + dz).height > info.height) {
+          return remember(null);
+        }
+      }
+    }
+
+    const axis = hash2D(
+      best.x,
+      best.z,
+      this._noiseSeeds.summitCrosses ^ 0x9e3779b9,
+    ) < 0.5 ? 'x' : 'z';
+    return remember(Object.freeze({
+      id: `${cellX},${cellZ}`,
+      cellX,
+      cellZ,
+      rootX: best.x,
+      rootY: info.height + 1,
+      rootZ: best.z,
+      summitHeight: info.height,
+      axis,
+      uprightBlock: PINE_LOG !== AIR ? PINE_LOG : LOG,
+      armBlock: WOODEN_PLANKS,
+      height: MOUNTAIN_CROSS_HEIGHT,
+      armY: MOUNTAIN_CROSS_ARM_Y,
+    }));
+  }
+
+  getMountainCrossesNear(x, z, radius = 192) {
+    const centerX = Number.isFinite(Number(x)) ? Number(x) : 0;
+    const centerZ = Number.isFinite(Number(z)) ? Number(z) : 0;
+    const safeRadius = THREE.MathUtils.clamp(Number(radius) || 0, 0, 512);
+    const minCellX = floorDiv(Math.floor(centerX - safeRadius), MOUNTAIN_SUMMIT_CELL_SIZE);
+    const minCellZ = floorDiv(Math.floor(centerZ - safeRadius), MOUNTAIN_SUMMIT_CELL_SIZE);
+    const maxCellX = floorDiv(Math.floor(centerX + safeRadius), MOUNTAIN_SUMMIT_CELL_SIZE);
+    const maxCellZ = floorDiv(Math.floor(centerZ + safeRadius), MOUNTAIN_SUMMIT_CELL_SIZE);
+    const crosses = [];
+    for (let cellZ = minCellZ; cellZ <= maxCellZ; cellZ++) {
+      for (let cellX = minCellX; cellX <= maxCellX; cellX++) {
+        const cross = this._mountainSummitCrossForCell(cellX, cellZ);
+        if (!cross || Math.hypot(cross.rootX - centerX, cross.rootZ - centerZ) > safeRadius) continue;
+        crosses.push(cross);
+      }
+    }
+    crosses.sort((a, b) => (
+      Math.hypot(a.rootX - centerX, a.rootZ - centerZ)
+        - Math.hypot(b.rootX - centerX, b.rootZ - centerZ)
+      || a.id.localeCompare(b.id)
+    ));
+    return crosses;
+  }
+
+  _decorateMountainCrosses(chunk) {
+    if (!this.summitCrossesEnabled || LOG === AIR || WOODEN_PLANKS === AIR) return;
+    const minX = chunk.cx * CHUNK_SIZE - 1;
+    const minZ = chunk.cz * CHUNK_SIZE - 1;
+    const maxX = (chunk.cx + 1) * CHUNK_SIZE;
+    const maxZ = (chunk.cz + 1) * CHUNK_SIZE;
+    const minCellX = floorDiv(minX, MOUNTAIN_SUMMIT_CELL_SIZE);
+    const minCellZ = floorDiv(minZ, MOUNTAIN_SUMMIT_CELL_SIZE);
+    const maxCellX = floorDiv(maxX, MOUNTAIN_SUMMIT_CELL_SIZE);
+    const maxCellZ = floorDiv(maxZ, MOUNTAIN_SUMMIT_CELL_SIZE);
+    const replacePlantOrAir = (id) => id === AIR || (!isSolid(id) && !isLiquid(id));
+
+    for (let cellZ = minCellZ; cellZ <= maxCellZ; cellZ++) {
+      for (let cellX = minCellX; cellX <= maxCellX; cellX++) {
+        const cross = this._mountainSummitCrossForCell(cellX, cellZ);
+        if (!cross) continue;
+        for (let dy = 0; dy < cross.height; dy++) {
+          this._writeGenerated(
+            chunk,
+            cross.rootX,
+            cross.rootY + dy,
+            cross.rootZ,
+            cross.uprightBlock,
+            replacePlantOrAir,
+          );
+        }
+        for (const offset of [-1, 1]) {
+          this._writeGenerated(
+            chunk,
+            cross.rootX + (cross.axis === 'x' ? offset : 0),
+            cross.rootY + cross.armY,
+            cross.rootZ + (cross.axis === 'z' ? offset : 0),
+            cross.armBlock,
+            replacePlantOrAir,
+          );
+        }
+      }
+    }
+  }
+
   _decorateTrees(chunk) {
     if (LOG === AIR || LEAVES === AIR) return;
     const minX = chunk.cx * CHUNK_SIZE - 2;
@@ -2015,6 +2181,11 @@ export class World {
     }
     if (chunk.generationPhase === 'plants') {
       this._decorateSurfacePlants(chunk);
+      chunk.generationPhase = 'summit-crosses';
+      if (now() >= deadline) return false;
+    }
+    if (chunk.generationPhase === 'summit-crosses') {
+      this._decorateMountainCrosses(chunk);
       chunk.generationPhase = 'cave-life';
       if (now() >= deadline) return false;
     }
@@ -2523,6 +2694,7 @@ export class World {
     this._columnCache.clear();
     this._caveNodeCache.clear();
     this._pondCellCache.clear();
+    this._mountainSummitCache.clear();
     this._refreshStats();
   }
 }

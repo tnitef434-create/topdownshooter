@@ -547,6 +547,91 @@ test('tree descriptors are seed-stable, query-stable and sorted nearest first', 
   differentWorld.dispose();
 });
 
+test('mountain sectors receive one deterministic wooden cross on their true summit', () => {
+  const center = { x: 0, z: 0 };
+  const radius = 384;
+  const firstWorld = new World(64, null, null);
+  const secondWorld = new World(64, null, null);
+  const differentWorld = new World(91234, null, null);
+  const legacyWorld = new World(64, null, null, {
+    generatorVersion: LEGACY_WORLD_GENERATOR_VERSION,
+  });
+  const first = firstWorld.getMountainCrossesNear(center.x, center.z, radius);
+
+  assert.ok(first.length >= 16, 'the mountain fixture should expose many distinct summit monuments');
+  assert.deepEqual(firstWorld.getMountainCrossesNear(center.x, center.z, radius), first,
+    'repeating the summit query changed its descriptors or order');
+  assert.deepEqual(secondWorld.getMountainCrossesNear(center.x, center.z, radius), first,
+    'the same seed produced different summit crosses');
+  assert.notDeepEqual(differentWorld.getMountainCrossesNear(center.x, center.z, radius), first,
+    'different seeds produced the same summit crosses');
+  assert.deepEqual(legacyWorld.getMountainCrossesNear(center.x, center.z, radius), [],
+    'legacy generator worlds must retain their original decoration bytes');
+  assert.equal(new Set(first.map((cross) => cross.id)).size, first.length,
+    'a mountain sector emitted more than one cross');
+  assert.ok(first.every((cross) => (
+    Object.isFrozen(cross)
+    && Number.isInteger(cross.rootX)
+    && Number.isInteger(cross.rootY)
+    && Number.isInteger(cross.rootZ)
+    && cross.rootY === cross.summitHeight + 1
+    && cross.summitHeight >= firstWorld.seaLevel + 24
+    && ['x', 'z'].includes(cross.axis)
+    && cross.height === 5
+    && cross.armY === 3
+  )), 'summit descriptors must be immutable, elevated and structurally complete');
+  for (const cross of first) {
+    assert.equal(firstWorld.terrainHeight(cross.rootX, cross.rootZ), cross.summitHeight,
+      `cross ${cross.id} drifted away from its terrain summit`);
+  }
+
+  firstWorld.dispose();
+  secondWorld.dispose();
+  differentWorld.dispose();
+  legacyWorld.dispose();
+});
+
+test('generated summit crosses are mineable and removed beams stay removed after reload', () => {
+  const world = new World(64, null, null);
+  const cross = world.getMountainCrossesNear(0, 0, 384)[0];
+  assert.ok(cross, 'the fixture needs a generated summit cross');
+  const arm = {
+    x: cross.rootX + (cross.axis === 'x' ? 1 : 0),
+    y: cross.rootY + cross.armY,
+    z: cross.rootZ + (cross.axis === 'z' ? 1 : 0),
+  };
+  const oppositeArm = {
+    x: cross.rootX - (cross.axis === 'x' ? 1 : 0),
+    y: arm.y,
+    z: cross.rootZ - (cross.axis === 'z' ? 1 : 0),
+  };
+  for (const position of [
+    { x: cross.rootX, z: cross.rootZ },
+    arm,
+    oppositeArm,
+  ]) world.ensurePositionGenerated(position.x, position.z);
+
+  for (let dy = 0; dy < cross.height; dy++) {
+    assert.equal(world.getBlock(cross.rootX, cross.rootY + dy, cross.rootZ), cross.uprightBlock,
+      `summit cross upright is incomplete at height ${dy}`);
+  }
+  assert.equal(world.getBlock(arm.x, arm.y, arm.z), cross.armBlock);
+  assert.equal(world.getBlock(oppositeArm.x, oppositeArm.y, oppositeArm.z), cross.armBlock);
+  assert.equal(BLOCKS[cross.uprightBlock].toolCategory, 'axe');
+  assert.equal(BLOCKS[cross.armBlock].toolCategory, 'axe');
+
+  assert.equal(world.setBlock(arm.x, arm.y, arm.z, BLOCK.AIR), true);
+  const edits = world.serializeEdits();
+  world.dispose();
+
+  const continued = new World(64, null, null);
+  assert.equal(continued.loadEdits(edits), true);
+  continued.ensurePositionGenerated(arm.x, arm.z);
+  assert.equal(continued.getBlock(arm.x, arm.y, arm.z), BLOCK.AIR,
+    'a mined summit-cross beam respawned after reload');
+  continued.dispose();
+});
+
 test('hanging-leaf metadata selects an independent quarter of accepted trees', () => {
   const world = new World(91234, null, null);
   const trees = world.getTreesNear(0, 0, 192);
