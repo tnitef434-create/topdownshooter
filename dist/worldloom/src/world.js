@@ -160,6 +160,7 @@ const MOUNTAIN_CROSS_MODEL_HEIGHT = 7;
 const MOUNTAIN_CROSS_CROSSBEAM_HEIGHT = 5.12;
 export const MOUNTAIN_CROSS_SPAWN_CHANCE = 0.25;
 const PLANT_CELL_SIZE = 3;
+const SHORT_GRASS_SCATTER_SALT = 0x7a2d91e3;
 const CACTUS_CELL_SIZE = 7;
 const POND_CELL_SIZE = 56;
 const POND_CELL_CACHE_LIMIT = 2_048;
@@ -296,6 +297,51 @@ function hashUnit(value) {
   if (value >= 0 && value <= 1) return value;
   const fractional = value - Math.floor(value);
   return fractional < 0 ? fractional + 1 : fractional;
+}
+
+export function shortGrassPatchDensity(x, z, seed = 0) {
+  const worldX = Number.isFinite(Number(x)) ? Number(x) : 0;
+  const worldZ = Number.isFinite(Number(z)) ? Number(z) : 0;
+  const patchSeed = normalizeSeed(seed);
+  // Three differently scaled, offset fields avoid both a uniform lawn and the
+  // obvious evenly-thinned lattice that appears when every high-noise block is
+  // accepted. Broad cover determines where grass can flourish, small pockets
+  // gather tufts into families, and the clearing field cuts irregular holes.
+  const broadCover = fbm2D(
+    (worldX + 37.5) / 23,
+    (worldZ - 19.25) / 23,
+    patchSeed,
+    { octaves: 3, lacunarity: 2.03, gain: 0.5 },
+  );
+  const localPocket = fbm2D(
+    (worldX - 11.75) / 5.4,
+    (worldZ + 29.5) / 5.4,
+    patchSeed ^ 0x85ebca6b,
+    { octaves: 2, lacunarity: 2.17, gain: 0.46 },
+  );
+  const clearing = fbm2D(
+    (worldX + 7.25) / 10.5,
+    (worldZ + 43.75) / 10.5,
+    patchSeed ^ 0xc2b2ae35,
+    { octaves: 2, lacunarity: 1.91, gain: 0.52 },
+  );
+  const patchAmount = smoothRange(0.43, 0.68, broadCover);
+  const pocketAmount = smoothRange(0.34, 0.72, localPocket);
+  const bareAmount = smoothRange(0.58, 0.79, clearing);
+  return THREE.MathUtils.clamp(
+    patchAmount * (0.06 + pocketAmount * 0.58) * (1 - bareAmount * 0.78),
+    0,
+    0.64,
+  );
+}
+
+export function shortGrassGrowsAt(x, z, seed = 0, forestWeight = 0) {
+  const worldX = Math.floor(Number.isFinite(Number(x)) ? Number(x) : 0);
+  const worldZ = Math.floor(Number.isFinite(Number(z)) ? Number(z) : 0);
+  const patchSeed = normalizeSeed(seed);
+  const density = shortGrassPatchDensity(worldX, worldZ, patchSeed);
+  const habitat = THREE.MathUtils.clamp(0.7 + (Number(forestWeight) || 0) * 0.38, 0.7, 1.02);
+  return hash2D(worldX, worldZ, patchSeed ^ SHORT_GRASS_SCATTER_SALT) < density * habitat;
 }
 
 function clampNoise(value) {
@@ -1937,17 +1983,12 @@ export class World {
       && !info.caveMouth
       && info.rockiness <= 0.62
     ) {
-      const patch = fbm2D(worldX / 11, worldZ / 11, this._noiseSeeds.grassPatches, {
-        octaves: 2,
-        lacunarity: 2.05,
-        gain: 0.48,
-      });
-      const thinning = hashUnit(hash2D(
+      if (shortGrassGrowsAt(
         worldX,
         worldZ,
-        this._noiseSeeds.grassPatches ^ 0x9e3779b9,
-      ));
-      if (patch >= 0.55 && thinning >= 0.24) return true;
+        this._noiseSeeds.grassPatches,
+        info.forestWeight,
+      )) return true;
     }
 
     if (CACTUS !== AIR) {
@@ -2463,8 +2504,8 @@ export class World {
       }
     }
 
-    // Dense values of one low-frequency field create connected tufts spanning
-    // several blocks, while the per-cell thinning keeps most meadow turf clear.
+    // Layered broad, pocket and clearing fields form irregular families with
+    // open breathing room instead of rows of evenly thinned block-centre tufts.
     // These are non-solid and non-selectable, so walking never catches on them.
     if (SHORT_GRASS !== AIR) {
       const originX = chunk.cx * CHUNK_SIZE;
@@ -2475,13 +2516,12 @@ export class World {
           const worldZ = originZ + z;
           const info = this._columnInfo(worldX, worldZ);
           if (info.pondId || info.surfaceSand || info.height <= SEA_LEVEL || info.caveMouth || info.rockiness > 0.62) continue;
-          const patch = fbm2D(worldX / 11, worldZ / 11, this._noiseSeeds.grassPatches, {
-            octaves: 2,
-            lacunarity: 2.05,
-            gain: 0.48,
-          });
-          const thinning = hashUnit(hash2D(worldX, worldZ, this._noiseSeeds.grassPatches ^ 0x9e3779b9));
-          if (patch < 0.55 || thinning < 0.24) continue;
+          if (!shortGrassGrowsAt(
+            worldX,
+            worldZ,
+            this._noiseSeeds.grassPatches,
+            info.forestWeight,
+          )) continue;
           const rootY = info.height + 1;
           this._writeGenerated(chunk, worldX, rootY, worldZ, SHORT_GRASS, (id) => id === AIR);
         }

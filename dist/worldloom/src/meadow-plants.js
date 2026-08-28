@@ -335,6 +335,16 @@ export function meadowPlantScale(kind, roll) {
   return kind === 'sunflower' ? 0.78 + variation * 0.12 : 0.84 + variation * 0.32;
 }
 
+export function meadowPlantVisualOffset(kind, x, y, z, seed = 0) {
+  const radiusLimit = kind === 'sunflower' ? 0.12 : 0.34;
+  const angle = unitHash(x, y, z, seed ^ 0x3c6ef372) * Math.PI * 2;
+  const radius = Math.sqrt(unitHash(x, y, z, seed ^ 0xbb67ae85)) * radiusLimit;
+  return {
+    x: Math.cos(angle) * radius,
+    z: Math.sin(angle) * radius,
+  };
+}
+
 export function scanMeadowPlantChunk(chunk) {
   const sunflowers = [];
   const shortGrass = [];
@@ -553,7 +563,8 @@ export class MeadowPlantField {
       const rotation = unitHash(entry.x, entry.y, entry.z, seed ^ 0x51ed270b) * Math.PI * 2;
       const roll = unitHash(entry.x, entry.y, entry.z, seed ^ 0x94d049bb);
       const scale = meadowPlantScale(kind, roll);
-      this._dummy.position.set(entry.x + 0.5, entry.y, entry.z + 0.5);
+      const offset = meadowPlantVisualOffset(kind, entry.x, entry.y, entry.z, seed);
+      this._dummy.position.set(entry.x + 0.5 + offset.x, entry.y, entry.z + 0.5 + offset.z);
       this._dummy.rotation.set(0, rotation, 0);
       this._dummy.scale.setScalar(scale);
       this._dummy.updateMatrix();

@@ -27,6 +27,7 @@ import { GroundLeafField } from '../src/public/worldloom/src/ground-leaves.js';
 import {
   MeadowPlantField,
   meadowPlantScale,
+  meadowPlantVisualOffset,
   scanMeadowPlantChunk,
 } from '../src/public/worldloom/src/meadow-plants.js';
 import { SummitCrossField } from '../src/public/worldloom/src/summit-crosses.js';
@@ -1853,6 +1854,20 @@ test('meadow field instances live block data with opaque vertex-color materials'
   assert.equal(field.shortGrass.count, 2);
   field.dispose();
   assert.equal(field.group.parent, null);
+});
+
+test('meadow grass leaves the block-centre lattice with bounded deterministic offsets', () => {
+  const first = meadowPlantVisualOffset('grass', 2, 1, 2, 64);
+  const repeat = meadowPlantVisualOffset('grass', 2, 1, 2, 64);
+  const neighbour = meadowPlantVisualOffset('grass', 3, 1, 2, 64);
+  const sunflower = meadowPlantVisualOffset('sunflower', 1, 1, 1, 64);
+  assert.deepEqual(first, repeat);
+  assert.notDeepEqual(first, neighbour);
+  assert.ok(Math.hypot(first.x, first.z) > 0.025);
+  assert.ok(Math.hypot(first.x, first.z) <= 0.340001);
+  assert.ok(Math.hypot(neighbour.x, neighbour.z) <= 0.340001);
+  assert.ok(Math.hypot(sunflower.x, sunflower.z) <= 0.120001,
+    'sunflowers should keep their interaction cell while receiving subtle variation');
 });
 
 test('meadow asset failure keeps both plants visible through voxel-colored fallback geometry', async () => {
