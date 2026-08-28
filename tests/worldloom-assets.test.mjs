@@ -30,6 +30,11 @@ import {
   scanMeadowPlantChunk,
 } from '../src/public/worldloom/src/meadow-plants.js';
 import { SummitCrossField } from '../src/public/worldloom/src/summit-crosses.js';
+import {
+  FOREST_FLOOR_ROOTS,
+  ForestFloorField,
+  forestInsectOffset,
+} from '../src/public/worldloom/src/forest-floor.js';
 
 function meshSummary(root) {
   const meshes = [];
@@ -139,6 +144,28 @@ const DIST_MEADOW_PLANTS_URL = new URL(
 );
 const DIST_MEADOW_RUNTIME_URL = new URL('../dist/worldloom/src/meadow-plants.js', import.meta.url);
 const MEADOW_RUNTIME_URL = new URL('../src/public/worldloom/src/meadow-plants.js', import.meta.url);
+const FOREST_FLOOR_URL = new URL(
+  '../src/public/worldloom/assets/environment/forest-floor.glb',
+  import.meta.url,
+);
+const FOREST_FLOOR_GENERATOR_URL = new URL(
+  '../tools/generate_forest_floor_assets.py',
+  import.meta.url,
+);
+const FOREST_FLOOR_CONCEPT_URL = new URL(
+  '../tools/assets/forest-floor/gpt-forest-floor-concept-v1.png',
+  import.meta.url,
+);
+const FOREST_FLOOR_PROMPT_URL = new URL(
+  '../tools/assets/forest-floor/PROMPT.md',
+  import.meta.url,
+);
+const DIST_FOREST_FLOOR_URL = new URL(
+  '../dist/worldloom/assets/environment/forest-floor.glb',
+  import.meta.url,
+);
+const FOREST_FLOOR_RUNTIME_URL = new URL('../src/public/worldloom/src/forest-floor.js', import.meta.url);
+const DIST_FOREST_FLOOR_RUNTIME_URL = new URL('../dist/worldloom/src/forest-floor.js', import.meta.url);
 const GLB_MAGIC = 0x46546c67;
 const GLB_JSON_CHUNK = 0x4e4f534a;
 const GLB_BINARY_CHUNK = 0x004e4942;
@@ -167,6 +194,27 @@ function embeddedBufferView(buffer, document, viewIndex) {
   const binaryStart = 20 + jsonLength + 8;
   const start = binaryStart + (view.byteOffset || 0);
   return buffer.subarray(start, start + view.byteLength);
+}
+
+function floatAccessorValues(buffer, document, accessorIndex) {
+  const accessor = document.accessors?.[accessorIndex];
+  assert.ok(accessor, `GLB is missing accessor ${accessorIndex}`);
+  assert.equal(accessor.componentType, 5126, 'accessor must use float32 values');
+  const components = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4 }[accessor.type];
+  assert.ok(components, `unsupported accessor shape ${accessor.type}`);
+  const view = document.bufferViews?.[accessor.bufferView];
+  assert.ok(view, `accessor ${accessorIndex} is missing its buffer view`);
+  const jsonLength = buffer.readUInt32LE(12);
+  const binaryStart = 20 + jsonLength + 8;
+  const stride = view.byteStride || components * 4;
+  const start = binaryStart + (view.byteOffset || 0) + (accessor.byteOffset || 0);
+  const values = [];
+  for (let item = 0; item < accessor.count; item++) {
+    for (let component = 0; component < components; component++) {
+      values.push(buffer.readFloatLE(start + item * stride + component * 4));
+    }
+  }
+  return values;
 }
 
 function pngMetadata(buffer) {
@@ -1879,4 +1927,274 @@ test('a meadow GLB resolving after timeout is observed and disposes its imported
   assert.ok(geometryDisposals >= 2, 'the late GLB geometries leaked after the timeout');
   assert.ok(materialDisposals >= 1, 'the late GLB material leaked after the timeout');
   field.dispose();
+});
+
+test('Blender living forest-floor pack is compact opaque hard-pixel geometry', () => {
+  const buffer = readFileSync(FOREST_FLOOR_URL);
+  assert.ok(buffer.length >= 192 * 1024, 'forest-floor voxel-grid GLB is suspiciously small or empty');
+  assert.ok(buffer.length <= 384 * 1024, `forest-floor GLB exceeds 384KB (${buffer.length} bytes)`);
+  const document = parseGlb(buffer);
+  assert.match(document.asset?.generator || '', /Blender/i);
+  assert.equal(document.images?.length || 0, 0, 'forest-floor props must not ship image textures');
+  assert.equal(document.textures?.length || 0, 0, 'forest-floor props must not retain texture bindings');
+  assert.equal(document.samplers?.length || 0, 0, 'forest-floor props must not retain texture samplers');
+  assert.equal(document.animations?.length || 0, 0, 'forest-floor pack must remain static instanced geometry');
+  assert.equal(document.materials?.length, 1, 'forest-floor pack must share one rain-tintable material');
+  const material = document.materials[0];
+  assert.equal(material.name, 'Worldloom_Forest_Floor_Vertex_Colours');
+  assert.equal(material.alphaMode, undefined, 'forest-floor material must use glTF OPAQUE defaults');
+  assert.equal(material.doubleSided, undefined, 'forest-floor material must keep single-sided defaults');
+  assert.equal(material.pbrMetallicRoughness?.metallicFactor, 0);
+  assert(material.pbrMetallicRoughness?.roughnessFactor >= 0.95);
+  assert.equal(material.extras?.rain_tint_compatible, true);
+
+  const expectedTriangles = new Map([
+    ['Fallen_Log_Asset', 1084],
+    ['Mossy_Stump_Asset', 892],
+    ['Exposed_Root_Asset', 632],
+    ['Twig_Cluster_Asset', 348],
+    ['Pinecone_Asset', 244],
+    ['Rock_Cluster_Asset', 384],
+    ['Mushroom_Log_Detail', 464],
+  ]);
+  const expectedRoots = [...expectedTriangles.keys()];
+  let totalTriangles = 0;
+  const cardinalNormals = new Set();
+  for (const rootName of expectedRoots) {
+    const root = document.nodes?.find((node) => node.name === rootName);
+    assert(root, `forest-floor pack lost stable root ${rootName}`);
+    assert.equal(root.children?.length, 1, `${rootName} should contain exactly one baked mesh child`);
+    const child = document.nodes[root.children[0]];
+    const mesh = document.meshes?.[child.mesh];
+    assert.equal(mesh?.primitives?.length, 1, `${rootName} exceeded its one-draw primitive contract`);
+    const primitive = mesh.primitives[0];
+    assert.deepEqual(Object.keys(primitive.attributes || {}).sort(), ['COLOR_0', 'NORMAL', 'POSITION'],
+      `${rootName} retained UVs or lost vertex colours`);
+    assert.equal(primitive.material, 0, `${rootName} does not share the pack material`);
+    const colour = document.accessors?.[primitive.attributes.COLOR_0];
+    assert.equal(colour?.type, 'VEC4');
+    assert.equal(colour?.componentType, 5123);
+    assert.equal(colour?.normalized, true);
+    const indices = document.accessors?.[primitive.indices];
+    const triangles = (indices?.count || 0) / 3;
+    assert.equal(triangles, root.extras?.triangle_count,
+      `${rootName} triangle metadata no longer matches its geometry`);
+    assert.equal(triangles, expectedTriangles.get(rootName),
+      `${rootName} no longer matches the approved from-scratch voxel model`);
+    totalTriangles += triangles;
+    assert.equal(root.extras?.rain_tint_contract, 'runtime_multiply_vertex_colour');
+    assert.equal(root.extras?.grid_contract, 'integer_xyz_voxel_cells');
+    assert.equal(root.extras?.voxel_cell_metres, 0.08);
+    assert.equal(root.extras?.exposed_face_meshing, true);
+    assert.equal(root.extras?.rotated_geometry, false);
+    assert.equal(root.extras?.smooth_shading, false);
+    assert(root.extras?.occupied_voxel_cells > 0);
+
+    const positions = floatAccessorValues(buffer, document, primitive.attributes.POSITION);
+    positions.forEach((value) => {
+      const boundary = value / 0.04;
+      assert(Math.abs(boundary - Math.round(boundary)) < 2e-5,
+        `${rootName} contains off-grid coordinate ${value}`);
+    });
+    const normals = floatAccessorValues(buffer, document, primitive.attributes.NORMAL);
+    for (let index = 0; index < normals.length; index += 3) {
+      const normal = normals.slice(index, index + 3).map((value) => (
+        Math.abs(value) < 1e-6 ? 0 : Math.round(value)
+      ));
+      assert(Math.abs(normal[0]) + Math.abs(normal[1]) + Math.abs(normal[2]) === 1,
+        `${rootName} contains a non-cardinal normal ${normal.join(',')}`);
+      cardinalNormals.add(normal.join(','));
+    }
+  }
+  const pack = document.nodes?.find((node) => node.name === 'Forest_Floor_Asset_Pack');
+  assert.equal(pack?.extras?.asset_role, 'worldloom_forest_floor_prop_pack');
+  assert.equal(pack?.extras?.root_count, 7);
+  assert.equal(pack?.extras?.generator_version, '2.0.0');
+  assert.equal(pack?.extras?.representation, 'integer_grid_exposed_face_vertex_colour_voxels');
+  assert.equal(pack?.extras?.grid_contract, 'integer_xyz_voxel_cells');
+  assert.equal(pack?.extras?.voxel_cell_metres, 0.08);
+  assert.equal(pack?.extras?.rotated_geometry, false);
+  assert.equal(pack?.extras?.smooth_shading, false);
+  assert.equal(totalTriangles, 4048);
+  assert.equal(pack?.extras?.total_triangles, totalTriangles);
+  assert.deepEqual([...cardinalNormals].sort(), [
+    '-1,0,0',
+    '0,-1,0',
+    '0,0,-1',
+    '0,0,1',
+    '0,1,0',
+    '1,0,0',
+  ], 'forest-floor geometry must contain only the six cube face normals');
+  document.nodes.forEach((node) => {
+    assert.equal(node.matrix, undefined, `${node.name} unexpectedly carries a transform matrix`);
+    assert.equal(node.translation, undefined, `${node.name} unexpectedly carries a translation`);
+    assert.equal(node.rotation, undefined, `${node.name} unexpectedly carries a rotation`);
+    assert.equal(node.scale, undefined, `${node.name} unexpectedly carries a scale`);
+  });
+});
+
+test('forest-floor concept provenance and Blender generator remain reproducible', () => {
+  const concept = readFileSync(FOREST_FLOOR_CONCEPT_URL);
+  assert.ok(concept.length > 16 * 1024, 'GPT forest-floor concept is missing or empty');
+  const prompt = readFileSync(FOREST_FLOOR_PROMPT_URL, 'utf8');
+  assert.match(prompt, /exact prompt/i);
+  assert.match(prompt, /mossy fallen log/i);
+  assert.match(prompt, /hard square corners/i);
+  assert.match(prompt, /not sampled.*runtime texture/is,
+    'concept documentation must keep GPT pixels out of runtime materials');
+  const generator = readFileSync(FOREST_FLOOR_GENERATOR_URL, 'utf8');
+  for (const rootName of [...Object.values(FOREST_FLOOR_ROOTS), 'Mushroom_Log_Detail']) {
+    assert.match(generator, new RegExp(rootName));
+  }
+  assert.match(generator, /COLOR_0_flat_per_face/);
+  assert.match(generator, /no_uv_no_texture/);
+  assert.match(generator, /rain_tint_compatible/);
+  assert.match(generator, /GENERATOR_VERSION\s*=\s*["']2\.0\.0["']/);
+  assert.match(generator, /VOXEL_CELL_METRES\s*=\s*0\.08/);
+  assert.match(generator, /class VoxelGridBuilder/);
+  assert.match(generator, /integer_xyz_voxel_cells/);
+  assert.doesNotMatch(generator, /class MeshBuilder|add_box\(/,
+    'forest props regressed from literal grid cells to arbitrary smooth boxes');
+});
+
+test('production forest-floor voxel assets stay byte-identical to tracked dist copies', () => {
+  assert.equal(
+    readFileSync(FOREST_FLOOR_URL).equals(readFileSync(DIST_FOREST_FLOOR_URL)),
+    true,
+    'the site is serving a stale forest-floor GLB',
+  );
+  assert.equal(
+    readFileSync(FOREST_FLOOR_RUNTIME_URL, 'utf8'),
+    readFileSync(DIST_FOREST_FLOOR_RUNTIME_URL, 'utf8'),
+    'the site is serving a stale forest-floor runtime',
+  );
+});
+
+function createTestForestFloorGltf() {
+  const scene = new THREE.Group();
+  const material = new THREE.MeshStandardMaterial({ vertexColors: true });
+  for (const rootName of [...Object.values(FOREST_FLOOR_ROOTS), 'Mushroom_Log_Detail']) {
+    const root = new THREE.Group();
+    root.name = rootName;
+    const geometry = new THREE.BoxGeometry(0.5, 0.4, 0.5);
+    geometry.deleteAttribute('uv');
+    const positions = geometry.getAttribute('position');
+    const colours = new Float32Array(positions.count * 3);
+    for (let index = 0; index < positions.count; index++) {
+      colours[index * 3] = 0.28;
+      colours[index * 3 + 1] = 0.46;
+      colours[index * 3 + 2] = 0.19;
+    }
+    geometry.setAttribute('color', new THREE.BufferAttribute(colours, 3));
+    const mesh = new THREE.Mesh(geometry, material);
+    root.add(mesh);
+    scene.add(root);
+  }
+  return { scene, animations: [] };
+}
+
+test('forest-floor field instances every habitat prop, darkens in rain, and batches rare insects', async () => {
+  const scene = new THREE.Scene();
+  const descriptors = [
+    { key: 'log', kind: 'fallen_log', x: 0, y: 1, z: 0, yaw: 0.2, scale: 1, wetnessSeed: 0.2, mushrooms: true, insects: true },
+    { key: 'stump', kind: 'stump', x: 2, y: 1, z: 0, yaw: 0.4, scale: 0.9, mushrooms: true, insects: false },
+    { key: 'roots', kind: 'exposed_roots', x: 4, y: 1, z: 0, yaw: 0.6, scale: 1.1 },
+    { key: 'twigs', kind: 'twigs', x: 6, y: 1, z: 0, yaw: 0.8, scale: 0.8, insects: true },
+    { key: 'cone', kind: 'pinecone', x: 8, y: 1, z: 0, yaw: 1, scale: 1 },
+    { key: 'rocks', kind: 'rock_cluster', x: 10, y: 1, z: 0, yaw: 1.2, scale: 1.2 },
+  ];
+  const world = {
+    streamRevision: 1,
+    getForestFloorNear: () => descriptors,
+    isPositionReady: () => true,
+  };
+  const field = new ForestFloorField(scene, {
+    loaderFactory: () => ({ loadAsync: async () => createTestForestFloorGltf() }),
+  });
+  field.setWorld(world);
+  field.setQuality({
+    forestFloorRadius: 52,
+    forestFloorCap: 144,
+    forestInsectCap: 8,
+    shadows: true,
+  });
+  await field.prepare();
+  field.update(1 / 60, new THREE.Vector3(0, 2, 0), {
+    active: true,
+    dayAmount: 1,
+    skyExposure: 1,
+    rainIntensity: 0,
+  });
+  const dry = field.getStats();
+  assert.equal(dry.ready, true);
+  assert.equal(dry.failed, false);
+  assert.equal(dry.props, 6);
+  assert.deepEqual(dry.counts, {
+    fallen_log: 1,
+    stump: 1,
+    exposed_roots: 1,
+    twigs: 1,
+    pinecone: 1,
+    rocks: 1,
+  });
+  assert.equal(dry.mushrooms, 2);
+  assert.equal(dry.insectAnchors, 1, 'non-log props must never acquire crawling insects');
+  assert.equal(dry.insectDots, 3);
+  assert.equal(dry.draws, 8, 'six prop draws, mushrooms, and one point draw should be the ceiling here');
+  assert.equal(dry.vertexColours, true);
+  assert.equal(dry.opaque, true);
+  field.pack.meshes.forEach((mesh) => {
+    assert.equal(mesh.isInstancedMesh, true);
+    assert.equal(mesh.material, field.pack.material, 'all props must share one rain-reactive material');
+    assert.equal(mesh.geometry.getAttribute('uv'), undefined);
+    assert.ok(mesh.geometry.getAttribute('color'));
+  });
+  assert.equal(field.pack.insects.material.size, 0.04);
+  assert.equal(field.pack.insects.material.transparent, false);
+  assert.equal(field.pack.insects.material.depthWrite, true);
+
+  field.update(3, new THREE.Vector3(0, 2, 0), {
+    active: true,
+    dayAmount: 1,
+    skyExposure: 1,
+    rainIntensity: 1,
+  });
+  const wet = field.getStats();
+  assert(wet.wetness > 0.98, `forest props did not become wet smoothly (${wet.wetness})`);
+  assert(field.pack.material.color.r < 0.72, 'rain did not visibly darken the shared forest material');
+  assert(field.pack.material.roughness < 0.8, 'wet props did not gain a restrained rain sheen');
+  assert.equal(wet.insectDots, 0, 'tiny insects should shelter during heavy rain');
+  field.dispose();
+});
+
+test('crawling forest insects remain deterministic fast near-surface dots', () => {
+  const anchor = {
+    key: 'forest-log-insects',
+    kind: 'fallen_log',
+    x: 12,
+    y: 5,
+    z: -4,
+    yaw: 0.63,
+    scale: 1.1,
+    wetnessSeed: 0.37,
+  };
+  let maximumRadius = 0;
+  let movement = 0;
+  let previous = null;
+  for (let step = 0; step <= 180; step++) {
+    const time = step / 60;
+    const point = forestInsectOffset(anchor, 1, time, 1, new THREE.Vector3());
+    assert.deepEqual(
+      point.toArray(),
+      forestInsectOffset(anchor, 1, time, 1, new THREE.Vector3()).toArray(),
+      'crawling-insect motion must be deterministic',
+    );
+    maximumRadius = Math.max(maximumRadius, Math.hypot(point.x - anchor.x, point.z - anchor.z));
+    assert(point.y > anchor.y + 0.56 && point.y < anchor.y + 0.59,
+      `crawling dot left the log surface at ${point.y}`);
+    if (previous) movement += point.distanceTo(previous);
+    previous = point;
+  }
+  assert(maximumRadius < 0.2, `crawling insect strayed too far from its log (${maximumRadius})`);
+  assert(movement > 0.7, `crawling insect motion is too static (${movement})`);
 });

@@ -11,6 +11,13 @@ import {
 import { SurvivalSystem } from '../src/public/worldloom/src/survival.js';
 import { BLOCK, BLOCKS } from '../src/public/worldloom/src/blocks.js';
 import {
+  FOREST_FLOOR_CELL_SIZE,
+  FOREST_FLOOR_INSECT_CHANCE,
+  FOREST_FLOOR_KINDS,
+  FOREST_FLOOR_MAX_TREE_DISTANCE,
+  FOREST_FLOOR_MIN_FOREST_WEIGHT,
+  FOREST_FLOOR_MIN_TREE_DISTANCE,
+  FOREST_FLOOR_MUSHROOM_CHANCE,
   World,
   LEGACY_WORLD_GENERATOR_VERSION,
   MOUNTAIN_CROSS_SPAWN_CHANCE,
@@ -643,6 +650,158 @@ test('tree descriptors are seed-stable, query-stable and sorted nearest first', 
   firstWorld.dispose();
   secondWorld.dispose();
   differentWorld.dispose();
+});
+
+test('forest-floor descriptors replay across query order and chunk streaming', () => {
+  const center = { x: 18.25, z: -11.75 };
+  const radius = 128;
+  const firstWorld = new World(20260827, null, null);
+  const replayWorld = new World(20260827, null, null);
+  const differentWorld = new World(91234, null, null);
+  const first = firstWorld.getForestFloorNear(center.x, center.z, radius);
+
+  assert.ok(first.length > 30, 'forest-floor fixture should cover a useful descriptor sample');
+  assert.equal(firstWorld.chunks.size, 0, 'a pure descriptor query must not stream voxel chunks');
+  firstWorld.getForestFloorNear(-96, 144, 72);
+  assert.deepEqual(firstWorld.getForestFloorNear(center.x, center.z, radius), first,
+    'an interleaved query changed forest-floor descriptors or ordering');
+  assert.deepEqual(replayWorld.getForestFloorNear(center.x, center.z, radius), first,
+    'the same seed did not replay the same forest floor');
+  assert.notDeepEqual(differentWorld.getForestFloorNear(center.x, center.z, radius), first,
+    'a different seed reused the same forest floor');
+
+  const inner = firstWorld.getForestFloorNear(center.x, center.z, 72);
+  assert.deepEqual(inner, first.filter((descriptor) => (
+    Math.hypot(descriptor.x - center.x, descriptor.z - center.z) <= 72
+  )), 'overlapping focus queries disagreed about shared descriptor cells');
+
+  for (const descriptor of [...first].reverse()) {
+    firstWorld.ensurePositionGenerated(descriptor.x, descriptor.z);
+  }
+  assert.deepEqual(firstWorld.getForestFloorNear(center.x, center.z, radius), first,
+    'materializing chunks changed pure forest-floor generation');
+  assert.equal(new Set(first.map(({ key }) => key)).size, first.length,
+    'forest-floor keys must be unique within a world query');
+  for (let index = 1; index < first.length; index++) {
+    const previous = first[index - 1];
+    const current = first[index];
+    const previousDistance = Math.hypot(previous.x - center.x, previous.z - center.z);
+    const currentDistance = Math.hypot(current.x - center.x, current.z - center.z);
+    assert.ok(
+      previousDistance < currentDistance
+      || Math.abs(previousDistance - currentDistance) < 1e-12
+        && previous.key.localeCompare(current.key) <= 0,
+      `forest-floor ordering changed between ${previous.key} and ${current.key}`,
+    );
+  }
+
+  firstWorld.dispose();
+  replayWorld.dispose();
+  differentWorld.dispose();
+});
+
+test('forest-floor descriptors stay sparse, dry, forest-bound and clear of generated decor', () => {
+  const world = new World(20260827, null, null);
+  const radius = 192;
+  const descriptors = world.getForestFloorNear(0, 0, radius);
+  const theoreticalCells = Math.PI * radius * radius
+    / (FOREST_FLOOR_CELL_SIZE * FOREST_FLOOR_CELL_SIZE);
+  const density = descriptors.length / theoreticalCells;
+  assert.ok(density > 0.005 && density < 0.06,
+    `forest-floor distribution stopped being sparse and natural (${density})`);
+  assert.ok(Object.isFrozen(FOREST_FLOOR_KINDS));
+
+  let minimumSpacing = Number.POSITIVE_INFINITY;
+  for (let index = 0; index < descriptors.length; index++) {
+    const descriptor = descriptors[index];
+    assert.equal(Object.isFrozen(descriptor), true);
+    assert.match(descriptor.key, /^forest-floor:-?\d+,-?\d+$/);
+    assert.ok(FOREST_FLOOR_KINDS.includes(descriptor.kind));
+    assert.ok(Number.isFinite(descriptor.x) && Number.isFinite(descriptor.y)
+      && Number.isFinite(descriptor.z));
+    assert.ok(Number.isFinite(descriptor.yaw) && descriptor.yaw >= 0
+      && descriptor.yaw < Math.PI * 2);
+    assert.ok(Number.isFinite(descriptor.scale) && descriptor.scale > 0.7
+      && descriptor.scale < 1.2);
+    assert.ok(descriptor.wetnessSeed >= 0 && descriptor.wetnessSeed < 1);
+    assert.equal(typeof descriptor.mushrooms, 'boolean');
+    assert.equal(typeof descriptor.insects, 'boolean');
+
+    const x = Math.floor(descriptor.x);
+    const z = Math.floor(descriptor.z);
+    const info = world._columnInfo(x, z);
+    assert.equal(info.biome, 'forest');
+    assert.ok(info.forestWeight >= FOREST_FLOOR_MIN_FOREST_WEIGHT);
+    assert.equal(info.pondId, null);
+    assert.equal(Number.isFinite(info.pondWaterLevel), false);
+    assert.equal(info.surfaceSand, false);
+    assert.equal(info.caveMouth, false);
+    assert.equal(descriptor.y, info.height + 1);
+    const support = world._baseBlockAt(x, info.height, z);
+    assert.equal(BLOCKS[support]?.solid, true);
+    assert.equal(BLOCKS[support]?.liquid, false);
+    assert.equal(world._baseBlockAt(x, info.height + 1, z), BLOCK.AIR);
+    assert.equal(world._generatedSurfaceDecorAt(x, z, info), false,
+      `${descriptor.key} overlaps generated plant decor`);
+
+    const trees = world.getTreesNear(x, z, FOREST_FLOOR_MAX_TREE_DISTANCE + 2);
+    const anchor = trees.find((tree) => tree.id === descriptor.treeKey);
+    assert.ok(anchor, `${descriptor.key} lost its living-tree anchor`);
+    const anchorDistance = Math.hypot(anchor.rootX - x, anchor.rootZ - z);
+    assert.ok(anchorDistance >= FOREST_FLOOR_MIN_TREE_DISTANCE
+      && anchorDistance <= FOREST_FLOOR_MAX_TREE_DISTANCE,
+    `${descriptor.key} is not naturally near its tree (${anchorDistance})`);
+    assert.equal(world._forestFloorFootprintIsClear(
+      x,
+      z,
+      descriptor.kind,
+      trees,
+      info.height,
+    ), true, `${descriptor.key} footprint intersects water, a trunk, or generated decor`);
+
+    for (let other = 0; other < index; other++) {
+      minimumSpacing = Math.min(minimumSpacing, Math.hypot(
+        descriptor.x - descriptors[other].x,
+        descriptor.z - descriptors[other].z,
+      ));
+    }
+  }
+  assert.ok(minimumSpacing >= 4.5,
+    `forest-floor descriptors clumped into collisions (${minimumSpacing})`);
+  world.dispose();
+});
+
+test('forest-floor subtype ecology covers every kind with minority log life', () => {
+  const seeds = [64, 65, 91234, 0x5f3759df, 0xa511e9b3, 1234, 777, 20260827];
+  const descriptors = [];
+  for (const seed of seeds) {
+    const world = new World(seed, null, null);
+    descriptors.push(...world.getForestFloorNear(0, 0, 192));
+    world.dispose();
+  }
+  assert.deepEqual(
+    [...new Set(descriptors.map(({ kind }) => kind))].sort(),
+    [...FOREST_FLOOR_KINDS].sort(),
+    'the deterministic population lost a requested forest-floor subtype',
+  );
+
+  const woody = descriptors.filter(({ kind }) => kind === 'fallen_log' || kind === 'stump');
+  const nonWoody = descriptors.filter(({ kind }) => kind !== 'fallen_log' && kind !== 'stump');
+  const mushroomCount = woody.filter(({ mushrooms }) => mushrooms).length;
+  const insectCount = woody.filter(({ insects }) => insects).length;
+  const mushroomRatio = mushroomCount / woody.length;
+  const insectRatio = insectCount / woody.length;
+  assert.ok(woody.length > 40, 'minority checks need a meaningful log and stump sample');
+  assert.ok(mushroomCount > 0 && mushroomRatio < 0.5,
+    `mushrooms must remain a minority of logs/stumps (${mushroomRatio})`);
+  assert.ok(insectCount > 0 && insectRatio < mushroomRatio && insectRatio < 0.25,
+    `insects must remain the smaller log/stump minority (${insectRatio})`);
+  assert.ok(Math.abs(mushroomRatio - FOREST_FLOOR_MUSHROOM_CHANCE) < 0.12,
+    `mushroom population drifted from its seeded chance (${mushroomRatio})`);
+  assert.ok(Math.abs(insectRatio - FOREST_FLOOR_INSECT_CHANCE) < 0.08,
+    `insect population drifted from its seeded chance (${insectRatio})`);
+  assert.equal(nonWoody.some(({ mushrooms, insects }) => mushrooms || insects), false,
+    'non-log decor cannot carry log mushrooms or insects');
 });
 
 test('eligible mountain sectors receive deterministic crosses on a one-in-four roll', () => {

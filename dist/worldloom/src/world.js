@@ -41,6 +41,40 @@ const COLUMN_CACHE_LIMIT = 32_768;
 const TREE_CELL_SIZE = 5;
 const TREE_HANGING_LEAVES_SALT = 0xd3a2646c;
 const TREE_FALLING_LEAVES_SALT = 0x8f6c4a21;
+export const FOREST_FLOOR_CELL_SIZE = 8;
+export const FOREST_FLOOR_MIN_FOREST_WEIGHT = 0.44;
+export const FOREST_FLOOR_MIN_TREE_DISTANCE = 1.6;
+export const FOREST_FLOOR_MAX_TREE_DISTANCE = 7.5;
+export const FOREST_FLOOR_MUSHROOM_CHANCE = 0.24;
+export const FOREST_FLOOR_INSECT_CHANCE = 0.07;
+export const FOREST_FLOOR_KINDS = Object.freeze([
+  'fallen_log',
+  'stump',
+  'exposed_roots',
+  'twigs',
+  'pinecone',
+  'rock_cluster',
+]);
+const FOREST_FLOOR_QUERY_RADIUS_LIMIT = 256;
+const FOREST_FLOOR_CACHE_LIMIT = 4_096;
+const FOREST_FLOOR_SPAWN_BASE = 0.16;
+const FOREST_FLOOR_SPAWN_FOREST_BONUS = 0.22;
+const FOREST_FLOOR_SCALE_RANGES = Object.freeze({
+  fallen_log: Object.freeze([0.84, 1.18]),
+  stump: Object.freeze([0.78, 1.12]),
+  exposed_roots: Object.freeze([0.82, 1.14]),
+  twigs: Object.freeze([0.72, 1.08]),
+  pinecone: Object.freeze([0.72, 1.02]),
+  rock_cluster: Object.freeze([0.76, 1.16]),
+});
+const FOREST_FLOOR_CLEARANCE = Object.freeze({
+  fallen_log: 1.35,
+  stump: 0.8,
+  exposed_roots: 1.0,
+  twigs: 0.55,
+  pinecone: 0.4,
+  rock_cluster: 1.0,
+});
 const MOUNTAIN_SUMMIT_CELL_SIZE = 64;
 const MOUNTAIN_SUMMIT_CACHE_LIMIT = 768;
 const MOUNTAIN_CROSS_MODEL_HEIGHT = 7;
@@ -308,6 +342,7 @@ export class World {
       : WORLD_GENERATOR_VERSION;
     this.pondsEnabled = this.generatorVersion >= WORLD_GENERATOR_VERSION;
     this.summitCrossesEnabled = this.generatorVersion >= WORLD_GENERATOR_VERSION;
+    this.forestFloorEnabled = this.generatorVersion >= WORLD_GENERATOR_VERSION;
     this.scene = scene ?? null;
     this.atlas = atlas ?? null;
     this.chunkSize = CHUNK_SIZE;
@@ -340,6 +375,7 @@ export class World {
     this._columnCache = new Map();
     this._caveNodeCache = new Map();
     this._pondCellCache = new Map();
+    this._forestFloorCache = new Map();
     this._mountainSummitCache = new Map();
     // Only player-created and simulated water needs metadata. Natural sea and
     // river blocks are implicit level-zero sources supplied by world generation.
@@ -369,6 +405,7 @@ export class World {
       trees: (this.seed ^ 0x85ebca6b) >>> 0,
       plants: (this.seed ^ 0x4b1d3f27) >>> 0,
       grassPatches: (this.seed ^ 0x6d703ef3) >>> 0,
+      forestFloor: (this.seed ^ 0x0f1bbcd7) >>> 0,
       ponds: (this.seed ^ 0xd1b54a35) >>> 0,
       cavePools: (this.seed ^ 0x93c467e3) >>> 0,
       summitCrosses: (this.seed ^ 0x243f6a88) >>> 0,
@@ -1772,6 +1809,275 @@ export class World {
     return trees;
   }
 
+  _generatedSurfaceDecorAt(x, z, providedInfo = null) {
+    const worldX = Math.floor(Number.isFinite(Number(x)) ? Number(x) : 0);
+    const worldZ = Math.floor(Number.isFinite(Number(z)) ? Number(z) : 0);
+    const info = providedInfo ?? this._columnInfo(worldX, worldZ);
+
+    if (FERN !== AIR || WILDFLOWER !== AIR) {
+      const cellX = floorDiv(worldX, PLANT_CELL_SIZE);
+      const cellZ = floorDiv(worldZ, PLANT_CELL_SIZE);
+      const roll = hashUnit(hash2D(cellX, cellZ, this._noiseSeeds.plants));
+      if (roll >= 0.68) {
+        const rootX = cellX * PLANT_CELL_SIZE + Math.floor(hashUnit(hash2D(
+          cellX,
+          cellZ,
+          this._noiseSeeds.plants ^ 0x9e3779b9,
+        )) * PLANT_CELL_SIZE);
+        const rootZ = cellZ * PLANT_CELL_SIZE + Math.floor(hashUnit(hash2D(
+          cellX,
+          cellZ,
+          this._noiseSeeds.plants ^ 0x85ebca6b,
+        )) * PLANT_CELL_SIZE);
+        const choice = info.biome === 'forest' || roll > 0.88 ? FERN : WILDFLOWER;
+        if (
+          rootX === worldX
+          && rootZ === worldZ
+          && choice !== AIR
+          && info.height > SEA_LEVEL
+          && !info.pondId
+          && !info.surfaceSand
+          && !info.caveMouth
+          && info.rockiness <= 0.58
+        ) return true;
+      }
+    }
+
+    if (
+      SHORT_GRASS !== AIR
+      && !info.pondId
+      && !info.surfaceSand
+      && info.height > SEA_LEVEL
+      && !info.caveMouth
+      && info.rockiness <= 0.62
+    ) {
+      const patch = fbm2D(worldX / 11, worldZ / 11, this._noiseSeeds.grassPatches, {
+        octaves: 2,
+        lacunarity: 2.05,
+        gain: 0.48,
+      });
+      const thinning = hashUnit(hash2D(
+        worldX,
+        worldZ,
+        this._noiseSeeds.grassPatches ^ 0x9e3779b9,
+      ));
+      if (patch >= 0.55 && thinning >= 0.24) return true;
+    }
+
+    if (CACTUS !== AIR) {
+      const cellX = floorDiv(worldX, CACTUS_CELL_SIZE);
+      const cellZ = floorDiv(worldZ, CACTUS_CELL_SIZE);
+      const roll = hashUnit(hash2D(cellX, cellZ, this._noiseSeeds.plants ^ 0xc2b2ae35));
+      const rootX = cellX * CACTUS_CELL_SIZE + 1 + Math.floor(hashUnit(hash2D(
+        cellX,
+        cellZ,
+        this._noiseSeeds.plants ^ 0x27d4eb2d,
+      )) * (CACTUS_CELL_SIZE - 2));
+      const rootZ = cellZ * CACTUS_CELL_SIZE + 1 + Math.floor(hashUnit(hash2D(
+        cellX,
+        cellZ,
+        this._noiseSeeds.plants ^ 0x165667b1,
+      )) * (CACTUS_CELL_SIZE - 2));
+      if (
+        roll >= 0.58
+        && rootX === worldX
+        && rootZ === worldZ
+        && !info.pondId
+        && info.biome === 'desert'
+        && info.surfaceSand
+        && info.height > SEA_LEVEL
+        && !info.caveMouth
+      ) return true;
+    }
+    return false;
+  }
+
+  _forestFloorFootprintIsClear(rootX, rootZ, kind, nearbyTrees, baseHeight) {
+    const clearance = FOREST_FLOOR_CLEARANCE[kind] ?? 0.75;
+    const reach = Math.ceil(clearance);
+    for (const tree of nearbyTrees) {
+      if (Math.hypot(tree.rootX - rootX, tree.rootZ - rootZ) < clearance + 0.75) return false;
+    }
+    for (let dz = -reach; dz <= reach; dz++) {
+      for (let dx = -reach; dx <= reach; dx++) {
+        if (Math.hypot(dx, dz) > clearance + 0.45) continue;
+        const x = rootX + dx;
+        const z = rootZ + dz;
+        const info = this._columnInfo(x, z);
+        if (
+          Math.abs(info.height - baseHeight) > 1
+          || info.height <= SEA_LEVEL + 1
+          || info.biome !== 'forest'
+          || info.forestWeight < FOREST_FLOOR_MIN_FOREST_WEIGHT
+          || info.pondId
+          || Number.isFinite(info.pondWaterLevel)
+          || info.surfaceSand
+          || info.caveMouth
+          || info.riverStrength > 0.28
+          || info.rockiness > 0.54
+          || this._baseBlockWithInfo(x, info.height, z, info) !== GRASS
+          || this._baseBlockWithInfo(x, info.height + 1, z, info) !== AIR
+          || this._generatedSurfaceDecorAt(x, z, info)
+        ) return false;
+      }
+    }
+    return true;
+  }
+
+  _forestFloorDescriptorForCell(cellX, cellZ) {
+    if (!this.forestFloorEnabled) return null;
+    cellX = Math.floor(Number.isFinite(Number(cellX)) ? Number(cellX) : 0);
+    cellZ = Math.floor(Number.isFinite(Number(cellZ)) ? Number(cellZ) : 0);
+    const seed = this._noiseSeeds.forestFloor;
+    const rootX = cellX * FOREST_FLOOR_CELL_SIZE + 2 + Math.floor(hashUnit(hash2D(
+      cellX,
+      cellZ,
+      seed ^ 0x9e3779b9,
+    )) * (FOREST_FLOOR_CELL_SIZE - 4));
+    const rootZ = cellZ * FOREST_FLOOR_CELL_SIZE + 2 + Math.floor(hashUnit(hash2D(
+      cellX,
+      cellZ,
+      seed ^ 0x85ebca6b,
+    )) * (FOREST_FLOOR_CELL_SIZE - 4));
+    const info = this._columnInfo(rootX, rootZ);
+    if (
+      info.height <= SEA_LEVEL + 1
+      || info.biome !== 'forest'
+      || info.forestWeight < FOREST_FLOOR_MIN_FOREST_WEIGHT
+      || info.pondId
+      || Number.isFinite(info.pondWaterLevel)
+      || info.surfaceSand
+      || info.caveMouth
+      || info.riverStrength > 0.28
+      || info.rockiness > 0.54
+    ) return null;
+    const spawnChance = FOREST_FLOOR_SPAWN_BASE
+      + info.forestWeight * FOREST_FLOOR_SPAWN_FOREST_BONUS;
+    if (hashUnit(hash2D(cellX, cellZ, seed ^ 0xc2b2ae35)) >= spawnChance) return null;
+    const slope = Math.max(
+      Math.abs(info.height - this.terrainHeight(rootX + 1, rootZ)),
+      Math.abs(info.height - this.terrainHeight(rootX - 1, rootZ)),
+      Math.abs(info.height - this.terrainHeight(rootX, rootZ + 1)),
+      Math.abs(info.height - this.terrainHeight(rootX, rootZ - 1)),
+    );
+    if (slope > 1) return null;
+
+    const nearbyTrees = this.getTreesNear(
+      rootX,
+      rootZ,
+      FOREST_FLOOR_MAX_TREE_DISTANCE + 2,
+    );
+    if (nearbyTrees.some((tree) => (
+      Math.hypot(tree.rootX - rootX, tree.rootZ - rootZ) < FOREST_FLOOR_MIN_TREE_DISTANCE
+    ))) return null;
+    const tree = nearbyTrees.find((candidate) => (
+      Math.hypot(candidate.rootX - rootX, candidate.rootZ - rootZ)
+        <= FOREST_FLOOR_MAX_TREE_DISTANCE
+      && Math.abs(candidate.rootY - 1 - info.height) <= 2
+    ));
+    if (!tree) return null;
+    const treeDistance = Math.hypot(tree.rootX - rootX, tree.rootZ - rootZ);
+
+    const kindRoll = hashUnit(hash2D(cellX, cellZ, seed ^ 0x27d4eb2d));
+    let kind = kindRoll < 0.19
+      ? 'fallen_log'
+      : kindRoll < 0.31
+        ? 'stump'
+        : kindRoll < 0.47
+          ? 'exposed_roots'
+          : kindRoll < 0.69
+            ? 'twigs'
+            : kindRoll < 0.83 && tree.isPine
+              ? 'pinecone'
+              : 'rock_cluster';
+    if (kind === 'exposed_roots' && treeDistance > 3.8) kind = 'twigs';
+    if (!this._forestFloorFootprintIsClear(
+      rootX,
+      rootZ,
+      kind,
+      nearbyTrees,
+      info.height,
+    )) return null;
+
+    const yawRoll = hashUnit(hash2D(cellX, cellZ, seed ^ 0x165667b1));
+    const yaw = kind === 'exposed_roots'
+      ? (Math.atan2(rootX - tree.rootX, rootZ - tree.rootZ)
+        + (yawRoll - 0.5) * 0.36 + Math.PI * 2) % (Math.PI * 2)
+      : yawRoll * Math.PI * 2;
+    const scaleRange = FOREST_FLOOR_SCALE_RANGES[kind];
+    const scale = scaleRange[0] + hashUnit(hash2D(
+      cellX,
+      cellZ,
+      seed ^ 0x94d049bb,
+    )) * (scaleRange[1] - scaleRange[0]);
+    const woody = kind === 'fallen_log' || kind === 'stump';
+    const mushrooms = woody && hashUnit(hash2D(
+      cellX,
+      cellZ,
+      seed ^ 0x6a09e667,
+    )) < FOREST_FLOOR_MUSHROOM_CHANCE;
+    const insects = woody && hashUnit(hash2D(
+      cellX,
+      cellZ,
+      seed ^ 0xbb67ae85,
+    )) < FOREST_FLOOR_INSECT_CHANCE;
+    return Object.freeze({
+      key: `forest-floor:${cellX},${cellZ}`,
+      cellX,
+      cellZ,
+      treeKey: tree.id,
+      x: rootX + 0.5,
+      y: info.height + 1,
+      z: rootZ + 0.5,
+      yaw,
+      scale,
+      kind,
+      wetnessSeed: hashUnit(hash2D(cellX, cellZ, seed ^ 0x3c6ef372)),
+      mushrooms,
+      insects,
+    });
+  }
+
+  getForestFloorNear(x, z, radius = 72) {
+    if (!this.forestFloorEnabled) return [];
+    const centerX = Number.isFinite(Number(x)) ? Number(x) : 0;
+    const centerZ = Number.isFinite(Number(z)) ? Number(z) : 0;
+    const safeRadius = THREE.MathUtils.clamp(
+      Number(radius) || 0,
+      0,
+      FOREST_FLOOR_QUERY_RADIUS_LIMIT,
+    );
+    const minCellX = floorDiv(Math.floor(centerX - safeRadius), FOREST_FLOOR_CELL_SIZE);
+    const minCellZ = floorDiv(Math.floor(centerZ - safeRadius), FOREST_FLOOR_CELL_SIZE);
+    const maxCellX = floorDiv(Math.floor(centerX + safeRadius), FOREST_FLOOR_CELL_SIZE);
+    const maxCellZ = floorDiv(Math.floor(centerZ + safeRadius), FOREST_FLOOR_CELL_SIZE);
+    const descriptors = [];
+    for (let cellZ = minCellZ; cellZ <= maxCellZ; cellZ++) {
+      for (let cellX = minCellX; cellX <= maxCellX; cellX++) {
+        const cellKey = `${cellX},${cellZ}`;
+        let descriptor;
+        if (this._forestFloorCache.has(cellKey)) {
+          descriptor = this._forestFloorCache.get(cellKey) || null;
+        } else {
+          descriptor = this._forestFloorDescriptorForCell(cellX, cellZ);
+          trimCache(this._forestFloorCache, FOREST_FLOOR_CACHE_LIMIT);
+          this._forestFloorCache.set(cellKey, descriptor || false);
+        }
+        if (
+          !descriptor
+          || Math.hypot(descriptor.x - centerX, descriptor.z - centerZ) > safeRadius
+        ) continue;
+        descriptors.push(descriptor);
+      }
+    }
+    descriptors.sort((a, b) => (
+      Math.hypot(a.x - centerX, a.z - centerZ)
+        - Math.hypot(b.x - centerX, b.z - centerZ)
+      || a.key.localeCompare(b.key)
+    ));
+    return descriptors;
+  }
+
   _mountainSummitCrossForCell(cellX, cellZ) {
     cellX = Math.floor(Number.isFinite(Number(cellX)) ? Number(cellX) : 0);
     cellZ = Math.floor(Number.isFinite(Number(cellZ)) ? Number(cellZ) : 0);
@@ -2680,6 +2986,7 @@ export class World {
     this._columnCache.clear();
     this._caveNodeCache.clear();
     this._pondCellCache.clear();
+    this._forestFloorCache.clear();
     this._mountainSummitCache.clear();
     this._refreshStats();
   }

@@ -244,6 +244,10 @@ try {
     const stats = window.__worldloomEnvironment?.meadowPlants?.getStats?.();
     return stats?.ready && stats.sunflowers > 0 && stats.shortGrass > 0;
   }, { timeout: 45_000 });
+  await frame.waitForFunction(() => {
+    const stats = window.__worldloomForestFloor?.getStats?.();
+    return stats?.ready;
+  }, { timeout: 45_000 });
 
   const hudPresentation = await frame.evaluate(() => {
     const inspectPlate = (selector) => {
@@ -450,6 +454,36 @@ try {
           }),
         };
       })(),
+      forestFloor: (() => {
+        const field = window.__worldloomForestFloor;
+        const stats = field?.getStats?.() || null;
+        const meshes = field?.pack?.meshes ? [...field.pack.meshes.values()] : [];
+        const sharedMaterial = field?.pack?.material;
+        return {
+          ...stats,
+          groupAttached: field?.group?.parent === graphics?.scene,
+          worldAttached: field?.world === world,
+          sevenInstancedMeshes: meshes.length === 7
+            && meshes.every((mesh) => mesh?.isInstancedMesh),
+          sharedOpaqueVoxelMaterial: meshes.length === 7 && meshes.every((mesh) => (
+            mesh.material === sharedMaterial
+            && mesh.material?.transparent === false
+            && mesh.material?.alphaTest === 0
+            && mesh.material?.depthWrite === true
+            && mesh.material?.vertexColors === true
+            && mesh.material?.flatShading === true
+            && mesh.material?.map === null
+            && Boolean(mesh.geometry?.getAttribute?.('color'))
+            && mesh.geometry?.getAttribute?.('uv') === undefined
+          )),
+          tinyOpaqueInsects: Boolean(
+            field?.pack?.insects?.isPoints
+            && field.pack.insects.material?.size <= 0.04
+            && field.pack.insects.material?.transparent === false
+            && field.pack.insects.material?.depthWrite === true
+          ),
+        };
+      })(),
       fallingLeaves: (() => {
         const field = environment?.fallingLeaves;
         if (!field?.state || !field?.positions || !field?.velocities) return { available: false };
@@ -616,6 +650,20 @@ try {
     && gameState.meadowPlants.shortGrass > 0
     && gameState.meadowPlants.draws <= 2,
   `Seed 64 did not render both opaque meadow plants: ${JSON.stringify(gameState.meadowPlants)}`);
+  assert.equal(gameState.forestFloor.ready, true,
+    `The Blender forest-floor pack did not load: ${gameState.forestFloor.error}`);
+  assert.equal(gameState.forestFloor.failed, false);
+  assert.match(gameState.forestFloor.assetUrl, /forest-floor\.glb(?:$|[?#])/i);
+  assert.equal(gameState.forestFloor.groupAttached, true);
+  assert.equal(gameState.forestFloor.worldAttached, true);
+  assert.equal(gameState.forestFloor.sevenInstancedMeshes, true,
+    'The living forest floor lost its seven-mesh instanced render structure');
+  assert.equal(gameState.forestFloor.sharedOpaqueVoxelMaterial, true,
+    'Forest-floor props lost their shared opaque hard-pixel vertex-colour material');
+  assert.equal(gameState.forestFloor.tinyOpaqueInsects, true,
+    'Forest-floor insects are no longer tiny opaque batched dots');
+  assert(gameState.forestFloor.props >= 0 && gameState.forestFloor.draws <= 8,
+    `The living forest floor exceeded its bounded draw budget: ${JSON.stringify(gameState.forestFloor)}`);
   assert.equal(gameState.fallingLeaves.available, true);
   assert.equal(gameState.fallingLeaves.saturated, true,
     'a full falling-leaf pool overwrote an airborne particle');

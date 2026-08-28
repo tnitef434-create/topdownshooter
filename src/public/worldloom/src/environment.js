@@ -5,6 +5,7 @@ import { GRAPHICS_PRESETS } from './save.js';
 import { PondEcologyField } from './pond-ecology.js';
 import { HangingLeavesField } from './hanging-leaves.js';
 import { GroundLeafField } from './ground-leaves.js';
+import { ForestFloorField } from './forest-floor.js';
 import { RedFlowerField } from './red-flowers.js';
 import { MeadowPlantField } from './meadow-plants.js';
 import { BirdField } from './birds.js';
@@ -1515,6 +1516,7 @@ export class Environment {
     this.rain = new RainField(scene);
     this.fallingLeaves = new FallingLeaves(scene);
     this.groundLeaves = new GroundLeafField(scene);
+    this.forestFloor = new ForestFloorField(scene);
     this.lightning = new LightningField(scene);
     this.pondEcology = new PondEcologyField(scene, this.graphicsUniforms);
     this.hangingLeaves = new HangingLeavesField(scene, this.graphicsUniforms);
@@ -1543,6 +1545,7 @@ export class Environment {
     this.rain.setWorld(this.weatherWorld);
     this.fallingLeaves.setWorld(this.weatherWorld);
     this.groundLeaves.setWorld(this.weatherWorld);
+    this.forestFloor.setWorld(this.weatherWorld);
     this.lightning.setWorld(this.weatherWorld);
     this.pondEcology.setWorld(this.weatherWorld);
     this.hangingLeaves.setWorld(this.weatherWorld);
@@ -1584,6 +1587,10 @@ export class Environment {
 
   prepareGroundLeaves() {
     return this.groundLeaves.prepare();
+  }
+
+  prepareForestFloor() {
+    return this.forestFloor.prepare();
   }
 
   prepareRedFlowers() {
@@ -1647,6 +1654,7 @@ export class Environment {
     this.rain.setQuality(profile, this.weatherEnabled, settings.reducedMotion);
     this.fallingLeaves.setQuality(profile, true, settings.reducedMotion);
     this.groundLeaves.setQuality(profile);
+    this.forestFloor.setQuality(profile, settings.reducedMotion);
     this.lightning.setQuality(this.weatherEnabled && profile.atmosphereDetail >= 0.6, settings.reducedMotion);
     this.pondEcology.setQuality(profile, settings.reducedMotion);
     this.hangingLeaves.setQuality(profile, settings.reducedMotion);
@@ -2218,6 +2226,13 @@ export class Environment {
       context.active !== false,
     );
     this.groundLeaves.update(dt, focus);
+    this.forestFloor.update(dt, focus, {
+      ...context,
+      rainIntensity: this.rainIntensity,
+      dayAmount: this.dayAmount,
+      skyExposure: this.skyExposure,
+      caveAmount: 1 - this.skyExposure,
+    });
     this.pondEcology.update(dt, focus, {
       rainIntensity: this.rainIntensity,
       dayAmount: this.dayAmount,

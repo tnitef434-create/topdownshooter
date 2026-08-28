@@ -189,6 +189,7 @@ function initRenderer() {
   window.__worldloomPonds = environment.pondEcology;
   window.__worldloomHangingLeaves = environment.hangingLeaves;
   window.__worldloomGroundLeaves = environment.groundLeaves;
+  window.__worldloomForestFloor = environment.forestFloor;
   window.__worldloomBirds = environment.birds;
   window.__worldloomSummitCrosses = environment.summitCrosses;
   // World-avatar geometry is structurally absent from the gameplay and GTAO
@@ -432,11 +433,12 @@ async function startWorld({ seed, mode: selectedMode, saveData = null }) {
   streamingFogFar = null;
   environment.enhanceWorldMaterials(world);
   environment.setWeatherContext(world);
-  ui.setLoading(0.075, 'Growing lily ponds, forest leaves, summit crosses and rare birds…');
+  ui.setLoading(0.075, 'Growing lily ponds, living forest floors, summit crosses and rare birds…');
   await Promise.all([
     environment.preparePondEcology(),
     environment.prepareHangingLeaves(),
     environment.prepareGroundLeaves(),
+    environment.prepareForestFloor(),
     environment.prepareRedFlowers(),
     environment.prepareMeadowPlants(),
     environment.prepareBirds(),
