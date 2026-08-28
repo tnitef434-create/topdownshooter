@@ -55,6 +55,12 @@ export const FOREST_FLOOR_KINDS = Object.freeze([
   'pinecone',
   'rock_cluster',
 ]);
+export const FOREST_FLOOR_SOLID_KINDS = Object.freeze([
+  'fallen_log',
+  'stump',
+  'exposed_roots',
+  'rock_cluster',
+]);
 const FOREST_FLOOR_QUERY_RADIUS_LIMIT = 256;
 const FOREST_FLOOR_CACHE_LIMIT = 4_096;
 const FOREST_FLOOR_SPAWN_BASE = 0.16;
@@ -75,6 +81,79 @@ const FOREST_FLOOR_CLEARANCE = Object.freeze({
   pinecone: 0.4,
   rock_cluster: 1.0,
 });
+// Collision follows the visibly substantial voxel masses, not the full model
+// bounds. This keeps a rotated log honest without creating invisible walls at
+// its empty corners. Low roots and stones are physical but stepable; tiny
+// twigs, pinecones, mushrooms and insects intentionally remain ground detail.
+const FOREST_FLOOR_COLLISION_PROFILES = Object.freeze({
+  fallen_log: Object.freeze([
+    Object.freeze({ offsetX: 0, offsetZ: 0, halfX: 0.72, halfZ: 0.22, height: 0.56, stepable: false }),
+  ]),
+  stump: Object.freeze([
+    Object.freeze({ offsetX: 0, offsetZ: 0, halfX: 0.22, halfZ: 0.22, height: 0.80, stepable: false }),
+    Object.freeze({ offsetX: 0, offsetZ: 0, halfX: 0.28, halfZ: 0.28, height: 0.16, stepable: true }),
+    Object.freeze({ offsetX: 0, offsetZ: 0, halfX: 0.64, halfZ: 0.10, height: 0.16, stepable: true }),
+    Object.freeze({ offsetX: 0, offsetZ: 0, halfX: 0.10, halfZ: 0.64, height: 0.16, stepable: true }),
+  ]),
+  exposed_roots: Object.freeze([
+    Object.freeze({ offsetX: 0, offsetZ: 0, halfX: 0.20, halfZ: 0.20, height: 0.24, stepable: true }),
+    Object.freeze({ offsetX: 0, offsetZ: 0.04, halfX: 0.72, halfZ: 0.07, height: 0.16, stepable: true }),
+    Object.freeze({ offsetX: -0.04, offsetZ: 0, halfX: 0.07, halfZ: 0.64, height: 0.16, stepable: true }),
+  ]),
+  rock_cluster: Object.freeze([
+    Object.freeze({ offsetX: -0.24, offsetZ: 0.04, halfX: 0.20, halfZ: 0.16, height: 0.24, stepable: true }),
+    Object.freeze({ offsetX: 0.20, offsetZ: 0.12, halfX: 0.16, halfZ: 0.16, height: 0.24, stepable: true }),
+    Object.freeze({ offsetX: 0.04, offsetZ: -0.24, halfX: 0.16, halfZ: 0.12, height: 0.16, stepable: true }),
+  ]),
+});
+
+export function forestFloorCollidersForDescriptor(descriptor) {
+  const templates = FOREST_FLOOR_COLLISION_PROFILES[descriptor?.kind];
+  if (!templates) return [];
+  const x = Number(descriptor?.x);
+  const y = Number(descriptor?.y);
+  const z = Number(descriptor?.z);
+  if (![x, y, z].every(Number.isFinite)) return [];
+  const yaw = Number.isFinite(Number(descriptor?.yaw)) ? Number(descriptor.yaw) : 0;
+  const scale = THREE.MathUtils.clamp(Number(descriptor?.scale) || 1, 0.45, 1.8);
+  const cosine = Math.cos(yaw);
+  const sine = Math.sin(yaw);
+  const key = String(descriptor?.key || `${descriptor.kind}:${x}:${z}`);
+  return templates.map((template, index) => {
+    const offsetX = template.offsetX * scale;
+    const offsetZ = template.offsetZ * scale;
+    return Object.freeze({
+      key: `${key}:collider:${index}`,
+      sourceKey: key,
+      kind: descriptor.kind,
+      x: x + offsetX * cosine + offsetZ * sine,
+      z: z - offsetX * sine + offsetZ * cosine,
+      minY: y,
+      maxY: y + template.height * scale,
+      halfX: template.halfX * scale,
+      halfZ: template.halfZ * scale,
+      yaw,
+      stepable: template.stepable === true,
+    });
+  });
+}
+
+function forestFloorColliderTouchesColumn(collider, blockX, blockZ) {
+  const deltaX = collider.x - (blockX + 0.5);
+  const deltaZ = collider.z - (blockZ + 0.5);
+  const cosine = Math.cos(collider.yaw);
+  const sine = Math.sin(collider.yaw);
+  const absCosine = Math.abs(cosine);
+  const absSine = Math.abs(sine);
+  const localDeltaX = deltaX * cosine - deltaZ * sine;
+  const localDeltaZ = deltaX * sine + deltaZ * cosine;
+  const epsilon = 1e-6;
+  if (Math.abs(deltaX) >= 0.5 + collider.halfX * absCosine + collider.halfZ * absSine - epsilon) return false;
+  if (Math.abs(deltaZ) >= 0.5 + collider.halfX * absSine + collider.halfZ * absCosine - epsilon) return false;
+  if (Math.abs(localDeltaX) >= collider.halfX + 0.5 * (absCosine + absSine) - epsilon) return false;
+  if (Math.abs(localDeltaZ) >= collider.halfZ + 0.5 * (absSine + absCosine) - epsilon) return false;
+  return true;
+}
 const MOUNTAIN_SUMMIT_CELL_SIZE = 64;
 const MOUNTAIN_SUMMIT_CACHE_LIMIT = 768;
 const MOUNTAIN_CROSS_MODEL_HEIGHT = 7;
@@ -343,6 +422,9 @@ export class World {
     this.pondsEnabled = this.generatorVersion >= WORLD_GENERATOR_VERSION;
     this.summitCrossesEnabled = this.generatorVersion >= WORLD_GENERATOR_VERSION;
     this.forestFloorEnabled = this.generatorVersion >= WORLD_GENERATOR_VERSION;
+    // Main enables this only after the matching Blender pack has loaded. A
+    // cosmetic asset failure must never leave invisible physical obstacles.
+    this.forestFloorCollisionEnabled = false;
     this.scene = scene ?? null;
     this.atlas = atlas ?? null;
     this.chunkSize = CHUNK_SIZE;
@@ -365,6 +447,7 @@ export class World {
     this.streamDistance = detailedStreamDistance(this.renderDistance);
     this.streamDirection = { x: 0, z: -1, strength: 0 };
     this.streamRevision = 0;
+    this.editRevision = 0;
     this._streamPlanSignature = '';
     this._streamPlanTargets = [];
     this._streamTargetKeys = new Set();
@@ -1276,7 +1359,10 @@ export class World {
       this.fluidLevels.delete(fluidKey);
     }
     this._scheduleFluidAround(x, y, z);
-    if (!options?.skipStats) this._refreshStats();
+    if (!options?.skipStats) {
+      this.editRevision++;
+      this._refreshStats();
+    }
     return true;
   }
 
@@ -2038,6 +2124,44 @@ export class World {
     });
   }
 
+  setForestFloorCollisionEnabled(enabled) {
+    this.forestFloorCollisionEnabled = this.forestFloorEnabled && Boolean(enabled);
+  }
+
+  forestFloorPlacementIsLive(descriptor) {
+    if (!descriptor || typeof this.getBlock !== 'function') return false;
+    const x = Math.floor(Number(descriptor.x));
+    const y = Math.floor(Number(descriptor.y));
+    const z = Math.floor(Number(descriptor.z));
+    if (![x, y, z].every(Number.isFinite)) return false;
+    const colliders = forestFloorCollidersForDescriptor(descriptor);
+    const columns = new Map([[`${x},${z}`, { x, z }]]);
+    for (const collider of colliders) {
+      const extentX = collider.halfX * Math.abs(Math.cos(collider.yaw))
+        + collider.halfZ * Math.abs(Math.sin(collider.yaw));
+      const extentZ = collider.halfX * Math.abs(Math.sin(collider.yaw))
+        + collider.halfZ * Math.abs(Math.cos(collider.yaw));
+      for (let blockZ = Math.floor(collider.z - extentZ);
+        blockZ <= Math.floor(collider.z + extentZ); blockZ++) {
+        for (let blockX = Math.floor(collider.x - extentX);
+          blockX <= Math.floor(collider.x + extentX); blockX++) {
+          if (forestFloorColliderTouchesColumn(collider, blockX, blockZ)) {
+            columns.set(`${blockX},${blockZ}`, { x: blockX, z: blockZ });
+          }
+        }
+      }
+    }
+    for (const column of columns.values()) {
+      const occupied = BLOCKS[this.getBlock(column.x, y, column.z)];
+      if (occupied?.solid || occupied?.liquid) return false;
+      const generatedSupport = BLOCKS[this._baseBlockAt(column.x, y - 1, column.z)];
+      if (!generatedSupport?.solid || generatedSupport.liquid) continue;
+      const liveSupport = BLOCKS[this.getBlock(column.x, y - 1, column.z)];
+      if (!liveSupport?.solid || liveSupport.liquid) return false;
+    }
+    return true;
+  }
+
   getForestFloorNear(x, z, radius = 72) {
     if (!this.forestFloorEnabled) return [];
     const centerX = Number.isFinite(Number(x)) ? Number(x) : 0;
@@ -2076,6 +2200,23 @@ export class World {
       || a.key.localeCompare(b.key)
     ));
     return descriptors;
+  }
+
+  getForestFloorCollidersNear(x, z, radius = 3.25) {
+    if (!this.forestFloorCollisionEnabled) return [];
+    const centerX = Number.isFinite(Number(x)) ? Number(x) : 0;
+    const centerZ = Number.isFinite(Number(z)) ? Number(z) : 0;
+    const safeRadius = THREE.MathUtils.clamp(Number(radius) || 0, 0, 12);
+    return this.getForestFloorNear(centerX, centerZ, safeRadius + 2)
+      .filter((descriptor) => (
+        (!this.isPositionReady || this.isPositionReady(descriptor.x, descriptor.z))
+        && this.forestFloorPlacementIsLive(descriptor)
+      ))
+      .flatMap(forestFloorCollidersForDescriptor)
+      .filter((collider) => (
+        Math.hypot(collider.x - centerX, collider.z - centerZ)
+          <= safeRadius + Math.hypot(collider.halfX, collider.halfZ)
+      ));
   }
 
   _mountainSummitCrossForCell(cellX, cellZ) {
@@ -2919,6 +3060,7 @@ export class World {
     for (const chunk of this.chunks.values()) {
       if (chunk.generated) this._generateChunk(chunk);
     }
+    this.editRevision++;
     this._refreshStats();
     return true;
   }
@@ -2965,6 +3107,7 @@ export class World {
   }
 
   dispose() {
+    this.forestFloorCollisionEnabled = false;
     this.distantTerrain?.dispose?.();
     this.distantTerrain = null;
     for (const [key, chunk] of [...this.chunks]) this._removeChunk(key, chunk, false);

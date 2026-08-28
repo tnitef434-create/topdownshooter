@@ -2095,7 +2095,7 @@ function createTestForestFloorGltf() {
 
 test('forest-floor field instances every habitat prop, darkens in rain, and batches rare insects', async () => {
   const scene = new THREE.Scene();
-  const descriptors = [
+  let descriptors = [
     { key: 'log', kind: 'fallen_log', x: 0, y: 1, z: 0, yaw: 0.2, scale: 1, wetnessSeed: 0.2, mushrooms: true, insects: true },
     { key: 'stump', kind: 'stump', x: 2, y: 1, z: 0, yaw: 0.4, scale: 0.9, mushrooms: true, insects: false },
     { key: 'roots', kind: 'exposed_roots', x: 4, y: 1, z: 0, yaw: 0.6, scale: 1.1 },
@@ -2105,6 +2105,7 @@ test('forest-floor field instances every habitat prop, darkens in rain, and batc
   ];
   const world = {
     streamRevision: 1,
+    editRevision: 0,
     getForestFloorNear: () => descriptors,
     isPositionReady: () => true,
   };
@@ -2164,6 +2165,16 @@ test('forest-floor field instances every habitat prop, darkens in rain, and batc
   assert(field.pack.material.color.r < 0.72, 'rain did not visibly darken the shared forest material');
   assert(field.pack.material.roughness < 0.8, 'wet props did not gain a restrained rain sheen');
   assert.equal(wet.insectDots, 0, 'tiny insects should shelter during heavy rain');
+  descriptors = descriptors.filter(({ key }) => key !== 'log');
+  world.editRevision++;
+  field.update(1 / 120, new THREE.Vector3(0, 2, 0), {
+    active: true,
+    dayAmount: 1,
+    skyExposure: 1,
+    rainIntensity: 0,
+  });
+  assert.equal(field.getStats().props, 5,
+    'a live block edit did not resync the forest mesh before collision could reactivate');
   field.dispose();
 });
 

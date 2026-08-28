@@ -310,6 +310,7 @@ export class ForestFloorField {
     this._cancelLoad = null;
     this._syncTimer = 0;
     this._lastStreamRevision = -1;
+    this._lastEditRevision = -1;
     this._lastFocus = new THREE.Vector3(Number.POSITIVE_INFINITY, 0, Number.POSITIVE_INFINITY);
     this._dummy = new THREE.Object3D();
     this._point = new THREE.Vector3();
@@ -342,6 +343,7 @@ export class ForestFloorField {
         this.ready = false;
         this.failed = true;
         this.error = cause instanceof Error ? cause : new Error(String(cause || 'Unknown forest-floor asset error'));
+        this.world?.setForestFloorCollisionEnabled?.(false);
         console.warn('Worldloom living forest floor was skipped safely.', this.error);
       }
       finish();
@@ -385,6 +387,7 @@ export class ForestFloorField {
         this.ready = true;
         this.failed = false;
         this.error = null;
+        this.world?.setForestFloorCollisionEnabled?.(true);
         this._applyShadowPolicy();
         this._syncTimer = 0;
         finish();
@@ -399,10 +402,15 @@ export class ForestFloorField {
 
   setWorld(world) {
     const nextWorld = world || null;
-    if (this.world !== nextWorld) this._clear();
+    if (this.world !== nextWorld) {
+      this.world?.setForestFloorCollisionEnabled?.(false);
+      this._clear();
+    }
     this.world = nextWorld;
+    this.world?.setForestFloorCollisionEnabled?.(this.ready);
     this._syncTimer = 0;
     this._lastStreamRevision = -1;
+    this._lastEditRevision = -1;
     this._lastFocus.set(Number.POSITIVE_INFINITY, 0, Number.POSITIVE_INFINITY);
     if (!this.world) this._clear();
   }
@@ -461,6 +469,9 @@ export class ForestFloorField {
   }
 
   _livePlacementClear(entry) {
+    if (typeof this.world?.forestFloorPlacementIsLive === 'function') {
+      return this.world.forestFloorPlacementIsLive(entry);
+    }
     if (typeof this.world?.getBlock !== 'function') return true;
     const x = Math.floor(entry.x);
     const y = Math.floor(entry.y);
@@ -481,6 +492,7 @@ export class ForestFloorField {
     this.insectAnchors = this.items.filter((item) => item.insects).slice(0, this.insectAnchorLimit);
     this._lastFocus.copy(focus);
     this._lastStreamRevision = Number(this.world.streamRevision) || 0;
+    this._lastEditRevision = Number(this.world.editRevision) || 0;
     return true;
   }
 
@@ -570,7 +582,9 @@ export class ForestFloorField {
     this._updateWetness(delta, context.rainIntensity || 0);
     this._syncTimer -= delta;
     const streamChanged = (Number(this.world.streamRevision) || 0) !== this._lastStreamRevision;
-    if (this._syncTimer <= 0 || streamChanged || this._lastFocus.distanceToSquared(focus) > 36) {
+    const editsChanged = (Number(this.world.editRevision) || 0) !== this._lastEditRevision;
+    if (this._syncTimer <= 0 || streamChanged || editsChanged
+      || this._lastFocus.distanceToSquared(focus) > 36) {
       this._syncTimer = RESYNC_INTERVAL;
       if (this._sync(focus)) this._writeInstances();
     }
@@ -611,6 +625,7 @@ export class ForestFloorField {
   }
 
   dispose() {
+    this.world?.setForestFloorCollisionEnabled?.(false);
     this._loadGeneration++;
     this._cancelLoad?.();
     this._cancelLoad = null;

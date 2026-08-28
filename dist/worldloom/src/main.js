@@ -444,6 +444,7 @@ async function startWorld({ seed, mode: selectedMode, saveData = null }) {
     environment.prepareBirds(),
     environment.prepareSummitCrosses(),
   ]);
+  world.setForestFloorCollisionEnabled?.(environment.forestFloor?.ready === true);
   mode = selectedMode === 'builder' ? 'builder' : 'survival';
   worldCreatedAt = saveData?.createdAt || new Date().toISOString();
   flags = { ...(saveData?.flags || {}) };

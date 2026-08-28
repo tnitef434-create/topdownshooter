@@ -463,6 +463,7 @@ try {
           ...stats,
           groupAttached: field?.group?.parent === graphics?.scene,
           worldAttached: field?.world === world,
+          collisionEnabled: world?.forestFloorCollisionEnabled === true,
           sevenInstancedMeshes: meshes.length === 7
             && meshes.every((mesh) => mesh?.isInstancedMesh),
           sharedOpaqueVoxelMaterial: meshes.length === 7 && meshes.every((mesh) => (
@@ -662,6 +663,8 @@ try {
     'Forest-floor props lost their shared opaque hard-pixel vertex-colour material');
   assert.equal(gameState.forestFloor.tinyOpaqueInsects, true,
     'Forest-floor insects are no longer tiny opaque batched dots');
+  assert.equal(gameState.forestFloor.collisionEnabled, true,
+    'Loaded forest-floor props did not enable their matching physical collision layer');
   assert(gameState.forestFloor.props >= 0 && gameState.forestFloor.draws <= 8,
     `The living forest floor exceeded its bounded draw budget: ${JSON.stringify(gameState.forestFloor)}`);
   assert.equal(gameState.fallingLeaves.available, true);

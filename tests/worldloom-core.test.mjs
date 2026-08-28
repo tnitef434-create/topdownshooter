@@ -18,10 +18,12 @@ import {
   FOREST_FLOOR_MIN_FOREST_WEIGHT,
   FOREST_FLOOR_MIN_TREE_DISTANCE,
   FOREST_FLOOR_MUSHROOM_CHANCE,
+  FOREST_FLOOR_SOLID_KINDS,
   World,
   LEGACY_WORLD_GENERATOR_VERSION,
   MOUNTAIN_CROSS_SPAWN_CHANCE,
   WORLD_GENERATOR_VERSION,
+  forestFloorCollidersForDescriptor,
   mountainCrossSpawnRoll,
 } from '../src/public/worldloom/src/world.js';
 import {
@@ -63,6 +65,7 @@ import {
   PlayerController,
   continuousPointerDelta,
   fallDamageForImpact,
+  intersectsPlayerCollider,
   raycastVoxels,
 } from '../src/public/worldloom/src/player.js';
 import {
@@ -802,6 +805,126 @@ test('forest-floor subtype ecology covers every kind with minority log life', ()
     `insect population drifted from its seeded chance (${insectRatio})`);
   assert.equal(nonWoody.some(({ mushrooms, insects }) => mushrooms || insects), false,
     'non-log decor cannot carry log mushrooms or insects');
+});
+
+test('forest-floor collision profiles follow rotated voxel masses without making tiny decor snaggy', () => {
+  assert.equal(Object.isFrozen(FOREST_FLOOR_SOLID_KINDS), true);
+  assert.deepEqual(
+    [...FOREST_FLOOR_SOLID_KINDS].sort(),
+    ['exposed_roots', 'fallen_log', 'rock_cluster', 'stump'],
+  );
+  const base = {
+    key: 'collision-fixture',
+    x: 10,
+    y: 4,
+    z: -6,
+    yaw: Math.PI / 3,
+    scale: 1.1,
+  };
+  for (const kind of FOREST_FLOOR_KINDS) {
+    const descriptor = { ...base, kind, mushrooms: true, insects: true };
+    const first = forestFloorCollidersForDescriptor(descriptor);
+    assert.deepEqual(forestFloorCollidersForDescriptor(descriptor), first,
+      `${kind} collider generation is not deterministic`);
+    assert.equal(first.length > 0, FOREST_FLOOR_SOLID_KINDS.includes(kind),
+      `${kind} has the wrong physical/decorative contract`);
+    first.forEach((collider) => {
+      assert.equal(Object.isFrozen(collider), true);
+      assert.equal(collider.sourceKey, base.key);
+      assert.equal(collider.kind, kind);
+      assert.equal(collider.yaw, base.yaw);
+      assert.ok(collider.maxY > collider.minY);
+      assert.ok(collider.halfX > 0 && collider.halfZ > 0);
+      assert.equal(typeof collider.stepable, 'boolean');
+    });
+  }
+
+  const log = forestFloorCollidersForDescriptor({ ...base, kind: 'fallen_log', yaw: 0, scale: 1 })[0];
+  const touchingTop = {
+    minX: log.x - 0.1,
+    maxX: log.x + 0.1,
+    minY: log.maxY + 0.0001,
+    maxY: log.maxY + 1.78,
+    minZ: log.z - 0.1,
+    maxZ: log.z + 0.1,
+  };
+  assert.equal(intersectsPlayerCollider(touchingTop, log), false,
+    'standing on a log must not count as being inside it');
+  assert.equal(intersectsPlayerCollider({
+    ...touchingTop,
+    minY: log.maxY - 0.01,
+  }, log), true, 'a real vertical overlap must collide');
+  const rotated = forestFloorCollidersForDescriptor({
+    ...base,
+    kind: 'fallen_log',
+    yaw: Math.PI / 2,
+    scale: 1,
+  })[0];
+  assert.equal(intersectsPlayerCollider({
+    minX: rotated.x - 0.1,
+    maxX: rotated.x + 0.1,
+    minY: rotated.minY,
+    maxY: rotated.maxY,
+    minZ: rotated.z + 0.56,
+    maxZ: rotated.z + 0.66,
+  }, rotated), true, 'a quarter-turned log did not rotate its long collision axis');
+});
+
+test('forest-floor collisions are asset-gated and react immediately to live block edits', () => {
+  const world = new World(20260827, null, null);
+  const descriptor = world.getForestFloorNear(0, 0, 192)
+    .find((entry) => FOREST_FLOOR_SOLID_KINDS.includes(entry.kind)
+      && entry.kind !== 'rock_cluster'
+      && world.forestFloorPlacementIsLive(entry));
+  assert.ok(descriptor, 'the collision fixture needs a substantial forest-floor prop');
+  world.ensurePositionGenerated(descriptor.x, descriptor.z);
+  assert.deepEqual(world.getForestFloorCollidersNear(descriptor.x, descriptor.z, 2), [],
+    'an unloaded cosmetic asset must never produce an invisible wall');
+
+  world.setForestFloorCollisionEnabled(true);
+  const original = world.getForestFloorCollidersNear(descriptor.x, descriptor.z, 2)
+    .filter(({ sourceKey }) => sourceKey === descriptor.key);
+  assert.ok(original.length > 0, 'the loaded forest-floor prop did not become physical');
+  const x = Math.floor(descriptor.x);
+  const y = Math.floor(descriptor.y);
+  const z = Math.floor(descriptor.z);
+  const supportId = world.getBlock(x, y - 1, z);
+  const streamRevision = world.streamRevision;
+  const editRevision = world.editRevision;
+  assert.equal(world.setBlock(x, y - 1, z, BLOCK.AIR), true);
+  assert.equal(world.editRevision, editRevision + 1);
+  assert.equal(world.getForestFloorCollidersNear(descriptor.x, descriptor.z, 2)
+    .some(({ sourceKey }) => sourceKey === descriptor.key), false,
+  'mining a prop support did not remove its collision immediately');
+  assert.equal(world.streamRevision, streamRevision,
+    'collision invalidation must not depend on a chunk-stream revision');
+  assert.equal(world.setBlock(x, y - 1, z, supportId), true);
+  assert.deepEqual(
+    world.getForestFloorCollidersNear(descriptor.x, descriptor.z, 2)
+      .filter(({ sourceKey }) => sourceKey === descriptor.key),
+    original,
+    'restoring the support did not restore the deterministic collider',
+  );
+
+  let outerFootprintEdit = null;
+  for (let dz = -1; dz <= 1 && !outerFootprintEdit; dz++) {
+    for (let dx = -1; dx <= 1 && !outerFootprintEdit; dx++) {
+      if (dx === 0 && dz === 0) continue;
+      if (world.getBlock(x + dx, y, z + dz) !== BLOCK.AIR) continue;
+      if (!world.setBlock(x + dx, y, z + dz, BLOCK.STONE)) continue;
+      const removed = !world.getForestFloorCollidersNear(descriptor.x, descriptor.z, 2)
+        .some(({ sourceKey }) => sourceKey === descriptor.key);
+      world.setBlock(x + dx, y, z + dz, BLOCK.AIR);
+      if (removed) outerFootprintEdit = { dx, dz };
+    }
+  }
+  assert.ok(outerFootprintEdit,
+    'building through an outer log/root/stump arm did not suppress its complete collider');
+  assert.equal(world.setBlock(x, y, z, BLOCK.STONE), true);
+  assert.equal(world.getForestFloorCollidersNear(descriptor.x, descriptor.z, 2)
+    .some(({ sourceKey }) => sourceKey === descriptor.key), false,
+  'building through a forest prop left its collision active');
+  world.dispose();
 });
 
 test('eligible mountain sectors receive deterministic crosses on a one-in-four roll', () => {
@@ -2501,6 +2624,82 @@ test('partial-height furniture uses matching collision bounds', () => {
   player.setPosition(0.5, 0.47, 0.5);
   assert.equal(player.intersectsBlock(0, 0, 0, BLOCK.BED), false);
   assert.equal(player.intersectsBlock(0, 0, 0, BLOCK.STONE), true);
+});
+
+test('player movement blocks, steps and lands on forest-floor collision shapes', () => {
+  const makePlayer = (colliders) => {
+    const camera = new THREE.PerspectiveCamera(75, 1, 0.05, 100);
+    const world = {
+      getBlock: () => BLOCK.AIR,
+      getForestFloorCollidersNear: () => colliders,
+    };
+    const player = new PlayerController(camera, world);
+    player.setPosition(0, 0, 0);
+    player.wasGrounded = true;
+    return player;
+  };
+  const blockingStump = {
+    key: 'stump',
+    x: 0.66,
+    z: 0,
+    minY: 0,
+    maxY: 0.8,
+    halfX: 0.14,
+    halfZ: 0.28,
+    yaw: 0,
+    stepable: false,
+  };
+  const blocked = makePlayer([blockingStump]);
+  assert.equal(blocked.isCollidingAt(new THREE.Vector3(0.5, 0, 0)), true,
+    'spawn and resume safety did not see the forest prop');
+  blocked.velocity.x = 12;
+  blocked._moveWithCollisions(0.05);
+  assert.ok(blocked.position.x < 0.25,
+    `high-speed movement tunneled through a stump (${blocked.position.x})`);
+  assert.equal(blocked.velocity.x, 0);
+
+  const lowRoot = {
+    ...blockingStump,
+    key: 'root',
+    maxY: 0.24,
+    stepable: true,
+  };
+  const stepping = makePlayer([lowRoot]);
+  stepping.velocity.x = 12;
+  stepping._moveWithCollisions(0.05);
+  assert.ok(stepping.position.x > 0.5,
+    `the low root became an ankle-height wall (${stepping.position.x})`);
+  assert.ok(Math.abs(stepping.position.y - (lowRoot.maxY + 0.0001)) < 1e-7,
+    `the player passed through instead of stepping onto the root (${stepping.position.y})`);
+  assert.equal(stepping.grounded, true);
+
+  const blockingLog = makePlayer([{
+    ...blockingStump,
+    key: 'log-side',
+    x: 0.95,
+    maxY: 0.56,
+    halfX: 0.4,
+  }]);
+  blockingLog.velocity.x = 12;
+  blockingLog._moveWithCollisions(0.05);
+  assert.ok(blockingLog.position.x < 0.25,
+    `a normal-height log was auto-stepped instead of requiring a jump (${blockingLog.position.x})`);
+
+  const landing = makePlayer([{ ...blockingStump, key: 'log', maxY: 0.56 }]);
+  landing.setPosition(0.66, 1, 0);
+  landing.velocity.y = -10;
+  landing._moveWithCollisions(0.05);
+  assert.ok(Math.abs(landing.position.y - 0.5601) < 1e-7,
+    `falling player did not land on the log (${landing.position.y})`);
+  assert.equal(landing.grounded, true);
+  assert.equal(landing.velocity.y, 0);
+  assert.equal(landing.landingImpact, 10);
+
+  const decorative = makePlayer([]);
+  decorative.velocity.x = 12;
+  decorative._moveWithCollisions(0.05);
+  assert.ok(Math.abs(decorative.position.x - 0.6) < 1e-7,
+    'non-solid twigs, pinecones or insects unexpectedly snagged movement');
 });
 
 test('pointer-lock filtering rejects monitor recenter spikes without limiting cumulative 360 turns', () => {
