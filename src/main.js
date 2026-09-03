@@ -1096,6 +1096,7 @@ function showScreen(screenKey) {
     playWaitMusic();
   } else if (screenKey === 'game') {
     playGameplayBackgroundMusic();
+    checkSaraMode(false);
     if (window.tipInterval) clearInterval(window.tipInterval);
     showNextGameplayTip();
     window.tipInterval = setInterval(showNextGameplayTip, 18000);
@@ -2067,9 +2068,13 @@ function setupUIListeners() {
     inputs.name.addEventListener('change', () => {
       myName = inputs.name.value.trim() || 'Operative';
       safeStorage.setItem('tacticstrike_player_name', myName);
+      checkSaraMode();
       if (socket && socket.connected) {
         socket.emit('change-name', { name: myName });
       }
+    });
+    inputs.name.addEventListener('input', () => {
+      checkSaraMode();
     });
   }
 
@@ -3083,6 +3088,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if (inputs.name) {
     inputs.name.value = myName;
   }
+  checkSaraMode(false);
 
   connectSocket();
   showScreen('menu');
@@ -4210,6 +4216,70 @@ function generateBotUsername() {
   if (roll < 0.65) return 'xX' + base + 'Xx';
   if (roll < 0.75) return base + '_' + (Math.floor(Math.random() * 90) + 10);
   return base;
+}
+
+let saraModeActive = false;
+
+function isSaraName(name) {
+  return (name || '').trim().toLowerCase() === 'sara';
+}
+
+function showSaraToast(message) {
+  const container = document.getElementById('notification-container');
+  if (!container) return;
+  const toast = document.createElement('div');
+  toast.className = 'custom-toast sara-toast';
+  toast.style.cssText = `
+    background: rgba(30, 10, 22, 0.95);
+    border: 1px solid #ff9ecf;
+    box-shadow: 0 0 18px rgba(255, 158, 207, 0.35);
+    border-radius: 6px;
+    padding: 14px 20px;
+    color: #ffd3e8;
+    font-family: var(--font-title);
+    font-size: 11px;
+    letter-spacing: 1.5px;
+    line-height: 1.5;
+    min-width: 280px;
+    max-width: 360px;
+    pointer-events: auto;
+    cursor: pointer;
+    opacity: 0;
+    transform: translateX(50px);
+    transition: all 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    position: relative;
+    overflow: hidden;
+    text-shadow: 0 0 8px rgba(255, 158, 207, 0.5);
+  `;
+  const textNode = document.createElement('div');
+  textNode.innerText = message;
+  toast.appendChild(textNode);
+  const dismiss = () => {
+    toast.style.opacity = '0';
+    toast.style.transform = 'translateX(50px)';
+    setTimeout(() => toast.remove(), 350);
+  };
+  toast.addEventListener('click', dismiss);
+  container.appendChild(toast);
+  requestAnimationFrame(() => {
+    toast.style.opacity = '1';
+    toast.style.transform = 'translateX(0)';
+  });
+  setTimeout(() => { if (toast.parentNode) dismiss(); }, 4200);
+}
+
+function checkSaraMode(showPopup = true) {
+  const current = inputs.name ? inputs.name.value : myName;
+  const active = isSaraName(current);
+  if (inputs.name) inputs.name.classList.toggle('name-sara-effect', active);
+  const hudName = document.getElementById('hud-self-name');
+  if (hudName) hudName.classList.toggle('name-sara-effect', active);
+  if (active && !saraModeActive && showPopup) {
+    showSaraToast('💗 x2 XP enabled, Sara xx');
+  } else if (!active && saraModeActive && showPopup) {
+    showSaraToast('💔 x2 XP gone, Sara xx');
+  }
+  saraModeActive = active;
 }
 
 // Expose remote chat event

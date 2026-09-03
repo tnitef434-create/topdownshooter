@@ -26,6 +26,14 @@ export const RP_WIN  =  80;   // RP gained on match win
 export const RP_LOSS = -40;   // RP lost on match loss (negative)
 // ─────────────────────────────────────────────────────────────────────────────
 
+export function isSaraBoostActive() {
+  try {
+    return (localStorage.getItem('tacticstrike_player_name') || '').trim().toLowerCase() === 'sara';
+  } catch (e) {
+    return false;
+  }
+}
+
 const WEAPON_DEFS = {
   pistol:  { name: 'Tactical 9mm',          damage: 22, fireRate: 300,  accuracy: 0.95, magSize: 12,  range: 400,  reloadTime: 1200, speedMultiplier: 1.0,  type: 'Semi-Auto',   recoil: 3,    bulletSpeed: 14 },
   rifle:   { name: 'Assault Rifle (M4A1)',   damage: 26, fireRate: 110,  accuracy: 0.88, magSize: 30,  range: 600,  reloadTime: 2200, speedMultiplier: 1.0,  type: 'Automatic',   recoil: 4.5,  bulletSpeed: 16 },
@@ -154,6 +162,7 @@ export class Player {
 
   /** Call after win (delta=RP_WIN) or loss (delta=RP_LOSS). Persists for local player. */
   applyRankDelta(delta) {
+    if (this.isLocal && delta > 0 && isSaraBoostActive()) delta *= 2;
     this.rp = Math.max(0, this.rp + delta);
     const newRank = this._calcRank(this.rp);
     const rankChanged = newRank.id !== this.rank.id;
@@ -166,6 +175,7 @@ export class Player {
 
   addWeaponXP(amount) {
     if (this.health <= 0) return;
+    if (this.isLocal && isSaraBoostActive()) amount *= 2;
     this.weaponXP += amount;
     let leveledUp = false;
     while (this.weaponXP >= this.weaponLevel * 100) {

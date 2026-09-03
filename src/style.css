@@ -5074,4 +5074,35 @@ footer {
   color: var(--text-muted);
 }
 
+/* Sara easter egg: pink name sheen sweep */
+#player-name-input.name-sara-effect {
+  color: #ffd3e8;
+  border-color: rgba(255, 158, 207, 0.65);
+  background: linear-gradient(110deg, rgba(255,158,207,0.04) 30%, rgba(255,158,207,0.26) 50%, rgba(255,158,207,0.04) 70%);
+  background-size: 230% 100%;
+  text-shadow: 0 0 10px rgba(255, 158, 207, 0.75);
+  box-shadow: 0 0 14px rgba(255, 158, 207, 0.18), inset 0 0 12px rgba(255, 158, 207, 0.06);
+  animation: sara-sheen 1.6s ease-in-out infinite;
+}
+
+#hud-self-name.name-sara-effect {
+  background: linear-gradient(110deg, #ff9ecf 20%, #ffffff 42%, #ff9ecf 64%);
+  background-size: 230% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: sara-sheen 1.6s linear infinite;
+  filter: drop-shadow(0 0 6px rgba(255, 158, 207, 0.6));
+}
+
+@keyframes sara-sheen {
+  0% { background-position: 120% 0; }
+  100% { background-position: -120% 0; }
+}
+
+.custom-toast.sara-toast {
+  border-color: #ff9ecf;
+  box-shadow: 0 0 18px rgba(255, 158, 207, 0.35);
+}
+
 
