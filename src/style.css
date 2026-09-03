@@ -88,21 +88,12 @@ body.is-starting #app {
   width: 0;
   height: 100%;
   background: #d4af37;
-  animation: startup-progress-fill 1.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-}
-
-@keyframes startup-progress-fill {
-  0% { width: 0; }
-  52% { width: 56%; }
-  100% { width: 100%; }
+  transition: width 0.22s ease;
 }
 
 @media (prefers-reduced-motion: reduce) {
   .startup-progress span {
-    animation: none;
-  }
-
-  .startup-progress span {
+    transition: none;
     width: 100%;
   }
 }
