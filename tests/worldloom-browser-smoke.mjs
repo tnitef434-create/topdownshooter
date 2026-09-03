@@ -21,11 +21,18 @@ const browser = await puppeteer.launch({
 });
 
 const pageErrors = [];
+const shaderErrors = [];
 
 try {
   const page = await browser.newPage();
   await page.setViewport({ width: 1280, height: 800, deviceScaleFactor: 1 });
   page.on('pageerror', (error) => pageErrors.push(`portal: ${error.stack || error.message}`));
+  page.on('console', (message) => {
+    const value = message.text();
+    if (message.type() === 'error' && /WebGLProgram|Shader Error|VALIDATE_STATUS|GL_INVALID/i.test(value)) {
+      shaderErrors.push(value);
+    }
+  });
 
   await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
   await page.waitForSelector('#btn-deploy-main', { timeout: 15_000 });
@@ -83,6 +90,26 @@ try {
     const loader = document.querySelector('#worldloom-frame-loading');
     return loader?.getAttribute('aria-busy') === 'false' && loader?.classList.contains('is-hidden');
   }, { timeout: 30_000 });
+
+  const portalFramePresentation = await page.evaluate(() => {
+    const toolbar = document.querySelector('.worldloom-site-toolbar');
+    const frame = document.querySelector('#worldloom-frame');
+    const screen = document.querySelector('#worldloom-site-screen');
+    const frameBounds = frame?.getBoundingClientRect();
+    return {
+      toolbarDisplay: toolbar ? getComputedStyle(toolbar).display : null,
+      frameTop: frameBounds?.top ?? null,
+      frameBottom: frameBounds?.bottom ?? null,
+      viewportHeight: innerHeight,
+      screenRows: screen ? getComputedStyle(screen).gridTemplateRows : '',
+    };
+  });
+  assert.equal(portalFramePresentation.toolbarDisplay, 'none',
+    'The obsolete TacticStrike/Worldloom portal bar is still visible');
+  assert(Math.abs(portalFramePresentation.frameTop) <= 1,
+    `Worldloom still leaves a top-bar gap at ${portalFramePresentation.frameTop}px`);
+  assert(Math.abs(portalFramePresentation.frameBottom - portalFramePresentation.viewportHeight) <= 1,
+    'Worldloom iframe does not fill the viewport after removing the portal bar');
 
   const frameHandle = await page.$('#worldloom-frame');
   const frame = await frameHandle?.contentFrame();
@@ -174,6 +201,28 @@ try {
   assert.match(settingsPresentation.thumbRule, /(?:#8e8e8e|rgb\(142\s*,\s*142\s*,\s*142\))/i,
     'Settings is missing its custom square WebKit scrollbar thumb');
   assert.equal(Number.parseFloat(settingsPresentation.toggleRadius), 0, 'Settings toggles reverted to pill switches');
+  const maximumViewSettings = await frame.evaluate(async () => {
+    const input = document.querySelector('#view-distance');
+    const output = document.querySelector('#view-distance-value');
+    if (!input || !output) return null;
+    input.value = '20';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    const { SaveStore } = await import('/worldloom/src/save.js');
+    return {
+      minimum: Number(input.min),
+      maximum: Number(input.max),
+      value: Number(input.value),
+      output: output.textContent?.trim() || '',
+      persisted: new SaveStore().loadSettings().viewDistance,
+    };
+  });
+  assert(maximumViewSettings, 'The view-distance control is missing');
+  assert.equal(maximumViewSettings.minimum, 2);
+  assert.equal(maximumViewSettings.maximum, 20, 'The settings UI does not expose the 20-chunk horizon');
+  assert.equal(maximumViewSettings.value, 20);
+  assert.equal(maximumViewSettings.output, '20 chunks');
+  assert.equal(maximumViewSettings.persisted, 20,
+    'The maximum view-distance selection did not survive settings persistence');
   await frame.evaluate(() => document.querySelector('#settings-close')?.click());
   await frame.waitForFunction(() => document.querySelector('#settings-panel')?.classList.contains('hidden'));
   await frame.evaluate(() => {
@@ -181,10 +230,24 @@ try {
     if (seed) seed.value = '64';
     document.querySelector('#new-world-button')?.click();
   });
+  const maximumWorldLoadStarted = Date.now();
   await frame.waitForFunction(() => !document.querySelector('#hud')?.classList.contains('hidden'), {
-    timeout: 60_000,
+    timeout: 180_000,
   });
+  const maximumWorldLoadMilliseconds = Date.now() - maximumWorldLoadStarted;
+  console.log(`maximum-distance preload: ${maximumWorldLoadMilliseconds}ms`);
   await delay(1_500);
+  await frame.waitForFunction(() => (
+    window.__worldloomSummitCrosses?.getStats?.().crosses > 0
+  ), { timeout: 45_000 });
+  await frame.waitForFunction(() => {
+    const stats = window.__worldloomEnvironment?.meadowPlants?.getStats?.();
+    return stats?.ready && stats.sunflowers > 0 && stats.shortGrass > 0;
+  }, { timeout: 45_000 });
+  await frame.waitForFunction(() => {
+    const stats = window.__worldloomForestFloor?.getStats?.();
+    return stats?.ready;
+  }, { timeout: 45_000 });
 
   const hudPresentation = await frame.evaluate(() => {
     const inspectPlate = (selector) => {
@@ -214,9 +277,79 @@ try {
     assert.equal(plate.backdropFilter, 'none', `${plateName} reintroduced glass blur`);
   }
 
+  const nonLethalDamage = await frame.evaluate(() => {
+    const player = window.__worldloomPlayer;
+    player.health = 1;
+    player.onLand?.(15.2);
+    const vignette = document.querySelector('#damage-vignette');
+    const style = getComputedStyle(vignette);
+    return {
+      health: player.health,
+      flash: vignette?.classList.contains('flash') || false,
+      borderWidth: Number.parseFloat(style.borderTopWidth),
+      borderColor: style.borderTopColor,
+      deathHidden: document.querySelector('#death-screen')?.classList.contains('hidden'),
+    };
+  });
+  assert(nonLethalDamage.health < 1 && nonLethalDamage.health > 0,
+    'real fall damage did not pass through the central player damage gateway');
+  assert.equal(nonLethalDamage.flash, true, 'damage did not trigger the edge-feedback animation');
+  assert(nonLethalDamage.borderWidth >= 5, 'damage feedback is not a visible perimeter border');
+  assert.match(nonLethalDamage.borderColor, /rgba?\(255\D+47\D+34/i,
+    `damage border is not authored red: ${nonLethalDamage.borderColor}`);
+  assert.equal(nonLethalDamage.deathHidden, true, 'nonlethal damage incorrectly opened the death screen');
+
+  await frame.evaluate(() => {
+    const player = window.__worldloomPlayer;
+    player.health = 0.04;
+    player.onLand?.(100);
+  });
+  await frame.waitForFunction(() => !document.querySelector('#death-screen')?.classList.contains('hidden'));
+  await frame.waitForFunction(() => document.querySelector('#respawn-button')?.disabled === false, {
+    timeout: 3_000,
+  });
+  const deathPresentation = await frame.evaluate(() => {
+    const screen = document.querySelector('#death-screen');
+    const player = window.__worldloomPlayer;
+    return {
+      title: document.querySelector('#death-title')?.textContent?.trim(),
+      reason: document.querySelector('#death-reason')?.textContent?.trim(),
+      role: screen?.getAttribute('role'),
+      modal: screen?.getAttribute('aria-modal'),
+      healthAlreadySafe: player?.health,
+      finitePosition: player?.position?.toArray?.().every(Number.isFinite),
+      zeroVelocity: player?.velocity?.lengthSq?.() === 0,
+      hudSoftHidden: document.querySelector('#hud')?.classList.contains('soft-hidden'),
+    };
+  });
+  assert.equal(deathPresentation.title, 'You Died');
+  assert.match(deathPresentation.reason, /ground too hard/i);
+  assert.equal(deathPresentation.role, 'dialog');
+  assert.equal(deathPresentation.modal, 'true');
+  assert.equal(deathPresentation.healthAlreadySafe, 1,
+    'lethal state was not made save-safe underneath the death screen');
+  assert.equal(deathPresentation.finitePosition, true);
+  assert.equal(deathPresentation.zeroVelocity, true);
+  assert.equal(deathPresentation.hudSoftHidden, true);
+  await frame.evaluate(() => document.querySelector('#respawn-button')?.click());
+  await frame.waitForFunction(() => document.querySelector('#death-screen')?.classList.contains('hidden'), {
+    timeout: 3_000,
+  });
+  const respawnedState = await frame.evaluate(() => ({
+    health: window.__worldloomPlayer?.health,
+    position: window.__worldloomPlayer?.position?.toArray?.(),
+    hudSoftHidden: document.querySelector('#hud')?.classList.contains('soft-hidden'),
+    saveHealth: JSON.parse(localStorage.getItem('worldloom.save.v1') || 'null')?.player?.health,
+  }));
+  assert.equal(respawnedState.health, 1);
+  assert(respawnedState.position.every(Number.isFinite));
+  assert.equal(respawnedState.hudSoftHidden, false);
+  assert.equal(respawnedState.saveHealth, 1, 'post-death save retained lethal health');
+
   const gameState = await frame.evaluate(() => {
     const graphics = window.__worldloomGraphics;
     const environment = window.__worldloomEnvironment;
+    const world = window.__worldloomWorld;
     const terrain = graphics?.scene?.children
       ?.filter((child) => child.name?.startsWith('Terrain '))
       .map((mesh) => ({
@@ -251,7 +384,8 @@ try {
     const localX = (camera?.position?.x || 0) - centerChunkX * 16;
     const localZ = (camera?.position?.z || 0) - centerChunkZ * 16;
     const nearestChunkEdge = Math.min(localX, 16 - localX, localZ, 16 - localZ);
-    const safeTerrainFar = Math.max(8, completeTerrainRadius * 16 + nearestChunkEdge - 2);
+    const detailedSafeTerrainFar = Math.max(8, completeTerrainRadius * 16 + nearestChunkEdge - 2);
+    const safeTerrainFar = world?.getSafeTerrainDistance?.(camera?.position) ?? detailedSafeTerrainFar;
     return {
       webgl2: Boolean(document.querySelector('#game')?.getContext('webgl2')),
       timeIcon: Boolean(document.querySelector('.time-chip__sun')),
@@ -259,8 +393,182 @@ try {
       vitality: document.querySelector('[aria-label="Vitality"]')?.getAttribute('aria-valuenow'),
       nourishment: document.querySelector('[aria-label="Nourishment"]')?.getAttribute('aria-valuenow'),
       objective: document.querySelector('#objective-text')?.textContent || '',
+      portalReturnLabel: document.querySelector('#title-button')?.textContent?.trim() || '',
       renderer: Boolean(graphics),
       environment: Boolean(window.__worldloomEnvironment),
+      weather: {
+        phase: environment?.weatherPhase,
+        timer: environment?.weatherTimer,
+        rain: environment?.rainIntensity,
+      },
+      moon: {
+        source: environment?.moon?.material?.map?.image?.currentSrc
+          || environment?.moon?.material?.map?.image?.src
+          || '',
+        depthTest: environment?.moon?.material?.depthTest,
+        depthWrite: environment?.moon?.material?.depthWrite,
+        depthFunc: environment?.moon?.material?.depthFunc,
+        alphaTest: environment?.moon?.material?.alphaTest,
+        normalBlending: environment?.moon?.material?.blending === 1,
+        farDepth: environment?.moon?.material?.userData?.worldloomCelestialFarDepth === true,
+      },
+      summitCrosses: (() => {
+        const field = window.__worldloomSummitCrosses;
+        const stats = field?.getStats?.() || null;
+        return {
+          ...stats,
+          groupAttached: field?.group?.parent === graphics?.scene,
+          twoInstancedMeshes: Boolean(
+            field?.meshes?.wood?.isInstancedMesh
+            && field?.meshes?.iron?.isInstancedMesh
+            && field.group?.children?.length === 2
+          ),
+          pixelAtlas: Boolean(
+            field?.meshes?.wood?.material?.map?.isTexture
+            && field.meshes.wood.material.map.magFilter === 1003
+            && field.meshes.wood.material.map.minFilter === 1003
+            && field.meshes.wood.material.map.generateMipmaps === false
+          ),
+        };
+      })(),
+      meadowPlants: (() => {
+        const field = environment?.meadowPlants;
+        const stats = field?.getStats?.() || null;
+        const meshes = [field?.sunflower, field?.shortGrass].filter(Boolean);
+        return {
+          ...stats,
+          groupAttached: field?.group?.parent === graphics?.scene,
+          twoInstancedMeshes: meshes.length === 2
+            && meshes.every((mesh) => mesh.isInstancedMesh),
+          opaqueVoxelMaterials: meshes.length === 2 && meshes.every((mesh) => {
+            const material = mesh.material;
+            return material?.transparent === false
+              && material?.alphaTest === 0
+              && material?.depthWrite === true
+              && material?.vertexColors === true
+              && material?.flatShading === true
+              && material?.map === null
+              && material?.normalMap === null
+              && Boolean(mesh.geometry?.getAttribute?.('color'))
+              && mesh.geometry?.getAttribute?.('uv') === undefined;
+          }),
+        };
+      })(),
+      forestFloor: (() => {
+        const field = window.__worldloomForestFloor;
+        const stats = field?.getStats?.() || null;
+        const meshes = field?.pack?.meshes ? [...field.pack.meshes.values()] : [];
+        const sharedMaterial = field?.pack?.material;
+        return {
+          ...stats,
+          groupAttached: field?.group?.parent === graphics?.scene,
+          worldAttached: field?.world === world,
+          collisionEnabled: world?.forestFloorCollisionEnabled === true,
+          sevenInstancedMeshes: meshes.length === 7
+            && meshes.every((mesh) => mesh?.isInstancedMesh),
+          sharedOpaqueVoxelMaterial: meshes.length === 7 && meshes.every((mesh) => (
+            mesh.material === sharedMaterial
+            && mesh.material?.transparent === false
+            && mesh.material?.alphaTest === 0
+            && mesh.material?.depthWrite === true
+            && mesh.material?.vertexColors === true
+            && mesh.material?.flatShading === true
+            && mesh.material?.map === null
+            && Boolean(mesh.geometry?.getAttribute?.('color'))
+            && mesh.geometry?.getAttribute?.('uv') === undefined
+          )),
+          tinyOpaqueInsects: Boolean(
+            field?.pack?.insects?.isPoints
+            && field.pack.insects.material?.size <= 0.04
+            && field.pack.insects.material?.transparent === false
+            && field.pack.insects.material?.depthWrite === true
+          ),
+        };
+      })(),
+      fallingLeaves: (() => {
+        const field = environment?.fallingLeaves;
+        if (!field?.state || !field?.positions || !field?.velocities) return { available: false };
+        const snapshot = {
+          state: field.state.slice(),
+          positions: field.positions.slice(),
+          velocities: field.velocities.slice(),
+          flightAge: field.flightAge.slice(),
+          settleTime: field.settleTime.slice(),
+          phase: field.phase.slice(),
+          cursor: field.cursor,
+          spawnTimer: field.spawnTimer,
+          enabled: field.enabled,
+          visible: field.points.visible,
+        };
+        try {
+          field.enabled = true;
+          field.spawnTimer = 999;
+          field.state.fill(1);
+          const saturatedPositions = field.positions.slice();
+          const saturated = field._spawn(camera.position.x, camera.position.y + 8, camera.position.z) === false
+            && field.positions.every((value, index) => value === saturatedPositions[index]);
+
+          const reusable = 37;
+          field.state[reusable] = 0;
+          field.positions[reusable * 3 + 1] = -9999;
+          field.cursor = reusable;
+          const reused = field._spawn(camera.position.x, camera.position.y + 8, camera.position.z);
+          const reusedOnly = reused === true
+            && field.state[reusable] === 1
+            && field.state.every((value, index) => index === reusable || value === 1);
+
+          field.state.fill(0);
+          field.positions.fill(-9999);
+          field.velocities.fill(0);
+          field.flightAge.fill(0);
+          field.settleTime.fill(0);
+          field.phase.fill(0);
+          field.state[0] = 1;
+          field.positions[0] = camera.position.x;
+          field.positions[1] = camera.position.y + 2;
+          field.positions[2] = camera.position.z;
+          field.velocities[1] = -0.5;
+          for (let step = 0; step < 1_200 && field.state[0] === 1; step++) {
+            field.update(0.05, camera.position, 0, 0, true);
+          }
+          const landed = field.state[0] === 2 && Number.isFinite(field.positions[1]);
+          const landedY = field.positions[1];
+          field.update(3, camera.position, 0, 0, true);
+          const recycled = field.state[0] === 0 && field.positions[1] === -9999;
+
+          field.state[1] = 1;
+          field.positions[3] = camera.position.x;
+          field.positions[4] = camera.position.y + 3;
+          field.positions[5] = camera.position.z;
+          const pausedPosition = [field.positions[3], field.positions[4], field.positions[5]];
+          field.points.visible = true;
+          field.update(0.25, camera.position, 0, 0, false);
+          const pausedHidden = field.points.visible === false
+            && field.state[1] === 1
+            && pausedPosition.every((value, index) => value === field.positions[3 + index]);
+          return {
+            available: true,
+            saturated,
+            reusedOnly,
+            landed,
+            landedY,
+            recycled,
+            pausedHidden,
+          };
+        } finally {
+          field.state.set(snapshot.state);
+          field.positions.set(snapshot.positions);
+          field.velocities.set(snapshot.velocities);
+          field.flightAge.set(snapshot.flightAge);
+          field.settleTime.set(snapshot.settleTime);
+          field.phase.set(snapshot.phase);
+          field.cursor = snapshot.cursor;
+          field.spawnTimer = snapshot.spawnTimer;
+          field.enabled = snapshot.enabled;
+          field.points.visible = snapshot.visible;
+          field.points.geometry.attributes.position.needsUpdate = true;
+        }
+      })(),
       avatar: Boolean(window.__worldloomPlayerAvatar?.root?.visible),
       avatarParts: (() => {
         let count = 0;
@@ -293,16 +601,83 @@ try {
       fogNear: graphics?.scene?.fog?.near ?? null,
       fogFar: graphics?.scene?.fog?.far ?? null,
       fogClarity: environment?.fogClarity ?? null,
+      streaming: world?.getStats?.() || null,
     };
   });
   assert.equal(gameState.webgl2, true, 'WebGL 2 did not initialize');
   assert.equal(gameState.timeIcon, true, 'HUD updates removed the sun icon');
   assert.match(gameState.timeText, /Day 1/);
   assert.equal(gameState.vitality, '100');
-  assert.equal(gameState.nourishment, '90');
+  assert(Number(gameState.nourishment) >= 75 && Number(gameState.nourishment) <= 90,
+    `Nourishment left its expected live-test range: ${gameState.nourishment}`);
   assert.notEqual(gameState.objective.trim(), '');
+  assert.match(gameState.portalReturnLabel, /return to TacticStrike/i,
+    'The pause menu has no replacement route back after removing the portal bar');
   assert.equal(gameState.renderer, true);
   assert.equal(gameState.environment, true);
+  assert.equal(gameState.weather.phase, 'clear', 'a new map inherited or immediately scripted storm weather');
+  assert.equal(gameState.weather.rain, 0);
+  assert(gameState.weather.timer >= 65 && gameState.weather.timer <= 430,
+    `new-world weather timer is outside its broad random window: ${gameState.weather.timer}`);
+  assert.match(gameState.moon.source, /realistic-moon\.png(?:$|[?#])/i);
+  assert.equal(gameState.moon.depthTest, true);
+  assert.equal(gameState.moon.depthWrite, false);
+  assert.equal(gameState.moon.depthFunc, 3, 'moon must use LessEqual terrain depth testing');
+  assert.equal(gameState.moon.normalBlending, true, 'moon texture should not be an additive white glow');
+  assert.equal(gameState.moon.farDepth, true, 'moon is not pinned behind mountain depth');
+  assert(gameState.moon.alphaTest > 0, 'transparent moon texture lacks an alpha cutoff');
+  assert.equal(gameState.summitCrosses.ready, true,
+    `The Blender summit cross did not load: ${gameState.summitCrosses.error}`);
+  assert.equal(gameState.summitCrosses.failed, false);
+  assert.match(gameState.summitCrosses.assetUrl, /summit-cross\.glb(?:$|[?#])/i);
+  assert.equal(gameState.summitCrosses.groupAttached, true);
+  assert.equal(gameState.summitCrosses.twoInstancedMeshes, true,
+    'The summit cross exceeded or lost its two-draw instanced render structure');
+  assert.equal(gameState.summitCrosses.gptTexture, true);
+  assert.equal(gameState.summitCrosses.pixelAtlas, true,
+    'The live cross lost its hard nearest-filtered GPT-derived atlas');
+  assert(gameState.summitCrosses.crosses > 0 && gameState.summitCrosses.draws === 2,
+    `Seed 64 did not render its nearby two-draw summit cross: ${JSON.stringify(gameState.summitCrosses)}`);
+  assert.equal(gameState.meadowPlants.ready, true,
+    `The Blender meadow plant pack did not load: ${gameState.meadowPlants.error}`);
+  assert.equal(gameState.meadowPlants.failed, false);
+  assert.match(gameState.meadowPlants.assetUrl, /meadow-plants\.glb(?:$|[?#])/i);
+  assert.equal(gameState.meadowPlants.groupAttached, true);
+  assert.equal(gameState.meadowPlants.twoInstancedMeshes, true,
+    'The sunflower and short grass lost their two-draw instanced render structure');
+  assert.equal(gameState.meadowPlants.opaqueVoxelMaterials, true,
+    'The live Blender plants lost their opaque flat-shaded vertex-color voxel contract');
+  assert(gameState.meadowPlants.sunflowers > 0
+    && gameState.meadowPlants.shortGrass > 0
+    && gameState.meadowPlants.draws <= 2,
+  `Seed 64 did not render both opaque meadow plants: ${JSON.stringify(gameState.meadowPlants)}`);
+  assert.equal(gameState.forestFloor.ready, true,
+    `The Blender forest-floor pack did not load: ${gameState.forestFloor.error}`);
+  assert.equal(gameState.forestFloor.failed, false);
+  assert.match(gameState.forestFloor.assetUrl, /forest-floor\.glb(?:$|[?#])/i);
+  assert.equal(gameState.forestFloor.groupAttached, true);
+  assert.equal(gameState.forestFloor.worldAttached, true);
+  assert.equal(gameState.forestFloor.sevenInstancedMeshes, true,
+    'The living forest floor lost its seven-mesh instanced render structure');
+  assert.equal(gameState.forestFloor.sharedOpaqueVoxelMaterial, true,
+    'Forest-floor props lost their shared opaque hard-pixel vertex-colour material');
+  assert.equal(gameState.forestFloor.tinyOpaqueInsects, true,
+    'Forest-floor insects are no longer tiny opaque batched dots');
+  assert.equal(gameState.forestFloor.collisionEnabled, true,
+    'Loaded forest-floor props did not enable their matching physical collision layer');
+  assert(gameState.forestFloor.props >= 0 && gameState.forestFloor.draws <= 8,
+    `The living forest floor exceeded its bounded draw budget: ${JSON.stringify(gameState.forestFloor)}`);
+  assert.equal(gameState.fallingLeaves.available, true);
+  assert.equal(gameState.fallingLeaves.saturated, true,
+    'a full falling-leaf pool overwrote an airborne particle');
+  assert.equal(gameState.fallingLeaves.reusedOnly, true,
+    'the falling-leaf pool did not reserve only its available slot');
+  assert.equal(gameState.fallingLeaves.landed, true,
+    `the live falling-leaf system never reached its settled state: ${JSON.stringify(gameState.fallingLeaves)}`);
+  assert.equal(gameState.fallingLeaves.recycled, true,
+    'a settled leaf did not recycle after its ground linger');
+  assert.equal(gameState.fallingLeaves.pausedHidden, true,
+    'paused falling leaves remained visibly frozen in mid-air');
   assert.equal(gameState.avatar, true, 'The Wayfarer player avatar is not active');
   assert(gameState.avatarParts >= 25, 'The Wayfarer player avatar lost authored body parts');
   assert.equal(gameState.avatarSelfDrawables, 0,
@@ -312,8 +687,14 @@ try {
     'The layer fix removed the local avatar from sunlight shadows');
   assert(gameState.terrain.some((mesh) => mesh.visible && mesh.vertices > 0),
     `No visible terrain geometry reached the first playable frame: ${JSON.stringify(gameState.terrain)}`);
-  assert(gameState.completeTerrainRadius >= 3,
-    `The playable frame opened before its safe seven-by-seven terrain core was ready: ${JSON.stringify(gameState.terrain)}`);
+  assert(gameState.completeTerrainRadius >= gameState.streaming.streamDistance,
+    `The playable frame opened before its full stream footprint was ready: ${JSON.stringify(gameState.streaming)}`);
+  assert.equal(gameState.streaming.pendingAdmission, 0,
+    'The loading screen left chunks waiting for post-spawn admission');
+  assert.equal(gameState.streaming.queued, 0,
+    'The loading screen left terrain generation queued for gameplay');
+  assert(maximumWorldLoadMilliseconds < 180_000,
+    `The complete 441-chunk maximum-distance preload exceeded its safety cap (${maximumWorldLoadMilliseconds}ms)`);
   assert(Number.isFinite(gameState.fogFar) && gameState.fogFar <= gameState.safeTerrainFar + 1.5,
     `Fog exposed unmeshed horizon space (fog ${gameState.fogFar}, safe ${gameState.safeTerrainFar})`);
   assert(Number.isFinite(gameState.fogNear) && gameState.fogNear >= 28,
@@ -322,6 +703,102 @@ try {
     `Clear-weather fog has no valid transition band (${gameState.fogNear} -> ${gameState.fogFar})`);
   assert(gameState.fogClarity > 0.8,
     `The open daylight spawn did not select the clear-air fog profile (${gameState.fogClarity})`);
+
+  // Leave the browser idle while the incremental horizon builder runs. The
+  // explicit readiness contract avoids a machine-speed timeout masquerading
+  // as a graphics regression and proves the published mesh is the requested
+  // maximum-distance revision rather than an intermediate terrain shell.
+  try {
+    await frame.waitForFunction(() => (
+      window.__worldloomWorld?.distantTerrain?.ready === true
+    ), { timeout: 45_000, polling: 'raf' });
+  } catch (error) {
+    const diagnostics = await frame.evaluate(() => ({
+      world: window.__worldloomWorld?.getStats?.(),
+      horizon: window.__worldloomWorld?.distantTerrain?.getStats?.(),
+      state: document.querySelector('#hud')?.classList.contains('hidden') ? 'hidden' : 'playing',
+      visibility: document.visibilityState,
+    }));
+    throw new Error(`Distant horizon did not become ready: ${JSON.stringify(diagnostics)}`, {
+      cause: error,
+    });
+  }
+  const maxDistanceState = await frame.evaluate(() => {
+    const world = window.__worldloomWorld;
+    const player = window.__worldloomPlayer;
+    const graphics = window.__worldloomGraphics;
+    const stats = world?.getStats?.();
+    const horizon = world?.distantTerrain;
+    const mesh = horizon?.mesh;
+    const position = mesh?.geometry?.getAttribute?.('position');
+    const normal = mesh?.geometry?.getAttribute?.('normal');
+    const color = mesh?.geometry?.getAttribute?.('color');
+    const finiteAttribute = (attribute) => {
+      if (!attribute?.array?.length) return false;
+      for (const value of attribute.array) {
+        if (!Number.isFinite(value)) return false;
+      }
+      return true;
+    };
+    const safeTerrainFar = world && player
+      ? world.getSafeTerrainDistance(player.position)
+      : Number.NaN;
+    return {
+      stats,
+      cameraFar: graphics?.camera?.far ?? null,
+      fogFar: graphics?.scene?.fog?.far ?? null,
+      safeTerrainFar,
+      horizon: {
+        ready: horizon?.ready === true,
+        meshes: horizon?.group?.children?.filter?.((child) => child.isMesh)?.length ?? 0,
+        tagged: mesh?.userData?.distantTerrain === true,
+        vertices: position?.count || 0,
+        triangles: position?.count ? position.count / 3 : 0,
+        finiteGeometry: [position, normal, color].every(finiteAttribute),
+      },
+    };
+  });
+  assert.equal(maxDistanceState.stats?.visualDistance, 20);
+  assert.equal(maxDistanceState.stats?.detailDistance, 8);
+  assert.equal(maxDistanceState.stats?.streamDistance, 10);
+  assert(maxDistanceState.stats.loaded <= 441,
+    `maximum view distance loaded too many full voxel chunks: ${JSON.stringify(maxDistanceState.stats)}`);
+  assert.equal(maxDistanceState.horizon.ready, true);
+  assert.equal(maxDistanceState.horizon.meshes, 1, 'The distant horizon must remain one merged draw mesh');
+  assert.equal(maxDistanceState.horizon.tagged, true, 'The published horizon mesh lost its runtime marker');
+  assert.equal(maxDistanceState.horizon.finiteGeometry, true, 'The distant horizon contains invalid geometry data');
+  assert(maxDistanceState.horizon.vertices > 0 && maxDistanceState.horizon.triangles > 0,
+    `The distant horizon published no visible triangles: ${JSON.stringify(maxDistanceState.horizon)}`);
+  assert(Number.isFinite(maxDistanceState.cameraFar) && maxDistanceState.cameraFar >= 400,
+    `The camera clips the 20-chunk horizon at ${maxDistanceState.cameraFar}m`);
+  assert(maxDistanceState.cameraFar > maxDistanceState.fogFar,
+    `Fog extends beyond the camera plane (${maxDistanceState.fogFar} >= ${maxDistanceState.cameraFar})`);
+  assert(Number.isFinite(maxDistanceState.safeTerrainFar));
+  assert(maxDistanceState.fogFar <= maxDistanceState.safeTerrainFar + 1.5,
+    `Fog exposed terrain beyond the live safe horizon (${maxDistanceState.fogFar} > ${maxDistanceState.safeTerrainFar})`);
+
+  const restoredViewSettings = await frame.evaluate(async () => {
+    const quality = document.querySelector('#graphics-quality');
+    if (quality) {
+      quality.value = 'balanced';
+      quality.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    const { SaveStore } = await import('/worldloom/src/save.js');
+    return {
+      selectedQuality: quality?.value || '',
+      viewDistance: Number(document.querySelector('#view-distance')?.value),
+      output: document.querySelector('#view-distance-value')?.textContent?.trim() || '',
+      persisted: new SaveStore().loadSettings(),
+      world: window.__worldloomWorld?.getStats?.(),
+    };
+  });
+  assert.equal(restoredViewSettings.selectedQuality, 'balanced');
+  assert.equal(restoredViewSettings.viewDistance, 4);
+  assert.equal(restoredViewSettings.output, '4 chunks');
+  assert.equal(restoredViewSettings.persisted.graphicsQuality, 'balanced');
+  assert.equal(restoredViewSettings.persisted.viewDistance, 4);
+  assert.equal(restoredViewSettings.world.visualDistance, 4,
+    'Later browser checks did not return to the balanced streaming footprint');
 
   const caveLightingState = await frame.evaluate(async () => {
     const THREE = await import('/worldloom/vendor/three.module.min.js');
@@ -366,6 +843,7 @@ try {
       caveAmount: 0,
       skyExposure: 1,
       sunVisibility: 1,
+      sunElevation: 0.3,
       sunWorldPosition: centeredSun,
     });
     graphics.render(1 / 60);
@@ -373,6 +851,18 @@ try {
     const passOrder = graphics.composer.passes.map((pass) => pass.name || pass.constructor.name);
     const depthIdentity = graphics.volumetricSunPass?.depthTexture === graphics.gtaoPass?.depthTexture;
     graphics.applyProfile(GRAPHICS_PRESETS.balanced);
+    graphics.setEnvironment({
+      dayAmount: 1,
+      rainAmount: 0,
+      caveAmount: 0,
+      skyExposure: 1,
+      sunVisibility: 1,
+      sunElevation: 0.3,
+      sunWorldPosition: centeredSun,
+    });
+    graphics.render(1 / 60);
+    const balancedGodRays = graphics.getDiagnostics();
+    const balancedPassOrder = graphics.composer.passes.map((pass) => pass.name || pass.constructor.name);
     return {
       nearMouth,
       deepTunnel,
@@ -389,7 +879,9 @@ try {
       pcfSoftShadowType: THREE.PCFSoftShadowMap,
       pcfShadowType: THREE.PCFShadowMap,
       highGodRays,
+      balancedGodRays,
       passOrder,
+      balancedPassOrder,
       depthIdentity,
     };
   });
@@ -421,11 +913,31 @@ try {
     'Volumetric sunlight lost its reduced-resolution performance guard');
   assert.equal(caveLightingState.depthIdentity, true,
     'Volumetric sunlight duplicated or lost GTAO depth instead of reusing it');
+  assert.equal(caveLightingState.highGodRays.volumetricSunState.tint, '#ffd28a',
+    'High sunlight lost its authored golden optical tint');
+  assert(caveLightingState.highGodRays.colorGrade.saturation > 1.05,
+    'High mode no longer applies its sunlight-aware color separation');
   const gtaoIndex = caveLightingState.passOrder.indexOf('GTAOPass');
   const shaftsIndex = caveLightingState.passOrder.indexOf('WorldloomVolumetricSunPass');
   const bloomIndex = caveLightingState.passOrder.indexOf('UnrealBloomPass');
   assert(gtaoIndex >= 0 && shaftsIndex > gtaoIndex && bloomIndex > shaftsIndex,
     `Volumetric pass order is invalid: ${caveLightingState.passOrder.join(' -> ')}`);
+  assert.equal(caveLightingState.balancedGodRays.volumetricSun, true,
+    'Balanced/medium mode did not enable its lightweight sunlight shafts');
+  assert.equal(caveLightingState.balancedGodRays.volumetricSunState.active, true,
+    'Balanced clear-sky shafts are not active');
+  assert.equal(caveLightingState.balancedGodRays.volumetricSunState.depthBound, false,
+    'Balanced unexpectedly paid for the GTAO depth pipeline');
+  assert.equal(caveLightingState.balancedGodRays.volumetricSunState.maskSource, 'beauty-fallback');
+  assert(caveLightingState.balancedGodRays.volumetricSunState.intensity
+    < caveLightingState.highGodRays.volumetricSunState.intensity,
+  'Balanced shafts no longer remain below the High cinematic tier');
+  assert.equal(caveLightingState.balancedPassOrder.includes('GTAOPass'), false,
+    'Balanced added the expensive GTAO pass');
+  assert.equal(caveLightingState.balancedPassOrder.includes('UnrealBloomPass'), false,
+    'Balanced added the expensive multi-blur bloom pass');
+  assert.equal(caveLightingState.balancedPassOrder.filter((name) => name === 'WorldloomVolumetricSunPass').length, 1,
+    `Balanced shaft pass was lost or duplicated: ${caveLightingState.balancedPassOrder.join(' -> ')}`);
 
   await frame.waitForFunction(() => {
     const stats = window.__worldloomPonds?.getStats?.();
@@ -668,6 +1180,41 @@ try {
   assert(hangingLeafState.low.draws <= 1, 'Low graphics used more than one hanging-leaf draw');
 
   await frame.waitForFunction(() => {
+    const stats = window.__worldloomGroundLeaves?.getStats?.();
+    return stats?.ready && !stats.failed && stats.patches > 0;
+  }, { timeout: 10_000 });
+  const groundLeafState = await frame.evaluate(() => {
+    const environment = window.__worldloomEnvironment;
+    const leaves = window.__worldloomGroundLeaves;
+    const focus = environment.atmosphere.position.clone();
+    environment.applyGraphicsSettings({
+      graphicsQuality: 'balanced',
+      weatherEffects: true,
+      reducedMotion: false,
+    });
+    leaves._syncTimer = 0;
+    leaves.update(0, focus);
+    return {
+      ...leaves.getStats(),
+      oneMesh: leaves.group.children.filter((child) => child === leaves.mesh).length === 1,
+      hardAlpha: leaves.mesh?.material?.alphaTest === 0.5
+        && leaves.mesh?.material?.transparent === false,
+      pixelAtlas: leaves.mesh?.material?.map?.magFilter === 1003
+        && leaves.mesh?.material?.map?.minFilter === 1003
+        && leaves.mesh?.material?.map?.generateMipmaps === false,
+    };
+  });
+  assert.equal(groundLeafState.ready, true, 'Blender ground leaves did not finish loading');
+  assert.equal(groundLeafState.failed, false, `Blender ground leaves failed: ${groundLeafState.error}`);
+  assert.match(groundLeafState.assetUrl, /ground-leaf-litter\.glb(?:$|[?#])/i);
+  assert.equal(groundLeafState.oneMesh, true, 'ground litter exceeded its one-mesh design');
+  assert.equal(groundLeafState.hardAlpha, true, 'ground leaves regained a transparent edge halo');
+  assert.equal(groundLeafState.pixelAtlas, true, 'ground leaves lost nearest-only GPT pixel filtering');
+  assert(groundLeafState.sourceTrees > 0 && groundLeafState.patches > 0,
+    `seed 64 produced no litter under falling-leaf trees: ${JSON.stringify(groundLeafState)}`);
+  assert.equal(groundLeafState.draws, 1);
+
+  await frame.waitForFunction(() => {
     const stats = window.__worldloomBirds?.getStats?.();
     return stats?.ready && !stats.failed && stats.templateRoots?.length === 2;
   }, { timeout: 10_000 });
@@ -793,9 +1340,11 @@ try {
   assert.equal(birdState.initial.count, 2, 'The deterministic bird fixture could not render both breeds');
   assert.equal(birdState.initial.breeds.ash_sparrow, 1);
   assert.equal(birdState.initial.breeds.pond_azurefin, 1);
+  assert.equal(birdState.initial.residentPondAnchors, 1,
+    'Seed 64 no longer assigns birds to exactly half of its two nearby ponds');
   assert.equal(birdState.ashStart?.habitat, 'tree', 'The Ash Sparrow did not begin on a real tree perch');
   assert.equal(birdState.azureStart?.habitat, 'pond', 'The Pond Azurefin did not fly toward a real pond bank');
-  assert.equal(birdState.azureStart?.state, 'takeoff', 'The pond-spawned bird did not enter authored takeoff flight');
+  assert.equal(birdState.azureStart?.state, 'cruise', 'The airborne debug bird did not enter authored cruise flight');
   assert.equal(birdState.partSetComplete, true, 'A live bird is missing an articulated body part');
   assert.equal(birdState.pixelAtlas, true, 'Live birds lost their hard nearest-filtered GPT-derived atlas');
   assert.equal(birdState.clipNames.length, 12, 'The live bird pack did not expose all twelve Blender clips');
@@ -832,6 +1381,12 @@ try {
       sunOpacity: environment.sun.material.opacity,
       sunVisibility: environment.atmosphere.material.uniforms.sunVisibility.value,
       sunlight: environment.sunLight.intensity,
+      sunColor: environment.sunLight.color.toArray(),
+      hemisphereColor: environment.hemisphere.color.toArray(),
+      hemisphereIntensity: environment.hemisphere.intensity,
+      bounceIntensity: environment.bounceLight.intensity,
+      environmentIntensity: environment.scene.environmentIntensity,
+      solarElevation: environment.solarElevation,
       sky: environment.scene.background.toArray(),
       exposure: environment.renderer?.toneMappingExposure,
     };
@@ -841,6 +1396,14 @@ try {
   assert.equal(clearState.sunOpacity, 1, 'The clear-weather sun disc is not fully visible');
   assert.equal(clearState.sunVisibility, 1, 'The clear-weather atmosphere still masks the sun');
   assert(clearState.sunlight > 2.5, `Clear daytime direct light is too dim: ${clearState.sunlight}`);
+  assert(clearState.sunColor[0] > clearState.sunColor[1]
+    && clearState.sunColor[1] > clearState.sunColor[2],
+  `Clear sun is grey instead of warm-neutral: ${JSON.stringify(clearState.sunColor)}`);
+  assert(clearState.hemisphereColor[2] > clearState.hemisphereColor[0],
+    `Sky fill lost its cooler separation: ${JSON.stringify(clearState.hemisphereColor)}`);
+  assert(clearState.sunlight > (
+    clearState.hemisphereIntensity + clearState.bounceIntensity + clearState.environmentIntensity
+  ) * 2.7, `Directional sun no longer dominates the fill: ${JSON.stringify(clearState)}`);
   assert(clearState.sky[2] > clearState.sky[0] && clearState.sky[2] > 0.65,
     `Clear daytime sky is not strongly blue: ${JSON.stringify(clearState.sky)}`);
 
@@ -850,7 +1413,8 @@ try {
       const graphics = window.__worldloomGraphics;
       const ponds = window.__worldloomPonds;
       const hangingLeaves = window.__worldloomHangingLeaves;
-      const focus = window.__worldloomEnvironment.atmosphere.position;
+      const environment = window.__worldloomEnvironment;
+      const focus = environment.atmosphere.position;
       const ashStrands = hangingLeaves?.strands?.filter((strand) => !strand.isPine) || [];
       const visibleStrands = ashStrands.length ? ashStrands : hangingLeaves?.strands || [];
       const nearestStrand = visibleStrands.reduce((nearest, strand) => (
@@ -904,23 +1468,39 @@ try {
         setRotation: camera.quaternion.setFromEuler,
         setEnvironment: graphics.setEnvironment,
         profile: graphics.profile,
+        environmentQuality: environment.graphicsQuality,
       };
+      environment.time = 0.31;
+      environment.weatherPhase = 'clear';
+      environment.rainTarget = 0;
+      environment.rainIntensity = 0;
+      environment.overcastAmount = 0;
+      environment.applyGraphicsSettings({
+        graphicsQuality: 'ultra',
+        weatherEffects: true,
+        reducedMotion: false,
+      });
+      environment.update(0, focus, 8);
+      const sunDirection = environment._sunDirection.clone();
+      const horizontalSun = sunDirection.clone().setY(0).normalize();
+      const cinematicCamera = target.clone().addScaledVector(horizontalSun, -7);
+      cinematicCamera.y = world.terrainHeight(cinematicCamera.x, cinematicCamera.z) + 1.7;
       camera.position.set(
-        candidates[0].position.x,
-        candidates[0].position.y,
-        candidates[0].position.z,
+        cinematicCamera.x,
+        cinematicCamera.y,
+        cinematicCamera.z,
       );
-      camera.lookAt(target.x, target.y + (nearestStrand ? -0.2 : 0.2), target.z);
+      camera.lookAt(camera.position.clone().addScaledVector(sunDirection, 100));
       camera.updateMatrixWorld(true);
-      const forward = target.clone().sub(camera.position).normalize();
-      graphics.applyProfile(GRAPHICS_PRESETS.high);
+      graphics.applyProfile(GRAPHICS_PRESETS.ultra);
       graphics.setEnvironment({
         dayAmount: 1,
         rainAmount: 0,
         caveAmount: 0,
         skyExposure: 1,
         sunVisibility: 1,
-        sunWorldPosition: camera.position.clone().addScaledVector(forward, 120),
+        sunElevation: environment.solarElevation,
+        sunWorldPosition: environment.sun.position,
       });
       camera.position.set = function holdPondView() { return this; };
       camera.quaternion.setFromEuler = function holdPondView() { return this; };
@@ -940,6 +1520,11 @@ try {
         camera.quaternion.setFromEuler = original.setRotation;
         window.__worldloomGraphics.setEnvironment = original.setEnvironment;
         window.__worldloomGraphics.applyProfile(original.profile);
+        window.__worldloomEnvironment.applyGraphicsSettings({
+          graphicsQuality: original.environmentQuality,
+          weatherEffects: true,
+          reducedMotion: false,
+        });
         camera.position.fromArray(original.position);
         camera.quaternion.fromArray(original.quaternion);
         delete window.__worldloomSmokeCameraRestore;
@@ -1092,7 +1677,10 @@ try {
   assert(Math.abs(resumedPosition[0] - exactResumeTarget[0]) < 1e-6, 'Continue snapped the saved X coordinate');
   assert(Math.abs(resumedPosition[2] - exactResumeTarget[1]) < 1e-6, 'Continue snapped the saved Z coordinate');
 
-  await page.evaluate(() => document.querySelector('#btn-close-worldloom')?.click());
+  // Pointer-lock release normally opens the pause menu. Directly invoke its
+  // authored exit action here because headless Chrome does not hold pointer
+  // lock, then verify the child-to-parent save-and-close handshake.
+  await reopenedFrame.evaluate(() => document.querySelector('#title-button')?.click());
   await page.waitForFunction(() => !document.body.classList.contains('is-worldloom-open'), { timeout: 3_000 });
 
   const inventoryPage = await browser.newPage();
@@ -1262,6 +1850,7 @@ try {
   assert.equal(failureReturnState.open, false, `WebGL recovery return failed: ${JSON.stringify(failureReturnState)}`);
   await failurePage.close();
 
+  assert.deepEqual(shaderErrors, [], `WebGL shader/program errors:\n${shaderErrors.join('\n\n')}`);
   assert.deepEqual(pageErrors, [], `Unhandled browser errors:\n${pageErrors.join('\n\n')}`);
   console.log(JSON.stringify({
     ok: true,
@@ -1269,14 +1858,20 @@ try {
     caveLightingState,
     pondState,
     hangingLeafState,
+    groundLeafState,
     birdState,
     clearState,
     stormState,
     deployPresentation,
+    portalFramePresentation,
     mainMenuPresentation,
     settingsPresentation,
+    maximumViewSettings,
+    maxDistanceState,
+    restoredViewSettings,
     hudPresentation,
     mobileInventory,
+    maximumWorldLoadMilliseconds,
     closeDuration,
     resilience: 'audio and storage failures recovered',
     inventoryDrag: 'multiple block stacks move between slots and persist as visible loose world items',

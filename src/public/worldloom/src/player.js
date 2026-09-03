@@ -14,6 +14,8 @@ export const PLAYER = Object.freeze({
 });
 
 const EPSILON = 0.0001;
+const FOREST_FLOOR_COLLISION_QUERY_RADIUS = 3.25;
+const FOREST_FLOOR_STEP_HEIGHT = 0.62;
 const MAX_CONTINUOUS_POINTER_STEP = 240;
 const MAX_STORED_YAW = Math.PI * 4096;
 
@@ -87,6 +89,42 @@ function intersectsBlockShape(aabb, x, y, z, blockId) {
   return aabb.maxX > x + EPSILON && aabb.minX < x + 1 - EPSILON
     && aabb.maxY > y + EPSILON && aabb.minY < y + height - EPSILON
     && aabb.maxZ > z + EPSILON && aabb.minZ < z + 1 - EPSILON;
+}
+
+export function intersectsPlayerCollider(aabb, collider) {
+  if (!aabb || !collider) return false;
+  const centerX = Number(collider.x);
+  const centerZ = Number(collider.z);
+  const minY = Number(collider.minY);
+  const maxY = Number(collider.maxY);
+  const halfX = Math.max(0, Number(collider.halfX) || 0);
+  const halfZ = Math.max(0, Number(collider.halfZ) || 0);
+  if (![centerX, centerZ, minY, maxY].every(Number.isFinite)
+    || halfX <= 0 || halfZ <= 0 || maxY <= minY) return false;
+  if (aabb.maxY <= minY + EPSILON || aabb.minY >= maxY - EPSILON) return false;
+
+  const playerCenterX = (aabb.minX + aabb.maxX) * 0.5;
+  const playerCenterZ = (aabb.minZ + aabb.maxZ) * 0.5;
+  const playerHalfX = (aabb.maxX - aabb.minX) * 0.5;
+  const playerHalfZ = (aabb.maxZ - aabb.minZ) * 0.5;
+  const deltaX = centerX - playerCenterX;
+  const deltaZ = centerZ - playerCenterZ;
+  const yaw = Number(collider.yaw) || 0;
+  const cosine = Math.cos(yaw);
+  const sine = Math.sin(yaw);
+  const absCosine = Math.abs(cosine);
+  const absSine = Math.abs(sine);
+
+  // Four-axis separating-axis test between the player's world-aligned box and
+  // the prop's yaw-rotated voxel core. Unlike a projected AABB, this preserves
+  // free space around diagonal logs instead of adding invisible corner walls.
+  if (Math.abs(deltaX) >= playerHalfX + halfX * absCosine + halfZ * absSine - EPSILON) return false;
+  if (Math.abs(deltaZ) >= playerHalfZ + halfX * absSine + halfZ * absCosine - EPSILON) return false;
+  const localDeltaX = deltaX * cosine - deltaZ * sine;
+  const localDeltaZ = deltaX * sine + deltaZ * cosine;
+  if (Math.abs(localDeltaX) >= halfX + playerHalfX * absCosine + playerHalfZ * absSine - EPSILON) return false;
+  if (Math.abs(localDeltaZ) >= halfZ + playerHalfX * absSine + playerHalfZ * absCosine - EPSILON) return false;
+  return true;
 }
 
 export class InputController {
@@ -253,6 +291,9 @@ export class PlayerController {
     this._right = new THREE.Vector3();
     this._lookEuler = new THREE.Euler(0, 0, 0, 'YXZ');
     this._lastSafe = this.position.clone();
+    this._activeExtraColliders = null;
+    this._startedInsideExtraColliders = [];
+    this._stepSupportAvailable = false;
     this._syncCamera(0, false, 75);
   }
 
@@ -285,14 +326,18 @@ export class PlayerController {
   }
 
   get feetAABB() {
+    return this._feetAABBAt(this.position);
+  }
+
+  _feetAABBAt(position) {
     const half = PLAYER.width / 2;
     return {
-      minX: this.position.x - half,
-      maxX: this.position.x + half,
-      minY: this.position.y,
-      maxY: this.position.y + PLAYER.height,
-      minZ: this.position.z - half,
-      maxZ: this.position.z + half,
+      minX: position.x - half,
+      maxX: position.x + half,
+      minY: position.y,
+      maxY: position.y + PLAYER.height,
+      minZ: position.z - half,
+      maxZ: position.z + half,
     };
   }
 
@@ -437,16 +482,31 @@ export class PlayerController {
     const sy = this.velocity.y * dt / steps;
     const sz = this.velocity.z * dt / steps;
     this.landingImpact = 0;
+    this._stepSupportAvailable = this.grounded || this.wasGrounded || this.coyote > 0;
     this.grounded = false;
-    for (let i = 0; i < steps; i++) {
-      this._moveAxis('x', sx);
-      this._moveAxis('z', sz);
-      this._moveAxis('y', sy);
+    this._activeExtraColliders = this._queryExtraColliders(this.position);
+    try {
+      for (let i = 0; i < steps; i++) {
+        this._moveAxis('x', sx);
+        this._moveAxis('z', sz);
+        this._moveAxis('y', sy);
+      }
+    } finally {
+      this._activeExtraColliders = null;
+      this._stepSupportAvailable = false;
     }
   }
 
   _moveAxis(axis, amount) {
     if (amount === 0) return;
+    const previousAxis = this.position[axis];
+    const colliders = this._activeExtraColliders || this._queryExtraColliders(this.position);
+    const beforeAabb = this.feetAABB;
+    const startedInside = this._startedInsideExtraColliders;
+    startedInside.length = 0;
+    for (const collider of colliders) {
+      if (intersectsPlayerCollider(beforeAabb, collider)) startedInside.push(collider);
+    }
     this.position[axis] += amount;
     const half = PLAYER.width / 2;
     const a = this.feetAABB;
@@ -480,13 +540,57 @@ export class PlayerController {
         }
       }
     }
+
+    for (const collider of colliders) {
+      if (startedInside.includes(collider) || !intersectsPlayerCollider(this.feetAABB, collider)) continue;
+      if (axis === 'x' || axis === 'z') {
+        if (this._tryStepOntoExtraCollider(collider, colliders)) continue;
+        this.position[axis] = previousAxis;
+        this.velocity[axis] = 0;
+      } else if (amount > 0) {
+        this.position.y = collider.minY - PLAYER.height - EPSILON;
+        this.velocity.y = 0;
+      } else {
+        this.position.y = collider.maxY + EPSILON;
+        this.grounded = true;
+        this.landingImpact = Math.max(this.landingImpact, -this.velocity.y);
+        this.velocity.y = 0;
+      }
+      break;
+    }
   }
 
-  _collidesAt(position) {
-    const previous = this.position;
-    this.position = position;
-    const a = this.feetAABB;
-    this.position = previous;
+  _tryStepOntoExtraCollider(collider, colliders) {
+    const rise = collider.maxY - this.position.y;
+    if (collider.stepable !== true
+      || (!this._stepSupportAvailable && !this.grounded)
+      || this.velocity.y > 0.5
+      || rise < -EPSILON
+      || rise > FOREST_FLOOR_STEP_HEIGHT + EPSILON) return false;
+    const candidate = this.position.clone();
+    candidate.y = collider.maxY + EPSILON;
+    if (this._collidesAt(candidate, colliders)) return false;
+    this.position.y = candidate.y;
+    this.velocity.y = Math.max(0, this.velocity.y);
+    this.grounded = true;
+    this._stepSupportAvailable = true;
+    return true;
+  }
+
+  _queryExtraColliders(position) {
+    const query = this.world?.getForestFloorCollidersNear;
+    if (typeof query !== 'function' || !position) return [];
+    const colliders = query.call(
+      this.world,
+      position.x,
+      position.z,
+      FOREST_FLOOR_COLLISION_QUERY_RADIUS,
+    );
+    return Array.isArray(colliders) ? colliders : [];
+  }
+
+  _collidesAt(position, extraColliders = null) {
+    const a = this._feetAABBAt(position);
     for (let y = Math.floor(a.minY + EPSILON); y <= Math.floor(a.maxY - EPSILON); y++) {
       for (let z = Math.floor(a.minZ + EPSILON); z <= Math.floor(a.maxZ - EPSILON); z++) {
         for (let x = Math.floor(a.minX + EPSILON); x <= Math.floor(a.maxX - EPSILON); x++) {
@@ -495,6 +599,8 @@ export class PlayerController {
         }
       }
     }
+    const colliders = extraColliders || this._activeExtraColliders || this._queryExtraColliders(position);
+    if (colliders.some((collider) => intersectsPlayerCollider(a, collider))) return true;
     return false;
   }
 

@@ -19,12 +19,15 @@ const MIN_DESTINATION_DISTANCE = 12;
 const MAX_FLIGHT_REPLANS = 4;
 const TREE_ANCHOR_MULTIPLIER = 14;
 const POND_ANCHOR_MULTIPLIER = 4;
+const TAKEOFF_WINDOW = 0.42;
+const LANDING_WINDOW = 0.4;
+export const POND_BIRD_OCCUPANCY_CHANCE = 0.5;
 
 const DEFAULT_PROFILE = Object.freeze({
   birdRadius: 56,
   birdCap: 2,
   birdShadowCap: 0,
-  birdSpawnChance: 0.15,
+  birdSpawnChance: 0.25,
 });
 
 export const BIRD_BREEDS = Object.freeze({
@@ -62,6 +65,11 @@ function clamp(value, minimum, maximum) {
   return Math.min(maximum, Math.max(minimum, value));
 }
 
+function smoothstep01(value) {
+  const amount = clamp(Number(value) || 0, 0, 1);
+  return amount * amount * (3 - 2 * amount);
+}
+
 function mix32(value) {
   let mixed = value >>> 0;
   mixed = Math.imul(mixed ^ (mixed >>> 16), 0x7feb352d);
@@ -75,6 +83,19 @@ export function birdUnitHash(seed, value = 0, salt = 0) {
       ^ Math.imul(Number(value) | 0, 0x9e3779b9)
       ^ (Number(salt) >>> 0),
   ) / 0x100000000;
+}
+
+/** Quick, held head turns without sharing or advancing the gameplay RNG. */
+function deterministicHeadSaccade(bird) {
+  const motionSeed = Number(bird?.motionSeed) >>> 0;
+  const interval = 1.35 + birdUnitHash(motionSeed, 0, 0xbb67ae85) * 1.15;
+  const shiftedAge = Math.max(0, Number(bird?.age) || 0)
+    + birdUnitHash(motionSeed, 1, 0x3c6ef372) * interval;
+  const index = Math.floor(shiftedAge / interval);
+  const phase = shiftedAge / interval - index;
+  const previous = (birdUnitHash(motionSeed, index - 1, 0xa54ff53a) - 0.5) * 0.5;
+  const next = (birdUnitHash(motionSeed, index, 0xa54ff53a) - 0.5) * 0.5;
+  return previous + (next - previous) * smoothstep01(phase / 0.1);
 }
 
 function nextRandom(bird) {
@@ -110,6 +131,20 @@ export function chooseBirdBreed(seed, habitat = 'tree') {
   const roll = birdUnitHash(seed, habitat === 'pond' ? 17 : 11, 0x85ebca6b);
   const azureChance = habitat === 'pond' ? 0.68 : 0.28;
   return roll < azureChance ? BIRD_BREEDS.pond_azurefin : BIRD_BREEDS.ash_sparrow;
+}
+
+/** Stable per-world pond residency: every canonical pond gets a seeded 50% chance. */
+export function birdPondHasResident(worldSeed, pond = {}) {
+  const rawCellX = Number(pond.cellX);
+  const rawCellZ = Number(pond.cellZ);
+  if (!Number.isFinite(rawCellX) || !Number.isFinite(rawCellZ)) return false;
+  const cellX = Math.floor(rawCellX) | 0;
+  const cellZ = Math.floor(rawCellZ) | 0;
+  return birdUnitHash(
+    (Number(worldSeed) >>> 0) ^ cellX,
+    cellZ,
+    0x7f4a7c15,
+  ) < POND_BIRD_OCCUPANCY_CHANCE;
 }
 
 export function birdSpawnAllowed(context = {}, profile = DEFAULT_PROFILE) {
@@ -320,6 +355,7 @@ export function birdPondBank(world, pond, seed = 0, target = new THREE.Vector3()
       supportBlock: groundBlock,
       waterProbe,
       descriptor: pond,
+      residentEligible: birdPondHasResident(seed, pond),
     };
   }
   return null;
@@ -427,14 +463,24 @@ function clipMatchesBreed(clip, breed) {
   return clipName.includes(breedName) || !otherNames.some((name) => clipName.includes(name));
 }
 
-function createClipAnimator(model, clips = []) {
+function createClipAnimator(model, clips = [], timingRate = 1) {
   const mixer = new THREE.AnimationMixer(model);
   const compatible = clips.filter(Boolean);
   const actions = new Map();
+  const individualRate = clamp(Number(timingRate) || 1, 0.97, 1.03);
   let currentAction = null;
   let currentClip = null;
   let currentState = '';
+  let lastSpeed = 0;
   let authored = false;
+
+  const isFlightState = (state) => state === 'cruise' || state === 'approach';
+  const flightTimeScale = (state, speed, clip) => {
+    const cadence = state === 'approach'
+      ? clamp(speed * 0.4, 3, 4)
+      : clamp(speed * 0.5, 3.8, 5);
+    return cadence * Math.max(0.1, Number(clip?.duration) || 1) * individualRate;
+  };
 
   const findClip = (state) => {
     const candidates = CLIP_CANDIDATES[state] || CLIP_CANDIDATES.cruise;
@@ -462,16 +508,26 @@ function createClipAnimator(model, clips = []) {
       return false;
     }
     if (clip === currentClip && state === currentState) return true;
+    // Cruise and approach intentionally share Flight_Loop. Keep its phase when
+    // changing speed so the wings never jump back to the first keyframe.
+    if (clip === currentClip && isFlightState(state) && isFlightState(currentState)) {
+      currentState = state;
+      return true;
+    }
     const action = actions.get(clip) || mixer.clipAction(clip);
     actions.set(clip, action);
-    const oneShot = state === 'takeoff' || state === 'landing';
+    const oneShot = state === 'takeoff' || state === 'landing' || state === 'pond_peck';
     action.enabled = true;
     action.clampWhenFinished = oneShot;
     action.setLoop(oneShot ? THREE.LoopOnce : THREE.LoopRepeat, oneShot ? 1 : Infinity);
     action.reset().setEffectiveWeight(1);
     if (oneShot) {
-      const visibleWindow = state === 'takeoff' ? 0.42 : 0.4;
+      const visibleWindow = state === 'takeoff'
+        ? TAKEOFF_WINDOW
+        : state === 'landing' ? LANDING_WINDOW : 1.46;
       action.setEffectiveTimeScale(clamp(clip.duration / visibleWindow, 0.75, 3.2));
+    } else if (isFlightState(state)) {
+      action.setEffectiveTimeScale(flightTimeScale(state, lastSpeed, clip));
     } else action.setEffectiveTimeScale(1);
     if (currentAction && currentAction !== action) {
       if (immediate) currentAction.stop();
@@ -489,8 +545,12 @@ function createClipAnimator(model, clips = []) {
     mixer,
     play,
     update(dt, speed = 0) {
-      if (currentAction && ['cruise', 'approach'].includes(currentState)) {
-        currentAction.setEffectiveTimeScale(clamp(speed / 8.5, 0.72, 1.55));
+      lastSpeed = Math.max(0, Number(speed) || 0);
+      if (currentAction && isFlightState(currentState)) {
+        const target = flightTimeScale(currentState, lastSpeed, currentClip);
+        const blend = 1 - Math.exp(-Math.max(0, dt) * 12);
+        const current = Number(currentAction.timeScale) || target;
+        currentAction.setEffectiveTimeScale(current + (target - current) * blend);
       }
       mixer.update(dt);
     },
@@ -804,8 +864,13 @@ export class BirdField {
       root,
       model,
       parts: captureMovableParts(model),
-      animator: createClipAnimator(model, template.clips),
+      animator: createClipAnimator(
+        model,
+        template.clips,
+        0.97 + birdUnitHash(seed, 19, 0x13198a2e) * 0.06,
+      ),
       randomState: mix32(seed ^ 0x632be5ab),
+      motionSeed: mix32(seed ^ 0x6a09e667),
       phase: birdUnitHash(seed, 9, 0x243f6a88) * Math.PI * 2,
       heading,
       bank: 0,
@@ -827,6 +892,9 @@ export class BirdField {
 
   _beginFlight(bird, destination, options = {}) {
     if (!bird || !destination?.position) return false;
+    const continuingInAir = Boolean(bird.route)
+      || options.airborneStart === true
+      || options.continueFlight === true;
     const start = bird.root.position.clone();
     const end = destination.position.clone();
     const distance = Math.max(0.01, Math.hypot(end.x - start.x, end.z - start.z));
@@ -845,13 +913,14 @@ export class BirdField {
     };
     bird.anchor = null;
     bird.exitAfterFlight = Boolean(options.exitAfterFlight);
-    this._setState(bird, 'takeoff');
+    this._setState(bird, continuingInAir ? 'cruise' : 'takeoff');
     return true;
   }
 
   _destinationForBird(bird, focus, startled = false) {
     const candidates = [...this.treeAnchors, ...this.pondAnchors].filter((anchor) => {
       if (anchor.id === bird.anchor?.id || !this._anchorStillValid(anchor)) return false;
+      if (anchor.habitat === 'pond' && !anchor.residentEligible) return false;
       const distanceSq = horizontalDistanceSquared(anchor.position, bird.root.position);
       if (distanceSq < MIN_DESTINATION_DISTANCE * MIN_DESTINATION_DISTANCE) return false;
       if (distanceSq > this.profile.birdRadius * this.profile.birdRadius) return false;
@@ -870,7 +939,7 @@ export class BirdField {
     if (!bird) return null;
     bird.anchor = anchor;
     bird.dwell = anchor.habitat === 'pond'
-      ? 2.5 + nextRandom(bird) * 5
+      ? 6 + nextRandom(bird) * 8
       : 5 + nextRandom(bird) * 11;
     if (airborne) {
       const angle = nextRandom(bird) * Math.PI * 2;
@@ -889,7 +958,7 @@ export class BirdField {
         MIN_SPAWN_RADIUS,
         spawnSafety.maximumRadius,
       );
-      if (safeAirborneStart) this._beginFlight(bird, anchor);
+      if (safeAirborneStart) this._beginFlight(bird, anchor, { airborneStart: true });
       else {
         bird.root.position.copy(anchor.position);
         airborne = false;
@@ -915,12 +984,20 @@ export class BirdField {
     const trees = this.treeAnchors.filter((anchor) => birdSpawnPositionIsSafe(
       focus, forward, anchor.position, MIN_SPAWN_RADIUS, maximumRadius,
     ));
-    const ponds = this.pondAnchors.filter((anchor) => birdSpawnPositionIsSafe(
+    const ponds = this.pondAnchors.filter((anchor) => anchor.residentEligible && birdSpawnPositionIsSafe(
       focus, forward, anchor.position, MIN_SPAWN_RADIUS, maximumRadius,
     ));
-    if (!trees.length && !ponds.length) return null;
-    const usePond = ponds.length > 0 && (trees.length === 0 || birdUnitHash(seed, 3, 0x3c6ef372) < 0.28);
-    const pool = usePond ? ponds : trees;
+    const claimedPondIds = new Set();
+    for (const bird of this.birds) {
+      if (bird.anchor?.habitat === 'pond') claimedPondIds.add(bird.anchor.id);
+      if (bird.route?.destination?.habitat === 'pond') claimedPondIds.add(bird.route.destination.id);
+    }
+    const vacantResidentPonds = ponds.filter((anchor) => !claimedPondIds.has(anchor.id));
+    if (!trees.length && !vacantResidentPonds.length) return null;
+    // Fill the seed-selected half of ponds first; ordinary tree birds use any
+    // remaining quality budget. This makes pond residency observable rather
+    // than merely changing the statistical destination preference.
+    const pool = vacantResidentPonds.length ? vacantResidentPonds : trees;
     const anchor = pool[Math.min(pool.length - 1, Math.floor(birdUnitHash(seed, 5, 0x510e527f) * pool.length))];
     const breed = chooseBirdBreed(seed, anchor.habitat);
     const airborne = birdUnitHash(seed, 7, 0xb7e15162) < (anchor.habitat === 'tree' ? 0.52 : 0.34);
@@ -987,15 +1064,26 @@ export class BirdField {
     }
     bird.root.position.copy(this._flightPoint);
     birdFlightTangent(route.start, route.end, progress, route.apex, route.bend, this._flightTangent);
+    const remaining = Math.max(0, route.duration - route.elapsed);
+    const canLand = !bird.exitAfterFlight && route.destination.habitat !== 'air';
+    const landingSettle = canLand
+      ? smoothstep01(1 - remaining / LANDING_WINDOW)
+      : 0;
     const desiredHeading = Math.atan2(this._flightTangent.x, this._flightTangent.z);
     const turn = shortestAngle(bird.heading, desiredHeading);
     bird.heading += turn * (1 - Math.exp(-dt * 8.5));
-    bird.bank += (clamp(-turn * 1.8, -0.48, 0.48) - bird.bank) * (1 - Math.exp(-dt * 6));
+    const desiredBank = clamp(-turn * 1.8, -0.48, 0.48) * (1 - landingSettle);
+    bird.bank += (desiredBank - bird.bank) * (1 - Math.exp(-dt * (6 + landingSettle * 18)));
     const horizontal = Math.max(1e-4, Math.hypot(this._flightTangent.x, this._flightTangent.z));
-    const desiredPitch = -Math.atan2(this._flightTangent.y, horizontal);
-    bird.pitch += (clamp(desiredPitch, -0.5, 0.42) - bird.pitch) * (1 - Math.exp(-dt * 7));
+    const desiredPitch = clamp(-Math.atan2(this._flightTangent.y, horizontal), -0.5, 0.42)
+      * (1 - landingSettle);
+    bird.pitch += (desiredPitch - bird.pitch) * (1 - Math.exp(-dt * (7 + landingSettle * 18)));
     bird.root.rotation.set(bird.pitch, bird.heading, bird.bank);
-    if (bird.state === 'takeoff' && bird.stateTime < 0.42) {
+    if (canLand && remaining <= LANDING_WINDOW) {
+      // Play the authored flare, leg extension, and touchdown while the root is
+      // still closing the final gap. The action continues across touchdown.
+      this._setState(bird, 'landing');
+    } else if (bird.state === 'takeoff' && bird.stateTime < TAKEOFF_WINDOW) {
       // Let the authored/procedural launch complete before cross-fading into
       // ordinary flight, independent of the route's total length.
     } else if (progress < 0.78) this._setState(bird, 'cruise');
@@ -1020,9 +1108,10 @@ export class BirdField {
     bird.root.rotation.x = 0;
     bird.root.rotation.z = 0;
     bird.dwell = route.destination.habitat === 'pond'
-      ? 2.5 + nextRandom(bird) * 5
+      ? 6 + nextRandom(bird) * 8
       : 5 + nextRandom(bird) * 11;
-    this._setState(bird, 'landing');
+    // Landing began during the final route window. Do not restart its one-shot
+    // at contact; any remainder now finishes with the bird on its support.
   }
 
   _startledTakeoff(bird, focus) {
@@ -1091,11 +1180,12 @@ export class BirdField {
   }
 
   _animateProcedurally(bird, dt) {
-    const flying = ['takeoff', 'cruise', 'approach'].includes(bird.state);
-    const landed = bird.state === 'perched_tree'
+    const airborne = Boolean(bird.route);
+    const flying = airborne || ['takeoff', 'cruise', 'approach'].includes(bird.state);
+    const landed = !airborne && (bird.state === 'perched_tree'
       || bird.state === 'pond_bank'
       || bird.state === 'pond_peck'
-      || bird.state === 'landing';
+      || bird.state === 'landing');
     // Authored clips establish the pose first. When no matching Blender clip
     // exists, the named-part fallback below owns the complete pose and cannot
     // be overwritten by a fading action from the preceding state.
@@ -1105,15 +1195,16 @@ export class BirdField {
       const flapRate = bird.state === 'approach' ? 9.5 : bird.state === 'takeoff' ? 17 : 13.2;
       const motionScale = this.reducedMotion ? 0.58 : 1;
       const flap = Math.sin(this._time * flapRate + bird.phase) * motionScale;
+      const flapping = flying && bird.state !== 'landing';
       if (parts.leftWing && parts.base.leftWing) {
         parts.leftWing.rotation.copy(parts.base.leftWing.rotation);
-        parts.leftWing.rotation.z += flying ? flap * 1.02 : 0.04;
-        parts.leftWing.rotation.x += flying ? Math.cos(this._time * flapRate + bird.phase) * 0.12 : 0;
+        parts.leftWing.rotation.z += flapping ? flap * 1.02 : bird.state === 'landing' ? 0.3 : 0.04;
+        parts.leftWing.rotation.x += flapping ? Math.cos(this._time * flapRate + bird.phase) * 0.12 : 0;
       }
       if (parts.rightWing && parts.base.rightWing) {
         parts.rightWing.rotation.copy(parts.base.rightWing.rotation);
-        parts.rightWing.rotation.z -= flying ? flap * 1.02 : 0.04;
-        parts.rightWing.rotation.x -= flying ? Math.cos(this._time * flapRate + bird.phase) * 0.12 : 0;
+        parts.rightWing.rotation.z -= flapping ? flap * 1.02 : bird.state === 'landing' ? 0.3 : 0.04;
+        parts.rightWing.rotation.x -= flapping ? Math.cos(this._time * flapRate + bird.phase) * 0.12 : 0;
       }
       if (parts.head && parts.base.head) {
         parts.head.rotation.copy(parts.base.head.rotation);
@@ -1136,15 +1227,38 @@ export class BirdField {
         const base = parts.base[key];
         if (!part || !base) continue;
         part.rotation.copy(base.rotation);
-        part.rotation.x += flying ? -0.62 : bird.state === 'landing' ? 0.22 : 0;
+        part.rotation.x += bird.state === 'landing' ? 0.22 : flying ? -0.62 : 0;
       }
       if (parts.body && parts.base.body) {
         parts.body.rotation.copy(parts.base.body.rotation);
-        parts.body.rotation.x += flying ? Math.sin(this._time * flapRate * 2 + bird.phase) * 0.018 : 0;
+        parts.body.rotation.x += flapping ? Math.sin(this._time * flapRate * 2 + bird.phase) * 0.018 : 0;
         if (bird.state === 'pond_peck') parts.body.rotation.x += 0.07;
       }
     }
-    const bob = landed ? Math.sin(this._time * 2.15 + bird.phase) * 0.012 : 0;
+    if (bird.animator?.authored) {
+      const parts = bird.parts;
+      const secondaryScale = this.reducedMotion ? 0.35 : 1;
+      // The Blender clip remains the primary pose. These local deltas are small
+      // steering and awareness cues, and the mixer rewrites the base next frame
+      // so they cannot accumulate or drift.
+      if (airborne && parts.leftWing && parts.rightWing) {
+        const wingBias = bird.bank * 0.14 * secondaryScale;
+        parts.leftWing.rotation.z += wingBias;
+        parts.rightWing.rotation.z += wingBias;
+      }
+      if (airborne && parts.tail) {
+        parts.tail.rotation.y -= bird.bank * 0.22 * secondaryScale;
+      }
+      if (landed
+        && bird.state !== 'landing'
+        && bird.state !== 'pond_peck'
+        && parts.head) {
+        parts.head.rotation.y += deterministicHeadSaccade(bird) * secondaryScale;
+      }
+    }
+    const resting = landed && bird.state !== 'landing';
+    const bobScale = this.reducedMotion ? 0.45 : 1;
+    const bob = resting ? Math.sin(this._time * 2.15 + bird.phase) * 0.012 * bobScale : 0;
     bird.model.position.copy(bird.parts.modelPosition);
     bird.model.position.y += bob;
   }
@@ -1199,7 +1313,7 @@ export class BirdField {
 
       if (bird.route) this._updateFlight(bird, elapsed, focus);
       else if (bird.state === 'landing') {
-        if (bird.stateTime >= 0.42) {
+        if (bird.stateTime >= LANDING_WINDOW) {
           this._setState(bird, bird.anchor?.habitat === 'pond' ? 'pond_bank' : 'perched_tree');
         }
       } else this._updateLanded(bird, elapsed, focus, context);
@@ -1260,6 +1374,7 @@ export class BirdField {
       states,
       treeAnchors: this.treeAnchors.length,
       pondAnchors: this.pondAnchors.length,
+      residentPondAnchors: this.pondAnchors.filter((anchor) => anchor.residentEligible).length,
       shadowBirds,
       draws,
       triangles,

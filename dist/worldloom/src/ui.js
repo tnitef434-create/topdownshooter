@@ -61,6 +61,10 @@ export class UI {
       loadingText: $('loading-text'),
       main: $('main-menu'),
       pause: $('pause-menu'),
+      death: $('death-screen'),
+      deathReason: $('death-reason'),
+      deathStatus: $('death-status'),
+      respawnButton: $('respawn-button'),
       hud: $('hud'),
       inventory: $('inventory-panel'),
       inventoryGrid: $('inventory-grid'),
@@ -98,6 +102,7 @@ export class UI {
     this.onCraft = null;
     this.onInventoryClose = null;
     this.onResume = null;
+    this.onRespawn = null;
     this.onNewWorld = null;
     this.onContinue = null;
     this.onSave = null;
@@ -108,6 +113,7 @@ export class UI {
     this.suppressInventoryClickUntil = 0;
     this._toastTimer = null;
     this._loadingHideTimer = null;
+    this._deathReadyTimer = null;
     this._bindStatic();
     this._bindDialogKeyboard();
   }
@@ -115,6 +121,10 @@ export class UI {
   _bindStatic() {
     const inventoryTip = document.querySelector('.inventory-tip');
     if (inventoryTip) inventoryTip.textContent = 'Drag stacks to move them · drag beyond the window to drop them into the world';
+    const titleButton = $('title-button');
+    if (titleButton && window.parent !== window) {
+      titleButton.textContent = 'Save & return to TacticStrike';
+    }
     $('new-world-button')?.addEventListener('click', () => {
       const seedValue = $('seed-input')?.value.trim() || `${Date.now()}`;
       const mode = document.querySelector('input[name="mode"]:checked')?.value || 'survival';
@@ -122,8 +132,9 @@ export class UI {
     });
     this.elements.continueButton?.addEventListener('click', () => this.onContinue?.());
     $('resume-button')?.addEventListener('click', () => this.onResume?.());
+    this.elements.respawnButton?.addEventListener('click', () => this.onRespawn?.());
     $('save-button')?.addEventListener('click', () => this.onSave?.());
-    $('title-button')?.addEventListener('click', () => this.onTitle?.());
+    titleButton?.addEventListener('click', () => this.onTitle?.());
     $('inventory-close')?.addEventListener('click', () => {
       if (this.onInventoryClose) this.onInventoryClose();
       else this.setInventory(false);
@@ -200,6 +211,7 @@ export class UI {
   }
 
   showMain() {
+    this.hideDeath();
     this.closePanels();
     this.elements.main?.classList.remove('hidden');
     this.elements.pause?.classList.add('hidden');
@@ -208,6 +220,7 @@ export class UI {
   }
 
   showGame() {
+    this.hideDeath();
     this.elements.main?.classList.add('hidden');
     this.elements.pause?.classList.add('hidden');
     this.elements.hud?.classList.remove('hidden');
@@ -223,6 +236,40 @@ export class UI {
 
   hidePause() {
     this.elements.pause?.classList.add('hidden');
+    this.elements.hud?.classList.remove('soft-hidden');
+  }
+
+  showDeath(reason = 'The wilds overcame you.') {
+    clearTimeout(this._deathReadyTimer);
+    this.closePanels();
+    this.elements.pause?.classList.add('hidden');
+    this.elements.hud?.classList.add('soft-hidden');
+    if (this.elements.deathReason) this.elements.deathReason.textContent = reason;
+    if (this.elements.deathStatus) this.elements.deathStatus.textContent = 'Reweaving a safe return…';
+    if (this.elements.respawnButton) this.elements.respawnButton.disabled = true;
+    this.elements.death?.classList.remove('hidden', 'is-respawning');
+    this._deathReadyTimer = setTimeout(() => {
+      if (this.elements.death?.classList.contains('hidden')) return;
+      if (this.elements.deathStatus) this.elements.deathStatus.textContent = 'Your return point is ready.';
+      if (this.elements.respawnButton) {
+        this.elements.respawnButton.disabled = false;
+        this.elements.respawnButton.focus();
+      }
+    }, 720);
+  }
+
+  beginRespawn() {
+    clearTimeout(this._deathReadyTimer);
+    if (this.elements.deathStatus) this.elements.deathStatus.textContent = 'Returning to the weave…';
+    if (this.elements.respawnButton) this.elements.respawnButton.disabled = true;
+    this.elements.death?.classList.add('is-respawning');
+  }
+
+  hideDeath() {
+    clearTimeout(this._deathReadyTimer);
+    this._deathReadyTimer = null;
+    this.elements.death?.classList.add('hidden');
+    this.elements.death?.classList.remove('is-respawning');
     this.elements.hud?.classList.remove('soft-hidden');
   }
 
@@ -648,9 +695,11 @@ export class UI {
     }
   }
 
-  damageFlash() {
+  damageFlash(strength = 0.16) {
     const element = this.elements.damage;
     if (!element) return;
+    const amount = Math.max(0, Math.min(1, Number(strength) || 0));
+    element.style.setProperty('--damage-strength', `${Math.min(1, 0.38 + Math.sqrt(amount) * 0.62)}`);
     element.classList.remove('flash');
     void element.offsetWidth;
     element.classList.add('flash');

@@ -16,6 +16,13 @@ import {
   LEGACY_WORLD_GENERATOR_VERSION,
   WORLD_GENERATOR_VERSION,
 } from './generator-version.js';
+import {
+  MAX_DETAIL_DISTANCE,
+  detailedStreamDistance,
+  detailedViewDistance,
+  normalizeViewDistance,
+} from './streaming-config.js';
+import { DistantTerrainHorizon } from './distant-terrain.js';
 
 export {
   LEGACY_WORLD_GENERATOR_VERSION,
@@ -33,7 +40,127 @@ const CHUNK_VOLUME = CHUNK_SIZE * CHUNK_SIZE * WORLD_HEIGHT;
 const COLUMN_CACHE_LIMIT = 32_768;
 const TREE_CELL_SIZE = 5;
 const TREE_HANGING_LEAVES_SALT = 0xd3a2646c;
+const TREE_FALLING_LEAVES_SALT = 0x8f6c4a21;
+export const FOREST_FLOOR_CELL_SIZE = 8;
+export const FOREST_FLOOR_MIN_FOREST_WEIGHT = 0.44;
+export const FOREST_FLOOR_MIN_TREE_DISTANCE = 1.6;
+export const FOREST_FLOOR_MAX_TREE_DISTANCE = 7.5;
+export const FOREST_FLOOR_MUSHROOM_CHANCE = 0.24;
+export const FOREST_FLOOR_INSECT_CHANCE = 0.07;
+export const FOREST_FLOOR_KINDS = Object.freeze([
+  'fallen_log',
+  'stump',
+  'exposed_roots',
+  'twigs',
+  'pinecone',
+  'rock_cluster',
+]);
+export const FOREST_FLOOR_SOLID_KINDS = Object.freeze([
+  'fallen_log',
+  'stump',
+  'exposed_roots',
+  'rock_cluster',
+]);
+const FOREST_FLOOR_QUERY_RADIUS_LIMIT = 256;
+const FOREST_FLOOR_CACHE_LIMIT = 4_096;
+const FOREST_FLOOR_SPAWN_BASE = 0.16;
+const FOREST_FLOOR_SPAWN_FOREST_BONUS = 0.22;
+const FOREST_FLOOR_SCALE_RANGES = Object.freeze({
+  fallen_log: Object.freeze([0.84, 1.18]),
+  stump: Object.freeze([0.78, 1.12]),
+  exposed_roots: Object.freeze([0.82, 1.14]),
+  twigs: Object.freeze([0.72, 1.08]),
+  pinecone: Object.freeze([0.72, 1.02]),
+  rock_cluster: Object.freeze([0.76, 1.16]),
+});
+const FOREST_FLOOR_CLEARANCE = Object.freeze({
+  fallen_log: 1.35,
+  stump: 0.8,
+  exposed_roots: 1.0,
+  twigs: 0.55,
+  pinecone: 0.4,
+  rock_cluster: 1.0,
+});
+// Collision follows the visibly substantial voxel masses, not the full model
+// bounds. This keeps a rotated log honest without creating invisible walls at
+// its empty corners. Low roots and stones are physical but stepable; tiny
+// twigs, pinecones, mushrooms and insects intentionally remain ground detail.
+const FOREST_FLOOR_COLLISION_PROFILES = Object.freeze({
+  fallen_log: Object.freeze([
+    Object.freeze({ offsetX: 0, offsetZ: 0, halfX: 0.72, halfZ: 0.22, height: 0.56, stepable: false }),
+  ]),
+  stump: Object.freeze([
+    Object.freeze({ offsetX: 0, offsetZ: 0, halfX: 0.22, halfZ: 0.22, height: 0.80, stepable: false }),
+    Object.freeze({ offsetX: 0, offsetZ: 0, halfX: 0.28, halfZ: 0.28, height: 0.16, stepable: true }),
+    Object.freeze({ offsetX: 0, offsetZ: 0, halfX: 0.64, halfZ: 0.10, height: 0.16, stepable: true }),
+    Object.freeze({ offsetX: 0, offsetZ: 0, halfX: 0.10, halfZ: 0.64, height: 0.16, stepable: true }),
+  ]),
+  exposed_roots: Object.freeze([
+    Object.freeze({ offsetX: 0, offsetZ: 0, halfX: 0.20, halfZ: 0.20, height: 0.24, stepable: true }),
+    Object.freeze({ offsetX: 0, offsetZ: 0.04, halfX: 0.72, halfZ: 0.07, height: 0.16, stepable: true }),
+    Object.freeze({ offsetX: -0.04, offsetZ: 0, halfX: 0.07, halfZ: 0.64, height: 0.16, stepable: true }),
+  ]),
+  rock_cluster: Object.freeze([
+    Object.freeze({ offsetX: -0.24, offsetZ: 0.04, halfX: 0.20, halfZ: 0.16, height: 0.24, stepable: true }),
+    Object.freeze({ offsetX: 0.20, offsetZ: 0.12, halfX: 0.16, halfZ: 0.16, height: 0.24, stepable: true }),
+    Object.freeze({ offsetX: 0.04, offsetZ: -0.24, halfX: 0.16, halfZ: 0.12, height: 0.16, stepable: true }),
+  ]),
+});
+
+export function forestFloorCollidersForDescriptor(descriptor) {
+  const templates = FOREST_FLOOR_COLLISION_PROFILES[descriptor?.kind];
+  if (!templates) return [];
+  const x = Number(descriptor?.x);
+  const y = Number(descriptor?.y);
+  const z = Number(descriptor?.z);
+  if (![x, y, z].every(Number.isFinite)) return [];
+  const yaw = Number.isFinite(Number(descriptor?.yaw)) ? Number(descriptor.yaw) : 0;
+  const scale = THREE.MathUtils.clamp(Number(descriptor?.scale) || 1, 0.45, 1.8);
+  const cosine = Math.cos(yaw);
+  const sine = Math.sin(yaw);
+  const key = String(descriptor?.key || `${descriptor.kind}:${x}:${z}`);
+  return templates.map((template, index) => {
+    const offsetX = template.offsetX * scale;
+    const offsetZ = template.offsetZ * scale;
+    return Object.freeze({
+      key: `${key}:collider:${index}`,
+      sourceKey: key,
+      kind: descriptor.kind,
+      x: x + offsetX * cosine + offsetZ * sine,
+      z: z - offsetX * sine + offsetZ * cosine,
+      minY: y,
+      maxY: y + template.height * scale,
+      halfX: template.halfX * scale,
+      halfZ: template.halfZ * scale,
+      yaw,
+      stepable: template.stepable === true,
+    });
+  });
+}
+
+function forestFloorColliderTouchesColumn(collider, blockX, blockZ) {
+  const deltaX = collider.x - (blockX + 0.5);
+  const deltaZ = collider.z - (blockZ + 0.5);
+  const cosine = Math.cos(collider.yaw);
+  const sine = Math.sin(collider.yaw);
+  const absCosine = Math.abs(cosine);
+  const absSine = Math.abs(sine);
+  const localDeltaX = deltaX * cosine - deltaZ * sine;
+  const localDeltaZ = deltaX * sine + deltaZ * cosine;
+  const epsilon = 1e-6;
+  if (Math.abs(deltaX) >= 0.5 + collider.halfX * absCosine + collider.halfZ * absSine - epsilon) return false;
+  if (Math.abs(deltaZ) >= 0.5 + collider.halfX * absSine + collider.halfZ * absCosine - epsilon) return false;
+  if (Math.abs(localDeltaX) >= collider.halfX + 0.5 * (absCosine + absSine) - epsilon) return false;
+  if (Math.abs(localDeltaZ) >= collider.halfZ + 0.5 * (absSine + absCosine) - epsilon) return false;
+  return true;
+}
+const MOUNTAIN_SUMMIT_CELL_SIZE = 64;
+const MOUNTAIN_SUMMIT_CACHE_LIMIT = 768;
+const MOUNTAIN_CROSS_MODEL_HEIGHT = 7;
+const MOUNTAIN_CROSS_CROSSBEAM_HEIGHT = 5.12;
+export const MOUNTAIN_CROSS_SPAWN_CHANCE = 0.25;
 const PLANT_CELL_SIZE = 3;
+const SHORT_GRASS_SCATTER_SALT = 0x7a2d91e3;
 const CACTUS_CELL_SIZE = 7;
 const POND_CELL_SIZE = 56;
 const POND_CELL_CACHE_LIMIT = 2_048;
@@ -42,15 +169,17 @@ const POND_MAX_RADIUS = 7.25;
 const CAVE_CELL_SIZE = 34;
 const FISSURE_CELL_SIZE = 78;
 const CAVE_NODE_CACHE_LIMIT = 4_096;
-// The atmospheric fog reaches a little beyond the selected view distance. Keep
-// two fully meshed rings behind it so a fast turn or a chunk-boundary crossing
-// reveals terrain instead of the clear color while the next strip streams in.
-const HORIZON_BUFFER_CHUNKS = 2;
 // Keep a modest amount of generated voxel data after a chunk leaves the view
 // radius. Walking back across a recently visited boundary then only needs a new
 // GPU mesh instead of repeating terrain, cave and decoration generation. At the
 // tallest view distance this is still only a few megabytes of Uint8Array data.
 const DORMANT_CHUNK_CACHE_LIMIT = 96;
+// Small and balanced footprints still materialize in one cheap pass. Larger
+// settings admit complete near rings first, then allocate a bounded number of
+// far chunks per streaming tick instead of producing a one-frame memory spike.
+const EAGER_STREAM_TARGET_LIMIT = 289;
+const INITIAL_STREAM_ADMISSION = 81;
+const STREAM_ADMISSION_BATCH = 48;
 const MAX_FLUID_LEVEL = 7;
 const MAX_FLUID_QUEUE = 32_768;
 const FLUID_DIRECTIONS = Object.freeze([
@@ -109,6 +238,14 @@ function floorDiv(value, divisor) {
   return Math.floor(value / divisor);
 }
 
+export function mountainCrossSpawnRoll(cellX, cellZ, seed = 0) {
+  return hash2D(
+    Math.floor(Number.isFinite(Number(cellX)) ? Number(cellX) : 0),
+    Math.floor(Number.isFinite(Number(cellZ)) ? Number(cellZ) : 0),
+    (normalizeSeed(seed) ^ 0x243f6a88) >>> 0,
+  );
+}
+
 function localCoordinate(value, chunkCoordinate) {
   return value - chunkCoordinate * CHUNK_SIZE;
 }
@@ -160,6 +297,51 @@ function hashUnit(value) {
   if (value >= 0 && value <= 1) return value;
   const fractional = value - Math.floor(value);
   return fractional < 0 ? fractional + 1 : fractional;
+}
+
+export function shortGrassPatchDensity(x, z, seed = 0) {
+  const worldX = Number.isFinite(Number(x)) ? Number(x) : 0;
+  const worldZ = Number.isFinite(Number(z)) ? Number(z) : 0;
+  const patchSeed = normalizeSeed(seed);
+  // Three differently scaled, offset fields avoid both a uniform lawn and the
+  // obvious evenly-thinned lattice that appears when every high-noise block is
+  // accepted. Broad cover determines where grass can flourish, small pockets
+  // gather tufts into families, and the clearing field cuts irregular holes.
+  const broadCover = fbm2D(
+    (worldX + 37.5) / 23,
+    (worldZ - 19.25) / 23,
+    patchSeed,
+    { octaves: 3, lacunarity: 2.03, gain: 0.5 },
+  );
+  const localPocket = fbm2D(
+    (worldX - 11.75) / 5.4,
+    (worldZ + 29.5) / 5.4,
+    patchSeed ^ 0x85ebca6b,
+    { octaves: 2, lacunarity: 2.17, gain: 0.46 },
+  );
+  const clearing = fbm2D(
+    (worldX + 7.25) / 10.5,
+    (worldZ + 43.75) / 10.5,
+    patchSeed ^ 0xc2b2ae35,
+    { octaves: 2, lacunarity: 1.91, gain: 0.52 },
+  );
+  const patchAmount = smoothRange(0.43, 0.68, broadCover);
+  const pocketAmount = smoothRange(0.34, 0.72, localPocket);
+  const bareAmount = smoothRange(0.58, 0.79, clearing);
+  return THREE.MathUtils.clamp(
+    patchAmount * (0.06 + pocketAmount * 0.58) * (1 - bareAmount * 0.78),
+    0,
+    0.64,
+  );
+}
+
+export function shortGrassGrowsAt(x, z, seed = 0, forestWeight = 0) {
+  const worldX = Math.floor(Number.isFinite(Number(x)) ? Number(x) : 0);
+  const worldZ = Math.floor(Number.isFinite(Number(z)) ? Number(z) : 0);
+  const patchSeed = normalizeSeed(seed);
+  const density = shortGrassPatchDensity(worldX, worldZ, patchSeed);
+  const habitat = THREE.MathUtils.clamp(0.7 + (Number(forestWeight) || 0) * 0.38, 0.7, 1.02);
+  return hash2D(worldX, worldZ, patchSeed ^ SHORT_GRASS_SCATTER_SALT) < density * habitat;
 }
 
 function clampNoise(value) {
@@ -284,6 +466,11 @@ export class World {
       ? LEGACY_WORLD_GENERATOR_VERSION
       : WORLD_GENERATOR_VERSION;
     this.pondsEnabled = this.generatorVersion >= WORLD_GENERATOR_VERSION;
+    this.summitCrossesEnabled = this.generatorVersion >= WORLD_GENERATOR_VERSION;
+    this.forestFloorEnabled = this.generatorVersion >= WORLD_GENERATOR_VERSION;
+    // Main enables this only after the matching Blender pack has loaded. A
+    // cosmetic asset failure must never leave invisible physical obstacles.
+    this.forestFloorCollisionEnabled = false;
     this.scene = scene ?? null;
     this.atlas = atlas ?? null;
     this.chunkSize = CHUNK_SIZE;
@@ -302,13 +489,23 @@ export class World {
     this._preloadChunksRemaining = 13;
     this.centerChunk = { cx: 0, cz: 0 };
     this.renderDistance = 5;
-    this.streamDistance = this.renderDistance + HORIZON_BUFFER_CHUNKS;
+    this.detailDistance = detailedViewDistance(this.renderDistance);
+    this.streamDistance = detailedStreamDistance(this.renderDistance);
     this.streamDirection = { x: 0, z: -1, strength: 0 };
+    this.streamRevision = 0;
+    this.editRevision = 0;
+    this._streamPlanSignature = '';
+    this._streamPlanTargets = [];
+    this._streamTargetKeys = new Set();
+    this._streamPriorityByKey = new Map();
+    this._streamPlanCursor = 0;
     this._streamTick = 0;
     this._editMeshSerial = 0;
     this._columnCache = new Map();
     this._caveNodeCache = new Map();
     this._pondCellCache = new Map();
+    this._forestFloorCache = new Map();
+    this._mountainSummitCache = new Map();
     // Only player-created and simulated water needs metadata. Natural sea and
     // river blocks are implicit level-zero sources supplied by world generation.
     this.fluidLevels = new Map();
@@ -337,8 +534,10 @@ export class World {
       trees: (this.seed ^ 0x85ebca6b) >>> 0,
       plants: (this.seed ^ 0x4b1d3f27) >>> 0,
       grassPatches: (this.seed ^ 0x6d703ef3) >>> 0,
+      forestFloor: (this.seed ^ 0x0f1bbcd7) >>> 0,
       ponds: (this.seed ^ 0xd1b54a35) >>> 0,
       cavePools: (this.seed ^ 0x93c467e3) >>> 0,
+      summitCrosses: (this.seed ^ 0x243f6a88) >>> 0,
     };
 
     const texture = textureFromAtlas(atlas);
@@ -419,6 +618,7 @@ export class World {
       generatedTotal: 0,
       rebuiltTotal: 0,
     };
+    this.distantTerrain = new DistantTerrainHorizon(this.scene, this);
     this._refreshStats();
   }
 
@@ -1205,7 +1405,10 @@ export class World {
       this.fluidLevels.delete(fluidKey);
     }
     this._scheduleFluidAround(x, y, z);
-    if (!options?.skipStats) this._refreshStats();
+    if (!options?.skipStats) {
+      this.editRevision++;
+      this._refreshStats();
+    }
     return true;
   }
 
@@ -1480,16 +1683,18 @@ export class World {
     return chunk;
   }
 
-  updateStreaming(position, renderDistance = this.renderDistance, motion = null) {
+  updateStreaming(position, renderDistance = this.renderDistance, motion = null, options = null) {
     const px = Number(position?.x ?? position?.[0] ?? 0);
     const pz = Number(position?.z ?? position?.[2] ?? 0);
     const centerX = floorDiv(Number.isFinite(px) ? px : 0, CHUNK_SIZE);
     const centerZ = floorDiv(Number.isFinite(pz) ? pz : 0, CHUNK_SIZE);
-    // View distance limits resident chunks, not world size. Generated coordinates
-    // remain effectively unbounded, while this cap prevents a settings mistake
-    // from scheduling an unbounded amount of work in one streaming update.
-    const distance = THREE.MathUtils.clamp(Math.floor(Number(renderDistance) || 5), 2, 16);
-    const streamDistance = Math.min(18, distance + HORIZON_BUFFER_CHUNKS);
+    // View distance is the visual horizon. Expensive interactive voxel chunks
+    // retain a separate bounded radius; a lightweight distant terrain proxy
+    // carries settings above that cap without generating far caves, fluids,
+    // foliage and collision meshes merely to fill a distant silhouette.
+    const distance = normalizeViewDistance(renderDistance, this.renderDistance);
+    const detailDistance = detailedViewDistance(distance);
+    const streamDistance = detailedStreamDistance(distance);
     const motionX = Number(motion?.x ?? motion?.[0] ?? 0);
     const motionZ = Number(motion?.z ?? motion?.[2] ?? 0);
     const motionLength = Math.hypot(motionX, motionZ);
@@ -1502,50 +1707,91 @@ export class World {
     }
     this.centerChunk = { cx: centerX, cz: centerZ };
     this.renderDistance = distance;
+    this.detailDistance = detailDistance;
     this.streamDistance = streamDistance;
+    if (distance > detailDistance) {
+      this.distantTerrain?.request(px, pz, distance, detailDistance);
+    } else if (this.distantTerrain?.mesh || this.distantTerrain?.pending) {
+      this.distantTerrain.clear();
+    }
 
-    const wanted = [];
-    const wantedKeys = new Set();
-    for (const chunk of this.chunks.values()) chunk.wanted = false;
-    for (let dz = -streamDistance; dz <= streamDistance; dz++) {
-      for (let dx = -streamDistance; dx <= streamDistance; dx++) {
-        const cx = centerX + dx;
-        const cz = centerZ + dz;
-        const key = chunkKey(cx, cz);
-        const ring = Math.max(Math.abs(dx), Math.abs(dz));
-        const radial = dx * dx + dz * dz;
-        const forward = dx * this.streamDirection.x + dz * this.streamDirection.z;
-        const lateral = Math.abs(dx * this.streamDirection.z - dz * this.streamDirection.x);
-        // Whole nearer rings always win, which guarantees mesh support on every
-        // side. Within a ring, moving-forward chunks win deterministically so
-        // the player has two chunk widths of prepared terrain in front of them.
-        const priority = ring * 1_000
-          + radial * 3
-          + this.streamDirection.strength * (lateral * 2 - forward * 12)
-          + (dx + streamDistance) * 0.001
-          + (dz + streamDistance) * 0.000001;
-        wantedKeys.add(key);
-        wanted.push({ cx, cz, priority });
+    const directionSector = this.streamDirection.strength > 0.04
+      ? ((Math.round(Math.atan2(this.streamDirection.z, this.streamDirection.x) / (Math.PI / 4)) % 8) + 8) % 8
+      : -1;
+    const signature = `${centerX},${centerZ}:${streamDistance}:${directionSector}`;
+    const planChanged = signature !== this._streamPlanSignature;
+    if (planChanged) {
+      const wanted = [];
+      const wantedKeys = new Set();
+      for (let dz = -streamDistance; dz <= streamDistance; dz++) {
+        for (let dx = -streamDistance; dx <= streamDistance; dx++) {
+          const cx = centerX + dx;
+          const cz = centerZ + dz;
+          const key = chunkKey(cx, cz);
+          const ring = Math.max(Math.abs(dx), Math.abs(dz));
+          const radial = dx * dx + dz * dz;
+          const forward = dx * this.streamDirection.x + dz * this.streamDirection.z;
+          const lateral = Math.abs(dx * this.streamDirection.z - dz * this.streamDirection.x);
+          // Whole nearer rings always win, which guarantees mesh support on
+          // every side. Motion only orders cells within the same complete ring.
+          const priority = ring * 1_000
+            + radial * 3
+            + this.streamDirection.strength * (lateral * 2 - forward * 12)
+            + (dx + streamDistance) * 0.001
+            + (dz + streamDistance) * 0.000001;
+          wantedKeys.add(key);
+          wanted.push({ cx, cz, key, priority });
+        }
+      }
+      wanted.sort((a, b) => a.priority - b.priority);
+      this._streamPlanSignature = signature;
+      this._streamPlanTargets = wanted;
+      this._streamTargetKeys = wantedKeys;
+      this._streamPriorityByKey = new Map(wanted.map((target) => [target.key, target.priority]));
+      this._streamPlanCursor = 0;
+      this.streamRevision++;
+
+      // Retain generated voxel arrays in the dormant LRU, but remove meshes and
+      // active scheduling state outside the new square immediately. This keeps
+      // the active footprint structurally bounded even at the maximum setting.
+      for (const [key, chunk] of [...this.chunks]) {
+        if (!wantedKeys.has(key)) {
+          this._removeChunk(key, chunk);
+          continue;
+        }
+        chunk.wanted = true;
+        chunk.streamPriority = this._streamPriorityByKey.get(key) ?? Number.POSITIVE_INFINITY;
+        for (const mesh of [chunk.opaqueMesh, chunk.glassMesh, chunk.waterMesh, chunk.glowMesh]) {
+          if (mesh) mesh.visible = true;
+        }
       }
     }
-    wanted.sort((a, b) => a.priority - b.priority);
-    for (const target of wanted) {
-      const chunk = this.ensureChunk(target.cx, target.cz);
+
+    // Normal travel admits very large footprints in bounded batches. The
+    // loading screen can explicitly materialize the complete plan at once so
+    // no allocation/generation debt survives into the first playable frame.
+    const preloadAll = options?.preloadAll === true;
+    const eager = preloadAll || this._streamPlanTargets.length <= EAGER_STREAM_TARGET_LIMIT;
+    const admissionLimit = eager
+      ? Number.POSITIVE_INFINITY
+      : this.chunks.size === 0
+        ? INITIAL_STREAM_ADMISSION
+        : STREAM_ADMISSION_BATCH;
+    let admitted = 0;
+    while (this._streamPlanCursor < this._streamPlanTargets.length) {
+      const target = this._streamPlanTargets[this._streamPlanCursor];
+      let chunk = this.chunks.get(target.key);
+      if (!chunk && admitted >= admissionLimit) break;
+      if (!chunk) {
+        chunk = this.ensureChunk(target.cx, target.cz);
+        admitted++;
+      }
       chunk.wanted = true;
       chunk.streamPriority = target.priority;
+      this._streamPlanCursor++;
     }
 
-    const unloadDistance = streamDistance + 1;
-    for (const [key, chunk] of [...this.chunks]) {
-      if (Math.abs(chunk.cx - centerX) > unloadDistance || Math.abs(chunk.cz - centerZ) > unloadDistance) {
-        this._removeChunk(key, chunk);
-      } else {
-        if (chunk.opaqueMesh) chunk.opaqueMesh.visible = chunk.wanted;
-        if (chunk.glassMesh) chunk.glassMesh.visible = chunk.wanted;
-        if (chunk.waterMesh) chunk.waterMesh.visible = chunk.wanted;
-        if (chunk.glowMesh) chunk.glowMesh.visible = chunk.wanted;
-      }
-    }
+    const wantedKeys = this._streamTargetKeys;
     this.generationQueue = this.generationQueue
       .filter((key) => this.chunks.has(key) && wantedKeys.has(key))
       .sort((a, b) => {
@@ -1555,13 +1801,24 @@ export class World {
           - (cb?.streamPriority ?? Number.POSITIVE_INFINITY);
       });
     this.queuedChunks = new Set(this.generationQueue);
-    this.fluidQueue = this.fluidQueue.slice(this.fluidQueueHead).filter((key) => {
-      const { x, y, z } = parseVoxelKey(key);
-      return this._fluidCellAvailable(x, y, z);
-    });
-    this.fluidQueueHead = 0;
-    this.fluidQueued = new Set(this.fluidQueue);
+    if (planChanged) {
+      this.fluidQueue = this.fluidQueue.slice(this.fluidQueueHead).filter((key) => {
+        const { x, y, z } = parseVoxelKey(key);
+        return this._fluidCellAvailable(x, y, z);
+      });
+      this.fluidQueueHead = 0;
+      this.fluidQueued = new Set(this.fluidQueue);
+    }
     this._refreshStats();
+    return {
+      changed: planChanged,
+      admitted,
+      pending: this._streamPlanTargets.length - this._streamPlanCursor,
+      visualDistance: distance,
+      detailDistance,
+      streamDistance,
+      maximumDetailDistance: MAX_DETAIL_DISTANCE,
+    };
   }
 
   _writeGenerated(chunk, worldX, y, worldZ, id, replace = null) {
@@ -1649,6 +1906,14 @@ export class World {
         cellZ,
         this._noiseSeeds.trees ^ TREE_HANGING_LEAVES_SALT,
       )) < 0.25,
+      // Only broad-leaf ash trees shed the green-and-gold leaf particles. The
+      // same deterministic flag drives the Blender ground litter, so a tree
+      // can never have leaves on the floor without being a falling-leaf tree.
+      hasFallingLeaves: !isPine && hashUnit(hash2D(
+        cellX,
+        cellZ,
+        this._noiseSeeds.trees ^ TREE_FALLING_LEAVES_SALT,
+      )) < 0.46,
     });
   }
 
@@ -1674,6 +1939,451 @@ export class World {
       || a.id.localeCompare(b.id)
     ));
     return trees;
+  }
+
+  _generatedSurfaceDecorAt(x, z, providedInfo = null) {
+    const worldX = Math.floor(Number.isFinite(Number(x)) ? Number(x) : 0);
+    const worldZ = Math.floor(Number.isFinite(Number(z)) ? Number(z) : 0);
+    const info = providedInfo ?? this._columnInfo(worldX, worldZ);
+
+    if (FERN !== AIR || WILDFLOWER !== AIR) {
+      const cellX = floorDiv(worldX, PLANT_CELL_SIZE);
+      const cellZ = floorDiv(worldZ, PLANT_CELL_SIZE);
+      const roll = hashUnit(hash2D(cellX, cellZ, this._noiseSeeds.plants));
+      if (roll >= 0.68) {
+        const rootX = cellX * PLANT_CELL_SIZE + Math.floor(hashUnit(hash2D(
+          cellX,
+          cellZ,
+          this._noiseSeeds.plants ^ 0x9e3779b9,
+        )) * PLANT_CELL_SIZE);
+        const rootZ = cellZ * PLANT_CELL_SIZE + Math.floor(hashUnit(hash2D(
+          cellX,
+          cellZ,
+          this._noiseSeeds.plants ^ 0x85ebca6b,
+        )) * PLANT_CELL_SIZE);
+        const choice = info.biome === 'forest' || roll > 0.88 ? FERN : WILDFLOWER;
+        if (
+          rootX === worldX
+          && rootZ === worldZ
+          && choice !== AIR
+          && info.height > SEA_LEVEL
+          && !info.pondId
+          && !info.surfaceSand
+          && !info.caveMouth
+          && info.rockiness <= 0.58
+        ) return true;
+      }
+    }
+
+    if (
+      SHORT_GRASS !== AIR
+      && !info.pondId
+      && !info.surfaceSand
+      && info.height > SEA_LEVEL
+      && !info.caveMouth
+      && info.rockiness <= 0.62
+    ) {
+      if (shortGrassGrowsAt(
+        worldX,
+        worldZ,
+        this._noiseSeeds.grassPatches,
+        info.forestWeight,
+      )) return true;
+    }
+
+    if (CACTUS !== AIR) {
+      const cellX = floorDiv(worldX, CACTUS_CELL_SIZE);
+      const cellZ = floorDiv(worldZ, CACTUS_CELL_SIZE);
+      const roll = hashUnit(hash2D(cellX, cellZ, this._noiseSeeds.plants ^ 0xc2b2ae35));
+      const rootX = cellX * CACTUS_CELL_SIZE + 1 + Math.floor(hashUnit(hash2D(
+        cellX,
+        cellZ,
+        this._noiseSeeds.plants ^ 0x27d4eb2d,
+      )) * (CACTUS_CELL_SIZE - 2));
+      const rootZ = cellZ * CACTUS_CELL_SIZE + 1 + Math.floor(hashUnit(hash2D(
+        cellX,
+        cellZ,
+        this._noiseSeeds.plants ^ 0x165667b1,
+      )) * (CACTUS_CELL_SIZE - 2));
+      if (
+        roll >= 0.58
+        && rootX === worldX
+        && rootZ === worldZ
+        && !info.pondId
+        && info.biome === 'desert'
+        && info.surfaceSand
+        && info.height > SEA_LEVEL
+        && !info.caveMouth
+      ) return true;
+    }
+    return false;
+  }
+
+  _forestFloorFootprintIsClear(rootX, rootZ, kind, nearbyTrees, baseHeight) {
+    const clearance = FOREST_FLOOR_CLEARANCE[kind] ?? 0.75;
+    const reach = Math.ceil(clearance);
+    for (const tree of nearbyTrees) {
+      if (Math.hypot(tree.rootX - rootX, tree.rootZ - rootZ) < clearance + 0.75) return false;
+    }
+    for (let dz = -reach; dz <= reach; dz++) {
+      for (let dx = -reach; dx <= reach; dx++) {
+        if (Math.hypot(dx, dz) > clearance + 0.45) continue;
+        const x = rootX + dx;
+        const z = rootZ + dz;
+        const info = this._columnInfo(x, z);
+        if (
+          Math.abs(info.height - baseHeight) > 1
+          || info.height <= SEA_LEVEL + 1
+          || info.biome !== 'forest'
+          || info.forestWeight < FOREST_FLOOR_MIN_FOREST_WEIGHT
+          || info.pondId
+          || Number.isFinite(info.pondWaterLevel)
+          || info.surfaceSand
+          || info.caveMouth
+          || info.riverStrength > 0.28
+          || info.rockiness > 0.54
+          || this._baseBlockWithInfo(x, info.height, z, info) !== GRASS
+          || this._baseBlockWithInfo(x, info.height + 1, z, info) !== AIR
+          || this._generatedSurfaceDecorAt(x, z, info)
+        ) return false;
+      }
+    }
+    return true;
+  }
+
+  _forestFloorDescriptorForCell(cellX, cellZ) {
+    if (!this.forestFloorEnabled) return null;
+    cellX = Math.floor(Number.isFinite(Number(cellX)) ? Number(cellX) : 0);
+    cellZ = Math.floor(Number.isFinite(Number(cellZ)) ? Number(cellZ) : 0);
+    const seed = this._noiseSeeds.forestFloor;
+    const rootX = cellX * FOREST_FLOOR_CELL_SIZE + 2 + Math.floor(hashUnit(hash2D(
+      cellX,
+      cellZ,
+      seed ^ 0x9e3779b9,
+    )) * (FOREST_FLOOR_CELL_SIZE - 4));
+    const rootZ = cellZ * FOREST_FLOOR_CELL_SIZE + 2 + Math.floor(hashUnit(hash2D(
+      cellX,
+      cellZ,
+      seed ^ 0x85ebca6b,
+    )) * (FOREST_FLOOR_CELL_SIZE - 4));
+    const info = this._columnInfo(rootX, rootZ);
+    if (
+      info.height <= SEA_LEVEL + 1
+      || info.biome !== 'forest'
+      || info.forestWeight < FOREST_FLOOR_MIN_FOREST_WEIGHT
+      || info.pondId
+      || Number.isFinite(info.pondWaterLevel)
+      || info.surfaceSand
+      || info.caveMouth
+      || info.riverStrength > 0.28
+      || info.rockiness > 0.54
+    ) return null;
+    const spawnChance = FOREST_FLOOR_SPAWN_BASE
+      + info.forestWeight * FOREST_FLOOR_SPAWN_FOREST_BONUS;
+    if (hashUnit(hash2D(cellX, cellZ, seed ^ 0xc2b2ae35)) >= spawnChance) return null;
+    const slope = Math.max(
+      Math.abs(info.height - this.terrainHeight(rootX + 1, rootZ)),
+      Math.abs(info.height - this.terrainHeight(rootX - 1, rootZ)),
+      Math.abs(info.height - this.terrainHeight(rootX, rootZ + 1)),
+      Math.abs(info.height - this.terrainHeight(rootX, rootZ - 1)),
+    );
+    if (slope > 1) return null;
+
+    const nearbyTrees = this.getTreesNear(
+      rootX,
+      rootZ,
+      FOREST_FLOOR_MAX_TREE_DISTANCE + 2,
+    );
+    if (nearbyTrees.some((tree) => (
+      Math.hypot(tree.rootX - rootX, tree.rootZ - rootZ) < FOREST_FLOOR_MIN_TREE_DISTANCE
+    ))) return null;
+    const tree = nearbyTrees.find((candidate) => (
+      Math.hypot(candidate.rootX - rootX, candidate.rootZ - rootZ)
+        <= FOREST_FLOOR_MAX_TREE_DISTANCE
+      && Math.abs(candidate.rootY - 1 - info.height) <= 2
+    ));
+    if (!tree) return null;
+    const treeDistance = Math.hypot(tree.rootX - rootX, tree.rootZ - rootZ);
+
+    const kindRoll = hashUnit(hash2D(cellX, cellZ, seed ^ 0x27d4eb2d));
+    let kind = kindRoll < 0.19
+      ? 'fallen_log'
+      : kindRoll < 0.31
+        ? 'stump'
+        : kindRoll < 0.47
+          ? 'exposed_roots'
+          : kindRoll < 0.69
+            ? 'twigs'
+            : kindRoll < 0.83 && tree.isPine
+              ? 'pinecone'
+              : 'rock_cluster';
+    if (kind === 'exposed_roots' && treeDistance > 3.8) kind = 'twigs';
+    if (!this._forestFloorFootprintIsClear(
+      rootX,
+      rootZ,
+      kind,
+      nearbyTrees,
+      info.height,
+    )) return null;
+
+    const yawRoll = hashUnit(hash2D(cellX, cellZ, seed ^ 0x165667b1));
+    const yaw = kind === 'exposed_roots'
+      ? (Math.atan2(rootX - tree.rootX, rootZ - tree.rootZ)
+        + (yawRoll - 0.5) * 0.36 + Math.PI * 2) % (Math.PI * 2)
+      : yawRoll * Math.PI * 2;
+    const scaleRange = FOREST_FLOOR_SCALE_RANGES[kind];
+    const scale = scaleRange[0] + hashUnit(hash2D(
+      cellX,
+      cellZ,
+      seed ^ 0x94d049bb,
+    )) * (scaleRange[1] - scaleRange[0]);
+    const woody = kind === 'fallen_log' || kind === 'stump';
+    const mushrooms = woody && hashUnit(hash2D(
+      cellX,
+      cellZ,
+      seed ^ 0x6a09e667,
+    )) < FOREST_FLOOR_MUSHROOM_CHANCE;
+    const insects = woody && hashUnit(hash2D(
+      cellX,
+      cellZ,
+      seed ^ 0xbb67ae85,
+    )) < FOREST_FLOOR_INSECT_CHANCE;
+    return Object.freeze({
+      key: `forest-floor:${cellX},${cellZ}`,
+      cellX,
+      cellZ,
+      treeKey: tree.id,
+      x: rootX + 0.5,
+      y: info.height + 1,
+      z: rootZ + 0.5,
+      yaw,
+      scale,
+      kind,
+      wetnessSeed: hashUnit(hash2D(cellX, cellZ, seed ^ 0x3c6ef372)),
+      mushrooms,
+      insects,
+    });
+  }
+
+  setForestFloorCollisionEnabled(enabled) {
+    this.forestFloorCollisionEnabled = this.forestFloorEnabled && Boolean(enabled);
+  }
+
+  forestFloorPlacementIsLive(descriptor) {
+    if (!descriptor || typeof this.getBlock !== 'function') return false;
+    const x = Math.floor(Number(descriptor.x));
+    const y = Math.floor(Number(descriptor.y));
+    const z = Math.floor(Number(descriptor.z));
+    if (![x, y, z].every(Number.isFinite)) return false;
+    const colliders = forestFloorCollidersForDescriptor(descriptor);
+    const columns = new Map([[`${x},${z}`, { x, z }]]);
+    for (const collider of colliders) {
+      const extentX = collider.halfX * Math.abs(Math.cos(collider.yaw))
+        + collider.halfZ * Math.abs(Math.sin(collider.yaw));
+      const extentZ = collider.halfX * Math.abs(Math.sin(collider.yaw))
+        + collider.halfZ * Math.abs(Math.cos(collider.yaw));
+      for (let blockZ = Math.floor(collider.z - extentZ);
+        blockZ <= Math.floor(collider.z + extentZ); blockZ++) {
+        for (let blockX = Math.floor(collider.x - extentX);
+          blockX <= Math.floor(collider.x + extentX); blockX++) {
+          if (forestFloorColliderTouchesColumn(collider, blockX, blockZ)) {
+            columns.set(`${blockX},${blockZ}`, { x: blockX, z: blockZ });
+          }
+        }
+      }
+    }
+    for (const column of columns.values()) {
+      const occupied = BLOCKS[this.getBlock(column.x, y, column.z)];
+      if (occupied?.solid || occupied?.liquid) return false;
+      const generatedSupport = BLOCKS[this._baseBlockAt(column.x, y - 1, column.z)];
+      if (!generatedSupport?.solid || generatedSupport.liquid) continue;
+      const liveSupport = BLOCKS[this.getBlock(column.x, y - 1, column.z)];
+      if (!liveSupport?.solid || liveSupport.liquid) return false;
+    }
+    return true;
+  }
+
+  getForestFloorNear(x, z, radius = 72) {
+    if (!this.forestFloorEnabled) return [];
+    const centerX = Number.isFinite(Number(x)) ? Number(x) : 0;
+    const centerZ = Number.isFinite(Number(z)) ? Number(z) : 0;
+    const safeRadius = THREE.MathUtils.clamp(
+      Number(radius) || 0,
+      0,
+      FOREST_FLOOR_QUERY_RADIUS_LIMIT,
+    );
+    const minCellX = floorDiv(Math.floor(centerX - safeRadius), FOREST_FLOOR_CELL_SIZE);
+    const minCellZ = floorDiv(Math.floor(centerZ - safeRadius), FOREST_FLOOR_CELL_SIZE);
+    const maxCellX = floorDiv(Math.floor(centerX + safeRadius), FOREST_FLOOR_CELL_SIZE);
+    const maxCellZ = floorDiv(Math.floor(centerZ + safeRadius), FOREST_FLOOR_CELL_SIZE);
+    const descriptors = [];
+    for (let cellZ = minCellZ; cellZ <= maxCellZ; cellZ++) {
+      for (let cellX = minCellX; cellX <= maxCellX; cellX++) {
+        const cellKey = `${cellX},${cellZ}`;
+        let descriptor;
+        if (this._forestFloorCache.has(cellKey)) {
+          descriptor = this._forestFloorCache.get(cellKey) || null;
+        } else {
+          descriptor = this._forestFloorDescriptorForCell(cellX, cellZ);
+          trimCache(this._forestFloorCache, FOREST_FLOOR_CACHE_LIMIT);
+          this._forestFloorCache.set(cellKey, descriptor || false);
+        }
+        if (
+          !descriptor
+          || Math.hypot(descriptor.x - centerX, descriptor.z - centerZ) > safeRadius
+        ) continue;
+        descriptors.push(descriptor);
+      }
+    }
+    descriptors.sort((a, b) => (
+      Math.hypot(a.x - centerX, a.z - centerZ)
+        - Math.hypot(b.x - centerX, b.z - centerZ)
+      || a.key.localeCompare(b.key)
+    ));
+    return descriptors;
+  }
+
+  getForestFloorCollidersNear(x, z, radius = 3.25) {
+    if (!this.forestFloorCollisionEnabled) return [];
+    const centerX = Number.isFinite(Number(x)) ? Number(x) : 0;
+    const centerZ = Number.isFinite(Number(z)) ? Number(z) : 0;
+    const safeRadius = THREE.MathUtils.clamp(Number(radius) || 0, 0, 12);
+    return this.getForestFloorNear(centerX, centerZ, safeRadius + 2)
+      .filter((descriptor) => (
+        (!this.isPositionReady || this.isPositionReady(descriptor.x, descriptor.z))
+        && this.forestFloorPlacementIsLive(descriptor)
+      ))
+      .flatMap(forestFloorCollidersForDescriptor)
+      .filter((collider) => (
+        Math.hypot(collider.x - centerX, collider.z - centerZ)
+          <= safeRadius + Math.hypot(collider.halfX, collider.halfZ)
+      ));
+  }
+
+  _mountainSummitCrossForCell(cellX, cellZ) {
+    cellX = Math.floor(Number.isFinite(Number(cellX)) ? Number(cellX) : 0);
+    cellZ = Math.floor(Number.isFinite(Number(cellZ)) ? Number(cellZ) : 0);
+    const key = `${cellX},${cellZ}`;
+    if (this._mountainSummitCache.has(key)) {
+      return this._mountainSummitCache.get(key) || null;
+    }
+    const remember = (value) => {
+      trimCache(this._mountainSummitCache, MOUNTAIN_SUMMIT_CACHE_LIMIT);
+      this._mountainSummitCache.set(key, value || false);
+      return value || null;
+    };
+    if (!this.summitCrossesEnabled) {
+      return remember(null);
+    }
+
+    const originX = cellX * MOUNTAIN_SUMMIT_CELL_SIZE;
+    const originZ = cellZ * MOUNTAIN_SUMMIT_CELL_SIZE;
+    let best = null;
+    const consider = (x, z) => {
+      const terrain = this._macroTerrainAt(x, z);
+      const rank = hash2D(x, z, this._noiseSeeds.summitCrosses);
+      if (
+        !best
+        || terrain.height > best.terrain.height
+        || (terrain.height === best.terrain.height && rank < best.rank)
+      ) best = { x, z, terrain, rank };
+    };
+
+    // A sparse scan locates the high part of each 64-block mountain sector;
+    // the full-resolution refinement then puts the monument on the actual
+    // voxel summit. This is deterministic and much cheaper than exhaustively
+    // sampling every surface column while chunks stream around the player.
+    for (let z = originZ + 4; z < originZ + MOUNTAIN_SUMMIT_CELL_SIZE; z += 8) {
+      for (let x = originX + 4; x < originX + MOUNTAIN_SUMMIT_CELL_SIZE; x += 8) {
+        consider(x, z);
+      }
+    }
+    if (!best) return remember(null);
+    const coarse = best;
+    for (let z = coarse.z - 6; z <= coarse.z + 6; z++) {
+      for (let x = coarse.x - 6; x <= coarse.x + 6; x++) consider(x, z);
+    }
+
+    // Refinement is allowed to cross the sector edge, but only the sector that
+    // owns the final coordinate may publish it. A ridge crossing a grid line
+    // therefore receives one cross instead of a duplicate on either side.
+    if (
+      floorDiv(best.x, MOUNTAIN_SUMMIT_CELL_SIZE) !== cellX
+      || floorDiv(best.z, MOUNTAIN_SUMMIT_CELL_SIZE) !== cellZ
+    ) return remember(null);
+
+    const info = this._columnInfo(best.x, best.z);
+    if (
+      info.height < SEA_LEVEL + 24
+      || info.rockiness < 0.56
+      || info.riverStrength > 0.2
+      || info.pondId
+      || info.caveMouth
+      || info.height + MOUNTAIN_CROSS_MODEL_HEIGHT >= WORLD_HEIGHT
+    ) return remember(null);
+
+    // Reject a high shoulder when the mountain is still rising just outside
+    // the refinement window. Broad, equal-height summit plateaus remain valid.
+    for (let dz = -12; dz <= 12; dz += 3) {
+      for (let dx = -12; dx <= 12; dx += 3) {
+        if (Math.abs(dx) <= 6 && Math.abs(dz) <= 6) continue;
+        if (this._macroTerrainAt(best.x + dx, best.z + dz).height > info.height) {
+          return remember(null);
+        }
+      }
+    }
+
+    // A mountain can be a valid summit without always carrying a monument.
+    // Roll once per 64-block mountain sector from the world seed so the same
+    // save is stable across streaming order and reloads, while only one in four
+    // eligible mountains receives the authored cross.
+    const spawnRoll = mountainCrossSpawnRoll(cellX, cellZ, this.seed);
+    if (spawnRoll >= MOUNTAIN_CROSS_SPAWN_CHANCE) return remember(null);
+
+    const axis = hash2D(
+      best.x,
+      best.z,
+      this._noiseSeeds.summitCrosses ^ 0x9e3779b9,
+    ) < 0.5 ? 'x' : 'z';
+    return remember(Object.freeze({
+      id: `${cellX},${cellZ}`,
+      cellX,
+      cellZ,
+      rootX: best.x,
+      rootY: info.height + 1,
+      rootZ: best.z,
+      summitHeight: info.height,
+      axis,
+      asset: 'summit-cross.glb',
+      modelHeight: MOUNTAIN_CROSS_MODEL_HEIGHT,
+      crossbeamHeight: MOUNTAIN_CROSS_CROSSBEAM_HEIGHT,
+      spawnChance: MOUNTAIN_CROSS_SPAWN_CHANCE,
+      spawnRoll,
+    }));
+  }
+
+  getMountainCrossesNear(x, z, radius = 192) {
+    const centerX = Number.isFinite(Number(x)) ? Number(x) : 0;
+    const centerZ = Number.isFinite(Number(z)) ? Number(z) : 0;
+    const safeRadius = THREE.MathUtils.clamp(Number(radius) || 0, 0, 512);
+    const minCellX = floorDiv(Math.floor(centerX - safeRadius), MOUNTAIN_SUMMIT_CELL_SIZE);
+    const minCellZ = floorDiv(Math.floor(centerZ - safeRadius), MOUNTAIN_SUMMIT_CELL_SIZE);
+    const maxCellX = floorDiv(Math.floor(centerX + safeRadius), MOUNTAIN_SUMMIT_CELL_SIZE);
+    const maxCellZ = floorDiv(Math.floor(centerZ + safeRadius), MOUNTAIN_SUMMIT_CELL_SIZE);
+    const crosses = [];
+    for (let cellZ = minCellZ; cellZ <= maxCellZ; cellZ++) {
+      for (let cellX = minCellX; cellX <= maxCellX; cellX++) {
+        const cross = this._mountainSummitCrossForCell(cellX, cellZ);
+        if (!cross || Math.hypot(cross.rootX - centerX, cross.rootZ - centerZ) > safeRadius) continue;
+        crosses.push(cross);
+      }
+    }
+    crosses.sort((a, b) => (
+      Math.hypot(a.rootX - centerX, a.rootZ - centerZ)
+        - Math.hypot(b.rootX - centerX, b.rootZ - centerZ)
+      || a.id.localeCompare(b.id)
+    ));
+    return crosses;
   }
 
   _decorateTrees(chunk) {
@@ -1794,8 +2504,8 @@ export class World {
       }
     }
 
-    // Dense values of one low-frequency field create connected tufts spanning
-    // several blocks, while the per-cell thinning keeps most meadow turf clear.
+    // Layered broad, pocket and clearing fields form irregular families with
+    // open breathing room instead of rows of evenly thinned block-centre tufts.
     // These are non-solid and non-selectable, so walking never catches on them.
     if (SHORT_GRASS !== AIR) {
       const originX = chunk.cx * CHUNK_SIZE;
@@ -1806,13 +2516,12 @@ export class World {
           const worldZ = originZ + z;
           const info = this._columnInfo(worldX, worldZ);
           if (info.pondId || info.surfaceSand || info.height <= SEA_LEVEL || info.caveMouth || info.rockiness > 0.62) continue;
-          const patch = fbm2D(worldX / 11, worldZ / 11, this._noiseSeeds.grassPatches, {
-            octaves: 2,
-            lacunarity: 2.05,
-            gain: 0.48,
-          });
-          const thinning = hashUnit(hash2D(worldX, worldZ, this._noiseSeeds.grassPatches ^ 0x9e3779b9));
-          if (patch < 0.55 || thinning < 0.24) continue;
+          if (!shortGrassGrowsAt(
+            worldX,
+            worldZ,
+            this._noiseSeeds.grassPatches,
+            info.forestWeight,
+          )) continue;
           const rootY = info.height + 1;
           this._writeGenerated(chunk, worldX, rootY, worldZ, SHORT_GRASS, (id) => id === AIR);
         }
@@ -1990,7 +2699,7 @@ export class World {
     }
   }
 
-  processQueue(maxChunks = 1, maxMilliseconds = 2.4) {
+  processQueue(maxChunks = 1, maxMilliseconds = 2.4, options = null) {
     const limit = Math.max(0, Math.floor(maxChunks));
     let processed = 0;
     let slices = 0;
@@ -2004,7 +2713,8 @@ export class World {
       }
       slices++;
       const warmingSpawn = this._preloadChunksRemaining > 0;
-      const completed = warmingSpawn
+      const completeChunks = warmingSpawn || options?.completeChunks === true;
+      const completed = completeChunks
         ? (this._generateChunk(chunk), true)
         : this._stepChunkGeneration(chunk, 128, maxMilliseconds);
       if (completed) {
@@ -2017,6 +2727,18 @@ export class World {
     }
     this._refreshStats();
     return processed;
+  }
+
+  hasPendingStreamingWork() {
+    return Boolean(
+      this.generationQueue.length
+      || this.stats.dirty > 0
+      || this.distantTerrain?.pending,
+    );
+  }
+
+  processDistantTerrain(maxRows = 2, maxMilliseconds = 2.4) {
+    return this.distantTerrain?.process(maxRows, maxMilliseconds) || 0;
   }
 
   _replaceMesh(chunk, property, geometry, material, name) {
@@ -2067,6 +2789,7 @@ export class World {
     const limit = Math.max(0, Math.floor(maxChunks));
     if (limit === 0) return 0;
     const editsOnly = options?.editsOnly === true;
+    const completeChunks = options?.completeChunks === true;
     const { cx, cz } = this.centerChunk;
     const dirty = [...this.chunks.values()]
       .filter((chunk) => (
@@ -2105,7 +2828,7 @@ export class World {
       }
       const revision = chunk.meshJobRevision;
       let complete = false;
-      if (chunk.editMeshPriority > 0) {
+      if (chunk.editMeshPriority > 0 || completeChunks) {
         const now = () => (
           typeof performance !== 'undefined' && typeof performance.now === 'function'
             ? performance.now()
@@ -2212,7 +2935,13 @@ export class World {
     const localX = localCoordinate(worldX, centerX);
     const localZ = localCoordinate(worldZ, centerZ);
     const nearestChunkEdge = Math.min(localX, CHUNK_SIZE - localX, localZ, CHUNK_SIZE - localZ);
-    return Math.max(8, completeRadius * CHUNK_SIZE + nearestChunkEdge - 2);
+    const detailedSafe = Math.max(8, completeRadius * CHUNK_SIZE + nearestChunkEdge - 2);
+    const distantSafe = this.distantTerrain?.getSafeDistanceFor(
+      worldX,
+      worldZ,
+      detailedSafe,
+    ) || 0;
+    return Math.max(detailedSafe, distantSafe);
   }
 
   _removeChunk(key, chunk, keepGeneratedData = true) {
@@ -2371,6 +3100,7 @@ export class World {
     for (const chunk of this.chunks.values()) {
       if (chunk.generated) this._generateChunk(chunk);
     }
+    this.editRevision++;
     this._refreshStats();
     return true;
   }
@@ -2397,18 +3127,36 @@ export class World {
     this.stats.edits = editCount;
     this.stats.flowingWater = this.fluidLevels.size;
     this.stats.fluidQueue = this.fluidQueue.length - this.fluidQueueHead;
+    this.stats.planned = this._streamPlanTargets.length;
+    this.stats.pendingAdmission = Math.max(
+      0,
+      this._streamPlanTargets.length - this._streamPlanCursor,
+    );
   }
 
   getStats() {
     this._refreshStats();
-    return { ...this.stats };
+    return {
+      ...this.stats,
+      visualDistance: this.renderDistance,
+      detailDistance: this.detailDistance,
+      streamDistance: this.streamDistance,
+      streamRevision: this.streamRevision,
+      distantTerrain: this.distantTerrain?.getStats?.() || null,
+    };
   }
 
   dispose() {
+    this.forestFloorCollisionEnabled = false;
+    this.distantTerrain?.dispose?.();
+    this.distantTerrain = null;
     for (const [key, chunk] of [...this.chunks]) this._removeChunk(key, chunk, false);
     this.dormantChunks.clear();
     this.generationQueue.length = 0;
     this.queuedChunks.clear();
+    this._streamPlanTargets.length = 0;
+    this._streamTargetKeys.clear();
+    this._streamPriorityByKey.clear();
     this.fluidQueue.length = 0;
     this.fluidQueueHead = 0;
     this.fluidQueued.clear();
@@ -2421,6 +3169,8 @@ export class World {
     this._columnCache.clear();
     this._caveNodeCache.clear();
     this._pondCellCache.clear();
+    this._forestFloorCache.clear();
+    this._mountainSummitCache.clear();
     this._refreshStats();
   }
 }

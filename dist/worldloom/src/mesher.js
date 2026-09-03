@@ -446,8 +446,8 @@ export class ChunkGeometryJob {
     const worldZ = this.originZ + z;
     const skyline = this.skylineState.sample;
 
-    if (definition?.shape === 'prop') {
-      // Rendered by its own Blender prop (red-flowers.js), not the voxel mesher.
+    if (definition?.shape === 'prop' || definition?.renderMode === 'meadow-model') {
+      // Rendered by a dedicated opaque Blender prop field, not atlas cutout quads.
       return;
     }
 

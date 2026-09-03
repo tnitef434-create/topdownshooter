@@ -138,6 +138,17 @@
         </div>
       </section>
 
+      <section id="death-screen" class="screen death-screen hidden" role="dialog" aria-modal="true" aria-labelledby="death-title" aria-describedby="death-reason">
+        <div class="death-card">
+          <span class="death-card__heart" aria-hidden="true"></span>
+          <p class="death-card__eyebrow">Your thread was cut</p>
+          <h2 id="death-title">You Died</h2>
+          <p id="death-reason" class="death-card__reason">The wilds overcame you.</p>
+          <p id="death-status" class="death-card__status" aria-live="assertive">Reweaving a safe return…</p>
+          <button id="respawn-button" class="button button--danger button--wide" type="button" disabled>Respawn</button>
+        </div>
+      </section>
+
       <section id="hud" class="hud hidden" aria-label="Game status">
         <div class="hud-top">
           <div class="objective-card">
@@ -280,9 +291,9 @@
                   </span>
                 </label>
                 <label class="setting-row" for="view-distance">
-                  <span><strong>View distance</strong><small>Higher values use more memory</small></span>
+                  <span><strong>View distance</strong><small>Full detail nearby · lightweight terrain at long range</small></span>
                   <span class="range-control">
-                    <input id="view-distance" type="range" min="2" max="9" step="1" value="4" />
+                    <input id="view-distance" type="range" min="2" max="20" step="1" value="4" />
                     <output id="view-distance-value" for="view-distance">4 chunks</output>
                   </span>
                 </label>

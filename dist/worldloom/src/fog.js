@@ -1,3 +1,5 @@
+import { normalizeViewDistance } from './streaming-config.js';
+
 function clamp(value, minimum, maximum) {
   return Math.max(minimum, Math.min(maximum, Number(value) || 0));
 }
@@ -13,7 +15,7 @@ function smoothstep(value, minimum, maximum) {
  * unchanged so terrain streaming retains the same visual safety boundary.
  */
 export function atmosphericFogRange(viewDistance = 4, context = {}) {
-  const distance = clamp(viewDistance, 2, 16);
+  const distance = normalizeViewDistance(viewDistance);
   const rain = clamp(context.rainIntensity, 0, 1);
   const overcast = clamp(context.overcastAmount, 0, 1);
   const skyExposure = clamp(context.skyExposure ?? 1, 0, 1);

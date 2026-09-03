@@ -13,6 +13,7 @@ const SunMaskShader = {
   uniforms: {
     tDiffuse: { value: null },
     tDepth: { value: null },
+    hasDepth: { value: 0 },
     resolution: { value: new THREE.Vector2(1, 1) },
     lightPosition: { value: new THREE.Vector2(0.5, 0.5) },
     sourceRadius: { value: 0.42 },
@@ -21,6 +22,7 @@ const SunMaskShader = {
   fragmentShader: /* glsl */`
     uniform sampler2D tDiffuse;
     uniform sampler2D tDepth;
+    uniform float hasDepth;
     uniform vec2 resolution;
     uniform vec2 lightPosition;
     uniform float sourceRadius;
@@ -28,26 +30,35 @@ const SunMaskShader = {
 
     void main() {
       vec3 sceneColor = texture2D(tDiffuse, vUv).rgb;
-      float depth = texture2D(tDepth, vUv).x;
+      float depth = 0.0;
+      if (hasDepth > 0.5) depth = texture2D(tDepth, vUv).x;
       // The atmosphere and sun deliberately do not write depth. Exact far
       // depth is therefore open air; terrain, leaves, clouds and roofs remain
       // black in the mask and carve clean shafts from the radial blur.
-      float depthSky = step(0.99999, depth);
+      float depthSky = step(0.5, hasDepth) * step(0.99999, depth);
       vec2 aspect = vec2(resolution.x / max(resolution.y, 1.0), 1.0);
       float sourceDistance = length((vUv - lightPosition) * aspect);
       float sourceFalloff = 1.0 - smoothstep(0.025, sourceRadius, sourceDistance);
       float luminance = dot(sceneColor, vec3(0.2126, 0.7152, 0.0722));
       // GTAO's shared normal pass cannot retain every atlas alpha cutout. The
-      // beauty buffer does: pixels in a leaf/grass hole contain the bright blue
-      // or neutral atmosphere behind it. Recover those pixels without turning
-      // green terrain into a light source; glass naturally receives a partial
-      // transmission instead of becoming an opaque rectangle.
+      // beauty buffer does: pixels in a leaf/grass hole contain the bright sky
+      // behind it. Recover blue, neutral and golden sky pixels without turning
+      // green terrain into a light source.
       float blueBalance = sceneColor.b - max(sceneColor.r, sceneColor.g);
-      float atmosphericColor = smoothstep(-0.16, 0.05, blueBalance);
-      float recoveredSky = smoothstep(0.42, 0.82, luminance) * atmosphericColor;
+      float warmBalance = min(sceneColor.r, sceneColor.g) - sceneColor.b;
+      float blueAtmosphere = smoothstep(-0.16, 0.05, blueBalance);
+      float warmNeutrality = 1.0 - smoothstep(0.08, 0.28, abs(sceneColor.r - sceneColor.g));
+      float goldenAtmosphere = smoothstep(0.02, 0.24, warmBalance)
+        * smoothstep(0.72, 1.04, luminance) * warmNeutrality;
+      float atmosphericColor = max(blueAtmosphere, goldenAtmosphere);
+      float recoveredSky = smoothstep(0.38, 0.78, luminance) * atmosphericColor;
       float openSky = max(depthSky, recoveredSky * (1.0 - depthSky));
       float skyEnergy = 0.22 + smoothstep(0.24, 1.15, luminance) * 0.78;
-      gl_FragColor = vec4(sceneColor * openSky * sourceFalloff * skyEnergy, 1.0);
+      // Store scalar optical energy. Carrying blue beauty-buffer RGB into the
+      // composite and multiplying it by gold produced low-energy grey/cyan
+      // beams. The authored sunlight tint is now applied exactly once.
+      float opticalEnergy = openSky * sourceFalloff * skyEnergy;
+      gl_FragColor = vec4(vec3(opticalEnergy), 1.0);
     }
   `,
 };
@@ -108,8 +119,13 @@ const SunCompositeShader = {
       vec4 sceneColor = texture2D(tDiffuse, vUv);
       vec3 shafts = texture2D(tShafts, vUv).rgb;
       // Soft compression keeps a white sun from producing clipped flat bands.
-      shafts /= 1.0 + max(max(shafts.r, shafts.g), shafts.b);
-      gl_FragColor = vec4(sceneColor.rgb + shafts * tint * intensity, sceneColor.a);
+      float shaftEnergy = max(max(shafts.r, shafts.g), shafts.b);
+      shaftEnergy /= 1.0 + shaftEnergy;
+      // A filmic toe lifts low-energy occlusion detail into visible beams while
+      // retaining a compressed shoulder around the solar disc. This makes
+      // foliage-defined rays legible without turning the whole view into haze.
+      float shapedEnergy = pow(max(shaftEnergy, 0.0), 0.78) * 1.28;
+      gl_FragColor = vec4(sceneColor.rgb + tint * shapedEnergy * intensity, sceneColor.a);
     }
   `,
 };
@@ -170,6 +186,7 @@ export class VolumetricSunPass extends Pass {
   setDepthTexture(depthTexture) {
     this.depthTexture = depthTexture || null;
     this.maskMaterial.uniforms.tDepth.value = this.depthTexture;
+    this.maskMaterial.uniforms.hasDepth.value = this.depthTexture ? 1 : 0;
   }
 
   configure({ resolutionScale, sourceRadius, density, decay, weight, tint } = {}) {
@@ -203,7 +220,7 @@ export class VolumetricSunPass extends Pass {
   }
 
   render(renderer, writeBuffer, readBuffer) {
-    if (!this.depthTexture || this.intensity <= 0.0001) return;
+    if (this.intensity <= 0.0001) return;
 
     this.maskMaterial.uniforms.tDiffuse.value = readBuffer.texture;
     renderer.setRenderTarget(this.maskTarget);
@@ -223,11 +240,18 @@ export class VolumetricSunPass extends Pass {
     return {
       active: this.enabled && this.intensity > 0.0001,
       depthBound: Boolean(this.depthTexture),
+      maskSource: this.depthTexture ? 'depth+beauty' : 'beauty-fallback',
       resolutionScale: this.resolutionScale,
       width: this.maskTarget.width,
       height: this.maskTarget.height,
       samples: 24,
       intensity: this.intensity,
+      tint: `#${this.compositeMaterial.uniforms.tint.value.getHexString()}`,
+      density: this.scatterMaterial.uniforms.density.value,
+      decay: this.scatterMaterial.uniforms.decay.value,
+      weight: this.scatterMaterial.uniforms.weight.value,
+      sourceRadius: this.maskMaterial.uniforms.sourceRadius.value,
+      lightUv: this.scatterMaterial.uniforms.lightPosition.value.toArray(),
     };
   }
 

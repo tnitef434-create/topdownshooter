@@ -4,14 +4,82 @@ import { CRACK_STAGES, createCrackAtlasTexture } from './crack-texture.js';
 import { GRAPHICS_PRESETS } from './save.js';
 import { PondEcologyField } from './pond-ecology.js';
 import { HangingLeavesField } from './hanging-leaves.js';
+import { GroundLeafField } from './ground-leaves.js';
+import { ForestFloorField } from './forest-floor.js';
 import { RedFlowerField } from './red-flowers.js';
+import { MeadowPlantField } from './meadow-plants.js';
 import { BirdField } from './birds.js';
+import { SummitCrossField } from './summit-crosses.js';
 import { atmosphericFogRange } from './fog.js';
 
 const LIGHT_BLOCKS = new Set([BLOCK.TORCH, BLOCK.LUMEN_CRYSTAL, BLOCK.KILN, BLOCK.FURNACE]);
 const FOLIAGE_BLOCKS = new Set([BLOCK.ASH_LEAVES, BLOCK.PINE_NEEDLES]);
+const SILHOUETTE_TARGET_SHAPES = new Set(['cross', 'cross-short', 'grass-tuft', 'prop']);
 const CLOUD_WORLD_REPEAT = 310;
 const CAVE_SKYLIGHT_RADIUS = 16;
+const SUN_HORIZON_COLOR = new THREE.Color('#ffb56f');
+const SUN_LOW_COLOR = new THREE.Color('#ffd395');
+const SUN_NOON_COLOR = new THREE.Color('#fff1c4');
+export const WEATHER_FRONT_CHANCE = 0.62;
+export const WEATHER_DURATION_RANGES = Object.freeze({
+  initialClear: Object.freeze([70, 430]),
+  dryClear: Object.freeze([110, 540]),
+  building: Object.freeze([18, 52]),
+  rain: Object.freeze([48, 250]),
+  afterStorm: Object.freeze([125, 620]),
+});
+
+function secureRandomUnit() {
+  const cryptoApi = globalThis.crypto;
+  if (cryptoApi?.getRandomValues) {
+    const value = new Uint32Array(1);
+    cryptoApi.getRandomValues(value);
+    return value[0] / 0x100000000;
+  }
+  return Math.random();
+}
+
+function normalizedWeatherRoll(value) {
+  return Math.max(0, Math.min(0.999999999, Number(value) || 0));
+}
+
+export function sampleWeatherDuration(kind, randomValue = 0.5) {
+  const [minimum, maximum] = WEATHER_DURATION_RANGES[kind] || WEATHER_DURATION_RANGES.dryClear;
+  return minimum + (maximum - minimum) * normalizedWeatherRoll(randomValue);
+}
+
+export function weatherFrontWillBuild(randomValue = 0.5) {
+  return normalizedWeatherRoll(randomValue) < WEATHER_FRONT_CHANCE;
+}
+
+/**
+ * Sprite billboards need to retain their apparent angular size, but celestial
+ * bodies must live behind every piece of terrain. Pinning only clip-space Z to
+ * the far plane preserves X/Y projection while the normal depth test produces
+ * exact mountain, tree and building silhouettes across the disc.
+ */
+export function pinCelestialSpriteToFarPlane(material) {
+  if (!material) return material;
+  const previousCompile = material.onBeforeCompile;
+  const previousCacheKey = material.customProgramCacheKey?.bind(material);
+  material.depthTest = true;
+  material.depthWrite = false;
+  material.depthFunc = THREE.LessEqualDepth;
+  material.onBeforeCompile = function onBeforeCompile(shader, renderer) {
+    previousCompile?.call(this, shader, renderer);
+    const projection = 'gl_Position = projectionMatrix * mvPosition;';
+    if (shader.vertexShader.includes(projection)) {
+      shader.vertexShader = shader.vertexShader.replace(
+        projection,
+        `${projection}\n\tgl_Position.z = gl_Position.w;`,
+      );
+    }
+  };
+  material.customProgramCacheKey = () => `${previousCacheKey?.() || ''}|worldloom-celestial-depth-v1`;
+  material.userData.worldloomCelestialFarDepth = true;
+  material.needsUpdate = true;
+  return material;
+}
 const CAVE_SKYLIGHT_DIRECTIONS = Object.freeze(Array.from({ length: 12 }, (_, index) => {
   const angle = (index / 12) * Math.PI * 2;
   return Object.freeze([Math.cos(angle), Math.sin(angle)]);
@@ -296,7 +364,28 @@ export function outdoorBounceIntensity(dayAmount, skyExposure, overcastAmount) {
   const day = THREE.MathUtils.clamp(Number(dayAmount) || 0, 0, 1);
   const sky = THREE.MathUtils.clamp(Number(skyExposure) || 0, 0, 1);
   const overcast = THREE.MathUtils.clamp(Number(overcastAmount) || 0, 0, 1);
-  return (0.012 + day * 0.18) * (0.02 + sky * 0.98) * (1 - overcast * 0.38);
+  return (0.016 + day * 0.2) * (0.02 + sky * 0.98) * (1 - overcast * 0.34);
+}
+
+export function daylightBalance(dayAmount, solarElevation, skyAccess = 1) {
+  const day = THREE.MathUtils.clamp(Number(dayAmount) || 0, 0, 1);
+  const elevation = THREE.MathUtils.clamp(Number(solarElevation) || 0, 0, 1);
+  const sky = THREE.MathUtils.clamp(Number(skyAccess) || 0, 0, 1);
+  const goldenHour = 1 - THREE.MathUtils.smoothstep(elevation, 0.14, 0.72);
+  return {
+    goldenHour,
+    sunIntensity: (0.015 + day * 3.82) * (0.98 + goldenHour * 0.08),
+    hemisphereIntensity: (0.16 + day * 0.58) * sky,
+    environmentIntensity: (0.03 + day * 0.32) * sky,
+  };
+}
+
+export function sunlightColorForElevation(solarElevation, target = new THREE.Color()) {
+  const elevation = THREE.MathUtils.clamp(Number(solarElevation) || 0, 0, 1);
+  const horizonToLow = THREE.MathUtils.smoothstep(elevation, 0.015, 0.22);
+  const lowToNoon = THREE.MathUtils.smoothstep(elevation, 0.24, 0.78);
+  target.copy(SUN_HORIZON_COLOR).lerp(SUN_LOW_COLOR, horizonToLow);
+  return target.lerp(SUN_NOON_COLOR, lowToNoon);
 }
 
 export function weatherLightingState(phase, overcastAmount = 0, rainIntensity = 0) {
@@ -338,6 +427,7 @@ function makeAtmosphereMaterial() {
       sunDirection: { value: new THREE.Vector3(0, 1, 0) },
       sunColor: { value: new THREE.Color('#fff1c2') },
       sunVisibility: { value: 1 },
+      sunElevation: { value: 1 },
       twilight: { value: 0 },
       dayAmount: { value: 1 },
       atmosphereDetail: { value: 0.72 },
@@ -357,6 +447,7 @@ function makeAtmosphereMaterial() {
       uniform vec3 sunDirection;
       uniform vec3 sunColor;
       uniform float sunVisibility;
+      uniform float sunElevation;
       uniform float twilight;
       uniform float dayAmount;
       uniform float atmosphereDetail;
@@ -377,10 +468,13 @@ function makeAtmosphereMaterial() {
         sky = mix(sky, zenithColor, upperBlend);
 
         float sunDot = max(dot(direction, normalize(sunDirection)), 0.0);
-        float sunHalo = pow(sunDot, 18.0) * (0.16 + twilight * 0.28);
-        float sunCore = pow(sunDot, 620.0) * 1.4;
-        float horizonGlow = exp(-abs(height) * 9.0) * twilight * 0.28;
-        sky += sunColor * (sunHalo + sunCore + horizonGlow) * sunVisibility;
+        float lowSun = 1.0 - smoothstep(0.14, 0.72, sunElevation);
+        float forwardScatter = pow(sunDot, 8.0) * (0.018 + lowSun * 0.075) * dayAmount;
+        float sunHalo = pow(sunDot, 18.0) * (0.18 + twilight * 0.3 + lowSun * 0.09);
+        float sunCore = pow(sunDot, 620.0) * 1.65;
+        float horizonGlow = exp(-abs(height) * 9.0)
+          * (twilight * 0.24 + lowSun * 0.055) * dayAmount;
+        sky += sunColor * (forwardScatter + sunHalo + sunCore + horizonGlow) * sunVisibility;
 
         // Tiny ordered-looking noise prevents visible color bands in dark skies.
         float grain = hash21(gl_FragCoord.xy) - 0.5;
@@ -469,12 +563,23 @@ function enhanceWaterMaterial(material, sharedUniforms) {
   material.onBeforeCompile = (shader) => {
     shader.uniforms.worldloomTime = sharedUniforms.time;
     shader.uniforms.worldloomDayAmount = sharedUniforms.dayAmount;
+    shader.uniforms.worldloomSunDirection = sharedUniforms.sunDirection;
+    shader.uniforms.worldloomSunColor = sharedUniforms.sunColor;
+    shader.uniforms.worldloomSunVisibility = sharedUniforms.sunVisibility;
     injectWorldPosition(shader, `
       float worldloomWaveMask = step(0.55, objectNormal.y);
       float worldloomWave = sin((position.x + modelMatrix[3].x) * 0.73 + worldloomTime * 1.45)
         + sin((position.z + modelMatrix[3].z) * 0.91 - worldloomTime * 1.13);
       transformed.y += worldloomWave * 0.018 * worldloomWaveMask;
     `);
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <common>',
+      `#include <common>
+        uniform vec3 worldloomSunDirection;
+        uniform vec3 worldloomSunColor;
+        uniform float worldloomSunVisibility;
+      `,
+    );
     shader.fragmentShader = shader.fragmentShader.replace(
       '#include <map_fragment>',
       `#include <map_fragment>
@@ -495,9 +600,19 @@ function enhanceWaterMaterial(material, sharedUniforms) {
         diffuseColor.rgb += vec3(0.16, 0.34, 0.42) * worldloomFresnel * (0.35 + worldloomDayAmount * 0.30);
       `,
     );
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <lights_fragment_end>',
+      `#include <lights_fragment_end>
+        vec3 worldloomSunView = normalize((viewMatrix * vec4(worldloomSunDirection, 0.0)).xyz);
+        vec3 worldloomHalfVector = normalize(worldloomSunView + geometryViewDir);
+        float worldloomSunGlint = pow(max(dot(normalize(normal), worldloomHalfVector), 0.0), 112.0);
+        reflectedLight.directSpecular += worldloomSunColor * worldloomSunGlint
+          * worldloomSunVisibility * (0.42 + worldloomDayAmount * 0.78);
+      `,
+    );
     material.userData.worldloomShader = shader;
   };
-  material.customProgramCacheKey = () => 'worldloom-animated-water-v2';
+  material.customProgramCacheKey = () => 'worldloom-animated-water-v3-sun-glint';
   material.needsUpdate = true;
 }
 
@@ -554,12 +669,9 @@ function makeWorldEnvironmentMap(renderer) {
     gradient.addColorStop(1, '#182117');
     context.fillStyle = gradient;
     context.fillRect(0, 0, canvas.width, canvas.height);
-    const sunGlow = context.createRadialGradient(374, 86, 2, 374, 86, 56);
-    sunGlow.addColorStop(0, 'rgba(255,250,220,1)');
-    sunGlow.addColorStop(0.12, 'rgba(255,223,158,.85)');
-    sunGlow.addColorStop(1, 'rgba(255,196,110,0)');
-    context.fillStyle = sunGlow;
-    context.fillRect(300, 12, 148, 148);
+    // Keep IBL direction-neutral. The old baked hotspot stayed fixed while the
+    // real sun crossed the sky, creating a second false highlight on water and
+    // glass. Their authored glints now follow the live sun direction instead.
     const texture = new THREE.CanvasTexture(canvas);
     texture.colorSpace = THREE.SRGBColorSpace;
     texture.mapping = THREE.EquirectangularReflectionMapping;
@@ -814,31 +926,87 @@ class RainField {
 }
 
 const MAX_FALLING_LEAVES = 180;
+const FALLING_LEAF_MAX_FLIGHT_SECONDS = 45;
+export const FALLING_LEAF_STATE = Object.freeze({
+  inactive: 0,
+  falling: 1,
+  settled: 2,
+});
+const FALLING_LEAF_TEXTURE_URL = new URL(
+  '../assets/environment/falling-leaf-particle.png',
+  import.meta.url,
+).href;
+
+export function fallingLeafSupportY(world, x, z, maxY, fallback = Number.NaN) {
+  if (!world?.getBlock) return fallback;
+  const blockX = Math.floor(Number(x) || 0);
+  const blockZ = Math.floor(Number(z) || 0);
+  const ceiling = Number(maxY);
+  if (!Number.isFinite(ceiling)) return fallback;
+  const worldHeight = Math.max(1, Number(world.worldHeight) || 96);
+  const scanTop = Math.max(0, Math.min(worldHeight - 1, Math.floor(ceiling + 0.001)));
+  for (let y = scanTop; y >= 0; y--) {
+    const id = world.getBlock(blockX, y, blockZ);
+    if (FOLIAGE_BLOCKS.has(id)) continue;
+    const definition = BLOCKS[id];
+    if (!definition?.solid && !definition?.liquid && !definition?.hazard) continue;
+    const liquidSurface = definition.liquid
+      ? world.getFluidSurfaceY?.(blockX, y, blockZ)
+      : null;
+    const surface = (liquidSurface ?? (y + blockShapeHeight(id))) + 0.025;
+    // A surface above the leaf means the particle is embedded in this column.
+    // Do not continue downward and mistake a face inside stacked solids for an
+    // exposed floor; horizontal collision resolution will keep the leaf out.
+    if (surface > ceiling + 0.04) return fallback;
+    if (surface <= ceiling + 0.04) return surface;
+  }
+  const terrain = Number(world.terrainHeight?.(blockX, blockZ)) + 1.025;
+  return Number.isFinite(terrain) && terrain <= ceiling + 0.04 ? terrain : fallback;
+}
+
+export function fallingLeafColumnBlocked(world, x, y, z) {
+  if (!world?.getBlock) return false;
+  const blockX = Math.floor(Number(x) || 0);
+  const blockY = Math.floor(Number(y) || 0);
+  const blockZ = Math.floor(Number(z) || 0);
+  const id = world.getBlock(blockX, blockY, blockZ);
+  if (FOLIAGE_BLOCKS.has(id)) return false;
+  const definition = BLOCKS[id];
+  if (!definition?.solid && !definition?.liquid && !definition?.hazard) return false;
+  const liquidSurface = definition.liquid
+    ? world.getFluidSurfaceY?.(blockX, blockY, blockZ)
+    : null;
+  const surface = (liquidSurface ?? (blockY + blockShapeHeight(id))) + 0.025;
+  return Number.isFinite(surface) && surface > Number(y) + 0.04;
+}
+
+export function stepFallingLeafVertical(y, velocityY, supportY, dt, flightAge = 0) {
+  const elapsed = Math.max(0, Number(dt) || 0);
+  const previousY = Number(y) || 0;
+  const support = Number(supportY);
+  const nextAge = Math.max(0, Number(flightAge) || 0) + elapsed;
+  const nextY = previousY + (Number(velocityY) || 0) * elapsed;
+  const crossedSupport = Number.isFinite(support)
+    && previousY >= support - 0.04
+    && nextY <= support;
+  const safetyLanding = Number.isFinite(support)
+    && nextAge >= FALLING_LEAF_MAX_FLIGHT_SECONDS;
+  const landed = crossedSupport || safetyLanding;
+  return {
+    y: landed ? support : nextY,
+    flightAge: nextAge,
+    landed,
+  };
+}
 
 function makeLeafTexture() {
-  const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = 32;
-  const context = canvas.getContext('2d');
-  context.translate(16, 16);
-  context.rotate(-0.55);
-  const gradient = context.createLinearGradient(-9, 0, 9, 0);
-  gradient.addColorStop(0, '#8a6d32');
-  gradient.addColorStop(0.48, '#d8b24f');
-  gradient.addColorStop(1, '#567a39');
-  context.fillStyle = gradient;
-  context.beginPath();
-  context.moveTo(-11, 0);
-  context.quadraticCurveTo(0, -7, 11, 0);
-  context.quadraticCurveTo(0, 7, -11, 0);
-  context.fill();
-  context.strokeStyle = 'rgba(244,225,151,.72)';
-  context.lineWidth = 1;
-  context.beginPath();
-  context.moveTo(-9, 0);
-  context.lineTo(9, 0);
-  context.stroke();
-  const texture = new THREE.CanvasTexture(canvas);
+  const texture = new THREE.TextureLoader().load(FALLING_LEAF_TEXTURE_URL);
+  texture.name = 'GPT-derived falling ash leaf';
   texture.colorSpace = THREE.SRGBColorSpace;
+  texture.magFilter = THREE.NearestFilter;
+  texture.minFilter = THREE.NearestFilter;
+  texture.generateMipmaps = false;
+  texture.anisotropy = 1;
   return texture;
 }
 
@@ -851,7 +1019,9 @@ class FallingLeaves {
     this.cursor = 0;
     this.positions = new Float32Array(MAX_FALLING_LEAVES * 3);
     this.velocities = new Float32Array(MAX_FALLING_LEAVES * 3);
-    this.life = new Float32Array(MAX_FALLING_LEAVES);
+    this.state = new Uint8Array(MAX_FALLING_LEAVES);
+    this.flightAge = new Float32Array(MAX_FALLING_LEAVES);
+    this.settleTime = new Float32Array(MAX_FALLING_LEAVES);
     this.phase = new Float32Array(MAX_FALLING_LEAVES);
     this.positions.fill(-9999);
     const geometry = new THREE.BufferGeometry();
@@ -880,7 +1050,9 @@ class FallingLeaves {
     this.world = world || null;
     this.points.visible = Boolean(world);
     if (!world) {
-      this.life.fill(0);
+      this.state.fill(FALLING_LEAF_STATE.inactive);
+      this.flightAge.fill(0);
+      this.settleTime.fill(0);
       this.positions.fill(-9999);
       this.points.geometry.attributes.position.needsUpdate = true;
     }
@@ -893,38 +1065,64 @@ class FallingLeaves {
   }
 
   _spawn(x, y, z) {
-    const index = this.cursor++ % MAX_FALLING_LEAVES;
-    const offset = index * 3;
-    this.positions[offset] = x + Math.random();
-    this.positions[offset + 1] = y + 0.2 + Math.random() * 0.8;
-    this.positions[offset + 2] = z + Math.random();
-    this.velocities[offset] = 0.08 + Math.random() * 0.18;
-    this.velocities[offset + 1] = -(0.35 + Math.random() * 0.5);
-    this.velocities[offset + 2] = (Math.random() - 0.5) * 0.16;
-    this.life[index] = 5 + Math.random() * 7;
-    this.phase[index] = Math.random() * Math.PI * 2;
-  }
-
-  _seedNearTrees(focus) {
-    if (!this.world?.getBlock) return;
-    const attempts = this.reducedMotion ? 5 : 13;
-    for (let attempt = 0; attempt < attempts; attempt++) {
-      const angle = Math.random() * Math.PI * 2;
-      const radius = 2 + Math.random() * 14;
-      const x = Math.floor(focus.x + Math.cos(angle) * radius);
-      const z = Math.floor(focus.z + Math.sin(angle) * radius);
-      const ground = Math.floor(this.world.terrainHeight?.(x, z) ?? focus.y - 1);
-      for (let y = ground + 3; y <= Math.min(ground + 10, Number(this.world.worldHeight) - 1); y++) {
-        if (this.world.getBlock(x, y, z) !== BLOCK.ASH_LEAVES) continue;
-        this._spawn(x, y - Math.random() * 1.4, z);
-        if (!this.reducedMotion && Math.random() > 0.68) this._spawn(x, y, z);
+    let index = -1;
+    for (let attempt = 0; attempt < MAX_FALLING_LEAVES; attempt++) {
+      const candidate = this.cursor++ % MAX_FALLING_LEAVES;
+      if (this.state[candidate] === FALLING_LEAF_STATE.inactive) {
+        index = candidate;
         break;
       }
     }
+    if (index < 0) return false;
+    const offset = index * 3;
+    let spawnX = 0;
+    let spawnY = 0;
+    let spawnZ = 0;
+    let foundOpenSpawn = false;
+    for (let attempt = 0; attempt < 6; attempt++) {
+      spawnX = x + Math.random();
+      spawnY = y + 0.2 + Math.random() * 0.8;
+      spawnZ = z + Math.random();
+      if (!fallingLeafColumnBlocked(this.world, spawnX, spawnY, spawnZ)) {
+        foundOpenSpawn = true;
+        break;
+      }
+    }
+    if (!foundOpenSpawn) return false;
+    this.positions[offset] = spawnX;
+    this.positions[offset + 1] = spawnY;
+    this.positions[offset + 2] = spawnZ;
+    this.velocities[offset] = 0.08 + Math.random() * 0.18;
+    this.velocities[offset + 1] = -(0.35 + Math.random() * 0.5);
+    this.velocities[offset + 2] = (Math.random() - 0.5) * 0.16;
+    this.state[index] = FALLING_LEAF_STATE.falling;
+    this.flightAge[index] = 0;
+    this.settleTime[index] = 0;
+    this.phase[index] = Math.random() * Math.PI * 2;
+    return true;
   }
 
-  update(dt, focus, windStrength = 1, rainIntensity = 0) {
-    this.points.visible = Boolean(this.enabled && this.world);
+  _seedNearTrees(focus) {
+    if (!this.world?.getTreesNear) return;
+    const trees = this.world.getTreesNear(focus.x, focus.z, 16)
+      .filter((tree) => tree.hasFallingLeaves && !tree.isPine
+        && this.world.isPositionReady?.(tree.rootX, tree.rootZ));
+    if (!trees.length) return;
+    const attempts = this.reducedMotion ? 5 : 13;
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      const tree = trees[Math.floor(Math.random() * trees.length)];
+      const angle = Math.random() * Math.PI * 2;
+      const radius = 0.3 + Math.random() * 2.1;
+      const x = tree.rootX + Math.cos(angle) * radius;
+      const z = tree.rootZ + Math.sin(angle) * radius;
+      const y = tree.crownY + 0.4 + Math.random() * 1.5;
+      this._spawn(x, y, z);
+      if (!this.reducedMotion && Math.random() > 0.68) this._spawn(x, y + 0.5, z);
+    }
+  }
+
+  update(dt, focus, windStrength = 1, rainIntensity = 0, active = true) {
+    this.points.visible = Boolean(this.enabled && this.world && active);
     if (!this.points.visible) return;
     this.spawnTimer -= dt;
     if (this.spawnTimer <= 0) {
@@ -932,17 +1130,49 @@ class FallingLeaves {
       this._seedNearTrees(focus);
     }
     for (let index = 0; index < MAX_FALLING_LEAVES; index++) {
-      if (this.life[index] <= 0) continue;
+      if (this.state[index] === FALLING_LEAF_STATE.inactive) continue;
       const offset = index * 3;
-      this.life[index] -= dt;
+      if (this.state[index] === FALLING_LEAF_STATE.settled) {
+        this.settleTime[index] -= dt;
+        if (this.settleTime[index] <= 0) {
+          this.state[index] = FALLING_LEAF_STATE.inactive;
+          this.positions[offset + 1] = -9999;
+        }
+        continue;
+      }
       this.phase[index] += dt * (1.4 + windStrength);
-      this.positions[offset] += (this.velocities[offset] + Math.sin(this.phase[index]) * 0.24 * windStrength) * dt;
-      this.positions[offset + 1] += this.velocities[offset + 1] * dt;
-      this.positions[offset + 2] += (this.velocities[offset + 2] + Math.cos(this.phase[index] * 0.73) * 0.14 * windStrength) * dt;
-      const ground = this.world.terrainHeight?.(this.positions[offset], this.positions[offset + 2]) ?? -100;
-      if (this.life[index] <= 0 || this.positions[offset + 1] <= ground + 1.02) {
-        this.life[index] = 0;
-        this.positions[offset + 1] = -9999;
+      const currentY = this.positions[offset + 1];
+      const nextX = this.positions[offset]
+        + (this.velocities[offset] + Math.sin(this.phase[index]) * 0.24 * windStrength) * dt;
+      if (!fallingLeafColumnBlocked(this.world, nextX, currentY, this.positions[offset + 2])) {
+        this.positions[offset] = nextX;
+      }
+      const nextZ = this.positions[offset + 2]
+        + (this.velocities[offset + 2] + Math.cos(this.phase[index] * 0.73) * 0.14 * windStrength) * dt;
+      if (!fallingLeafColumnBlocked(this.world, this.positions[offset], currentY, nextZ)) {
+        this.positions[offset + 2] = nextZ;
+      }
+      const support = fallingLeafSupportY(
+        this.world,
+        this.positions[offset],
+        this.positions[offset + 2],
+        this.positions[offset + 1],
+      );
+      const vertical = stepFallingLeafVertical(
+        this.positions[offset + 1],
+        this.velocities[offset + 1],
+        support,
+        dt,
+        this.flightAge[index],
+      );
+      this.positions[offset + 1] = vertical.y;
+      this.flightAge[index] = vertical.flightAge;
+      if (vertical.landed) {
+        this.state[index] = FALLING_LEAF_STATE.settled;
+        this.settleTime[index] = 0.8 + Math.random() * 1.2;
+        this.velocities[offset] = 0;
+        this.velocities[offset + 1] = 0;
+        this.velocities[offset + 2] = 0;
       }
     }
     this.points.material.opacity = 0.8 * (1 - rainIntensity * 0.4);
@@ -1147,11 +1377,12 @@ export class Environment {
     this.localCloudCoverage = 0;
     this.localCloudCount = 0;
     this.nearestCloudDistance = Number.POSITIVE_INFINITY;
+    this.weatherRandom = secureRandomUnit;
     this.weatherPhase = 'clear';
     this.stormIntensity = 0.72;
     this.weatherBuildAge = 0;
     this.pendingStormDuration = 100;
-    this.weatherTimer = 6 + Math.random() * 14;
+    this.weatherTimer = sampleWeatherDuration('initialClear', this._weatherRoll());
     this.weatherWorld = null;
     this.onLightning = null;
     this.weatherEnabled = true;
@@ -1167,16 +1398,21 @@ export class Environment {
     this.fogClarity = 0;
     this.skyColor = new THREE.Color();
     this.fogColor = new THREE.Color();
-    this.daySky = new THREE.Color('#70bce8');
+    this.daySky = new THREE.Color('#5fb8eb');
     this.dawnSky = new THREE.Color('#e79b72');
     this.nightSky = new THREE.Color('#08152c');
-    this.dayFog = new THREE.Color('#acd6df');
+    this.dayFog = new THREE.Color('#8fc7dc');
     this.dawnFog = new THREE.Color('#d89a7c');
     this.nightFog = new THREE.Color('#101b32');
     this._colorA = new THREE.Color();
     this._colorB = new THREE.Color();
-    this._sunDawn = new THREE.Color('#ffd0a0');
-    this._sunDay = new THREE.Color('#fff5d6');
+    this._sunColor = new THREE.Color('#fff1c4');
+    this._hemisphereNight = new THREE.Color('#385070');
+    this._hemisphereDay = new THREE.Color('#b9d9ec');
+    this._groundNight = new THREE.Color('#171d18');
+    this._groundDay = new THREE.Color('#556438');
+    this._bounceNight = new THREE.Color('#6f7d82');
+    this._bounceDay = new THREE.Color('#deddb8');
     this._cloudNight = new THREE.Color('#68748d');
     this._cloudDay = new THREE.Color('#fff7df');
     this._cloudDawn = new THREE.Color('#f3a37e');
@@ -1184,10 +1420,14 @@ export class Environment {
     this._stormFog = new THREE.Color('#5d7178');
     this._sunDirection = new THREE.Vector3();
     this._shadowFocus = new THREE.Vector3();
+    this.solarElevation = 0;
     this.graphicsUniforms = {
       time: { value: 0 },
       dayAmount: { value: 1 },
       windStrength: { value: 1 },
+      sunDirection: { value: new THREE.Vector3(0, 1, 0) },
+      sunColor: { value: new THREE.Color('#fff1c4') },
+      sunVisibility: { value: 1 },
     };
 
     scene.background = this.skyColor;
@@ -1207,15 +1447,15 @@ export class Environment {
     this.atmosphere.renderOrder = -1000;
     scene.add(this.atmosphere);
 
-    this.hemisphere = new THREE.HemisphereLight(0xbfe8ff, 0x334124, 1.55);
+    this.hemisphere = new THREE.HemisphereLight(0xb9d9ec, 0x556438, 0.74);
     scene.add(this.hemisphere);
     // Soft sky bounce keeps downward-facing leaf and bark faces readable under
     // a canopy. Its intensity follows measured sky access, so sealed rooms and
     // deep caves still fall to black while outdoor shade retains natural detail.
-    this.bounceLight = new THREE.AmbientLight(0xc4d5ca, 0.12);
+    this.bounceLight = new THREE.AmbientLight(0xdeddb8, 0.16);
     this.bounceLight.name = 'Diffuse outdoor sky bounce';
     scene.add(this.bounceLight);
-    this.sunLight = new THREE.DirectionalLight(0xfff3d1, 2.45);
+    this.sunLight = new THREE.DirectionalLight(0xffd395, 3.2);
     this.sunLight.castShadow = true;
     this.sunLight.shadow.mapSize.set(2048, 2048);
     this.sunLight.shadow.camera.left = -38;
@@ -1236,24 +1476,35 @@ export class Environment {
       renderer.shadowMap.type = THREE.PCFShadowMap;
     }
 
-    const sunMat = new THREE.SpriteMaterial({
+    const sunMat = pinCelestialSpriteToFarPlane(new THREE.SpriteMaterial({
       map: makeDiscTexture('rgba(255,252,220,1)', 'rgba(255,194,94,0.25)'),
       transparent: true,
+      depthTest: true,
       depthWrite: false,
       fog: false,
       blending: THREE.AdditiveBlending,
-    });
+    }));
     this.sun = new THREE.Sprite(sunMat);
     this.sun.scale.set(13, 13, 1);
     scene.add(this.sun);
 
-    const moonMat = new THREE.SpriteMaterial({
-      map: makeDiscTexture('rgba(222,235,255,0.95)', 'rgba(102,150,255,0.16)'),
+    const moonTexture = new THREE.TextureLoader().load('assets/environment/realistic-moon.png');
+    moonTexture.colorSpace = THREE.SRGBColorSpace;
+    moonTexture.minFilter = THREE.LinearMipmapLinearFilter;
+    moonTexture.magFilter = THREE.LinearFilter;
+    moonTexture.generateMipmaps = true;
+    moonTexture.anisotropy = Math.min(8, renderer?.capabilities?.getMaxAnisotropy?.() || 1);
+    const moonMat = pinCelestialSpriteToFarPlane(new THREE.SpriteMaterial({
+      map: moonTexture,
+      color: 0xdce6f4,
       transparent: true,
+      alphaTest: 0.012,
+      depthTest: true,
       depthWrite: false,
       fog: false,
-      blending: THREE.AdditiveBlending,
-    });
+      toneMapped: false,
+      blending: THREE.NormalBlending,
+    }));
     this.moon = new THREE.Sprite(moonMat);
     this.moon.scale.set(8, 8, 1);
     scene.add(this.moon);
@@ -1264,11 +1515,15 @@ export class Environment {
     scene.add(this.clouds);
     this.rain = new RainField(scene);
     this.fallingLeaves = new FallingLeaves(scene);
+    this.groundLeaves = new GroundLeafField(scene);
+    this.forestFloor = new ForestFloorField(scene);
     this.lightning = new LightningField(scene);
     this.pondEcology = new PondEcologyField(scene, this.graphicsUniforms);
     this.hangingLeaves = new HangingLeavesField(scene, this.graphicsUniforms);
     this.redFlowers = new RedFlowerField(scene);
+    this.meadowPlants = new MeadowPlantField(scene);
     this.birds = new BirdField(scene);
+    this.summitCrosses = new SummitCrossField(scene);
     this.localLights = Array.from({ length: 8 }, (_, index) => {
       const light = new THREE.PointLight(0xffb45f, 0, 10, 2);
       light.name = `Nearby voxel light ${index + 1}`;
@@ -1285,14 +1540,41 @@ export class Environment {
   }
 
   setWeatherContext(world) {
+    const worldChanged = world !== this.weatherWorld;
     this.weatherWorld = world || null;
     this.rain.setWorld(this.weatherWorld);
     this.fallingLeaves.setWorld(this.weatherWorld);
+    this.groundLeaves.setWorld(this.weatherWorld);
+    this.forestFloor.setWorld(this.weatherWorld);
     this.lightning.setWorld(this.weatherWorld);
     this.pondEcology.setWorld(this.weatherWorld);
     this.hangingLeaves.setWorld(this.weatherWorld);
     this.redFlowers.setWorld(this.weatherWorld);
+    this.meadowPlants.setWorld(this.weatherWorld);
     this.birds.setWorld(this.weatherWorld);
+    this.summitCrosses.setWorld(this.weatherWorld);
+    if (worldChanged) this._resetWeatherCycle(Boolean(this.weatherWorld));
+  }
+
+  _weatherRoll() {
+    const random = typeof this.weatherRandom === 'function'
+      ? this.weatherRandom()
+      : secureRandomUnit();
+    return normalizedWeatherRoll(random);
+  }
+
+  _resetWeatherCycle(active = true) {
+    this.weatherRandom = secureRandomUnit;
+    this.weatherPhase = 'clear';
+    this.weatherBuildAge = 0;
+    this.rainTarget = 0;
+    this.rainIntensity = 0;
+    this.overcastAmount = 0;
+    this.stormIntensity = 0.48 + this._weatherRoll() * 0.5;
+    this.pendingStormDuration = sampleWeatherDuration('rain', this._weatherRoll());
+    this.cloudCoverTarget = 0.22 + this._weatherRoll() * 0.28;
+    this.cloudCover = active ? this.cloudCoverTarget : 0.32;
+    this.weatherTimer = sampleWeatherDuration('initialClear', this._weatherRoll());
   }
 
   preparePondEcology() {
@@ -1303,12 +1585,28 @@ export class Environment {
     return this.hangingLeaves.prepare();
   }
 
+  prepareGroundLeaves() {
+    return this.groundLeaves.prepare();
+  }
+
+  prepareForestFloor() {
+    return this.forestFloor.prepare();
+  }
+
   prepareRedFlowers() {
     return this.redFlowers.prepare();
   }
 
+  prepareMeadowPlants() {
+    return this.meadowPlants.prepare();
+  }
+
   prepareBirds() {
     return this.birds.prepare();
+  }
+
+  prepareSummitCrosses() {
+    return this.summitCrosses.prepare();
   }
 
   forceWeather(kind = 'rain', intensity = 0.78, duration = 120) {
@@ -1355,10 +1653,14 @@ export class Environment {
     this.shadowExtent = Number(profile.shadowExtent) || 46;
     this.rain.setQuality(profile, this.weatherEnabled, settings.reducedMotion);
     this.fallingLeaves.setQuality(profile, true, settings.reducedMotion);
+    this.groundLeaves.setQuality(profile);
+    this.forestFloor.setQuality(profile, settings.reducedMotion);
     this.lightning.setQuality(this.weatherEnabled && profile.atmosphereDetail >= 0.6, settings.reducedMotion);
     this.pondEcology.setQuality(profile, settings.reducedMotion);
     this.hangingLeaves.setQuality(profile, settings.reducedMotion);
+    this.meadowPlants.setQuality(profile);
     this.birds.setQuality(profile, settings.reducedMotion);
+    this.summitCrosses.setQuality(profile);
     this.graphicsUniforms.windStrength.value = settings.reducedMotion ? 0.22 : 1;
 
     if (this.renderer?.shadowMap) {
@@ -1387,7 +1689,11 @@ export class Environment {
       cloud.userData.targetVisible = index < cloudCount;
     });
     this.atmosphere.material.uniforms.atmosphereDetail.value = profile.atmosphereDetail;
-    if (this.renderer) this.renderer.toneMappingExposure = quality === 'low' ? 0.96 : quality === 'ultra' ? 1.04 : 1.01;
+    if (this.renderer) {
+      this.renderer.toneMappingExposure = quality === 'low'
+        ? 0.98
+        : quality === 'ultra' ? 0.99 : quality === 'high' ? 1 : 1.01;
+    }
     this.localLights.forEach((light, index) => {
       if (index >= this.localLightLimit) light.visible = false;
       light.castShadow = Boolean(profile.shadows && index < this.localShadowLightLimit);
@@ -1594,7 +1900,7 @@ export class Environment {
           // Rain has ended. Keep the clearing phase while the grey dome and
           // cloud density ease back to a sunny baseline instead of snapping.
           if (this.cloudCoverTarget >= 0.8) {
-            this.cloudCoverTarget = 0.22 + Math.random() * 0.28;
+            this.cloudCoverTarget = 0.22 + this._weatherRoll() * 0.28;
           }
         }
       } else if (this.weatherTimer <= 0) {
@@ -1602,7 +1908,7 @@ export class Environment {
           this.weatherPhase = 'clearing';
           this.rainTarget = 0;
           this.cloudCoverTarget = Math.max(0.9, this.cloudCover);
-          this.weatherTimer = 105 + Math.random() * 210;
+          this.weatherTimer = sampleWeatherDuration('afterStorm', this._weatherRoll());
         } else if (this.weatherPhase === 'building') {
           if (
             this.weatherBuildAge >= 10
@@ -1612,18 +1918,29 @@ export class Environment {
           ) {
             this.weatherPhase = 'rain';
             this.rainTarget = this.stormIntensity;
-            this.weatherTimer = this.pendingStormDuration || (65 + Math.random() * 145);
+            this.weatherTimer = this.pendingStormDuration
+              || sampleWeatherDuration('rain', this._weatherRoll());
           } else {
-            this.weatherTimer = 2.5;
+            this.weatherTimer = 1.6 + this._weatherRoll() * 3.4;
           }
         } else {
-          this.weatherPhase = 'building';
-          this.stormIntensity = 0.48 + Math.random() * 0.5;
-          this.pendingStormDuration = 65 + Math.random() * 145;
-          this.weatherBuildAge = 0;
-          this.cloudCoverTarget = 0.84 + Math.random() * 0.16;
-          this.rainTarget = 0;
-          this.weatherTimer = 14 + Math.random() * 12;
+          // A dry interval ending is a weather opportunity, not a scripted
+          // promise of rain. Some fronts dissipate off-screen and schedule a
+          // fresh dry spell, so new worlds no longer receive the same storm at
+          // nearly the same elapsed time.
+          if (!weatherFrontWillBuild(this._weatherRoll())) {
+            this.weatherPhase = 'clear';
+            this.cloudCoverTarget = 0.22 + this._weatherRoll() * 0.28;
+            this.weatherTimer = sampleWeatherDuration('dryClear', this._weatherRoll());
+          } else {
+            this.weatherPhase = 'building';
+            this.stormIntensity = 0.48 + this._weatherRoll() * 0.5;
+            this.pendingStormDuration = sampleWeatherDuration('rain', this._weatherRoll());
+            this.weatherBuildAge = 0;
+            this.cloudCoverTarget = 0.84 + this._weatherRoll() * 0.16;
+            this.rainTarget = 0;
+            this.weatherTimer = sampleWeatherDuration('building', this._weatherRoll());
+          }
         }
       }
     } else if (!this.weatherEnabled) {
@@ -1769,6 +2086,7 @@ export class Environment {
     this._updateSkyExposure(dt, focus);
     const angle = this.time * Math.PI * 2 - Math.PI * 0.5;
     const solar = Math.sin(angle);
+    this.solarElevation = Math.max(0, solar);
     this.dayAmount = THREE.MathUtils.smoothstep(solar, -0.18, 0.22);
     this.graphicsUniforms.dayAmount.value = this.dayAmount;
     const twilight = 1 - THREE.MathUtils.smoothstep(Math.abs(solar), 0.04, 0.42);
@@ -1805,17 +2123,23 @@ export class Environment {
     skyUniforms.lowerColor.value.copy(this.fogColor).multiplyScalar(0.52 + this.dayAmount * 0.25);
     skyUniforms.twilight.value = twilight;
     skyUniforms.dayAmount.value = this.dayAmount;
+    skyUniforms.sunElevation.value = this.solarElevation;
     const sunVisibility = lightingState.sunVisibility;
     skyUniforms.sunVisibility.value = sunVisibility;
 
     // Keep skylight subordinate to the directional sources so form is defined
     // by light and shadow instead of the previous flat ambient wash.
     const skyAccess = THREE.MathUtils.smoothstep(this.skyExposure, 0.005, 0.92);
-    this.hemisphere.intensity = (0.2 + this.dayAmount * 0.72)
-      * (1 - this.overcastAmount * 0.34)
-      * skyAccess;
-    this.hemisphere.color.setRGB(0.34 + this.dayAmount * 0.44, 0.42 + this.dayAmount * 0.45, 0.66 + this.dayAmount * 0.34);
-    this.hemisphere.groundColor.setRGB(0.055 + this.dayAmount * 0.09, 0.07 + this.dayAmount * 0.11, 0.095 + this.dayAmount * 0.035);
+    const daylight = daylightBalance(this.dayAmount, this.solarElevation, skyAccess);
+    this.hemisphere.intensity = daylight.hemisphereIntensity
+      * (1 - this.overcastAmount * 0.3);
+    this.hemisphere.color.copy(this._hemisphereNight)
+      .lerp(this._hemisphereDay, this.dayAmount)
+      .lerp(this._stormFog, this.overcastAmount * 0.22);
+    this.hemisphere.groundColor.copy(this._groundNight)
+      .lerp(this._groundDay, this.dayAmount)
+      .lerp(this._stormSky, this.overcastAmount * 0.16);
+    this.bounceLight.color.copy(this._bounceNight).lerp(this._bounceDay, this.dayAmount);
     this.bounceLight.intensity = outdoorBounceIntensity(
       this.dayAmount,
       this.skyExposure,
@@ -1829,21 +2153,23 @@ export class Environment {
     // Moon shadows are intentionally disabled for performance on every preset,
     // so the local probe must always gate moonlight inside sealed caves.
     const moonAccess = directionalSkyAccess(false, this.skyExposure);
-    this.sunLight.intensity = (0.015 + this.dayAmount * 3.65)
+    this.sunLight.intensity = daylight.sunIntensity
       * (0.025 + sunVisibility * 0.975)
       * directAccess;
-    this.sunLight.color.copy(this._sunDawn).lerp(this._sunDay, this.dayAmount);
+    sunlightColorForElevation(this.solarElevation, this._sunColor);
+    this.sunLight.color.copy(this._sunColor);
     this.moonLight.intensity = Math.pow(1 - this.dayAmount, 1.55) * 0.24 * moonAccess;
     if ('environmentIntensity' in this.scene) {
-      this.scene.environmentIntensity = (0.035 + this.dayAmount * 0.43)
-        * (1 - this.overcastAmount * 0.46)
-        * skyAccess;
+      this.scene.environmentIntensity = daylight.environmentIntensity
+        * (1 - this.overcastAmount * 0.46);
     }
     if (this.renderer) {
-      const baseExposure = this.graphicsQuality === 'low' ? 0.96 : this.graphicsQuality === 'ultra' ? 1.04 : 1.01;
+      const baseExposure = this.graphicsQuality === 'low'
+        ? 0.98
+        : this.graphicsQuality === 'ultra' ? 0.99 : this.graphicsQuality === 'high' ? 1 : 1.01;
       const eyeAdaptation = 1 + THREE.MathUtils.smoothstep(1 - this.skyExposure, 0.45, 1) * 0.12;
       const targetExposure = baseExposure
-        * (0.96 + (1 - this.dayAmount) * 0.12 - this.overcastAmount * 0.08)
+        * (0.99 + (1 - this.dayAmount) * 0.1 - this.overcastAmount * 0.07)
         * eyeAdaptation;
       this.renderer.toneMappingExposure += (targetExposure - this.renderer.toneMappingExposure) * (1 - Math.exp(-dt / 1.8));
     }
@@ -1855,6 +2181,9 @@ export class Environment {
     this.sun.material.opacity = THREE.MathUtils.smoothstep(solar, -0.16, 0.03) * sunVisibility;
     this.moon.material.opacity = THREE.MathUtils.smoothstep(-solar, -0.12, 0.05) * 0.88 * sunVisibility;
     this._sunDirection.copy(sunPosition).normalize();
+    this.graphicsUniforms.sunDirection.value.copy(this._sunDirection);
+    this.graphicsUniforms.sunColor.value.copy(this.sunLight.color);
+    this.graphicsUniforms.sunVisibility.value = sunVisibility * this.dayAmount;
     const shadowMapSize = Math.max(1, this.sunLight.shadow.mapSize.x);
     const shadowTexel = (this.shadowExtent * 2) / shadowMapSize;
     this._shadowFocus.set(
@@ -1889,7 +2218,21 @@ export class Environment {
       light.intensity = light.userData.baseIntensity * flicker;
     });
     this.rain.update(dt, focus, this.rainIntensity);
-    this.fallingLeaves.update(dt, focus, this.graphicsUniforms.windStrength.value, this.rainIntensity);
+    this.fallingLeaves.update(
+      dt,
+      focus,
+      this.graphicsUniforms.windStrength.value,
+      this.rainIntensity,
+      context.active !== false,
+    );
+    this.groundLeaves.update(dt, focus);
+    this.forestFloor.update(dt, focus, {
+      ...context,
+      rainIntensity: this.rainIntensity,
+      dayAmount: this.dayAmount,
+      skyExposure: this.skyExposure,
+      caveAmount: 1 - this.skyExposure,
+    });
     this.pondEcology.update(dt, focus, {
       rainIntensity: this.rainIntensity,
       dayAmount: this.dayAmount,
@@ -1897,6 +2240,8 @@ export class Environment {
     });
     this.hangingLeaves.update(dt, focus, context);
     this.redFlowers.update(dt, focus);
+    this.meadowPlants.update(dt, focus);
+    this.summitCrosses.update(dt, focus, viewDistance);
     this.birds.update(dt, focus, {
       ...context,
       dayAmount: this.dayAmount,
@@ -2047,14 +2392,19 @@ export class BlockEffects {
       return;
     }
     const { x, y, z, id } = hit.block;
+    const usesCubeOverlay = !SILHOUETTE_TARGET_SHAPES.has(BLOCKS[id]?.shape);
     const targetKey = `${x},${y},${z}`;
     if (targetKey !== this.crackTarget) {
       this.crackTarget = targetKey;
       this.crackStage = -1;
     }
-    this.outline.visible = true;
+    // The target label already identifies the block precisely. The pale idle
+    // wireframe was especially distracting when the ray passed through plants
+    // and selected the turf beneath them, so target outlines remain disabled
+    // for every shape. Mining cracks still provide spatial feedback on solids.
+    this.outline.visible = false;
     this.outline.position.set(x + 0.5, y + 0.5, z + 0.5);
-    this.crack.visible = progress > 0.01;
+    this.crack.visible = usesCubeOverlay && progress > 0.01;
     this.crack.position.copy(this.outline.position);
     const nextStage = progress > 0.01 ? Math.min(CRACK_STAGES - 1, Math.floor(progress * CRACK_STAGES)) : -1;
     if (nextStage !== this.crackStage) {
@@ -2069,7 +2419,7 @@ export class BlockEffects {
     }
     this.crack.material.opacity = 0.66 + Math.max(0, nextStage) * 0.028;
     this.crack.scale.setScalar(1 + Math.max(0, nextStage) * 0.0007);
-    this.outline.material.opacity = 0.9 - Math.min(0.3, progress * 0.3);
+    this.outline.material.opacity = 0;
     // Invalid placement is already explained by the interaction toast. Keeping
     // a red cube on every invalid target looked like a permanent world artifact,
     // so the spatial preview exists only when it represents a real placement.

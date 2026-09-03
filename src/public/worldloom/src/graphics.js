@@ -49,14 +49,25 @@ export function projectLightToScreen(camera, worldPosition, target = {}) {
 
 export function volumetricSunIntensity(profile = {}, environment = {}, projection = {}) {
   const authoredStrength = THREE.MathUtils.clamp(Number(profile.godRayStrength) || 0, 0, 0.5);
-  const day = THREE.MathUtils.smoothstep(Number(environment.dayAmount) || 0, 0.16, 0.86);
+  // dayAmount starts rising before the solar disc clears the horizon. A steep
+  // second daylight curve used to erase golden-hour shafts; sunVisibility is
+  // the authoritative horizon gate, so only true night is removed here.
+  const day = THREE.MathUtils.smoothstep(Number(environment.dayAmount) || 0, 0.03, 0.4);
+  const rawElevation = Number(environment.sunElevation);
+  const elevation = Number.isFinite(rawElevation)
+    ? THREE.MathUtils.clamp(rawElevation, 0, 1)
+    : day;
   const dry = 1 - THREE.MathUtils.smoothstep(Number(environment.rainAmount) || 0, 0.025, 0.78);
   const openCave = 1 - THREE.MathUtils.smoothstep(Number(environment.caveAmount) || 0, 0.02, 0.82);
   const sky = THREE.MathUtils.smoothstep(Number(environment.skyExposure) || 0, 0.04, 0.72);
   const visibleSun = THREE.MathUtils.clamp(Number(environment.sunVisibility) || 0, 0, 1);
   const facing = THREE.MathUtils.smoothstep(Number(projection.facing) || 0, 0.015, 0.3);
   const onScreen = THREE.MathUtils.clamp(Number(projection.screenFade) || 0, 0, 1);
-  return authoredStrength * day * dry * openCave * sky * visibleSun * facing * onScreen;
+  // Low sunlight travels through more atmosphere and produces the longest,
+  // most visible shafts. sunVisibility already handles the actual horizon, so
+  // this lift can favour golden hour without reviving a sun below the terrain.
+  const lowAngleLift = 1 + (1 - THREE.MathUtils.smoothstep(elevation, 0.08, 0.78)) * 0.22;
+  return authoredStrength * day * dry * openCave * sky * visibleSun * facing * onScreen * lowAngleLift;
 }
 
 const CinematicShader = {
@@ -73,6 +84,7 @@ const CinematicShader = {
     dayAmount: { value: 1 },
     rainAmount: { value: 0 },
     caveAmount: { value: 0 },
+    sunElevation: { value: 1 },
   },
   vertexShader: /* glsl */`
     varying vec2 vUv;
@@ -93,6 +105,7 @@ const CinematicShader = {
     uniform float dayAmount;
     uniform float rainAmount;
     uniform float caveAmount;
+    uniform float sunElevation;
     varying vec2 vUv;
 
     float hash12(vec2 p) {
@@ -112,15 +125,25 @@ const CinematicShader = {
       vec3 color = center + (center - crossBlur) * sharpen * strength;
 
       float luminance = dot(color, vec3(0.2126, 0.7152, 0.0722));
-      color = mix(vec3(luminance), color, mix(1.0, saturation, strength));
-      color = (color - 0.18) * (1.0 + 0.055 * strength) + 0.18;
+      float channelMax = max(max(color.r, color.g), color.b);
+      float channelMin = min(min(color.r, color.g), color.b);
+      float chroma = channelMax - channelMin;
+      float clearDay = dayAmount * (1.0 - rainAmount) * (1.0 - caveAmount);
+      float vibrance = (1.0 - smoothstep(0.05, 0.72, chroma)) * clearDay * 0.055;
+      color = mix(vec3(luminance), color, mix(1.0, saturation + vibrance, strength));
+      color = (color - 0.18) * (1.0 + 0.078 * strength * (0.55 + clearDay * 0.45)) + 0.18;
 
       float highlight = smoothstep(0.32, 1.15, luminance);
       float shadow = 1.0 - smoothstep(0.025, 0.34, luminance);
-      vec3 warmLight = vec3(1.018, 1.003, 0.978);
-      vec3 coolShadow = mix(vec3(0.975, 0.992, 1.018), vec3(0.955, 0.98, 1.025), rainAmount);
-      color *= mix(vec3(1.0), warmLight, highlight * strength);
-      color *= mix(vec3(1.0), coolShadow, shadow * strength);
+      float goldenHour = 1.0 - smoothstep(0.12, 0.78, sunElevation);
+      vec3 noonLight = vec3(1.032, 1.012, 0.968);
+      vec3 goldenLight = vec3(1.085, 1.025, 0.89);
+      vec3 warmLight = mix(noonLight, goldenLight, goldenHour * 0.78);
+      vec3 clearShadow = vec3(0.974, 1.006, 0.974);
+      vec3 stormShadow = vec3(0.952, 0.982, 1.026);
+      vec3 shadowBalance = mix(clearShadow, stormShadow, rainAmount);
+      color *= mix(vec3(1.0), warmLight, highlight * strength * clearDay);
+      color *= mix(vec3(1.0), shadowBalance, shadow * strength * (0.3 + rainAmount * 0.7));
 
       // Depth should remove unlit detail instead of applying a grey overlay.
       // Bright torch/lava highlights survive, while low-luminance cave surfaces
@@ -169,6 +192,7 @@ export class GraphicsPipeline {
       caveAmount: 0,
       skyExposure: 1,
       sunVisibility: 0,
+      sunElevation: 1,
     };
     this.sunProjection = {
       uv: new THREE.Vector2(0.5, 0.5),
@@ -245,10 +269,13 @@ export class GraphicsPipeline {
     this.aoEnabled = Boolean(profile.ambientOcclusion);
     this.bloomEnabled = Number(profile.bloomStrength || 0) > 0;
     if (this.aoEnabled) this._ensureGtao();
-    this.volumetricSunEnabled = this.aoEnabled && Number(profile.godRayStrength || 0) > 0;
+    this.volumetricSunEnabled = Number(profile.godRayStrength || 0) > 0;
     if (this.volumetricSunEnabled) {
       this._ensureVolumetricSun();
-      this.volumetricSunPass.setDepthTexture(this.gtaoPass?.depthTexture);
+      // High and Ultra reuse GTAO's exact depth. Balanced deliberately avoids
+      // that expensive full-scene normal/depth + AO workload and uses the
+      // shaft pass's conservative beauty-buffer sky fallback instead.
+      this.volumetricSunPass.setDepthTexture(this.aoEnabled ? this.gtaoPass?.depthTexture : null);
       this.volumetricSunPass.configure({
         resolutionScale: profile.godRayScale,
         sourceRadius: profile.godRaySourceRadius,
@@ -308,6 +335,7 @@ export class GraphicsPipeline {
     caveAmount = 0,
     skyExposure = 1,
     sunVisibility = 0,
+    sunElevation = 1,
     sunWorldPosition = null,
   } = {}) {
     this.environment.dayAmount = THREE.MathUtils.clamp(dayAmount, 0, 1);
@@ -315,6 +343,7 @@ export class GraphicsPipeline {
     this.environment.caveAmount = THREE.MathUtils.clamp(caveAmount, 0, 1);
     this.environment.skyExposure = THREE.MathUtils.clamp(skyExposure, 0, 1);
     this.environment.sunVisibility = THREE.MathUtils.clamp(sunVisibility, 0, 1);
+    this.environment.sunElevation = THREE.MathUtils.clamp(sunElevation, 0, 1);
     if (this.volumetricSunPass) {
       const projection = projectLightToScreen(this.camera, sunWorldPosition, this.sunProjection);
       const intensity = volumetricSunIntensity(this.profile, this.environment, projection);
@@ -325,6 +354,7 @@ export class GraphicsPipeline {
     this.cinematicPass.uniforms.dayAmount.value = this.environment.dayAmount;
     this.cinematicPass.uniforms.rainAmount.value = this.environment.rainAmount;
     this.cinematicPass.uniforms.caveAmount.value = this.environment.caveAmount;
+    this.cinematicPass.uniforms.sunElevation.value = this.environment.sunElevation;
   }
 
   render(dt) {
@@ -348,6 +378,11 @@ export class GraphicsPipeline {
       width: this.width,
       height: this.height,
       pixelRatio: this.pixelRatio,
+      colorGrade: this.cinematicPass ? {
+        strength: this.cinematicPass.uniforms.strength.value,
+        saturation: this.cinematicPass.uniforms.saturation.value,
+        sunElevation: this.cinematicPass.uniforms.sunElevation.value,
+      } : null,
     };
   }
 }

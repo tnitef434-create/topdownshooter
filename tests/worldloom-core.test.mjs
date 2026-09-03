@@ -11,18 +11,41 @@ import {
 import { SurvivalSystem } from '../src/public/worldloom/src/survival.js';
 import { BLOCK, BLOCKS } from '../src/public/worldloom/src/blocks.js';
 import {
+  FOREST_FLOOR_CELL_SIZE,
+  FOREST_FLOOR_INSECT_CHANCE,
+  FOREST_FLOOR_KINDS,
+  FOREST_FLOOR_MAX_TREE_DISTANCE,
+  FOREST_FLOOR_MIN_FOREST_WEIGHT,
+  FOREST_FLOOR_MIN_TREE_DISTANCE,
+  FOREST_FLOOR_MUSHROOM_CHANCE,
+  FOREST_FLOOR_SOLID_KINDS,
   World,
   LEGACY_WORLD_GENERATOR_VERSION,
+  MOUNTAIN_CROSS_SPAWN_CHANCE,
   WORLD_GENERATOR_VERSION,
+  forestFloorCollidersForDescriptor,
+  mountainCrossSpawnRoll,
+  shortGrassGrowsAt,
+  shortGrassPatchDensity,
 } from '../src/public/worldloom/src/world.js';
 import {
   BlockEffects,
   caveEntranceSkylight,
+  daylightBalance,
   directionalSkyAccess,
   Environment,
+  fallingLeafColumnBlocked,
+  fallingLeafSupportY,
   nearestPeriodicCloudCoordinate,
   outdoorBounceIntensity,
+  pinCelestialSpriteToFarPlane,
+  sampleWeatherDuration,
   skylightTransmission,
+  stepFallingLeafVertical,
+  sunlightColorForElevation,
+  WEATHER_DURATION_RANGES,
+  WEATHER_FRONT_CHANCE,
+  weatherFrontWillBuild,
   weatherLightingState,
 } from '../src/public/worldloom/src/environment.js';
 import {
@@ -32,7 +55,11 @@ import {
   projectLightToScreen,
   volumetricSunIntensity,
 } from '../src/public/worldloom/src/graphics.js';
-import { coverDepthSkylight, plantCoverSkylight } from '../src/public/worldloom/src/mesher.js';
+import {
+  buildChunkGeometry,
+  coverDepthSkylight,
+  plantCoverSkylight,
+} from '../src/public/worldloom/src/mesher.js';
 import { VolumetricSunPass } from '../src/public/worldloom/src/volumetric-sun-pass.js';
 import {
   InputController,
@@ -40,6 +67,7 @@ import {
   PlayerController,
   continuousPointerDelta,
   fallDamageForImpact,
+  intersectsPlayerCollider,
   raycastVoxels,
 } from '../src/public/worldloom/src/player.js';
 import {
@@ -49,10 +77,12 @@ import {
 } from '../src/public/worldloom/src/creatures.js';
 import {
   BIRD_BREEDS,
+  POND_BIRD_OCCUPANCY_CHANCE,
   BirdField,
   birdFlightPoint,
   birdFlightTangent,
   birdPondBank,
+  birdPondHasResident,
   birdSpawnAllowed,
   birdSpawnPositionIsSafe,
   birdTerrainFlightApex,
@@ -76,6 +106,20 @@ import {
   atmosphericFogRange,
   clampFogToMeshedTerrain,
 } from '../src/public/worldloom/src/fog.js';
+import {
+  CHUNK_WORLD_SIZE,
+  DETAIL_SUPPORT_CHUNKS,
+  DISTANT_HORIZON_BUFFER_CHUNKS,
+  MAX_DETAIL_DISTANCE,
+  MAX_VIEW_DISTANCE,
+  MIN_VIEW_DISTANCE,
+  cameraFarForViewDistance,
+  detailedStreamDistance,
+  detailedViewDistance,
+  distantHorizonRadius,
+  normalizeViewDistance,
+} from '../src/public/worldloom/src/streaming-config.js';
+import { DistantTerrainHorizon } from '../src/public/worldloom/src/distant-terrain.js';
 
 function validSnapshot() {
   return {
@@ -95,6 +139,61 @@ function validSnapshot() {
     world: { version: 2, chunks: [], fluids: [] },
   };
 }
+
+test('view-distance configuration keeps the visual horizon broad and voxel detail bounded', () => {
+  assert.equal(MIN_VIEW_DISTANCE, 2);
+  assert.equal(MAX_VIEW_DISTANCE, 20);
+  assert.equal(MAX_DETAIL_DISTANCE, 8);
+  assert.equal(DETAIL_SUPPORT_CHUNKS, 2);
+  assert.equal(DISTANT_HORIZON_BUFFER_CHUNKS, 3);
+  assert.equal(CHUNK_WORLD_SIZE, 16);
+
+  assert.equal(normalizeViewDistance(undefined), 4);
+  assert.equal(normalizeViewDistance(Number.NaN, 6), 6);
+  assert.equal(normalizeViewDistance(-100), MIN_VIEW_DISTANCE);
+  assert.equal(normalizeViewDistance('19.6'), MAX_VIEW_DISTANCE);
+  assert.equal(normalizeViewDistance(10.49), 10);
+  assert.equal(normalizeViewDistance(10.5), 11);
+  assert.equal(normalizeViewDistance(9, 99), 9,
+    'a valid requested distance must not inherit a malformed fallback');
+
+  assert.equal(detailedViewDistance(MIN_VIEW_DISTANCE), MIN_VIEW_DISTANCE);
+  assert.equal(detailedViewDistance(MAX_DETAIL_DISTANCE), MAX_DETAIL_DISTANCE);
+  assert.equal(detailedViewDistance(MAX_VIEW_DISTANCE), MAX_DETAIL_DISTANCE);
+  assert.equal(detailedStreamDistance(MIN_VIEW_DISTANCE), MIN_VIEW_DISTANCE + DETAIL_SUPPORT_CHUNKS);
+  assert.equal(detailedStreamDistance(MAX_VIEW_DISTANCE), MAX_DETAIL_DISTANCE + DETAIL_SUPPORT_CHUNKS);
+
+  const maximumHorizon = (MAX_VIEW_DISTANCE + DISTANT_HORIZON_BUFFER_CHUNKS) * CHUNK_WORLD_SIZE;
+  assert.equal(distantHorizonRadius(MAX_VIEW_DISTANCE), maximumHorizon);
+  assert.equal(cameraFarForViewDistance(MIN_VIEW_DISTANCE), 320,
+    'low view distance should retain the established depth precision');
+  assert.equal(cameraFarForViewDistance(MAX_VIEW_DISTANCE), maximumHorizon + 32);
+  assert.ok(cameraFarForViewDistance(MAX_VIEW_DISTANCE) > distantHorizonRadius(MAX_VIEW_DISTANCE));
+});
+
+test('saved view distance clamps to 2–20 while graphics presets remain valid defaults', () => {
+  const store = new SaveStore();
+  const sanitize = (viewDistance) => store.sanitizeSettings({
+    ...DEFAULT_SETTINGS,
+    viewDistance,
+  }).viewDistance;
+
+  assert.equal(sanitize(-50), MIN_VIEW_DISTANCE);
+  assert.equal(sanitize(1), MIN_VIEW_DISTANCE);
+  assert.equal(sanitize(2), MIN_VIEW_DISTANCE);
+  assert.equal(sanitize(19.6), MAX_VIEW_DISTANCE);
+  assert.equal(sanitize(20), MAX_VIEW_DISTANCE);
+  assert.equal(sanitize(500), MAX_VIEW_DISTANCE);
+  assert.equal(sanitize('not-a-number'), DEFAULT_SETTINGS.viewDistance);
+
+  for (const [name, preset] of Object.entries(GRAPHICS_PRESETS)) {
+    assert.ok(Number.isInteger(preset.viewDistance), `${name} view distance must be an integer`);
+    assert.ok(
+      preset.viewDistance >= MIN_VIEW_DISTANCE && preset.viewDistance <= MAX_VIEW_DISTANCE,
+      `${name} view distance ${preset.viewDistance} is outside the supported range`,
+    );
+  }
+});
 
 test('inventory reports exact capacity and cloning is transactional', () => {
   const inventory = new Inventory();
@@ -430,7 +529,114 @@ test('highland pine and walk-through shortgrass form deterministic natural patch
   assert.ok(grassCount > 8 && grassCount < 192, 'shortgrass should cluster without carpeting every block');
   assert.ok(pineCount > 20, 'the second tree species should be visibly represented');
   assert.equal(BLOCKS[BLOCK.SHORT_GRASS].solid, false, 'shortgrass must remain walk-through');
+  assert.equal(BLOCKS[BLOCK.SHORT_GRASS].renderMode, 'meadow-model');
+  assert.equal(BLOCKS[BLOCK.WILDFLOWER].renderMode, 'meadow-model');
   world.dispose();
+});
+
+test('shortgrass density creates broken pockets instead of an evenly spaced lawn', () => {
+  const seed = (64 ^ 0x6d703ef3) >>> 0;
+  const samples = [];
+  const cellCounts = [];
+  for (let cellZ = -4; cellZ < 4; cellZ++) {
+    for (let cellX = -4; cellX < 4; cellX++) {
+      let count = 0;
+      for (let z = 0; z < 8; z++) {
+        for (let x = 0; x < 8; x++) {
+          const density = shortGrassPatchDensity(cellX * 8 + x, cellZ * 8 + z, seed);
+          samples.push(density);
+          if (density >= 0.16) count++;
+        }
+      }
+      cellCounts.push(count);
+    }
+  }
+  assert.ok(Math.min(...samples) < 0.01, 'the density field no longer leaves convincing bare ground');
+  assert.ok(Math.max(...samples) > 0.35, 'the density field no longer forms visible grass pockets');
+  assert.ok(Math.max(...cellCounts) - Math.min(...cellCounts) >= 28,
+    'neighbouring areas are too uniformly populated to read as natural patches');
+  assert.equal(shortGrassGrowsAt(7, -11, seed, 0.72), shortGrassGrowsAt(7, -11, seed, 0.72),
+    'shortgrass placement must replay exactly for saved worlds');
+});
+
+test('opaque Blender meadow plants emit no legacy terrain-atlas cross geometry', () => {
+  const size = 2;
+  const height = 2;
+  const blocks = new Uint8Array(size * size * height);
+  const indexAt = (x, y, z) => x + size * (z + size * y);
+  blocks[indexAt(0, 1, 0)] = BLOCK.WILDFLOWER;
+  blocks[indexAt(1, 1, 1)] = BLOCK.SHORT_GRASS;
+  const world = {
+    chunkSize: size,
+    worldHeight: height,
+    getBlock: (x, y, z) => (
+      x >= 0 && x < size && y >= 0 && y < height && z >= 0 && z < size
+        ? blocks[indexAt(x, y, z)]
+        : BLOCK.AIR
+    ),
+  };
+  const geometry = buildChunkGeometry(world, { cx: 0, cz: 0, blocks });
+  assert.equal(geometry.faces, 0,
+    'the terrain mesher still emitted crossed cards behind the opaque Blender plants');
+  assert.equal(geometry.opaque?.getAttribute('position')?.count || 0, 0);
+  geometry.opaque?.dispose?.();
+  geometry.glass?.dispose?.();
+  geometry.water?.dispose?.();
+  geometry.glow?.dispose?.();
+});
+
+test('falling leaves resolve real supports while ignoring canopy foliage', () => {
+  const cells = new Map([
+    ['0:8:0', BLOCK.STONE],
+    ['1:10:0', BLOCK.ASH_LEAVES],
+    ['1:2:0', BLOCK.TURF],
+    ['2:5:0', BLOCK.WATER],
+    ['3:5:0', BLOCK.BED],
+    ['4:7:0', BLOCK.STONE],
+    ['4:8:0', BLOCK.STONE],
+  ]);
+  const world = {
+    worldHeight: 16,
+    terrainHeight: () => 2,
+    getBlock: (x, y, z) => cells.get(`${x}:${y}:${z}`) ?? BLOCK.AIR,
+    getFluidSurfaceY: (x, y) => (x === 2 && y === 5 ? 5.62 : null),
+  };
+  assert.ok(Math.abs(fallingLeafSupportY(world, 0.2, 0.2, 12) - 9.025) < 1e-6,
+    'an edited stone roof was not treated as the leaf support');
+  assert.ok(Math.abs(fallingLeafSupportY(world, 1.2, 0.2, 12) - 3.025) < 1e-6,
+    'canopy leaves must be skipped so airborne particles reach the ground');
+  assert.ok(Math.abs(fallingLeafSupportY(world, 2.2, 0.2, 12) - 5.645) < 1e-6,
+    'water must use its real partial fluid surface');
+  assert.ok(Math.abs(fallingLeafSupportY(world, 3.2, 0.2, 12) - 5.485) < 1e-6,
+    'slab-height authored floors must receive falling leaves');
+  assert.equal(fallingLeafColumnBlocked(world, 4.2, 8.5, 0.2), true,
+    'a leaf inside a stacked solid column was not rejected as a side collision');
+  assert.equal(Number.isNaN(fallingLeafSupportY(world, 4.2, 0.2, 8.5)), true,
+    'an internal face between stacked solids was incorrectly accepted as a floor');
+  assert.equal(fallingLeafColumnBlocked(world, 1.2, 10.5, 0.2), false,
+    'canopy foliage should not block a falling leaf horizontally');
+});
+
+test('slow falling leaves remain airborne beyond the old TTL and still land', () => {
+  let y = 12;
+  let flightAge = 0;
+  let landed = false;
+  for (let step = 0; step < 120; step++) {
+    const result = stepFallingLeafVertical(y, -0.35, 3.025, 0.1, flightAge);
+    y = result.y;
+    flightAge = result.flightAge;
+    landed = result.landed;
+  }
+  assert.equal(landed, false, 'the regression fixture should still be airborne after twelve seconds');
+  assert.ok(y > 3.025, 'the leaf disappeared or snapped before crossing the floor');
+  for (let step = 0; step < 200 && !landed; step++) {
+    const result = stepFallingLeafVertical(y, -0.35, 3.025, 0.1, flightAge);
+    y = result.y;
+    flightAge = result.flightAge;
+    landed = result.landed;
+  }
+  assert.equal(landed, true, 'the slow leaf never completed its descent');
+  assert.ok(Math.abs(y - 3.025) < 1e-6, 'the leaf did not settle flush on its support');
 });
 
 test('tree descriptors are seed-stable, query-stable and sorted nearest first', () => {
@@ -476,6 +682,362 @@ test('tree descriptors are seed-stable, query-stable and sorted nearest first', 
   differentWorld.dispose();
 });
 
+test('forest-floor descriptors replay across query order and chunk streaming', () => {
+  const center = { x: 18.25, z: -11.75 };
+  const radius = 128;
+  const firstWorld = new World(20260827, null, null);
+  const replayWorld = new World(20260827, null, null);
+  const differentWorld = new World(91234, null, null);
+  const first = firstWorld.getForestFloorNear(center.x, center.z, radius);
+
+  assert.ok(first.length > 30, 'forest-floor fixture should cover a useful descriptor sample');
+  assert.equal(firstWorld.chunks.size, 0, 'a pure descriptor query must not stream voxel chunks');
+  firstWorld.getForestFloorNear(-96, 144, 72);
+  assert.deepEqual(firstWorld.getForestFloorNear(center.x, center.z, radius), first,
+    'an interleaved query changed forest-floor descriptors or ordering');
+  assert.deepEqual(replayWorld.getForestFloorNear(center.x, center.z, radius), first,
+    'the same seed did not replay the same forest floor');
+  assert.notDeepEqual(differentWorld.getForestFloorNear(center.x, center.z, radius), first,
+    'a different seed reused the same forest floor');
+
+  const inner = firstWorld.getForestFloorNear(center.x, center.z, 72);
+  assert.deepEqual(inner, first.filter((descriptor) => (
+    Math.hypot(descriptor.x - center.x, descriptor.z - center.z) <= 72
+  )), 'overlapping focus queries disagreed about shared descriptor cells');
+
+  for (const descriptor of [...first].reverse()) {
+    firstWorld.ensurePositionGenerated(descriptor.x, descriptor.z);
+  }
+  assert.deepEqual(firstWorld.getForestFloorNear(center.x, center.z, radius), first,
+    'materializing chunks changed pure forest-floor generation');
+  assert.equal(new Set(first.map(({ key }) => key)).size, first.length,
+    'forest-floor keys must be unique within a world query');
+  for (let index = 1; index < first.length; index++) {
+    const previous = first[index - 1];
+    const current = first[index];
+    const previousDistance = Math.hypot(previous.x - center.x, previous.z - center.z);
+    const currentDistance = Math.hypot(current.x - center.x, current.z - center.z);
+    assert.ok(
+      previousDistance < currentDistance
+      || Math.abs(previousDistance - currentDistance) < 1e-12
+        && previous.key.localeCompare(current.key) <= 0,
+      `forest-floor ordering changed between ${previous.key} and ${current.key}`,
+    );
+  }
+
+  firstWorld.dispose();
+  replayWorld.dispose();
+  differentWorld.dispose();
+});
+
+test('forest-floor descriptors stay sparse, dry, forest-bound and clear of generated decor', () => {
+  const world = new World(20260827, null, null);
+  const radius = 192;
+  const descriptors = world.getForestFloorNear(0, 0, radius);
+  const theoreticalCells = Math.PI * radius * radius
+    / (FOREST_FLOOR_CELL_SIZE * FOREST_FLOOR_CELL_SIZE);
+  const density = descriptors.length / theoreticalCells;
+  assert.ok(density > 0.005 && density < 0.06,
+    `forest-floor distribution stopped being sparse and natural (${density})`);
+  assert.ok(Object.isFrozen(FOREST_FLOOR_KINDS));
+
+  let minimumSpacing = Number.POSITIVE_INFINITY;
+  for (let index = 0; index < descriptors.length; index++) {
+    const descriptor = descriptors[index];
+    assert.equal(Object.isFrozen(descriptor), true);
+    assert.match(descriptor.key, /^forest-floor:-?\d+,-?\d+$/);
+    assert.ok(FOREST_FLOOR_KINDS.includes(descriptor.kind));
+    assert.ok(Number.isFinite(descriptor.x) && Number.isFinite(descriptor.y)
+      && Number.isFinite(descriptor.z));
+    assert.ok(Number.isFinite(descriptor.yaw) && descriptor.yaw >= 0
+      && descriptor.yaw < Math.PI * 2);
+    assert.ok(Number.isFinite(descriptor.scale) && descriptor.scale > 0.7
+      && descriptor.scale < 1.2);
+    assert.ok(descriptor.wetnessSeed >= 0 && descriptor.wetnessSeed < 1);
+    assert.equal(typeof descriptor.mushrooms, 'boolean');
+    assert.equal(typeof descriptor.insects, 'boolean');
+
+    const x = Math.floor(descriptor.x);
+    const z = Math.floor(descriptor.z);
+    const info = world._columnInfo(x, z);
+    assert.equal(info.biome, 'forest');
+    assert.ok(info.forestWeight >= FOREST_FLOOR_MIN_FOREST_WEIGHT);
+    assert.equal(info.pondId, null);
+    assert.equal(Number.isFinite(info.pondWaterLevel), false);
+    assert.equal(info.surfaceSand, false);
+    assert.equal(info.caveMouth, false);
+    assert.equal(descriptor.y, info.height + 1);
+    const support = world._baseBlockAt(x, info.height, z);
+    assert.equal(BLOCKS[support]?.solid, true);
+    assert.equal(BLOCKS[support]?.liquid, false);
+    assert.equal(world._baseBlockAt(x, info.height + 1, z), BLOCK.AIR);
+    assert.equal(world._generatedSurfaceDecorAt(x, z, info), false,
+      `${descriptor.key} overlaps generated plant decor`);
+
+    const trees = world.getTreesNear(x, z, FOREST_FLOOR_MAX_TREE_DISTANCE + 2);
+    const anchor = trees.find((tree) => tree.id === descriptor.treeKey);
+    assert.ok(anchor, `${descriptor.key} lost its living-tree anchor`);
+    const anchorDistance = Math.hypot(anchor.rootX - x, anchor.rootZ - z);
+    assert.ok(anchorDistance >= FOREST_FLOOR_MIN_TREE_DISTANCE
+      && anchorDistance <= FOREST_FLOOR_MAX_TREE_DISTANCE,
+    `${descriptor.key} is not naturally near its tree (${anchorDistance})`);
+    assert.equal(world._forestFloorFootprintIsClear(
+      x,
+      z,
+      descriptor.kind,
+      trees,
+      info.height,
+    ), true, `${descriptor.key} footprint intersects water, a trunk, or generated decor`);
+
+    for (let other = 0; other < index; other++) {
+      minimumSpacing = Math.min(minimumSpacing, Math.hypot(
+        descriptor.x - descriptors[other].x,
+        descriptor.z - descriptors[other].z,
+      ));
+    }
+  }
+  assert.ok(minimumSpacing >= 4.5,
+    `forest-floor descriptors clumped into collisions (${minimumSpacing})`);
+  world.dispose();
+});
+
+test('forest-floor subtype ecology covers every kind with minority log life', () => {
+  const seeds = [64, 65, 91234, 0x5f3759df, 0xa511e9b3, 1234, 777, 20260827];
+  const descriptors = [];
+  for (const seed of seeds) {
+    const world = new World(seed, null, null);
+    descriptors.push(...world.getForestFloorNear(0, 0, 192));
+    world.dispose();
+  }
+  assert.deepEqual(
+    [...new Set(descriptors.map(({ kind }) => kind))].sort(),
+    [...FOREST_FLOOR_KINDS].sort(),
+    'the deterministic population lost a requested forest-floor subtype',
+  );
+
+  const woody = descriptors.filter(({ kind }) => kind === 'fallen_log' || kind === 'stump');
+  const nonWoody = descriptors.filter(({ kind }) => kind !== 'fallen_log' && kind !== 'stump');
+  const mushroomCount = woody.filter(({ mushrooms }) => mushrooms).length;
+  const insectCount = woody.filter(({ insects }) => insects).length;
+  const mushroomRatio = mushroomCount / woody.length;
+  const insectRatio = insectCount / woody.length;
+  assert.ok(woody.length > 40, 'minority checks need a meaningful log and stump sample');
+  assert.ok(mushroomCount > 0 && mushroomRatio < 0.5,
+    `mushrooms must remain a minority of logs/stumps (${mushroomRatio})`);
+  assert.ok(insectCount > 0 && insectRatio < mushroomRatio && insectRatio < 0.25,
+    `insects must remain the smaller log/stump minority (${insectRatio})`);
+  assert.ok(Math.abs(mushroomRatio - FOREST_FLOOR_MUSHROOM_CHANCE) < 0.12,
+    `mushroom population drifted from its seeded chance (${mushroomRatio})`);
+  assert.ok(Math.abs(insectRatio - FOREST_FLOOR_INSECT_CHANCE) < 0.08,
+    `insect population drifted from its seeded chance (${insectRatio})`);
+  assert.equal(nonWoody.some(({ mushrooms, insects }) => mushrooms || insects), false,
+    'non-log decor cannot carry log mushrooms or insects');
+});
+
+test('forest-floor collision profiles follow rotated voxel masses without making tiny decor snaggy', () => {
+  assert.equal(Object.isFrozen(FOREST_FLOOR_SOLID_KINDS), true);
+  assert.deepEqual(
+    [...FOREST_FLOOR_SOLID_KINDS].sort(),
+    ['exposed_roots', 'fallen_log', 'rock_cluster', 'stump'],
+  );
+  const base = {
+    key: 'collision-fixture',
+    x: 10,
+    y: 4,
+    z: -6,
+    yaw: Math.PI / 3,
+    scale: 1.1,
+  };
+  for (const kind of FOREST_FLOOR_KINDS) {
+    const descriptor = { ...base, kind, mushrooms: true, insects: true };
+    const first = forestFloorCollidersForDescriptor(descriptor);
+    assert.deepEqual(forestFloorCollidersForDescriptor(descriptor), first,
+      `${kind} collider generation is not deterministic`);
+    assert.equal(first.length > 0, FOREST_FLOOR_SOLID_KINDS.includes(kind),
+      `${kind} has the wrong physical/decorative contract`);
+    first.forEach((collider) => {
+      assert.equal(Object.isFrozen(collider), true);
+      assert.equal(collider.sourceKey, base.key);
+      assert.equal(collider.kind, kind);
+      assert.equal(collider.yaw, base.yaw);
+      assert.ok(collider.maxY > collider.minY);
+      assert.ok(collider.halfX > 0 && collider.halfZ > 0);
+      assert.equal(typeof collider.stepable, 'boolean');
+    });
+  }
+
+  const log = forestFloorCollidersForDescriptor({ ...base, kind: 'fallen_log', yaw: 0, scale: 1 })[0];
+  const touchingTop = {
+    minX: log.x - 0.1,
+    maxX: log.x + 0.1,
+    minY: log.maxY + 0.0001,
+    maxY: log.maxY + 1.78,
+    minZ: log.z - 0.1,
+    maxZ: log.z + 0.1,
+  };
+  assert.equal(intersectsPlayerCollider(touchingTop, log), false,
+    'standing on a log must not count as being inside it');
+  assert.equal(intersectsPlayerCollider({
+    ...touchingTop,
+    minY: log.maxY - 0.01,
+  }, log), true, 'a real vertical overlap must collide');
+  const rotated = forestFloorCollidersForDescriptor({
+    ...base,
+    kind: 'fallen_log',
+    yaw: Math.PI / 2,
+    scale: 1,
+  })[0];
+  assert.equal(intersectsPlayerCollider({
+    minX: rotated.x - 0.1,
+    maxX: rotated.x + 0.1,
+    minY: rotated.minY,
+    maxY: rotated.maxY,
+    minZ: rotated.z + 0.56,
+    maxZ: rotated.z + 0.66,
+  }, rotated), true, 'a quarter-turned log did not rotate its long collision axis');
+});
+
+test('forest-floor collisions are asset-gated and react immediately to live block edits', () => {
+  const world = new World(20260827, null, null);
+  const descriptor = world.getForestFloorNear(0, 0, 192)
+    .find((entry) => FOREST_FLOOR_SOLID_KINDS.includes(entry.kind)
+      && entry.kind !== 'rock_cluster'
+      && world.forestFloorPlacementIsLive(entry));
+  assert.ok(descriptor, 'the collision fixture needs a substantial forest-floor prop');
+  world.ensurePositionGenerated(descriptor.x, descriptor.z);
+  assert.deepEqual(world.getForestFloorCollidersNear(descriptor.x, descriptor.z, 2), [],
+    'an unloaded cosmetic asset must never produce an invisible wall');
+
+  world.setForestFloorCollisionEnabled(true);
+  const original = world.getForestFloorCollidersNear(descriptor.x, descriptor.z, 2)
+    .filter(({ sourceKey }) => sourceKey === descriptor.key);
+  assert.ok(original.length > 0, 'the loaded forest-floor prop did not become physical');
+  const x = Math.floor(descriptor.x);
+  const y = Math.floor(descriptor.y);
+  const z = Math.floor(descriptor.z);
+  const supportId = world.getBlock(x, y - 1, z);
+  const streamRevision = world.streamRevision;
+  const editRevision = world.editRevision;
+  assert.equal(world.setBlock(x, y - 1, z, BLOCK.AIR), true);
+  assert.equal(world.editRevision, editRevision + 1);
+  assert.equal(world.getForestFloorCollidersNear(descriptor.x, descriptor.z, 2)
+    .some(({ sourceKey }) => sourceKey === descriptor.key), false,
+  'mining a prop support did not remove its collision immediately');
+  assert.equal(world.streamRevision, streamRevision,
+    'collision invalidation must not depend on a chunk-stream revision');
+  assert.equal(world.setBlock(x, y - 1, z, supportId), true);
+  assert.deepEqual(
+    world.getForestFloorCollidersNear(descriptor.x, descriptor.z, 2)
+      .filter(({ sourceKey }) => sourceKey === descriptor.key),
+    original,
+    'restoring the support did not restore the deterministic collider',
+  );
+
+  let outerFootprintEdit = null;
+  for (let dz = -1; dz <= 1 && !outerFootprintEdit; dz++) {
+    for (let dx = -1; dx <= 1 && !outerFootprintEdit; dx++) {
+      if (dx === 0 && dz === 0) continue;
+      if (world.getBlock(x + dx, y, z + dz) !== BLOCK.AIR) continue;
+      if (!world.setBlock(x + dx, y, z + dz, BLOCK.STONE)) continue;
+      const removed = !world.getForestFloorCollidersNear(descriptor.x, descriptor.z, 2)
+        .some(({ sourceKey }) => sourceKey === descriptor.key);
+      world.setBlock(x + dx, y, z + dz, BLOCK.AIR);
+      if (removed) outerFootprintEdit = { dx, dz };
+    }
+  }
+  assert.ok(outerFootprintEdit,
+    'building through an outer log/root/stump arm did not suppress its complete collider');
+  assert.equal(world.setBlock(x, y, z, BLOCK.STONE), true);
+  assert.equal(world.getForestFloorCollidersNear(descriptor.x, descriptor.z, 2)
+    .some(({ sourceKey }) => sourceKey === descriptor.key), false,
+  'building through a forest prop left its collision active');
+  world.dispose();
+});
+
+test('eligible mountain sectors receive deterministic crosses on a one-in-four roll', () => {
+  const center = { x: 0, z: 0 };
+  const radius = 384;
+  const firstWorld = new World(64, null, null);
+  const secondWorld = new World(64, null, null);
+  const differentWorld = new World(91234, null, null);
+  const legacyWorld = new World(64, null, null, {
+    generatorVersion: LEGACY_WORLD_GENERATOR_VERSION,
+  });
+  const first = firstWorld.getMountainCrossesNear(center.x, center.z, radius);
+
+  assert.ok(first.length >= 3, 'the mountain fixture should expose several quarter-chance summit monuments');
+  assert.deepEqual(firstWorld.getMountainCrossesNear(center.x, center.z, radius), first,
+    'repeating the summit query changed its descriptors or order');
+  assert.deepEqual(secondWorld.getMountainCrossesNear(center.x, center.z, radius), first,
+    'the same seed produced different summit crosses');
+  assert.notDeepEqual(differentWorld.getMountainCrossesNear(center.x, center.z, radius), first,
+    'different seeds produced the same summit crosses');
+  assert.deepEqual(legacyWorld.getMountainCrossesNear(center.x, center.z, radius), [],
+    'legacy generator worlds must retain their original decoration bytes');
+  assert.equal(new Set(first.map((cross) => cross.id)).size, first.length,
+    'a mountain sector emitted more than one cross');
+  assert.ok(first.every((cross) => (
+    Object.isFrozen(cross)
+    && Number.isInteger(cross.rootX)
+    && Number.isInteger(cross.rootY)
+    && Number.isInteger(cross.rootZ)
+    && cross.rootY === cross.summitHeight + 1
+    && cross.summitHeight >= firstWorld.seaLevel + 24
+    && ['x', 'z'].includes(cross.axis)
+    && cross.asset === 'summit-cross.glb'
+    && cross.modelHeight === 7
+    && cross.crossbeamHeight === 5.12
+    && cross.spawnChance === MOUNTAIN_CROSS_SPAWN_CHANCE
+    && cross.spawnRoll === mountainCrossSpawnRoll(cross.cellX, cross.cellZ, firstWorld.seed)
+    && cross.spawnRoll < MOUNTAIN_CROSS_SPAWN_CHANCE
+  )), 'summit descriptors must be immutable, elevated and structurally complete');
+  for (const cross of first) {
+    assert.equal(firstWorld.terrainHeight(cross.rootX, cross.rootZ), cross.summitHeight,
+      `cross ${cross.id} drifted away from its terrain summit`);
+  }
+
+  firstWorld.dispose();
+  secondWorld.dispose();
+  differentWorld.dispose();
+  legacyWorld.dispose();
+});
+
+test('mountain cross spawn rolls remain statistically locked to twenty-five percent', () => {
+  let selected = 0;
+  let sampled = 0;
+  for (const seed of [64, 91234, 0x5f3759df, 0xa511e9b3]) {
+    for (let cellZ = -32; cellZ < 32; cellZ++) {
+      for (let cellX = -32; cellX < 32; cellX++) {
+        sampled++;
+        if (mountainCrossSpawnRoll(cellX, cellZ, seed) < MOUNTAIN_CROSS_SPAWN_CHANCE) selected++;
+      }
+    }
+  }
+  const ratio = selected / sampled;
+  assert.ok(ratio >= 0.24 && ratio <= 0.26,
+    `expected a deterministic 25% cross roll, received ${(ratio * 100).toFixed(2)}%`);
+});
+
+test('summit descriptors reserve open air for the Blender model instead of voxel plus signs', () => {
+  const world = new World(64, null, null);
+  const cross = world.getMountainCrossesNear(0, 0, 384)[0];
+  assert.ok(cross, 'the fixture needs a generated summit cross');
+  world.ensurePositionGenerated(cross.rootX, cross.rootZ);
+  for (let dy = 0; dy < 5; dy++) {
+    assert.equal(world.getBlock(cross.rootX, cross.rootY + dy, cross.rootZ), BLOCK.AIR,
+      `old voxel upright leaked into the Blender model at height ${dy}`);
+  }
+  const oldArmY = cross.rootY + 3;
+  for (const offset of [-1, 1]) {
+    const x = cross.rootX + (cross.axis === 'x' ? offset : 0);
+    const z = cross.rootZ + (cross.axis === 'z' ? offset : 0);
+    world.ensurePositionGenerated(x, z);
+    assert.equal(world.getBlock(x, oldArmY, z), BLOCK.AIR,
+      'old voxel crossbeam leaked beneath the authored Blender cross');
+  }
+  world.dispose();
+});
+
 test('hanging-leaf metadata selects an independent quarter of accepted trees', () => {
   const world = new World(91234, null, null);
   const trees = world.getTreesNear(0, 0, 192);
@@ -487,18 +1049,32 @@ test('hanging-leaf metadata selects an independent quarter of accepted trees', (
   world.dispose();
 });
 
-test('tree descriptor refactor preserves fixed-seed decorated chunk bytes', () => {
+test('falling-leaf metadata selects only ash trees for matching forest-floor litter', () => {
+  const world = new World(91234, null, null);
+  const trees = world.getTreesNear(0, 0, 192);
+  const ash = trees.filter((tree) => !tree.isPine);
+  const selected = ash.filter((tree) => tree.hasFallingLeaves);
+  assert.ok(ash.length > 600, 'falling-leaf fixture should sample enough ash trees');
+  assert.equal(trees.filter((tree) => tree.isPine && tree.hasFallingLeaves).length, 0,
+    'pine trees must not receive broad ash-leaf particles or litter');
+  const ratio = selected.length / ash.length;
+  assert.ok(ratio >= 0.4 && ratio <= 0.52,
+    `expected roughly 46% of ash trees to shed leaves, received ${(ratio * 100).toFixed(2)}%`);
+  world.dispose();
+});
+
+test('surface decoration distribution preserves fixed-seed generated chunk bytes', () => {
   const fixtures = [
-    { seed: 64, cx: 0, cz: 0, hash: 'cf4226f33b9feb5055fa7aa15994074221cb55be455d96da3bddae3e4c3745b3' },
-    { seed: 64, cx: 3, cz: -2, hash: '2166c24e5a7e2360c6e840a827d4b8d6c00405ac093d9eb8475ab275eb2d8079' },
-    { seed: 91234, cx: 1, cz: 1, hash: '1d61d21d969f2bcb67764016fd32b5ec34e9c18b2369649e6e0b2c6102a6053d' },
+    { seed: 64, cx: 0, cz: 0, hash: 'b19090d11cde0926de0c1ea6462e45881415cb3e647028497e4bb7ebe5ab7f78' },
+    { seed: 64, cx: 3, cz: -2, hash: '81d49c46ad6a792d7e1be1e42a1e94d8d0ff6bba0d9d369a0471ca89a6ba30df' },
+    { seed: 91234, cx: 1, cz: 1, hash: '39bbfdc47611cee4501d656429a0f0ed4ff1422422243781e0622b1beecd814e' },
   ];
   for (const fixture of fixtures) {
     const world = new World(fixture.seed, null, null);
     const chunk = world.ensurePositionGenerated(fixture.cx * 16, fixture.cz * 16);
     const hash = createHash('sha256').update(chunk.blocks).digest('hex');
     assert.equal(hash, fixture.hash,
-      `tree metadata changed generated bytes for ${fixture.seed}:${fixture.cx},${fixture.cz}`);
+      `surface decoration changed generated bytes for ${fixture.seed}:${fixture.cx},${fixture.cz}`);
     world.dispose();
   }
 });
@@ -1003,6 +1579,175 @@ test('streaming prepares hidden horizon rings and favors the direction of travel
   world.dispose();
 });
 
+test('maximum visual distance stages admission without exceeding the full-detail chunk budget', () => {
+  const world = new World(7342, null, null);
+  const position = { x: 0.5, z: 0.5 };
+  const motion = { x: 6, z: -2 };
+  const maximumActiveChunks = (detailedStreamDistance(MAX_VIEW_DISTANCE) * 2 + 1) ** 2;
+
+  let update = world.updateStreaming(position, MAX_VIEW_DISTANCE, motion);
+  const initialRevision = world.streamRevision;
+  assert.deepEqual({
+    visualDistance: update.visualDistance,
+    detailDistance: update.detailDistance,
+    streamDistance: update.streamDistance,
+    maximumDetailDistance: update.maximumDetailDistance,
+  }, {
+    visualDistance: MAX_VIEW_DISTANCE,
+    detailDistance: MAX_DETAIL_DISTANCE,
+    streamDistance: MAX_DETAIL_DISTANCE + DETAIL_SUPPORT_CHUNKS,
+    maximumDetailDistance: MAX_DETAIL_DISTANCE,
+  });
+  assert.equal(world.renderDistance, MAX_VIEW_DISTANCE);
+  assert.equal(world.detailDistance, MAX_DETAIL_DISTANCE);
+  assert.equal(world.streamDistance, MAX_DETAIL_DISTANCE + DETAIL_SUPPORT_CHUNKS);
+  assert.equal(update.changed, true);
+  assert.equal(update.admitted, 81, 'the first maximum-distance admission should remain bounded');
+  assert.ok(update.pending > 0, 'the far detail rings should be staged over later streaming updates');
+  assert.ok(world.chunks.size <= maximumActiveChunks);
+
+  let calls = 1;
+  while (update.pending > 0 && calls < 32) {
+    update = world.updateStreaming(position, MAX_VIEW_DISTANCE, motion);
+    calls++;
+    assert.equal(update.changed, false, 'continued admission must reuse the cached streaming plan');
+    assert.equal(world.streamRevision, initialRevision,
+      'same-center updates must not rebuild the streaming plan');
+    assert.ok(update.admitted <= 48, 'later admissions must retain their per-update allocation cap');
+    assert.ok(world.chunks.size <= maximumActiveChunks,
+      `active detail chunks exceeded ${maximumActiveChunks} during staged admission`);
+  }
+
+  assert.equal(update.pending, 0, 'repeated bounded updates should eventually admit the complete detail square');
+  assert.equal(world.chunks.size, maximumActiveChunks);
+  assert.equal(world.generationQueue.length, maximumActiveChunks);
+  assert.ok(calls > 1 && calls < 32, `staged admission completed in an unexpected ${calls} calls`);
+  world.dispose();
+});
+
+test('loading-stage streaming admits and fully generates the complete active footprint', () => {
+  const world = new World(73420, null, null);
+  const position = { x: 0.5, z: 0.5 };
+  const maximumActiveChunks = (detailedStreamDistance(MAX_VIEW_DISTANCE) * 2 + 1) ** 2;
+  const update = world.updateStreaming(
+    position,
+    MAX_VIEW_DISTANCE,
+    { x: 0, z: 0 },
+    { preloadAll: true },
+  );
+
+  assert.equal(update.pending, 0, 'loading must not leave planned chunks waiting for later admission');
+  assert.equal(update.admitted, maximumActiveChunks);
+  assert.equal(world.chunks.size, maximumActiveChunks);
+  assert.equal(world.generationQueue.length, maximumActiveChunks);
+
+  const completed = world.processQueue(2, 0.5, { completeChunks: true });
+  assert.equal(completed, 2, 'loading mode must finish whole chunks instead of retaining sliced jobs');
+  assert.equal(world.generationQueue.length, maximumActiveChunks - 2);
+  assert.equal([...world.chunks.values()].filter((chunk) => chunk.generated).length, 2);
+  world.dispose();
+});
+
+test('streaming plan revision changes only when its chunk-space signature changes', () => {
+  const world = new World(7343, null, null);
+  const motion = { x: 4.2, z: 0.4 };
+  const maximumActiveChunks = (detailedStreamDistance(MAX_VIEW_DISTANCE) * 2 + 1) ** 2;
+  const first = world.updateStreaming({ x: 0.5, z: 0.5 }, MAX_VIEW_DISTANCE, motion);
+  const firstRevision = world.streamRevision;
+
+  const sameChunk = world.updateStreaming({ x: 15.75, z: 8.25 }, MAX_VIEW_DISTANCE, motion);
+  assert.equal(first.changed, true);
+  assert.equal(sameChunk.changed, false);
+  assert.equal(world.streamRevision, firstRevision,
+    'sub-chunk movement with the same direction sector must reuse the plan');
+  assert.ok(world.chunks.size <= maximumActiveChunks);
+
+  const crossed = world.updateStreaming({ x: CHUNK_WORLD_SIZE + 0.5, z: 8.25 }, MAX_VIEW_DISTANCE, motion);
+  assert.equal(crossed.changed, true);
+  assert.equal(world.streamRevision, firstRevision + 1,
+    'crossing a chunk boundary must publish exactly one new stream plan');
+  assert.ok(world.chunks.size <= maximumActiveChunks,
+    'a boundary crossing must evict stale chunks before admitting the new strip');
+  assert.equal(world.renderDistance, MAX_VIEW_DISTANCE);
+  assert.equal(world.detailDistance, MAX_DETAIL_DISTANCE);
+  assert.equal(world.streamDistance, detailedStreamDistance(MAX_VIEW_DISTANCE));
+  world.dispose();
+});
+
+test('distant terrain builds deterministically, incrementally, and swaps atomically', () => {
+  const scene = new THREE.Scene();
+  const terrain = {
+    seaLevel: 32,
+    _columnInfo(x, z) {
+      const height = Math.round(31 + Math.sin(x / 41) * 6 + Math.cos(z / 53) * 4);
+      return {
+        height,
+        biome: x < -40 ? 'forest' : x > 80 ? 'desert' : 'plains',
+        moisture: 0.45 + Math.sin(z / 90) * 0.2,
+        forestWeight: x < 0 ? 0.7 : 0.1,
+        desertWeight: x > 50 ? 0.65 : 0.05,
+        surfaceSand: x > 90,
+        rockiness: Math.max(0, (height - 34) / 24),
+        pondWaterLevel: Math.abs(x) < 8 && Math.abs(z) < 8 ? 34 : null,
+      };
+    },
+  };
+  const hashGeometry = (horizon) => {
+    const hash = createHash('sha256');
+    for (const name of ['position', 'normal', 'color']) {
+      const array = horizon.mesh.geometry.getAttribute(name).array;
+      hash.update(Buffer.from(array.buffer, array.byteOffset, array.byteLength));
+    }
+    return hash.digest('hex');
+  };
+
+  const first = new DistantTerrainHorizon(scene, terrain);
+  assert.equal(first.request(0.5, 0.5, MAX_VIEW_DISTANCE, MAX_DETAIL_DISTANCE), false);
+  const originalPending = first.pendingWork;
+  first.process(1, Number.POSITIVE_INFINITY);
+  assert.ok(first.pendingWork < originalPending && first.pending,
+    'one row should advance without publishing the complete horizon');
+  while (first.pending) first.process(16, Number.POSITIVE_INFINITY);
+  assert.equal(first.ready, true);
+  assert.equal(first.mesh.castShadow, false);
+  assert.equal(first.mesh.receiveShadow, false);
+  assert.equal(first.mesh.userData.distantTerrain, true);
+  const firstStats = first.getStats();
+  assert.equal(firstStats.outerRadius, distantHorizonRadius(MAX_VIEW_DISTANCE));
+  assert.equal(firstStats.innerRadius, CHUNK_WORLD_SIZE * 3);
+  assert.ok(firstStats.vertices > 0 && firstStats.vertices <= 210_000);
+  assert.ok(firstStats.triangles > 0 && firstStats.triangles <= 70_000);
+  for (const name of ['position', 'normal', 'color']) {
+    const values = first.mesh.geometry.getAttribute(name).array;
+    assert.ok(values.every(Number.isFinite), `${name} contains a non-finite distant-terrain value`);
+  }
+  assert.equal(first.getSafeDistanceFor(0.5, 0.5, 8), 0,
+    'the visual horizon cannot bridge an unfinished detailed centre hole');
+  assert.ok(first.getSafeDistanceFor(0.5, 0.5, 80) >= 350,
+    'a complete detailed seam should unlock the twenty-chunk visual horizon');
+  const firstHash = hashGeometry(first);
+
+  const replay = new DistantTerrainHorizon(null, terrain);
+  replay.request(0.5, 0.5, MAX_VIEW_DISTANCE, MAX_DETAIL_DISTANCE);
+  replay.process(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY);
+  assert.equal(hashGeometry(replay), firstHash, 'the same world request must reproduce exact horizon buffers');
+  assert.equal(first.request(15.75, 8.25, MAX_VIEW_DISTANCE, MAX_DETAIL_DISTANCE), true,
+    'movement inside the snapped chunk must be a cache hit');
+
+  const oldMesh = first.mesh;
+  assert.equal(first.request(16.5, 8.25, MAX_VIEW_DISTANCE, MAX_DETAIL_DISTANCE), false);
+  assert.equal(first.mesh, oldMesh, 'a replacement build must retain the published horizon');
+  assert.equal(first.ready, false);
+  first.process(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY);
+  assert.notEqual(first.mesh, oldMesh, 'the replacement must publish atomically after completion');
+  assert.equal(first.ready, true);
+  assert.deepEqual(first.getStats().center, [16, 0]);
+
+  replay.dispose();
+  first.dispose();
+  assert.equal(scene.children.includes(first.group), false);
+});
+
 test('mature overgrown trees use ivy bark textures without protruding lower-trunk leaf blocks', () => {
   const world = new World(64, null, null);
   for (let cz = -2; cz <= 2; cz++) {
@@ -1141,6 +1886,71 @@ test('fog clamp never reveals terrain beyond the complete meshed horizon', () =>
     'storm/cave/night/underwater clarity must retain the exact legacy safety band');
   assert.equal(legacyLoading.far, loading.far,
     'both clear and dense fog must become fully opaque before the same unmeshed horizon');
+});
+
+test('celestial sprites retain their projected size while testing terrain at far-plane depth', () => {
+  const material = pinCelestialSpriteToFarPlane(new THREE.SpriteMaterial({
+    depthTest: false,
+    depthWrite: true,
+  }));
+  const shader = {
+    vertexShader: 'void main() {\n\tgl_Position = projectionMatrix * mvPosition;\n}',
+  };
+  material.onBeforeCompile(shader, null);
+  assert.equal(material.depthTest, true);
+  assert.equal(material.depthWrite, false);
+  assert.equal(material.depthFunc, THREE.LessEqualDepth);
+  assert.equal(material.userData.worldloomCelestialFarDepth, true);
+  assert.match(shader.vertexShader, /gl_Position\.z\s*=\s*gl_Position\.w/,
+    'mountains must win the depth test without changing the sprite projection');
+  assert.match(material.customProgramCacheKey(), /worldloom-celestial-depth-v1/);
+});
+
+test('weather windows span broad ranges and front opportunities can remain dry', () => {
+  for (const [kind, [minimum, maximum]] of Object.entries(WEATHER_DURATION_RANGES)) {
+    assert.equal(sampleWeatherDuration(kind, 0), minimum, `${kind} must include its minimum`);
+    const upper = sampleWeatherDuration(kind, 1);
+    assert.ok(upper < maximum && upper > maximum - 0.001,
+      `${kind} must approach its maximum without leaving the range`);
+  }
+  assert.ok(WEATHER_DURATION_RANGES.initialClear[1] - WEATHER_DURATION_RANGES.initialClear[0] >= 300,
+    'new worlds need a broad first-weather window rather than a disguised two-minute script');
+  assert.equal(weatherFrontWillBuild(0), true);
+  assert.equal(weatherFrontWillBuild(WEATHER_FRONT_CHANCE - 0.001), true);
+  assert.equal(weatherFrontWillBuild(WEATHER_FRONT_CHANCE), false);
+  assert.equal(weatherFrontWillBuild(0.99), false);
+});
+
+test('a clear weather opportunity can skip rain and schedule another varied dry spell', () => {
+  const rolls = [0.94, 0.31, 0.73];
+  const environment = weatherHarness('clear', {
+    weatherTimer: 0,
+    cloudCover: 0.34,
+    cloudCoverTarget: 0.34,
+    weatherRandom: () => rolls.shift() ?? 0.5,
+  });
+  environment._updateWeather(0.1);
+  assert.equal(environment.weatherPhase, 'clear');
+  assert.equal(environment.rainTarget, 0);
+  assert.ok(environment.weatherTimer >= WEATHER_DURATION_RANGES.dryClear[0]);
+  assert.ok(environment.weatherTimer <= WEATHER_DURATION_RANGES.dryClear[1]);
+});
+
+test('a successful weather opportunity samples independent buildup and storm durations', () => {
+  const rolls = [0.08, 0.35, 0.67, 0.44, 0.81];
+  const environment = weatherHarness('clear', {
+    weatherTimer: 0,
+    cloudCover: 0.34,
+    cloudCoverTarget: 0.34,
+    weatherRandom: () => rolls.shift() ?? 0.5,
+  });
+  environment._updateWeather(0.1);
+  assert.equal(environment.weatherPhase, 'building');
+  assert.ok(environment.weatherTimer >= WEATHER_DURATION_RANGES.building[0]);
+  assert.ok(environment.weatherTimer <= WEATHER_DURATION_RANGES.building[1]);
+  assert.ok(environment.pendingStormDuration >= WEATHER_DURATION_RANGES.rain[0]);
+  assert.ok(environment.pendingStormDuration <= WEATHER_DURATION_RANGES.rain[1]);
+  assert.equal(environment.rainTarget, 0, 'clouds must still gather before precipitation begins');
 });
 
 test('rain intensity is clamped to zero whenever the local sky has no storm clouds', () => {
@@ -1482,11 +2292,24 @@ test('covered voxel faces preserve mouth detail before reaching deep-cave black'
     'low mode retains most sunlight while a cave entrance is still visible');
 });
 
-test('volumetric sunlight is depth-ready, projected safely, and limited to high-end presets', () => {
+test('sunlight tiers keep medium affordable while scaling warm shafts through cinematic mode', () => {
   assert.equal(GRAPHICS_PRESETS.low.godRayStrength, 0);
-  assert.equal(GRAPHICS_PRESETS.balanced.godRayStrength, 0);
-  assert.ok(GRAPHICS_PRESETS.high.godRayStrength > 0);
+  assert.ok(GRAPHICS_PRESETS.balanced.godRayStrength > 0);
+  assert.ok(GRAPHICS_PRESETS.high.godRayStrength > GRAPHICS_PRESETS.balanced.godRayStrength);
   assert.ok(GRAPHICS_PRESETS.ultra.godRayStrength > GRAPHICS_PRESETS.high.godRayStrength);
+  assert.equal(GRAPHICS_PRESETS.balanced.ambientOcclusion, false,
+    'medium shafts must not silently add the expensive GTAO pipeline');
+  assert.equal(GRAPHICS_PRESETS.balanced.bloomStrength, 0,
+    'medium keeps the multi-blur bloom pass out of its frame budget');
+  assert.ok(GRAPHICS_PRESETS.balanced.godRayScale < GRAPHICS_PRESETS.high.godRayScale);
+  assert.ok(GRAPHICS_PRESETS.high.godRayScale < GRAPHICS_PRESETS.ultra.godRayScale);
+  for (const preset of [GRAPHICS_PRESETS.balanced, GRAPHICS_PRESETS.high, GRAPHICS_PRESETS.ultra]) {
+    const tint = new THREE.Color(preset.godRayTint);
+    assert.ok(tint.r > tint.g && tint.g > tint.b,
+      `${preset.label} shafts must carry a genuinely warm optical tint`);
+    assert.ok(preset.godRaySourceRadius < 0.4,
+      `${preset.label} shaft source became a flat full-screen haze`);
+  }
 
   const camera = new THREE.PerspectiveCamera(75, 16 / 9, 0.1, 320);
   camera.position.set(0, 2, 0);
@@ -1510,8 +2333,23 @@ test('volumetric sunlight is depth-ready, projected safely, and limited to high-
   };
   const clearHigh = volumetricSunIntensity(GRAPHICS_PRESETS.high, clearEnvironment, front);
   const clearUltra = volumetricSunIntensity(GRAPHICS_PRESETS.ultra, clearEnvironment, front);
+  const clearBalanced = volumetricSunIntensity(GRAPHICS_PRESETS.balanced, clearEnvironment, front);
   assert.ok(clearHigh > 0.1 && clearUltra > clearHigh);
-  assert.equal(volumetricSunIntensity(GRAPHICS_PRESETS.balanced, clearEnvironment, front), 0);
+  assert.ok(clearBalanced > 0 && clearBalanced < clearHigh);
+  const goldenHigh = volumetricSunIntensity(
+    GRAPHICS_PRESETS.high,
+    { ...clearEnvironment, dayAmount: 0.44, sunElevation: 0.04 },
+    front,
+  );
+  assert.ok(goldenHigh > clearHigh,
+    'visible golden-hour shafts should not be weaker than noon shafts');
+  const canopyHigh = volumetricSunIntensity(
+    GRAPHICS_PRESETS.high,
+    { ...clearEnvironment, skyExposure: 0.5, sunElevation: 0.3 },
+    front,
+  );
+  assert.ok(canopyHigh > 0 && canopyHigh < goldenHigh,
+    'partial canopy exposure should retain occlusion-rich shafts without matching open sky');
   assert.equal(volumetricSunIntensity(GRAPHICS_PRESETS.high, { ...clearEnvironment, rainAmount: 1 }, front), 0);
   assert.equal(volumetricSunIntensity(GRAPHICS_PRESETS.high, { ...clearEnvironment, caveAmount: 1 }, front), 0);
   assert.equal(volumetricSunIntensity(GRAPHICS_PRESETS.high, { ...clearEnvironment, skyExposure: 0 }, front), 0);
@@ -1523,10 +2361,33 @@ test('volumetric sunlight is depth-ready, projected safely, and limited to high-
   pass.setDepthTexture({ isDepthTexture: true });
   const diagnostics = pass.getDiagnostics();
   assert.equal(diagnostics.depthBound, true);
-  assert.equal(diagnostics.width, 420);
-  assert.equal(diagnostics.height, 210);
+  assert.equal(diagnostics.maskSource, 'depth+beauty');
+  assert.equal(diagnostics.width, 440);
+  assert.equal(diagnostics.height, 220);
   assert.equal(diagnostics.samples, 24);
+  assert.equal(diagnostics.sourceRadius, 0.42);
   pass.dispose();
+});
+
+test('clear daylight uses a warm key, restrained cool fill, and elevation-aware color temperature', () => {
+  const horizon = sunlightColorForElevation(0);
+  const low = sunlightColorForElevation(0.28);
+  const noon = sunlightColorForElevation(1);
+  assert.ok(horizon.r > horizon.g && horizon.g > horizon.b,
+    'horizon sunlight must stay golden rather than grey-white');
+  assert.ok((horizon.r / horizon.b) > (low.r / low.b));
+  assert.ok((low.r / low.b) > (noon.r / noon.b),
+    'sunlight should smoothly approach a warm-neutral noon temperature');
+
+  const openDay = daylightBalance(1, 0.35, 1);
+  const canopyDay = daylightBalance(1, 0.35, 0.46);
+  assert.ok(openDay.goldenHour > 0.5);
+  assert.ok(openDay.sunIntensity > (openDay.hemisphereIntensity + openDay.environmentIntensity) * 3,
+    'clear daylight needs a materially dominant directional key');
+  assert.ok(canopyDay.hemisphereIntensity > 0.3 && canopyDay.environmentIntensity > 0.14,
+    'canopy fill must stay readable while open-sky cyan wash is reduced');
+  assert.ok(outdoorBounceIntensity(1, 0.46, 0) > 0.09,
+    'warm canopy bounce regressed below its readability floor');
 });
 
 test('an opaque player-built roof removes ambient sky exposure with gradual eye adaptation', () => {
@@ -1576,7 +2437,7 @@ test('dense tree foliage provides shade without applying cave darkness', () => {
     'a sealed surface shelter must not inherit outdoor bounce light');
 });
 
-test('selection effects never show the red placement cube without a placeable stack', () => {
+test('selection effects never show an idle wireframe or red placement cube', () => {
   const effects = Object.create(BlockEffects.prototype);
   Object.assign(effects, {
     outline: {
@@ -1606,13 +2467,57 @@ test('selection effects never show the red placement cube without a placeable st
   };
   effects.setTarget(hit, 0, false, false);
   assert.equal(effects.preview.visible, false);
-  assert.equal(effects.outline.visible, true, 'the normal target outline remains available');
+  assert.equal(effects.outline.visible, false,
+    'the idle target wireframe must stay hidden while the label identifies the block');
   effects.setTarget(hit, 0, false, true);
   assert.equal(effects.preview.visible, false, 'invalid placement must not create a persistent red artifact');
   effects.setTarget(hit, 0, true, true);
   assert.equal(effects.preview.visible, true, 'an explicitly selected placeable stack may preview placement');
   effects.setTarget(null);
   assert.equal(effects.preview.visible, false);
+});
+
+test('selection effects reserve cube overlays for active solid-block mining cracks', () => {
+  const effects = Object.create(BlockEffects.prototype);
+  Object.assign(effects, {
+    outline: {
+      visible: false,
+      position: new THREE.Vector3(),
+      material: { opacity: 0 },
+    },
+    crack: {
+      visible: false,
+      position: new THREE.Vector3(),
+      material: { opacity: 0 },
+      scale: new THREE.Vector3(1, 1, 1),
+    },
+    preview: {
+      visible: false,
+      position: new THREE.Vector3(),
+      material: { color: new THREE.Color(), opacity: 0 },
+    },
+    crackTexture: { offset: { x: 0 }, updateMatrix() {} },
+    crackStage: -1,
+    crackTarget: '',
+    burst() {},
+  });
+
+  [BLOCK.FERN, BLOCK.WILDFLOWER, BLOCK.GLOW_MUSHROOM, BLOCK.SHORT_GRASS, BLOCK.RED_FLOWER]
+    .forEach((id, index) => {
+      effects.setTarget({
+        block: { x: index, y: 2, z: 3, id },
+        adjacent: { x: index, y: 3, z: 3 },
+      }, 0.55, false, false);
+      assert.equal(effects.outline.visible, false, `${BLOCKS[id].name} received a full cube outline`);
+      assert.equal(effects.crack.visible, false, `${BLOCKS[id].name} received a full cube crack overlay`);
+    });
+
+  effects.setTarget({
+    block: { x: 9, y: 2, z: 3, id: BLOCK.SAND },
+    adjacent: { x: 9, y: 3, z: 3 },
+  }, 0.55, false, false);
+  assert.equal(effects.outline.visible, false, 'solid blocks must not regain the idle wireframe');
+  assert.equal(effects.crack.visible, true, 'solid blocks must retain their breaking cracks');
 });
 
 test('a compact roof and four walls make a player-built shelter fully dark', () => {
@@ -1746,6 +2651,82 @@ test('partial-height furniture uses matching collision bounds', () => {
   player.setPosition(0.5, 0.47, 0.5);
   assert.equal(player.intersectsBlock(0, 0, 0, BLOCK.BED), false);
   assert.equal(player.intersectsBlock(0, 0, 0, BLOCK.STONE), true);
+});
+
+test('player movement blocks, steps and lands on forest-floor collision shapes', () => {
+  const makePlayer = (colliders) => {
+    const camera = new THREE.PerspectiveCamera(75, 1, 0.05, 100);
+    const world = {
+      getBlock: () => BLOCK.AIR,
+      getForestFloorCollidersNear: () => colliders,
+    };
+    const player = new PlayerController(camera, world);
+    player.setPosition(0, 0, 0);
+    player.wasGrounded = true;
+    return player;
+  };
+  const blockingStump = {
+    key: 'stump',
+    x: 0.66,
+    z: 0,
+    minY: 0,
+    maxY: 0.8,
+    halfX: 0.14,
+    halfZ: 0.28,
+    yaw: 0,
+    stepable: false,
+  };
+  const blocked = makePlayer([blockingStump]);
+  assert.equal(blocked.isCollidingAt(new THREE.Vector3(0.5, 0, 0)), true,
+    'spawn and resume safety did not see the forest prop');
+  blocked.velocity.x = 12;
+  blocked._moveWithCollisions(0.05);
+  assert.ok(blocked.position.x < 0.25,
+    `high-speed movement tunneled through a stump (${blocked.position.x})`);
+  assert.equal(blocked.velocity.x, 0);
+
+  const lowRoot = {
+    ...blockingStump,
+    key: 'root',
+    maxY: 0.24,
+    stepable: true,
+  };
+  const stepping = makePlayer([lowRoot]);
+  stepping.velocity.x = 12;
+  stepping._moveWithCollisions(0.05);
+  assert.ok(stepping.position.x > 0.5,
+    `the low root became an ankle-height wall (${stepping.position.x})`);
+  assert.ok(Math.abs(stepping.position.y - (lowRoot.maxY + 0.0001)) < 1e-7,
+    `the player passed through instead of stepping onto the root (${stepping.position.y})`);
+  assert.equal(stepping.grounded, true);
+
+  const blockingLog = makePlayer([{
+    ...blockingStump,
+    key: 'log-side',
+    x: 0.95,
+    maxY: 0.56,
+    halfX: 0.4,
+  }]);
+  blockingLog.velocity.x = 12;
+  blockingLog._moveWithCollisions(0.05);
+  assert.ok(blockingLog.position.x < 0.25,
+    `a normal-height log was auto-stepped instead of requiring a jump (${blockingLog.position.x})`);
+
+  const landing = makePlayer([{ ...blockingStump, key: 'log', maxY: 0.56 }]);
+  landing.setPosition(0.66, 1, 0);
+  landing.velocity.y = -10;
+  landing._moveWithCollisions(0.05);
+  assert.ok(Math.abs(landing.position.y - 0.5601) < 1e-7,
+    `falling player did not land on the log (${landing.position.y})`);
+  assert.equal(landing.grounded, true);
+  assert.equal(landing.velocity.y, 0);
+  assert.equal(landing.landingImpact, 10);
+
+  const decorative = makePlayer([]);
+  decorative.velocity.x = 12;
+  decorative._moveWithCollisions(0.05);
+  assert.ok(Math.abs(decorative.position.x - 0.6) < 1e-7,
+    'non-solid twigs, pinecones or insects unexpectedly snagged movement');
 });
 
 test('pointer-lock filtering rejects monitor recenter spikes without limiting cumulative 360 turns', () => {
@@ -2030,14 +3011,14 @@ test('creature combat is telegraphed, threatening, and player swings recover eve
   system.dispose();
 });
 
-test('rare bird admission and breed selection are deterministic and habitat-aware', () => {
+test('bird admission, pond residency, and breed selection are deterministic and habitat-aware', () => {
   assert.deepEqual(Object.keys(BIRD_BREEDS).sort(), ['ash_sparrow', 'pond_azurefin']);
   assert.notEqual(BIRD_BREEDS.ash_sparrow.rootName, BIRD_BREEDS.pond_azurefin.rootName);
 
   const field = new BirdField(null);
   const chance = field.profile.birdSpawnChance;
-  assert.ok(chance >= 0.03 && chance <= 0.2,
-    `default bird admission should stay rare, received ${(chance * 100).toFixed(1)}%`);
+  assert.ok(chance >= 0.2 && chance <= 0.3,
+    `default bird admission should be noticeably increased, received ${(chance * 100).toFixed(1)}%`);
   const admissions = (seed) => Array.from({ length: 8_192 }, (_, serial) => (
     birdUnitHash(seed, serial, 0xa24baed5) < chance
   ));
@@ -2048,6 +3029,32 @@ test('rare bird admission and breed selection are deterministic and habitat-awar
   assert.ok(Math.abs(admittedRatio - chance) < 0.025,
     `seeded rare admissions drifted away from the configured chance (${admittedRatio})`);
   field.dispose();
+
+  assert.equal(POND_BIRD_OCCUPANCY_CHANCE, 0.5);
+  const pondResidency = [];
+  let changedWorldResidency = 0;
+  for (let x = -64; x < 64; x++) {
+    for (let z = -64; z < 64; z++) {
+      const pond = { cellX: x, cellZ: z };
+      const firstResident = birdPondHasResident(0x51ed270b, pond);
+      assert.equal(birdPondHasResident(0x51ed270b, pond), firstResident,
+        'the same world and pond must retain residency across reloads');
+      pondResidency.push(firstResident);
+      if (birdPondHasResident(0x7f4a7c15, pond) !== firstResident) changedWorldResidency++;
+    }
+  }
+  const pondResidentRatio = pondResidency.filter(Boolean).length / pondResidency.length;
+  assert.ok(Math.abs(pondResidentRatio - 0.5) < 0.02,
+    `pond residency drifted away from 50% (${pondResidentRatio})`);
+  assert.ok(changedWorldResidency > pondResidency.length * 0.35,
+    'different worlds should materially change which ponds receive residents');
+  assert.equal(birdPondHasResident(123, {}), false);
+  assert.equal(birdPondHasResident(123, { cellX: 1 }), false);
+  assert.equal([
+    { cellX: -1, cellZ: -1 },
+    { cellX: -1, cellZ: 0 },
+  ].filter((pond) => birdPondHasResident(64, pond)).length, 1,
+  'the browser fixture should retain one resident pond');
 
   const counts = {
     tree: { ash_sparrow: 0, pond_azurefin: 0 },
@@ -2157,6 +3164,7 @@ test('bird tree and pond anchors validate live support, dry space, and streamed 
   const bank = birdPondBank(pondWorld, pond, 77);
   assert.ok(bank, 'a live pond with a dry bank should expose a landing');
   assert.equal(bank.habitat, 'pond');
+  assert.equal(bank.residentEligible, birdPondHasResident(77, pond));
   assert.equal(BLOCKS[bank.supportBlock]?.solid, true);
   assert.equal(BLOCKS[pondWorld.getBlock(
     Math.floor(bank.position.x), Math.floor(bank.position.y), Math.floor(bank.position.z),

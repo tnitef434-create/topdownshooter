@@ -37,3 +37,52 @@ turf.
 Regenerate from the repository root with:
 
   "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe" --background --factory-startup --python tools/generate_red_flower.py -- --output src/public/worldloom/assets/environment/red-flower.glb --preview outputs/red-flower-qa.png
+
+Realistic moon
+==============
+
+realistic-moon.png is a 1024x1024 transparent RGBA texture generated with the
+built-in GPT Image tool. The original 1254px source and complete prompt are
+preserved in tools/assets/moon-textures. The runtime image was downscaled with
+Lanczos filtering; atmospheric glow and terrain occlusion are intentionally
+handled by the renderer rather than baked into the texture.
+
+Hard-pixel meadow plants
+========================
+
+meadow-plants.glb contains the Blender-authored Sunflower_Asset and
+Short_Grass_Asset roots. The asset pack uses deterministic, hand-authored
+vertex-colour voxel geometry matching the established red-flower.glb style:
+the sunflower is a crossed 16x16 voxel relief and the grass is a crossed 8x8
+voxel relief with 29 occupied 0.048m logical pixels. Flat per-face colours are
+carried by COLOR_0; the runtime meshes contain no UVs, image textures, alpha
+cards, or normal maps.
+
+The two v2 GPT Image PNGs and their exact prompts are preserved under
+tools/assets/meadow-plant-textures as concept-only references. They are never
+sampled, packed, or loaded by the game at runtime.
+
+Regenerate from the repository root with:
+
+  "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe" --background --factory-startup --python tools/generate_meadow_plants.py -- --output src/public/worldloom/assets/environment/meadow-plants.glb --preview outputs/meadow-plants-qa.png
+
+Living forest floor
+===================
+
+forest-floor.glb is a deterministic Blender-authored pack of true voxel-grid,
+vertex-coloured fallen logs, stumps, exposed roots, twigs, pinecones, rock
+clusters, and small mushroom details. Every model is rebuilt from shared 0.08m
+integer cells with internal faces culled, only six cardinal normals, identity
+transforms, and visible square palette clusters. Its geometry has no arbitrary
+rotations, smooth shading, UVs, image textures, alpha cards, or normal maps.
+The runtime instances it in a small fixed draw budget, smoothly darkens the
+shared material while wet, and batches rare crawling insects as tiny opaque
+points.
+
+The GPT Image concept and exact prompt are preserved under
+tools/assets/forest-floor as a style reference only. No generated pixels are
+sampled or shipped by the game.
+
+Regenerate from the repository root with:
+
+  "C:\Program Files\Blender Foundation\Blender 5.2\blender.exe" --background --factory-startup --python tools/generate_forest_floor_assets.py -- --output src/public/worldloom/assets/environment/forest-floor.glb --preview outputs/forest-floor-qa.png

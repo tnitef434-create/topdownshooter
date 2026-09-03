@@ -23,6 +23,19 @@ import {
   hangingLeafCollisionPush,
   timeCorrectedDamping,
 } from '../src/public/worldloom/src/hanging-leaves.js';
+import { GroundLeafField } from '../src/public/worldloom/src/ground-leaves.js';
+import {
+  MeadowPlantField,
+  meadowPlantScale,
+  meadowPlantVisualOffset,
+  scanMeadowPlantChunk,
+} from '../src/public/worldloom/src/meadow-plants.js';
+import { SummitCrossField } from '../src/public/worldloom/src/summit-crosses.js';
+import {
+  FOREST_FLOOR_ROOTS,
+  ForestFloorField,
+  forestInsectOffset,
+} from '../src/public/worldloom/src/forest-floor.js';
 
 function meshSummary(root) {
   const meshes = [];
@@ -51,6 +64,40 @@ const HANGING_LEAVES_GENERATOR_URL = new URL(
   '../tools/generate_hanging_leaves.py',
   import.meta.url,
 );
+const GROUND_LEAVES_URL = new URL(
+  '../src/public/worldloom/assets/environment/ground-leaf-litter.glb',
+  import.meta.url,
+);
+const GROUND_LEAVES_ATLAS_URL = new URL(
+  '../src/public/worldloom/assets/environment/ground-leaf-litter-atlas.png',
+  import.meta.url,
+);
+const FALLING_LEAF_PARTICLE_URL = new URL(
+  '../src/public/worldloom/assets/environment/falling-leaf-particle.png',
+  import.meta.url,
+);
+const GROUND_LEAVES_SOURCE_URL = new URL(
+  '../tools/assets/ground-leaf-textures/gpt-ground-leaves-source.png',
+  import.meta.url,
+);
+const GROUND_LEAVES_PROMPT_URL = new URL(
+  '../tools/assets/ground-leaf-textures/PROMPT.md',
+  import.meta.url,
+);
+const GROUND_LEAVES_GENERATOR_URL = new URL('../tools/generate_ground_leaves.py', import.meta.url);
+const SUMMIT_CROSS_URL = new URL(
+  '../src/public/worldloom/assets/environment/summit-cross.glb',
+  import.meta.url,
+);
+const SUMMIT_CROSS_ATLAS_URL = new URL(
+  '../src/public/worldloom/assets/environment/summit-cross-wood-atlas.png',
+  import.meta.url,
+);
+const SUMMIT_CROSS_SOURCE_URL = new URL(
+  '../tools/assets/summit-cross-textures/gpt-summit-cross-wood-source.png',
+  import.meta.url,
+);
+const SUMMIT_CROSS_GENERATOR_URL = new URL('../tools/generate_summit_cross.py', import.meta.url);
 const BIRD_ASSET_URL = new URL(
   '../src/public/worldloom/assets/birds/worldloom-birds.glb',
   import.meta.url,
@@ -66,6 +113,60 @@ const BIRD_SOURCE_URL = new URL(
 const BIRD_PROMPT_URL = new URL('../tools/assets/bird-textures/PROMPTS.md', import.meta.url);
 const BIRD_README_URL = new URL('../tools/assets/bird-textures/README.md', import.meta.url);
 const BIRD_GENERATOR_URL = new URL('../tools/generate_bird_assets.py', import.meta.url);
+const MOON_TEXTURE_URL = new URL(
+  '../src/public/worldloom/assets/environment/realistic-moon.png',
+  import.meta.url,
+);
+const MOON_SOURCE_URL = new URL(
+  '../tools/assets/moon-textures/gpt-realistic-moon-source.png',
+  import.meta.url,
+);
+const MOON_PROMPT_URL = new URL('../tools/assets/moon-textures/PROMPT.md', import.meta.url);
+const MEADOW_PLANTS_URL = new URL(
+  '../src/public/worldloom/assets/environment/meadow-plants.glb',
+  import.meta.url,
+);
+const MEADOW_SUNFLOWER_SOURCE_URL = new URL(
+  '../tools/assets/meadow-plant-textures/gpt-pixel-sunflower-reference-v2.png',
+  import.meta.url,
+);
+const MEADOW_GRASS_SOURCE_URL = new URL(
+  '../tools/assets/meadow-plant-textures/gpt-pixel-grass-reference-v2.png',
+  import.meta.url,
+);
+const MEADOW_PROMPTS_URL = new URL(
+  '../tools/assets/meadow-plant-textures/PROMPTS.md',
+  import.meta.url,
+);
+const MEADOW_GENERATOR_URL = new URL('../tools/generate_meadow_plants.py', import.meta.url);
+const DIST_MEADOW_PLANTS_URL = new URL(
+  '../dist/worldloom/assets/environment/meadow-plants.glb',
+  import.meta.url,
+);
+const DIST_MEADOW_RUNTIME_URL = new URL('../dist/worldloom/src/meadow-plants.js', import.meta.url);
+const MEADOW_RUNTIME_URL = new URL('../src/public/worldloom/src/meadow-plants.js', import.meta.url);
+const FOREST_FLOOR_URL = new URL(
+  '../src/public/worldloom/assets/environment/forest-floor.glb',
+  import.meta.url,
+);
+const FOREST_FLOOR_GENERATOR_URL = new URL(
+  '../tools/generate_forest_floor_assets.py',
+  import.meta.url,
+);
+const FOREST_FLOOR_CONCEPT_URL = new URL(
+  '../tools/assets/forest-floor/gpt-forest-floor-concept-v1.png',
+  import.meta.url,
+);
+const FOREST_FLOOR_PROMPT_URL = new URL(
+  '../tools/assets/forest-floor/PROMPT.md',
+  import.meta.url,
+);
+const DIST_FOREST_FLOOR_URL = new URL(
+  '../dist/worldloom/assets/environment/forest-floor.glb',
+  import.meta.url,
+);
+const FOREST_FLOOR_RUNTIME_URL = new URL('../src/public/worldloom/src/forest-floor.js', import.meta.url);
+const DIST_FOREST_FLOOR_RUNTIME_URL = new URL('../dist/worldloom/src/forest-floor.js', import.meta.url);
 const GLB_MAGIC = 0x46546c67;
 const GLB_JSON_CHUNK = 0x4e4f534a;
 const GLB_BINARY_CHUNK = 0x004e4942;
@@ -94,6 +195,27 @@ function embeddedBufferView(buffer, document, viewIndex) {
   const binaryStart = 20 + jsonLength + 8;
   const start = binaryStart + (view.byteOffset || 0);
   return buffer.subarray(start, start + view.byteLength);
+}
+
+function floatAccessorValues(buffer, document, accessorIndex) {
+  const accessor = document.accessors?.[accessorIndex];
+  assert.ok(accessor, `GLB is missing accessor ${accessorIndex}`);
+  assert.equal(accessor.componentType, 5126, 'accessor must use float32 values');
+  const components = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4 }[accessor.type];
+  assert.ok(components, `unsupported accessor shape ${accessor.type}`);
+  const view = document.bufferViews?.[accessor.bufferView];
+  assert.ok(view, `accessor ${accessorIndex} is missing its buffer view`);
+  const jsonLength = buffer.readUInt32LE(12);
+  const binaryStart = 20 + jsonLength + 8;
+  const stride = view.byteStride || components * 4;
+  const start = binaryStart + (view.byteOffset || 0) + (accessor.byteOffset || 0);
+  const values = [];
+  for (let item = 0; item < accessor.count; item++) {
+    for (let component = 0; component < components; component++) {
+      values.push(buffer.readFloatLE(start + item * stride + component * 4));
+    }
+  }
+  return values;
 }
 
 function pngMetadata(buffer) {
@@ -231,6 +353,263 @@ function createTestHangingLeafGltf(packScale = 1) {
   scene.updateMatrixWorld(true);
   return { scene, animations: [], atlasTexture };
 }
+
+function createTestGroundLeafGltf() {
+  const scene = new THREE.Scene();
+  const root = new THREE.Group();
+  root.name = 'Ground_Leaf_Litter_Asset';
+  scene.add(root);
+  const atlasTexture = new THREE.DataTexture(
+    new Uint8Array([77, 125, 81, 255]),
+    1,
+    1,
+    THREE.RGBAFormat,
+  );
+  atlasTexture.name = 'Fake embedded GPT ground-leaf atlas';
+  atlasTexture.colorSpace = THREE.SRGBColorSpace;
+  atlasTexture.needsUpdate = true;
+  const patch = new THREE.Mesh(
+    new THREE.PlaneGeometry(2, 2),
+    new THREE.MeshStandardMaterial({ map: atlasTexture, side: THREE.DoubleSide }),
+  );
+  patch.name = 'Ground_Leaf_Litter_Patch';
+  patch.rotation.x = -Math.PI * 0.5;
+  root.add(patch);
+  scene.updateMatrixWorld(true);
+  return { scene, animations: [], atlasTexture };
+}
+
+function createTestMeadowPlantGltf() {
+  const scene = new THREE.Scene();
+  const pack = new THREE.Group();
+  pack.name = 'Meadow_Plant_Asset_Pack';
+  scene.add(pack);
+  const material = new THREE.MeshStandardMaterial({ vertexColors: true });
+  const withVertexColors = (geometry, colors) => {
+    const position = geometry.getAttribute('position');
+    const values = new Float32Array(position.count * 3);
+    for (let index = 0; index < position.count; index++) {
+      const color = colors[index % colors.length];
+      values[index * 3] = color[0];
+      values[index * 3 + 1] = color[1];
+      values[index * 3 + 2] = color[2];
+    }
+    geometry.setAttribute('color', new THREE.BufferAttribute(values, 3));
+    geometry.deleteAttribute('uv');
+    return geometry;
+  };
+  const sunflower = new THREE.Group();
+  sunflower.name = 'Sunflower_Asset';
+  sunflower.add(new THREE.Mesh(withVertexColors(
+    new THREE.BoxGeometry(0.5, 1.1, 0.24),
+    [[0.98, 0.7, 0.08], [0.3, 0.55, 0.16], [0.24, 0.1, 0.04]],
+  ), material));
+  pack.add(sunflower);
+  const shortGrass = new THREE.Group();
+  shortGrass.name = 'Short_Grass_Asset';
+  shortGrass.add(new THREE.Mesh(withVertexColors(
+    new THREE.BoxGeometry(0.6, 0.3, 0.3),
+    [[0.13, 0.32, 0.1], [0.31, 0.55, 0.17], [0.55, 0.68, 0.22]],
+  ), material));
+  pack.add(shortGrass);
+  scene.updateMatrixWorld(true);
+  return { scene, animations: [] };
+}
+
+function createTestSummitCrossGltf() {
+  const scene = new THREE.Scene();
+  const root = new THREE.Group();
+  root.name = 'Summit_Cross_Asset';
+  scene.add(root);
+  const atlasTexture = new THREE.DataTexture(
+    new Uint8Array([91, 58, 29, 255]),
+    1,
+    1,
+    THREE.RGBAFormat,
+  );
+  atlasTexture.name = 'Fake embedded GPT summit-cross wood atlas';
+  atlasTexture.colorSpace = THREE.SRGBColorSpace;
+  atlasTexture.needsUpdate = true;
+  const wood = new THREE.Mesh(
+    new THREE.BoxGeometry(0.52, 7, 0.38),
+    new THREE.MeshStandardMaterial({ map: atlasTexture, roughness: 0.91 }),
+  );
+  wood.name = 'Summit_Cross_Wood';
+  wood.position.y = 3.5;
+  root.add(wood);
+  const iron = new THREE.Mesh(
+    new THREE.BoxGeometry(0.15, 0.15, 0.08),
+    new THREE.MeshStandardMaterial({ color: 0x18130f }),
+  );
+  iron.name = 'Summit_Cross_Iron_Pegs';
+  iron.position.y = 5.12;
+  root.add(iron);
+  scene.updateMatrixWorld(true);
+  return { scene, animations: [], atlasTexture };
+}
+
+test('Blender summit-cross GLB is a self-contained traditional Latin cross within web budgets', () => {
+  const glb = readFileSync(SUMMIT_CROSS_URL);
+  assert.ok(glb.length >= 8 * 1024, 'summit-cross GLB is suspiciously small or empty');
+  assert.ok(glb.length <= 128 * 1024, `summit-cross GLB exceeds 128KB (${glb.length} bytes)`);
+  const document = parseGlb(glb);
+  assert.match(document.asset?.generator || '', /Blender I\/O/i,
+    'summit cross must identify the Blender glTF exporter');
+  assert.equal(document.buffers?.length, 1);
+  assert.equal(document.buffers?.[0]?.uri, undefined,
+    'summit cross cannot depend on an external geometry buffer');
+  assert.ok(!(document.extensionsUsed || []).includes('KHR_draco_mesh_compression'));
+  assert.doesNotMatch(JSON.stringify(document), /KHR_draco_mesh_compression/);
+
+  const root = (document.nodes || []).find((node) => node.name === 'Summit_Cross_Asset');
+  assert.ok(root, 'summit cross lost its stable runtime root');
+  assert.equal(root.extras?.asset_role, 'mountain_summit_latin_cross');
+  assert.equal(root.extras?.height_metres, 7);
+  assert.equal(root.extras?.crossbeam_height_metres, 5.12);
+  assert.equal(root.extras?.runtime_draw_budget, 2);
+  assert.equal(root.extras?.gpt_texture_source, 'gpt-summit-cross-wood-source.png');
+  assert.equal(root.extras?.triangle_count, 176);
+  const descendantNames = new Set(descendantNodeIndices(document, 'Summit_Cross_Asset')
+    .map((index) => document.nodes[index]?.name));
+  assert.ok(descendantNames.has('Summit_Cross_Wood'));
+  assert.ok(descendantNames.has('Summit_Cross_Iron_Pegs'));
+  assert.equal(document.meshes?.length, 2, 'cross must stay within its two-draw material budget');
+  const primitives = (document.meshes || []).flatMap((mesh) => mesh.primitives || []);
+  assert.equal(primitives.length, 2);
+  assert.ok(primitives.every((primitive) => Number.isInteger(primitive.attributes?.TEXCOORD_0)),
+    'both authored materials must retain stable UV coordinates');
+  const triangles = primitives.reduce((total, primitive) => {
+    const accessor = document.accessors?.[primitive.indices]
+      || document.accessors?.[primitive.attributes?.POSITION];
+    return total + (accessor?.count || 0) / 3;
+  }, 0);
+  assert.equal(triangles, 176);
+});
+
+test('summit-cross GLB embeds the exact nearest-filtered GPT-derived pixel atlas', () => {
+  const glb = readFileSync(SUMMIT_CROSS_URL);
+  const document = parseGlb(glb);
+  const atlas = readFileSync(SUMMIT_CROSS_ATLAS_URL);
+  assert.deepEqual(pngMetadata(atlas), {
+    width: 128,
+    height: 64,
+    bitDepth: 8,
+    colorType: 6,
+  });
+  assert.equal(document.images?.length, 1);
+  assert.equal(document.images[0]?.uri, undefined);
+  assert.equal(document.images[0]?.mimeType, 'image/png');
+  assert.deepEqual(embeddedBufferView(glb, document, document.images[0].bufferView), atlas,
+    'embedded and separately served summit-cross atlases must be byte-identical');
+  const material = document.materials?.find((entry) => entry.name === 'Summit_Cross_Hand_Hewn_Wood');
+  assert.equal(material?.extras?.source_texture, 'gpt-summit-cross-wood-source.png');
+  assert.equal(material?.pbrMetallicRoughness?.metallicFactor, 0);
+  assert.ok(material?.pbrMetallicRoughness?.roughnessFactor >= 0.9);
+  const texture = document.textures?.[material?.pbrMetallicRoughness?.baseColorTexture?.index];
+  const sampler = document.samplers?.[texture?.sampler];
+  assert.equal(sampler?.magFilter, 9728);
+  assert.ok([9728, 9984].includes(sampler?.minFilter));
+});
+
+test('Blender summit-cross generator preserves its GPT source and reproducible export contract', () => {
+  const generator = readFileSync(SUMMIT_CROSS_GENERATOR_URL, 'utf8');
+  const source = readFileSync(SUMMIT_CROSS_SOURCE_URL);
+  assert.ok(source.length >= 256 * 1024, 'GPT-image wood source is missing or unexpectedly tiny');
+  for (const name of ['Summit_Cross_Asset', 'Summit_Cross_Wood', 'Summit_Cross_Iron_Pegs']) {
+    assert.match(generator, new RegExp(name));
+  }
+  assert.match(generator, /gpt-summit-cross-wood-source\.png/);
+  assert.match(generator, /root\["height_metres"\]\s*=\s*7\.0/);
+  assert.match(generator, /root\["crossbeam_height_metres"\]\s*=\s*5\.12/);
+  assert.match(generator, /texture\.interpolation\s*=\s*["']Closest["']/);
+  assert.match(generator, /["']export_draco_mesh_compression_enable["']\s*:\s*False/);
+  assert.match(generator, /["']export_texcoords["']\s*:\s*True/);
+});
+
+test('summit-cross field instances the Blender model and removes unsupported monuments', async () => {
+  const scene = new THREE.Scene();
+  const field = new SummitCrossField(scene, {
+    loaderFactory: () => ({ loadAsync: () => Promise.resolve(createTestSummitCrossGltf()) }),
+  });
+  await field.prepare();
+  assert.equal(field.ready, true);
+  assert.equal(field.meshes?.wood?.isInstancedMesh, true);
+  assert.equal(field.meshes?.iron?.isInstancedMesh, true);
+  assert.equal(field.meshes?.wood?.material?.map?.magFilter, THREE.NearestFilter);
+  assert.equal(field.meshes?.wood?.material?.map?.minFilter, THREE.NearestFilter);
+  const cross = Object.freeze({
+    id: '0,0',
+    rootX: 10,
+    rootY: 71,
+    rootZ: 12,
+    summitHeight: 70,
+    axis: 'x',
+    asset: 'summit-cross.glb',
+    modelHeight: 7,
+    crossbeamHeight: 5.12,
+  });
+  let supported = true;
+  let requestedRadius = 0;
+  const world = {
+    streamRevision: 1,
+    detailDistance: 8,
+    getMountainCrossesNear: (x, z, radius) => {
+      requestedRadius = radius;
+      return [cross];
+    },
+    isPositionReady: () => true,
+    getBlock: (x, y, z) => (
+      x === cross.rootX && y === cross.summitHeight && z === cross.rootZ && supported
+        ? BLOCK.STONE
+        : BLOCK.AIR
+    ),
+  };
+  field.setWorld(world);
+  field.setQuality({ shadows: true });
+  field.update(0, new THREE.Vector3(10, 72, 12), 20);
+  assert.equal(requestedRadius, 160,
+    'maximum visual distance must not scan mountain props beyond the detailed stream radius');
+  assert.deepEqual(field.getStats(), {
+    ready: true,
+    failed: false,
+    loading: false,
+    error: '',
+    crosses: 1,
+    draws: 2,
+    triangles: 24,
+    assetUrl: field.assetUrl,
+    gptTexture: true,
+    nearestTexture: true,
+  });
+  assert.ok([...field.meshes.wood.instanceMatrix.array].every(Number.isFinite));
+  assert.ok([...field.meshes.iron.instanceMatrix.array].every(Number.isFinite));
+  const matrix = new THREE.Matrix4();
+  field.meshes.wood.getMatrixAt(0, matrix);
+  const position = new THREE.Vector3().setFromMatrixPosition(matrix);
+  assert.ok(position.distanceTo(new THREE.Vector3(10.5, 70.82, 12.5)) < 1e-6);
+
+  supported = false;
+  world.streamRevision++;
+  field.update(0.5, new THREE.Vector3(10, 72, 12), 4);
+  assert.equal(field.getStats().crosses, 0,
+    'breaking or unloading mountain support must hide the decorative model');
+  field.dispose();
+  assert.equal(scene.children.length, 0);
+});
+
+test('summit-cross asset failures remain bounded cosmetic failures', async () => {
+  const field = new SummitCrossField(new THREE.Scene(), {
+    assetUrl: '/missing-summit-cross.glb',
+    loadTimeoutMs: 100,
+    loaderFactory: () => ({ loadAsync: () => Promise.reject(new Error('404 summit cross')) }),
+  });
+  await assert.doesNotReject(() => field.prepare());
+  assert.equal(field.ready, false);
+  assert.equal(field.getStats().failed, true);
+  assert.match(field.getStats().error, /404 summit cross/);
+  assert.equal(field.getStats().loading, false);
+  field.dispose();
+});
 
 test('Blender bird GLB keeps two articulated breeds, named clips, and strict web budgets', () => {
   const glb = readFileSync(BIRD_ASSET_URL);
@@ -762,6 +1141,141 @@ test('pond flies are tiny unlit dots with deterministic fast short-loop motion',
   assert.equal(scene.children.length, 0);
 });
 
+test('Blender ground-leaf litter is a self-contained one-draw GPT-textured asset', () => {
+  const glb = readFileSync(GROUND_LEAVES_URL);
+  assert.ok(glb.length >= 4 * 1024, 'ground-leaf GLB is suspiciously small or empty');
+  assert.ok(glb.length <= 128 * 1024, `ground-leaf GLB exceeds 128KB (${glb.length} bytes)`);
+  const document = parseGlb(glb);
+  assert.match(document.asset?.generator || '', /Blender I\/O/i);
+  assert.ok(!(document.extensionsUsed || []).includes('KHR_draco_mesh_compression'));
+  assert.equal(document.buffers?.length, 1);
+  assert.equal(document.buffers?.[0]?.uri, undefined);
+  const root = (document.nodes || []).find((node) => node.name === 'Ground_Leaf_Litter_Asset');
+  assert.equal(root?.extras?.asset_role, 'falling_leaf_tree_ground_litter');
+  assert.equal(root?.extras?.runtime_draw_budget, 1);
+  assert.equal(root?.extras?.gpt_texture_source, 'gpt-ground-leaves-source.png');
+  assert.equal(root?.extras?.matching_particle_texture, 'falling-leaf-particle.png');
+  const leafNodes = descendantNodeIndices(document, 'Ground_Leaf_Litter_Asset')
+    .map((index) => document.nodes[index]);
+  const primitives = leafNodes
+    .filter((node) => Number.isInteger(node.mesh))
+    .flatMap((node) => document.meshes[node.mesh]?.primitives || []);
+  assert.equal(primitives.length, 1, 'ground litter must remain one instanced draw');
+  assert.ok(Number.isInteger(primitives[0].attributes?.TEXCOORD_0));
+  const triangleAccessor = document.accessors?.[primitives[0].indices]
+    || document.accessors?.[primitives[0].attributes?.POSITION];
+  assert.equal((triangleAccessor?.count || 0) / 3, 20,
+    'the Blender patch must retain its ten two-triangle leaves');
+
+  const atlasBuffer = readFileSync(GROUND_LEAVES_ATLAS_URL);
+  assert.deepEqual(pngMetadata(atlasBuffer), {
+    width: 128, height: 128, bitDepth: 8, colorType: 6,
+  });
+  assert.equal(document.images?.length, 1);
+  assert.deepEqual(
+    embeddedBufferView(glb, document, document.images[0].bufferView),
+    atlasBuffer,
+    'the GLB must embed the exact reproducible GPT-derived atlas',
+  );
+  const material = document.materials?.[primitives[0].material];
+  assert.equal(material?.doubleSided, true);
+  const texture = document.textures?.[material?.pbrMetallicRoughness?.baseColorTexture?.index];
+  const sampler = document.samplers?.[texture?.sampler];
+  assert.equal(sampler?.magFilter, 9728);
+  assert.ok([9728, 9984].includes(sampler?.minFilter));
+
+  const particleBuffer = readFileSync(FALLING_LEAF_PARTICLE_URL);
+  assert.deepEqual(pngMetadata(particleBuffer), {
+    width: 32, height: 32, bitDepth: 8, colorType: 6,
+  });
+  const atlas = decodeRgbaPng(atlasBuffer);
+  const particle = decodeRgbaPng(particleBuffer);
+  let particleOpaque = 0;
+  for (let y = 0; y < particle.height; y++) {
+    for (let x = 0; x < particle.width; x++) {
+      const particleOffset = (y * particle.width + x) * 4;
+      // Blender image coordinates are bottom-up; tile zero occupies the
+      // bottom-left atlas cell after PNG encoding.
+      const atlasY = atlas.height - particle.height + y;
+      const atlasOffset = (atlasY * atlas.width + x) * 4;
+      assert.deepEqual(
+        particle.pixels.subarray(particleOffset, particleOffset + 4),
+        atlas.pixels.subarray(atlasOffset, atlasOffset + 4),
+        'the airborne particle must be copied from the same ground-leaf atlas tile',
+      );
+      particleOpaque += Number(particle.pixels[particleOffset + 3] > 0);
+    }
+  }
+  assert.ok(particleOpaque >= 32, 'falling-leaf particle lost its readable silhouette');
+});
+
+test('ground-leaf Blender generator preserves GPT provenance and hard pixel filtering', () => {
+  assert.ok(readFileSync(GROUND_LEAVES_SOURCE_URL).length > 32 * 1024,
+    'project-local GPT source is missing or suspiciously small');
+  const prompt = readFileSync(GROUND_LEAVES_PROMPT_URL, 'utf8');
+  assert.match(prompt, /built-in\s+GPT image tool/i);
+  assert.match(prompt, /no halos; no outlines/i);
+  const source = readFileSync(GROUND_LEAVES_GENERATOR_URL, 'utf8');
+  assert.match(source, /Ground_Leaf_Litter_Asset/);
+  assert.match(source, /gpt-ground-leaves-source\.png/);
+  assert.match(source, /falling-leaf-particle\.png/);
+  assert.match(source, /texture\.interpolation\s*=\s*["']Closest["']/);
+  assert.match(source, /["']export_draco_mesh_compression_enable["']\s*:\s*False/);
+});
+
+test('ground leaves instance only below live deterministic falling-leaf trees', async () => {
+  const scene = new THREE.Scene();
+  const field = new GroundLeafField(scene, {
+    loaderFactory: () => ({ loadAsync: () => Promise.resolve(createTestGroundLeafGltf()) }),
+  });
+  await field.prepare();
+  assert.equal(field.ready, true);
+  assert.equal(field.mesh?.isInstancedMesh, true);
+  assert.equal(field.mesh.material.map.magFilter, THREE.NearestFilter);
+  assert.equal(field.mesh.material.map.minFilter, THREE.NearestFilter);
+  assert.equal(field.mesh.material.map.generateMipmaps, false);
+  const tree = Object.freeze({
+    id: 'falling-ash',
+    rootX: 0,
+    rootY: 4,
+    rootZ: 0,
+    crownY: 7,
+    isPine: false,
+    hasFallingLeaves: true,
+  });
+  let canopyPresent = true;
+  const world = {
+    seed: 64,
+    streamRevision: 0,
+    getTreesNear: () => [tree],
+    isPositionReady: () => true,
+    terrainHeight: () => 3,
+    getBlock: (x, y, z) => {
+      if (canopyPresent && y === tree.crownY
+        && Math.abs(x - tree.rootX) + Math.abs(z - tree.rootZ) === 1) return BLOCK.ASH_LEAVES;
+      if (y === 3) return BLOCK.TURF;
+      return BLOCK.AIR;
+    },
+  };
+  field.setWorld(world);
+  field.setQuality({ hangingLeafRadius: 24, hangingLeafTreeCap: 1 });
+  field.update(0, new THREE.Vector3(0.5, 4.2, 0.5));
+  const initial = field.getStats();
+  assert.equal(initial.sourceTrees, 1);
+  assert.equal(initial.patches, 1);
+  assert.equal(initial.draws, 1);
+  assert.equal(initial.gptTexture, true);
+  assert.equal(initial.nearestTexture, true);
+
+  canopyPresent = false;
+  world.streamRevision++;
+  field.update(0, new THREE.Vector3(0.5, 4.2, 0.5));
+  assert.equal(field.getStats().patches, 0,
+    'removing the falling-leaf canopy must remove its floor litter on the next world revision');
+  field.dispose();
+  assert.equal(scene.children.length, 0);
+});
+
 test('Blender hanging-leaf GLB is self-contained, pixel-authored and compact', () => {
   const glb = readFileSync(HANGING_LEAVES_URL);
   assert.ok(glb.length >= 4 * 1024, 'hanging-leaf GLB is suspiciously small or empty');
@@ -1156,4 +1670,557 @@ test('first-person Wayfarer arms keep their colour panels to one draw each', () 
   assert.equal(gripMeshes[0].material.colorWrite, true,
     'self-hiding the world avatar must not remove held items and their grip arm');
   held.dispose();
+});
+
+test('GPT moon texture is a detailed transparent runtime asset with preserved provenance', () => {
+  const runtime = readFileSync(MOON_TEXTURE_URL);
+  const source = readFileSync(MOON_SOURCE_URL);
+  const prompt = readFileSync(MOON_PROMPT_URL, 'utf8');
+  assert.deepEqual(pngMetadata(runtime), {
+    width: 1024,
+    height: 1024,
+    bitDepth: 8,
+    colorType: 6,
+  });
+  assert.deepEqual(pngMetadata(source), {
+    width: 1254,
+    height: 1254,
+    bitDepth: 8,
+    colorType: 6,
+  });
+  const decoded = decodeRgbaPng(runtime);
+  const alphaAt = (x, y) => decoded.pixels[(y * decoded.width + x) * 4 + 3];
+  assert.equal(alphaAt(0, 0), 0, 'the moon sprite must not carry an opaque square backdrop');
+  assert.ok(alphaAt(512, 512) >= 248, 'the centre of the moon disc must remain opaque and detailed');
+  assert.ok(runtime.length >= 500 * 1024, 'runtime texture is suspiciously small for a detailed 1024px moon');
+  assert.match(prompt, /built-in GPT Image tool/);
+  assert.match(prompt, /scientifically plausible crater\s+fields/);
+  assert.match(prompt, /no\s+baked atmospheric glow/);
+});
+
+test('Blender meadow pack uses two opaque vertex-colored voxel meshes', () => {
+  const glb = readFileSync(MEADOW_PLANTS_URL);
+  const document = parseGlb(glb);
+  assert.ok(glb.length >= 24 * 1024, 'meadow-plant GLB is suspiciously small or empty');
+  assert.ok(glb.length <= 512 * 1024, `meadow-plant GLB exceeds 512KB (${glb.length} bytes)`);
+  const pack = document.nodes?.find((node) => node.name === 'Meadow_Plant_Asset_Pack');
+  const sunflower = document.nodes?.find((node) => node.name === 'Sunflower_Asset');
+  const grass = document.nodes?.find((node) => node.name === 'Short_Grass_Asset');
+  assert.equal(pack?.extras?.asset_role, 'worldloom_meadow_plant_pack');
+  assert.equal(pack?.extras?.generator_version, '2.0.0');
+  assert.equal(pack?.extras?.representation, 'hard_pixel_vertex_colour_voxels');
+  assert.equal(pack?.extras?.material_contract, 'opaque_flat_vertex_colours');
+  assert.equal(pack?.extras?.alpha_contract, 'opaque_geometry_only');
+  assert.equal(pack?.extras?.texture_contract, 'no_uv_no_texture');
+  assert.equal(pack?.extras?.runtime_draw_budget, 2);
+  assert.equal(sunflower?.extras?.asset_role, 'meadow_sunflower');
+  assert.equal(sunflower?.extras?.representation, 'crossed_16x16_vertex_color_voxel_relief');
+  assert.equal(sunflower?.extras?.logical_grid, '16x16');
+  assert.equal(sunflower?.extras?.logical_pixel_metres, 0.0575);
+  assert.equal(sunflower?.extras?.palette_colours, 8);
+  assert.equal(sunflower?.extras?.texture_contract, 'no_uv_no_texture');
+  assert.ok(
+    sunflower.extras.authored_height_metres * meadowPlantScale('sunflower', 1) <= 1,
+    'the visible sunflower bloom exceeds its one-block interaction volume',
+  );
+  assert.equal(grass?.extras?.asset_role, 'meadow_short_grass');
+  assert.equal(grass?.extras?.representation, 'crossed_8x8_vertex_color_voxel_relief');
+  assert.equal(grass?.extras?.logical_grid, '8x8');
+  assert.equal(grass?.extras?.voxel_size_metres, 0.048);
+  assert.equal(grass?.extras?.palette_colours, 5);
+  assert.equal(grass?.extras?.occupied_pixels, 29);
+  assert.equal(grass?.extras?.texture_contract, 'no_uv_no_texture');
+  assert.ok(grass?.extras?.triangle_count > 24,
+    'short grass regressed to a few smooth tapered cards instead of voxel geometry');
+
+  const rootNames = ['Sunflower_Asset', 'Short_Grass_Asset'];
+  const primitives = rootNames.flatMap((name) => descendantNodeIndices(document, name))
+    .flatMap((index) => {
+      const mesh = document.meshes?.[document.nodes[index]?.mesh];
+      return mesh?.primitives || [];
+    });
+  assert.equal(primitives.length, 2, 'the meadow pack must bake to exactly two instanced draws');
+  assert.ok(primitives.every((primitive) => (
+    Number.isInteger(primitive.attributes?.POSITION)
+    && Number.isInteger(primitive.attributes?.NORMAL)
+    && Number.isInteger(primitive.attributes?.COLOR_0)
+    && primitive.attributes?.TEXCOORD_0 === undefined
+  )), 'both Blender models must use vertex colors without texture coordinates');
+  for (const primitive of primitives) {
+    const position = document.accessors?.[primitive.attributes.POSITION];
+    const colors = document.accessors?.[primitive.attributes.COLOR_0];
+    assert.equal(colors?.count, position?.count, 'every meadow vertex needs an authored color');
+    assert.ok(['VEC3', 'VEC4'].includes(colors?.type), 'meadow colors must be RGB or RGBA vectors');
+  }
+  assert.equal(new Set(primitives.map((primitive) => primitive.material)).size, 1,
+    'sunflower and grass must share one vertex-color material');
+  const material = document.materials?.[primitives[0].material];
+  assert.equal(material?.alphaMode, undefined, 'meadow plants must stay glTF OPAQUE');
+  assert.equal(material?.pbrMetallicRoughness?.baseColorFactor, undefined);
+  assert.equal(material?.pbrMetallicRoughness?.baseColorTexture, undefined,
+    'vertex-colored meadow plants must not retain an atlas texture');
+  assert.equal(document.images?.length ?? 0, 0);
+  assert.equal(document.textures?.length ?? 0, 0);
+  assert.equal(document.samplers?.length ?? 0, 0);
+  assert.equal(document.materials?.length, 1);
+  assert.equal(Boolean(document.extensionsUsed?.includes('KHR_draco_mesh_compression')), false);
+});
+
+test('production meadow plant files stay byte-identical to their tracked dist copies', () => {
+  assert.deepEqual(readFileSync(DIST_MEADOW_PLANTS_URL), readFileSync(MEADOW_PLANTS_URL));
+  assert.deepEqual(readFileSync(DIST_MEADOW_RUNTIME_URL), readFileSync(MEADOW_RUNTIME_URL));
+});
+
+test('meadow pixel references, prompts and Blender generator preserve reproducible provenance', () => {
+  assert.deepEqual(pngMetadata(readFileSync(MEADOW_SUNFLOWER_SOURCE_URL)), {
+    width: 1254,
+    height: 1254,
+    bitDepth: 8,
+    colorType: 6,
+  });
+  assert.deepEqual(pngMetadata(readFileSync(MEADOW_GRASS_SOURCE_URL)), {
+    width: 1254,
+    height: 1254,
+    bitDepth: 8,
+    colorType: 2,
+  });
+  const prompts = readFileSync(MEADOW_PROMPTS_URL, 'utf8');
+  const generator = readFileSync(MEADOW_GENERATOR_URL, 'utf8');
+  assert.match(prompts, /built-in\s+GPT\s+Image\s+tool/i);
+  assert.match(prompts, /pixel/i);
+  assert.match(prompts, /sunflower/i);
+  assert.match(prompts, /grass/i);
+  assert.match(generator, /vertex.?color|color_attributes/i);
+  assert.match(generator, /voxel/i);
+  assert.doesNotMatch(generator, /opaque_tapered_blade_quads/);
+  assert.match(generator, /export_draco_mesh_compression_enable/);
+});
+
+test('meadow field instances live block data with opaque vertex-color materials', async () => {
+  const fixture = createTestMeadowPlantGltf();
+  const scene = new THREE.Scene();
+  const field = new MeadowPlantField(scene, {
+    loaderFactory: () => ({ loadAsync: async () => fixture }),
+    loadTimeoutMs: 200,
+  });
+  const blocks = new Uint8Array(16 * 16 * 4);
+  const indexAt = (x, y, z) => x + 16 * (z + 16 * y);
+  blocks[indexAt(1, 1, 1)] = BLOCK.WILDFLOWER;
+  blocks[indexAt(2, 1, 2)] = BLOCK.SHORT_GRASS;
+  blocks[indexAt(3, 1, 2)] = BLOCK.SHORT_GRASS;
+  const chunk = {
+    key: '0,0',
+    cx: 0,
+    cz: 0,
+    blocks,
+    generated: true,
+    wanted: true,
+    revision: 1,
+  };
+  assert.deepEqual(scanMeadowPlantChunk(chunk), {
+    sunflowers: [{ x: 1, y: 1, z: 1 }],
+    shortGrass: [{ x: 2, y: 1, z: 2 }, { x: 3, y: 1, z: 2 }],
+  });
+  field.setWorld({ seed: 64, chunks: new Map([['0,0', chunk]]) });
+  await field.prepare();
+  field.update(1, new THREE.Vector3(0, 1, 0));
+  assert.deepEqual(field.getStats(), {
+    ready: true,
+    failed: false,
+    loading: false,
+    error: '',
+    sunflowers: 1,
+    shortGrass: 2,
+    draws: 2,
+    cachedChunks: 1,
+    assetUrl: field.assetUrl,
+  });
+  for (const mesh of [field.sunflower, field.shortGrass]) {
+    assert.equal(mesh.material.transparent, false);
+    assert.equal(mesh.material.alphaTest, 0);
+    assert.equal(mesh.material.depthWrite, true);
+    assert.equal(mesh.material.vertexColors, true);
+    assert.equal(mesh.material.flatShading, true);
+    assert.equal(mesh.material.map, null);
+    assert.equal(mesh.material.normalMap, null);
+    assert.ok(mesh.geometry.getAttribute('color'), 'runtime meadow geometry lost its vertex palette');
+    assert.equal(mesh.geometry.getAttribute('uv'), undefined,
+      'runtime meadow geometry retained unused atlas coordinates');
+  }
+  blocks[indexAt(1, 1, 1)] = BLOCK.AIR;
+  chunk.revision++;
+  field.update(0.5, new THREE.Vector3(0, 1, 0));
+  assert.equal(field.sunflower.count, 0, 'mined sunflower remained in the Blender instance field');
+  assert.equal(field.shortGrass.count, 2);
+  field.dispose();
+  assert.equal(field.group.parent, null);
+});
+
+test('meadow grass leaves the block-centre lattice with bounded deterministic offsets', () => {
+  const first = meadowPlantVisualOffset('grass', 2, 1, 2, 64);
+  const repeat = meadowPlantVisualOffset('grass', 2, 1, 2, 64);
+  const neighbour = meadowPlantVisualOffset('grass', 3, 1, 2, 64);
+  const sunflower = meadowPlantVisualOffset('sunflower', 1, 1, 1, 64);
+  assert.deepEqual(first, repeat);
+  assert.notDeepEqual(first, neighbour);
+  assert.ok(Math.hypot(first.x, first.z) > 0.025);
+  assert.ok(Math.hypot(first.x, first.z) <= 0.340001);
+  assert.ok(Math.hypot(neighbour.x, neighbour.z) <= 0.340001);
+  assert.ok(Math.hypot(sunflower.x, sunflower.z) <= 0.120001,
+    'sunflowers should keep their interaction cell while receiving subtle variation');
+});
+
+test('meadow asset failure keeps both plants visible through voxel-colored fallback geometry', async () => {
+  const blocks = new Uint8Array(16 * 16 * 3);
+  const indexAt = (x, y, z) => x + 16 * (z + 16 * y);
+  blocks[indexAt(1, 1, 1)] = BLOCK.WILDFLOWER;
+  blocks[indexAt(2, 1, 2)] = BLOCK.SHORT_GRASS;
+  const chunk = {
+    key: '0,0', cx: 0, cz: 0, blocks, generated: true, wanted: true, revision: 1,
+  };
+  const field = new MeadowPlantField(new THREE.Scene(), {
+    loaderFactory: () => ({ loadAsync: async () => { throw new Error('404 meadow pack'); } }),
+    loadTimeoutMs: 200,
+  });
+  field.setWorld({ seed: 64, chunks: new Map([['0,0', chunk]]) });
+  await field.prepare();
+  field.update(1, new THREE.Vector3(0, 1, 0));
+  const stats = field.getStats();
+  assert.equal(stats.ready, true, 'a cosmetic asset failure disabled the visible fallback');
+  assert.equal(stats.failed, true);
+  assert.equal(stats.sunflowers, 1);
+  assert.equal(stats.shortGrass, 1);
+  for (const mesh of [field.sunflower, field.shortGrass]) {
+    assert.equal(mesh.visible, true);
+    assert.equal(mesh.material.transparent, false);
+    assert.equal(mesh.material.alphaTest, 0);
+    assert.equal(mesh.material.depthWrite, true);
+    assert.equal(mesh.material.vertexColors, true);
+    assert.equal(mesh.material.flatShading, true);
+    assert.equal(mesh.material.map, null);
+    assert.equal(mesh.material.normalMap, null);
+    assert.ok(mesh.geometry.getAttribute('color'), 'fallback geometry lost its vertex palette');
+    assert.equal(mesh.geometry.getAttribute('uv'), undefined,
+      'fallback geometry retained unused texture coordinates');
+  }
+  field.dispose();
+});
+
+test('a meadow GLB resolving after timeout is observed and disposes its imported resources', async () => {
+  const fixture = createTestMeadowPlantGltf();
+  let geometryDisposals = 0;
+  let materialDisposals = 0;
+  const materials = new Set();
+  fixture.scene.traverse((node) => {
+    if (node.geometry?.dispose) {
+      const dispose = node.geometry.dispose.bind(node.geometry);
+      node.geometry.dispose = () => {
+        geometryDisposals++;
+        dispose();
+      };
+    }
+    const entries = Array.isArray(node.material) ? node.material : [node.material];
+    entries.filter(Boolean).forEach((material) => materials.add(material));
+  });
+  materials.forEach((material) => {
+    const dispose = material.dispose.bind(material);
+    material.dispose = () => {
+      materialDisposals++;
+      dispose();
+    };
+  });
+  const field = new MeadowPlantField(new THREE.Scene(), {
+    loaderFactory: () => ({
+      loadAsync: () => new Promise((resolve) => setTimeout(() => resolve(fixture), 35)),
+    }),
+    loadTimeoutMs: 10,
+  });
+  await field.prepare();
+  assert.equal(field.ready, true);
+  assert.equal(field.failed, true);
+  await new Promise((resolve) => setTimeout(resolve, 55));
+  assert.ok(geometryDisposals >= 2, 'the late GLB geometries leaked after the timeout');
+  assert.ok(materialDisposals >= 1, 'the late GLB material leaked after the timeout');
+  field.dispose();
+});
+
+test('Blender living forest-floor pack is compact opaque hard-pixel geometry', () => {
+  const buffer = readFileSync(FOREST_FLOOR_URL);
+  assert.ok(buffer.length >= 192 * 1024, 'forest-floor voxel-grid GLB is suspiciously small or empty');
+  assert.ok(buffer.length <= 384 * 1024, `forest-floor GLB exceeds 384KB (${buffer.length} bytes)`);
+  const document = parseGlb(buffer);
+  assert.match(document.asset?.generator || '', /Blender/i);
+  assert.equal(document.images?.length || 0, 0, 'forest-floor props must not ship image textures');
+  assert.equal(document.textures?.length || 0, 0, 'forest-floor props must not retain texture bindings');
+  assert.equal(document.samplers?.length || 0, 0, 'forest-floor props must not retain texture samplers');
+  assert.equal(document.animations?.length || 0, 0, 'forest-floor pack must remain static instanced geometry');
+  assert.equal(document.materials?.length, 1, 'forest-floor pack must share one rain-tintable material');
+  const material = document.materials[0];
+  assert.equal(material.name, 'Worldloom_Forest_Floor_Vertex_Colours');
+  assert.equal(material.alphaMode, undefined, 'forest-floor material must use glTF OPAQUE defaults');
+  assert.equal(material.doubleSided, undefined, 'forest-floor material must keep single-sided defaults');
+  assert.equal(material.pbrMetallicRoughness?.metallicFactor, 0);
+  assert(material.pbrMetallicRoughness?.roughnessFactor >= 0.95);
+  assert.equal(material.extras?.rain_tint_compatible, true);
+
+  const expectedTriangles = new Map([
+    ['Fallen_Log_Asset', 1084],
+    ['Mossy_Stump_Asset', 892],
+    ['Exposed_Root_Asset', 632],
+    ['Twig_Cluster_Asset', 348],
+    ['Pinecone_Asset', 244],
+    ['Rock_Cluster_Asset', 384],
+    ['Mushroom_Log_Detail', 464],
+  ]);
+  const expectedRoots = [...expectedTriangles.keys()];
+  let totalTriangles = 0;
+  const cardinalNormals = new Set();
+  for (const rootName of expectedRoots) {
+    const root = document.nodes?.find((node) => node.name === rootName);
+    assert(root, `forest-floor pack lost stable root ${rootName}`);
+    assert.equal(root.children?.length, 1, `${rootName} should contain exactly one baked mesh child`);
+    const child = document.nodes[root.children[0]];
+    const mesh = document.meshes?.[child.mesh];
+    assert.equal(mesh?.primitives?.length, 1, `${rootName} exceeded its one-draw primitive contract`);
+    const primitive = mesh.primitives[0];
+    assert.deepEqual(Object.keys(primitive.attributes || {}).sort(), ['COLOR_0', 'NORMAL', 'POSITION'],
+      `${rootName} retained UVs or lost vertex colours`);
+    assert.equal(primitive.material, 0, `${rootName} does not share the pack material`);
+    const colour = document.accessors?.[primitive.attributes.COLOR_0];
+    assert.equal(colour?.type, 'VEC4');
+    assert.equal(colour?.componentType, 5123);
+    assert.equal(colour?.normalized, true);
+    const indices = document.accessors?.[primitive.indices];
+    const triangles = (indices?.count || 0) / 3;
+    assert.equal(triangles, root.extras?.triangle_count,
+      `${rootName} triangle metadata no longer matches its geometry`);
+    assert.equal(triangles, expectedTriangles.get(rootName),
+      `${rootName} no longer matches the approved from-scratch voxel model`);
+    totalTriangles += triangles;
+    assert.equal(root.extras?.rain_tint_contract, 'runtime_multiply_vertex_colour');
+    assert.equal(root.extras?.grid_contract, 'integer_xyz_voxel_cells');
+    assert.equal(root.extras?.voxel_cell_metres, 0.08);
+    assert.equal(root.extras?.exposed_face_meshing, true);
+    assert.equal(root.extras?.rotated_geometry, false);
+    assert.equal(root.extras?.smooth_shading, false);
+    assert(root.extras?.occupied_voxel_cells > 0);
+
+    const positions = floatAccessorValues(buffer, document, primitive.attributes.POSITION);
+    positions.forEach((value) => {
+      const boundary = value / 0.04;
+      assert(Math.abs(boundary - Math.round(boundary)) < 2e-5,
+        `${rootName} contains off-grid coordinate ${value}`);
+    });
+    const normals = floatAccessorValues(buffer, document, primitive.attributes.NORMAL);
+    for (let index = 0; index < normals.length; index += 3) {
+      const normal = normals.slice(index, index + 3).map((value) => (
+        Math.abs(value) < 1e-6 ? 0 : Math.round(value)
+      ));
+      assert(Math.abs(normal[0]) + Math.abs(normal[1]) + Math.abs(normal[2]) === 1,
+        `${rootName} contains a non-cardinal normal ${normal.join(',')}`);
+      cardinalNormals.add(normal.join(','));
+    }
+  }
+  const pack = document.nodes?.find((node) => node.name === 'Forest_Floor_Asset_Pack');
+  assert.equal(pack?.extras?.asset_role, 'worldloom_forest_floor_prop_pack');
+  assert.equal(pack?.extras?.root_count, 7);
+  assert.equal(pack?.extras?.generator_version, '2.0.0');
+  assert.equal(pack?.extras?.representation, 'integer_grid_exposed_face_vertex_colour_voxels');
+  assert.equal(pack?.extras?.grid_contract, 'integer_xyz_voxel_cells');
+  assert.equal(pack?.extras?.voxel_cell_metres, 0.08);
+  assert.equal(pack?.extras?.rotated_geometry, false);
+  assert.equal(pack?.extras?.smooth_shading, false);
+  assert.equal(totalTriangles, 4048);
+  assert.equal(pack?.extras?.total_triangles, totalTriangles);
+  assert.deepEqual([...cardinalNormals].sort(), [
+    '-1,0,0',
+    '0,-1,0',
+    '0,0,-1',
+    '0,0,1',
+    '0,1,0',
+    '1,0,0',
+  ], 'forest-floor geometry must contain only the six cube face normals');
+  document.nodes.forEach((node) => {
+    assert.equal(node.matrix, undefined, `${node.name} unexpectedly carries a transform matrix`);
+    assert.equal(node.translation, undefined, `${node.name} unexpectedly carries a translation`);
+    assert.equal(node.rotation, undefined, `${node.name} unexpectedly carries a rotation`);
+    assert.equal(node.scale, undefined, `${node.name} unexpectedly carries a scale`);
+  });
+});
+
+test('forest-floor concept provenance and Blender generator remain reproducible', () => {
+  const concept = readFileSync(FOREST_FLOOR_CONCEPT_URL);
+  assert.ok(concept.length > 16 * 1024, 'GPT forest-floor concept is missing or empty');
+  const prompt = readFileSync(FOREST_FLOOR_PROMPT_URL, 'utf8');
+  assert.match(prompt, /exact prompt/i);
+  assert.match(prompt, /mossy fallen log/i);
+  assert.match(prompt, /hard square corners/i);
+  assert.match(prompt, /not sampled.*runtime texture/is,
+    'concept documentation must keep GPT pixels out of runtime materials');
+  const generator = readFileSync(FOREST_FLOOR_GENERATOR_URL, 'utf8');
+  for (const rootName of [...Object.values(FOREST_FLOOR_ROOTS), 'Mushroom_Log_Detail']) {
+    assert.match(generator, new RegExp(rootName));
+  }
+  assert.match(generator, /COLOR_0_flat_per_face/);
+  assert.match(generator, /no_uv_no_texture/);
+  assert.match(generator, /rain_tint_compatible/);
+  assert.match(generator, /GENERATOR_VERSION\s*=\s*["']2\.0\.0["']/);
+  assert.match(generator, /VOXEL_CELL_METRES\s*=\s*0\.08/);
+  assert.match(generator, /class VoxelGridBuilder/);
+  assert.match(generator, /integer_xyz_voxel_cells/);
+  assert.doesNotMatch(generator, /class MeshBuilder|add_box\(/,
+    'forest props regressed from literal grid cells to arbitrary smooth boxes');
+});
+
+test('production forest-floor voxel assets stay byte-identical to tracked dist copies', () => {
+  assert.equal(
+    readFileSync(FOREST_FLOOR_URL).equals(readFileSync(DIST_FOREST_FLOOR_URL)),
+    true,
+    'the site is serving a stale forest-floor GLB',
+  );
+  assert.equal(
+    readFileSync(FOREST_FLOOR_RUNTIME_URL, 'utf8'),
+    readFileSync(DIST_FOREST_FLOOR_RUNTIME_URL, 'utf8'),
+    'the site is serving a stale forest-floor runtime',
+  );
+});
+
+function createTestForestFloorGltf() {
+  const scene = new THREE.Group();
+  const material = new THREE.MeshStandardMaterial({ vertexColors: true });
+  for (const rootName of [...Object.values(FOREST_FLOOR_ROOTS), 'Mushroom_Log_Detail']) {
+    const root = new THREE.Group();
+    root.name = rootName;
+    const geometry = new THREE.BoxGeometry(0.5, 0.4, 0.5);
+    geometry.deleteAttribute('uv');
+    const positions = geometry.getAttribute('position');
+    const colours = new Float32Array(positions.count * 3);
+    for (let index = 0; index < positions.count; index++) {
+      colours[index * 3] = 0.28;
+      colours[index * 3 + 1] = 0.46;
+      colours[index * 3 + 2] = 0.19;
+    }
+    geometry.setAttribute('color', new THREE.BufferAttribute(colours, 3));
+    const mesh = new THREE.Mesh(geometry, material);
+    root.add(mesh);
+    scene.add(root);
+  }
+  return { scene, animations: [] };
+}
+
+test('forest-floor field instances every habitat prop, darkens in rain, and batches rare insects', async () => {
+  const scene = new THREE.Scene();
+  let descriptors = [
+    { key: 'log', kind: 'fallen_log', x: 0, y: 1, z: 0, yaw: 0.2, scale: 1, wetnessSeed: 0.2, mushrooms: true, insects: true },
+    { key: 'stump', kind: 'stump', x: 2, y: 1, z: 0, yaw: 0.4, scale: 0.9, mushrooms: true, insects: false },
+    { key: 'roots', kind: 'exposed_roots', x: 4, y: 1, z: 0, yaw: 0.6, scale: 1.1 },
+    { key: 'twigs', kind: 'twigs', x: 6, y: 1, z: 0, yaw: 0.8, scale: 0.8, insects: true },
+    { key: 'cone', kind: 'pinecone', x: 8, y: 1, z: 0, yaw: 1, scale: 1 },
+    { key: 'rocks', kind: 'rock_cluster', x: 10, y: 1, z: 0, yaw: 1.2, scale: 1.2 },
+  ];
+  const world = {
+    streamRevision: 1,
+    editRevision: 0,
+    getForestFloorNear: () => descriptors,
+    isPositionReady: () => true,
+  };
+  const field = new ForestFloorField(scene, {
+    loaderFactory: () => ({ loadAsync: async () => createTestForestFloorGltf() }),
+  });
+  field.setWorld(world);
+  field.setQuality({
+    forestFloorRadius: 52,
+    forestFloorCap: 144,
+    forestInsectCap: 8,
+    shadows: true,
+  });
+  await field.prepare();
+  field.update(1 / 60, new THREE.Vector3(0, 2, 0), {
+    active: true,
+    dayAmount: 1,
+    skyExposure: 1,
+    rainIntensity: 0,
+  });
+  const dry = field.getStats();
+  assert.equal(dry.ready, true);
+  assert.equal(dry.failed, false);
+  assert.equal(dry.props, 6);
+  assert.deepEqual(dry.counts, {
+    fallen_log: 1,
+    stump: 1,
+    exposed_roots: 1,
+    twigs: 1,
+    pinecone: 1,
+    rocks: 1,
+  });
+  assert.equal(dry.mushrooms, 2);
+  assert.equal(dry.insectAnchors, 1, 'non-log props must never acquire crawling insects');
+  assert.equal(dry.insectDots, 3);
+  assert.equal(dry.draws, 8, 'six prop draws, mushrooms, and one point draw should be the ceiling here');
+  assert.equal(dry.vertexColours, true);
+  assert.equal(dry.opaque, true);
+  field.pack.meshes.forEach((mesh) => {
+    assert.equal(mesh.isInstancedMesh, true);
+    assert.equal(mesh.material, field.pack.material, 'all props must share one rain-reactive material');
+    assert.equal(mesh.geometry.getAttribute('uv'), undefined);
+    assert.ok(mesh.geometry.getAttribute('color'));
+  });
+  assert.equal(field.pack.insects.material.size, 0.04);
+  assert.equal(field.pack.insects.material.transparent, false);
+  assert.equal(field.pack.insects.material.depthWrite, true);
+
+  field.update(3, new THREE.Vector3(0, 2, 0), {
+    active: true,
+    dayAmount: 1,
+    skyExposure: 1,
+    rainIntensity: 1,
+  });
+  const wet = field.getStats();
+  assert(wet.wetness > 0.98, `forest props did not become wet smoothly (${wet.wetness})`);
+  assert(field.pack.material.color.r < 0.72, 'rain did not visibly darken the shared forest material');
+  assert(field.pack.material.roughness < 0.8, 'wet props did not gain a restrained rain sheen');
+  assert.equal(wet.insectDots, 0, 'tiny insects should shelter during heavy rain');
+  descriptors = descriptors.filter(({ key }) => key !== 'log');
+  world.editRevision++;
+  field.update(1 / 120, new THREE.Vector3(0, 2, 0), {
+    active: true,
+    dayAmount: 1,
+    skyExposure: 1,
+    rainIntensity: 0,
+  });
+  assert.equal(field.getStats().props, 5,
+    'a live block edit did not resync the forest mesh before collision could reactivate');
+  field.dispose();
+});
+
+test('crawling forest insects remain deterministic fast near-surface dots', () => {
+  const anchor = {
+    key: 'forest-log-insects',
+    kind: 'fallen_log',
+    x: 12,
+    y: 5,
+    z: -4,
+    yaw: 0.63,
+    scale: 1.1,
+    wetnessSeed: 0.37,
+  };
+  let maximumRadius = 0;
+  let movement = 0;
+  let previous = null;
+  for (let step = 0; step <= 180; step++) {
+    const time = step / 60;
+    const point = forestInsectOffset(anchor, 1, time, 1, new THREE.Vector3());
+    assert.deepEqual(
+      point.toArray(),
+      forestInsectOffset(anchor, 1, time, 1, new THREE.Vector3()).toArray(),
+      'crawling-insect motion must be deterministic',
+    );
+    maximumRadius = Math.max(maximumRadius, Math.hypot(point.x - anchor.x, point.z - anchor.z));
+    assert(point.y > anchor.y + 0.56 && point.y < anchor.y + 0.59,
+      `crawling dot left the log surface at ${point.y}`);
+    if (previous) movement += point.distanceTo(previous);
+    previous = point;
+  }
+  assert(maximumRadius < 0.2, `crawling insect strayed too far from its log (${maximumRadius})`);
+  assert(movement > 0.7, `crawling insect motion is too static (${movement})`);
 });
