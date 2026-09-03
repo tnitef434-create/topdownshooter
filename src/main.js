@@ -293,10 +293,7 @@ function updateWeaponLocksUI() {
       btn.innerHTML = `🔒 ${WEAPON_NAMES[weaponKey]} <span style="font-size:7px; display:block; color:#ff3c3c; margin-top:2.5px; font-family:var(--font-title); font-weight:bold;">${req.rank}</span>`;
     } else {
       btn.classList.remove('locked');
-      let label = WEAPON_NAMES[weaponKey] || weaponKey;
-      if (bought && req && rp < req.rp) {
-        label = `🛍️ ${label}`;
-      }
+      const label = WEAPON_NAMES[weaponKey] || weaponKey;
       btn.innerHTML = label;
     }
   });
