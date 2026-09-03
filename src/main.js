@@ -3204,7 +3204,25 @@ function initCreditShop() {
   });
 
   buyCreditsButtons.forEach(button => button.addEventListener('click', () => playCreditShopSound('confirm')));
+
+  window.addEventListener('pageshow', (event) => {
+    if (event.persisted) resetCreditCheckoutButtons();
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) resetCreditCheckoutButtons();
+  });
 }
+
+function resetCreditCheckoutButtons() {
+  document.querySelectorAll('#credit-shop-modal [data-buy-credit-pack]').forEach(button => {
+    button.disabled = false;
+    if (button.dataset.checkoutLabel) {
+      button.innerHTML = button.dataset.checkoutLabel;
+      delete button.dataset.checkoutLabel;
+    }
+  });
+}
+window.resetCreditCheckoutButtons = resetCreditCheckoutButtons;
 
 function openCreditShopModal(source = 'menu') {
   const creditShopModal = document.getElementById('credit-shop-modal');
@@ -3221,8 +3239,8 @@ async function startCreditCheckout(packageId) {
   }
 
   const checkoutButton = document.querySelector(`[data-buy-credit-pack="${packageId}"]`);
-  const previousLabel = checkoutButton?.innerHTML;
   if (checkoutButton) {
+    checkoutButton.dataset.checkoutLabel = checkoutButton.innerHTML;
     checkoutButton.disabled = true;
     checkoutButton.textContent = 'OPENING SECURE CHECKOUT…';
   }
@@ -3233,12 +3251,10 @@ async function startCreditCheckout(packageId) {
       body: JSON.stringify({ packageId })
     });
     playCreditShopSound('confirm');
+    resetCreditCheckoutButtons();
     window.location.assign(result.checkoutUrl);
   } catch (error) {
-    if (checkoutButton) {
-      checkoutButton.disabled = false;
-      checkoutButton.innerHTML = previousLabel;
-    }
+    resetCreditCheckoutButtons();
     if (error.status === 401) {
       clearAccountSession();
       openAccountModal('login', 'Your session expired. Sign in again to continue.');
