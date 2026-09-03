@@ -282,18 +282,21 @@ function updateWeaponLocksUI() {
     const weaponKey = btn.dataset.weapon;
     const req = WEAPON_LOCKS[weaponKey];
     const unlocked = isWeaponUnlocked(weaponKey);
+    let bought = false;
+    try {
+      const purchased = JSON.parse(safeStorage.getItem('tacticstrike_purchased_weapons') || '[]');
+      bought = purchased.includes(weaponKey);
+    } catch(e) {}
+    btn.classList.toggle('owned', bought);
     if (req && !unlocked) {
       btn.classList.add('locked');
       btn.innerHTML = `🔒 ${WEAPON_NAMES[weaponKey]} <span style="font-size:7px; display:block; color:#ff3c3c; margin-top:2.5px; font-family:var(--font-title); font-weight:bold;">${req.rank}</span>`;
     } else {
       btn.classList.remove('locked');
       let label = WEAPON_NAMES[weaponKey] || weaponKey;
-      try {
-        const purchased = JSON.parse(safeStorage.getItem('tacticstrike_purchased_weapons') || '[]');
-        if (purchased.includes(weaponKey) && rp < req.rp) {
-          label = `🛍️ ${label}`;
-        }
-      } catch(e) {}
+      if (bought && req && rp < req.rp) {
+        label = `🛍️ ${label}`;
+      }
       btn.innerHTML = label;
     }
   });
@@ -304,6 +307,12 @@ function updateWeaponLocksUI() {
     const weaponKey = opt.dataset.weapon;
     const req = WEAPON_LOCKS[weaponKey];
     const unlocked = isWeaponUnlocked(weaponKey);
+    let bought = false;
+    try {
+      const purchased = JSON.parse(safeStorage.getItem('tacticstrike_purchased_weapons') || '[]');
+      bought = purchased.includes(weaponKey);
+    } catch(e) {}
+    opt.classList.toggle('owned', bought);
     let lockBadge = opt.querySelector('.lock-badge');
     
     if (req && !unlocked) {

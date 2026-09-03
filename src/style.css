@@ -3105,6 +3105,26 @@ footer {
   background: rgba(255, 0, 0, 0.04) !important;
   border-color: rgba(255, 60, 60, 0.4) !important;
 }
+
+/* Owned (purchased) Weapon Styling — subtle golden edge */
+.match-weapon-btn.owned {
+  border-color: rgba(212, 175, 55, 0.38);
+  border-left-color: #d4af37;
+}
+
+.match-weapon-btn.owned:hover {
+  border-color: rgba(212, 175, 55, 0.6);
+  border-left-color: #d4af37;
+  background: #1a1710;
+}
+
+.weapon-option.owned {
+  border-color: rgba(212, 175, 55, 0.38);
+}
+
+.weapon-option.owned:hover {
+  border-color: rgba(212, 175, 55, 0.6);
+}
 .lock-badge {
   display: inline-flex;
   align-items: center;
