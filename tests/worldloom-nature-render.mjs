@@ -9,7 +9,7 @@ try {
  const result=await page.evaluate(()=>window.natureResult);
  assert.equal(errors.length,0,errors.join('\n'));
  for(const item of result.water){assert.ok(item.covered>1000);assert.equal(item.changed,0,`water overpainted item ${item.id}`);}
- assert.ok(result.sand.drifts>0);assert.equal(result.sand.draws,1);
+ assert.ok(result.sand.drifts>0);assert.equal(result.sand.draws,2);assert.ok(result.sand.dustPlumes>0);
  mkdirSync('../../outputs',{recursive:true});await page.screenshot({path:'../../outputs/worldloom-sand-wind.png'});
  const later=await page.evaluate(()=>window.sandRender(2));assert.ok(later.time>result.sand.time);
  console.log(JSON.stringify({passed:true,...result,later},null,2));

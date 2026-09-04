@@ -2,6 +2,7 @@ import * as THREE from '../vendor/three.module.min.js';
 import { BLOCK } from './blocks.js';
 import { SAND_DRIFT_MESH } from './sand-drift-mesh.js';
 import { hasPlantGround } from './plant-visibility.js';
+import { createSandDust } from './sand-dust.js';
 
 const CAP = 72;
 const REGION = 32;
@@ -82,16 +83,17 @@ export class SandWindField {
     this.mesh.name='Intermittent Blender windblown sand';this.mesh.userData.authoredIn='Blender';
     this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);this.mesh.frustumCulled=false;
     this.mesh.renderOrder=4;this.mesh.count=0;this.mesh.visible=false;scene?.add(this.mesh);
+    this.dust = createSandDust(CAP * 3,this.uniforms.time,scene);
   }
   setWorld(world) {
     if(this.world===world)return;
     this.world=world;this.anchors=[];this.particles=[];this.time=0;this.scanTimer=0;this.emitTimer=0;
-    this.mesh.count=0;this.mesh.visible=false;
+    this.mesh.count=0;this.mesh.visible=false;this.dust.count=0;this.dust.visible=false;
   }
   setQuality(profile={},reducedMotion=false,enabled=true) {
     this.limit=Math.round(24+48*Math.max(0,Math.min(1,profile.atmosphereDetail??.7)));
     this.reducedMotion=Boolean(reducedMotion);this.enabled=enabled!==false;
-    if(!this.enabled){this.particles=[];this.mesh.count=0;this.mesh.visible=false;}
+    if(!this.enabled){this.particles=[];this.mesh.count=0;this.mesh.visible=false;this.dust.count=0;this.dust.visible=false;}
   }
   _scan(focus) {
     const anchors=[],seed=this.world?.seed||0;
@@ -118,7 +120,7 @@ export class SandWindField {
         const serial=++this.serial,seed=this.world.seed||0;
         const a=this.anchors[Math.floor(hash(serial,3,seed)*this.anchors.length)];
         const gust=sandGustAt(a.x,a.z,this.time,seed);if(gust.strength<.1)continue;
-        const p={...a,angle:gust.angle,length:2.8+hash(serial,5,seed)*2.4,width:.8+hash(serial,7,seed)*1.1,
+        const p={...a,angle:gust.angle,length:3.5+hash(serial,5,seed)*2.8,width:1.8+hash(serial,7,seed)*.8,
           age:0,life:5+hash(serial,11,seed)*4,speed:(.4+hash(serial,13,seed)*.45)*(this.reducedMotion?.45:1),seed:hash(serial,17,seed),strength:gust.strength};
         if(sandRibbonFits(this.world,p))this.particles.push(p);
       }
@@ -128,15 +130,27 @@ export class SandWindField {
       return p.age<p.life&&(p.x-focus.x)**2+(p.z-focus.z)**2<48**2&&sandRibbonFits(this.world,p);
     }).slice(0,this.limit);
     const alpha=this.mesh.geometry.attributes.driftOpacity,seeds=this.mesh.geometry.attributes.driftSeed;
+    const dustAlpha=this.dust.geometry.attributes.dustAlpha,dustSeed=this.dust.geometry.attributes.dustSeed;
     this.particles.forEach((p,i)=>{
       this.dummy.position.set(p.x,p.y+.025+Math.sin(p.age/p.life*Math.PI)*.04,p.z);
       this.dummy.rotation.set(0,-p.angle,0);this.dummy.scale.set(p.length,1,p.width);this.dummy.updateMatrix();this.mesh.setMatrixAt(i,this.dummy.matrix);
       alpha.setX(i,smooth(p.age/1.4)*smooth((p.life-p.age)/2)*p.strength*weather*(this.reducedMotion?.5:1));seeds.setX(i,p.seed);
+      for(let puff=0;puff<3;puff++) {
+        const index=i*3+puff,along=(puff-1)*p.length*.23;
+        const lift=.32+.15*Math.sin(p.age*.65+puff*1.7+p.seed*8);
+        this.dummy.position.set(p.x+Math.cos(p.angle)*along,p.y+lift,p.z+Math.sin(p.angle)*along);
+        this.dummy.rotation.set(0,0,0);this.dummy.scale.set(1.3+p.seed*.6,.65+p.seed*.45,1);this.dummy.updateMatrix();
+        this.dust.setMatrixAt(index,this.dummy.matrix);
+        dustAlpha.setX(index,alpha.getX(i)*(.68+.22*Math.sin(p.age*.8+puff)**2));dustSeed.setX(index,p.seed+puff*.317);
+      }
     });
     this.mesh.material.color.set(0xd7bd8a).multiplyScalar(.14+.86*Math.max(0,Math.min(1,context.dayAmount??1)));
     this.mesh.count=this.particles.length;this.mesh.visible=this.mesh.count>0&&weather>.01;
+    this.dust.material.color.set(0xe5c58e).multiplyScalar(.14+.86*Math.max(0,Math.min(1,context.dayAmount??1)));
+    this.dust.count=this.particles.length*3;this.dust.visible=this.mesh.visible;
+    this.dust.instanceMatrix.needsUpdate=true;dustAlpha.needsUpdate=true;dustSeed.needsUpdate=true;
     this.mesh.instanceMatrix.needsUpdate=true;alpha.needsUpdate=true;seeds.needsUpdate=true;
   }
-  getStats(){return {anchors:this.anchors.length,drifts:this.mesh.count,draws:Number(this.mesh.visible),time:this.time,enabled:this.enabled};}
-  dispose(){this.mesh.removeFromParent();this.mesh.geometry.dispose();this.mesh.material.dispose();this.world=null;this.particles=[];this.anchors=[];}
+  getStats(){return {anchors:this.anchors.length,drifts:this.mesh.count,dustPlumes:this.dust.count,draws:Number(this.mesh.visible)+Number(this.dust.visible),time:this.time,enabled:this.enabled};}
+  dispose(){for(const mesh of [this.mesh,this.dust]){mesh.removeFromParent();mesh.geometry.dispose();mesh.material.dispose();}this.world=null;this.particles=[];this.anchors=[];}
 }

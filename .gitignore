@@ -16,7 +16,10 @@ dist/worldloom/src/*
 !dist/worldloom/src/meadow-wind.js
 !dist/worldloom/src/plant-visibility.js
 !dist/worldloom/src/sand-wind.js
+!dist/worldloom/src/sand-dust.js
 !dist/worldloom/src/sand-drift-mesh.js
+!dist/worldloom/src/sea-life.js
+!dist/worldloom/src/sea-life-meshes.js
 !dist/worldloom/src/portal.js
 !dist/worldloom/src/forest-floor.js
 !dist/worldloom/assets/
@@ -29,6 +32,7 @@ dist/worldloom/assets/environment/*
 !dist/worldloom/assets/environment/summit-cross.glb
 !dist/worldloom/assets/environment/meadow-plants.glb
 !dist/worldloom/assets/environment/sand-drift.glb
+!dist/worldloom/assets/environment/sea-life.glb
 !dist/worldloom/assets/environment/forest-floor.glb
 !dist/worldloom/assets/birds/
 dist/worldloom/assets/birds/*

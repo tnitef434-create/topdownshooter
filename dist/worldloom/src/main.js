@@ -188,6 +188,8 @@ function initRenderer() {
   }
   environment = new Environment(scene, renderer);
   window.__worldloomPonds = environment.pondEcology;
+  window.__worldloomSeaLife = environment.seaLife;
+  window.__worldloomSandWind = environment.sandWind;
   window.__worldloomHangingLeaves = environment.hangingLeaves;
   window.__worldloomGroundLeaves = environment.groundLeaves;
   window.__worldloomForestFloor = environment.forestFloor;

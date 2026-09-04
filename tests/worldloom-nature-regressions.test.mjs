@@ -69,7 +69,8 @@ test('sand field stays within its draw budget, fades in, shelters from rain and 
   field.setWorld(world);field.setQuality({atmosphereDetail:0});
   let peak=0;for(let t=0;t<200;t++)if(sandGustAt(0,0,t,41).strength>.8){peak=t;break;}
   field.time=peak;for(let i=0;i<80;i++)field.update(.05,focus,{dayAmount:1});
-  assert.ok(field.particles.length>0);assert.ok(field.particles.length<=24);assert.equal(field.getStats().draws,1);
+  assert.ok(field.particles.length>0);assert.ok(field.particles.length<=24);assert.equal(field.getStats().draws,2);
+  assert.equal(field.getStats().dustPlumes,field.particles.length*3);
   assert.ok(field.mesh.geometry.attributes.driftOpacity.array.some(v=>v>0&&v<=1));
   assert.equal(field.mesh.material.depthWrite,false);
   assert.ok(field.particles.every(p=>sandRibbonFits(world,p)));

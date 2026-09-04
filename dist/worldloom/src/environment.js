@@ -9,6 +9,7 @@ import { ForestFloorField } from './forest-floor.js';
 import { RedFlowerField } from './red-flowers.js';
 import { MeadowPlantField } from './meadow-plants.js';
 import { SandWindField } from './sand-wind.js';
+import { SeaLifeField } from './sea-life.js';
 import { SummitCrossField } from './summit-crosses.js';
 import { atmosphericFogRange } from './fog.js';
 
@@ -1523,7 +1524,8 @@ export class Environment {
     this.redFlowers = new RedFlowerField(scene);
     this.meadowPlants = new MeadowPlantField(scene);
     this.sandWind = new SandWindField(scene);
-    // Wildlife is owned exclusively by the custom pig system.
+    this.seaLife = new SeaLifeField(scene);
+    // Combat creatures remain pigs; sea life is a protected decorative habitat.
     this.summitCrosses = new SummitCrossField(scene);
     this.localLights = Array.from({ length: 8 }, (_, index) => {
       const light = new THREE.PointLight(0xffb45f, 0, 10, 2);
@@ -1553,6 +1555,7 @@ export class Environment {
     this.redFlowers.setWorld(this.weatherWorld);
     this.meadowPlants.setWorld(this.weatherWorld);
     this.sandWind.setWorld(this.weatherWorld);
+    this.seaLife.setWorld(this.weatherWorld);
     this.summitCrosses.setWorld(this.weatherWorld);
     if (worldChanged) this._resetWeatherCycle(Boolean(this.weatherWorld));
   }
@@ -1659,6 +1662,7 @@ export class Environment {
     this.hangingLeaves.setQuality(profile, settings.reducedMotion);
     this.meadowPlants.setQuality(profile, settings.reducedMotion);
     this.sandWind.setQuality(profile, settings.reducedMotion, this.weatherEnabled);
+    this.seaLife.setQuality(profile, settings.reducedMotion);
     this.summitCrosses.setQuality(profile);
     this.graphicsUniforms.windStrength.value = settings.reducedMotion ? 0.22 : 1;
 
@@ -2241,6 +2245,7 @@ export class Environment {
     this.redFlowers.update(dt, focus);
     this.meadowPlants.update(dt, focus);
     this.sandWind.update(dt, focus, {...context, rainIntensity:this.rainIntensity, skyExposure:this.skyExposure, dayAmount:this.dayAmount});
+    this.seaLife.update(dt, focus, context);
     this.summitCrosses.update(dt, focus, viewDistance);
 
     const lightningEvent = this.lightning.update(

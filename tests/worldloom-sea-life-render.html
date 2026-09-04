@@ -1,0 +1,39 @@
+<!doctype html><html><meta charset="utf-8"><title>Worldloom sea life render test</title><style>body{margin:0;background:#173e47}canvas{display:block}#label{position:absolute;top:24px;left:30px;font:20px system-ui;color:#d4eeeb;pointer-events:none}</style><div id="label">Worldloom · Seagrass habitat</div><script type="module">
+import * as THREE from '/src/public/worldloom/vendor/three.module.min.js';
+import { SeaLifeField } from '/src/public/worldloom/src/sea-life.js';
+import { BLOCK } from '/src/public/worldloom/src/blocks.js';
+const renderer=new THREE.WebGLRenderer({antialias:true,preserveDrawingBuffer:true});renderer.setSize(1200,800);renderer.setPixelRatio(1);document.body.append(renderer.domElement);
+renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;
+const scene=new THREE.Scene();scene.background=new THREE.Color('#174f60');scene.fog=new THREE.Fog('#174f60',8,28);
+scene.add(new THREE.HemisphereLight(0xb4e9f7,0x54734b,2.2));
+const sun=new THREE.DirectionalLight(0xc5eada,2.5);sun.position.set(4,9,3);scene.add(sun);
+const camera=new THREE.PerspectiveCamera(52,1.5,.025,100);
+const floor=new THREE.Mesh(new THREE.PlaneGeometry(120,120,1,1),new THREE.MeshStandardMaterial({color:0xb7a26e,roughness:1}));floor.rotation.x=-Math.PI/2;floor.position.y=1;scene.add(floor);
+const water=new THREE.Mesh(new THREE.PlaneGeometry(120,120),new THREE.MeshBasicMaterial({color:0x64bbd0,side:THREE.DoubleSide,transparent:true,opacity:.16,depthWrite:false}));water.rotation.x=-Math.PI/2;water.position.y=5.85;scene.add(water);
+const world={seed:41,seaLevel:5,hasVisibleTerrainAt:()=>true,terrainHeight:()=>0,getBlock:(x,y,z)=>y<=0?BLOCK.SAND:y<=5?BLOCK.WATER:BLOCK.AIR};
+const sea=new SeaLifeField(scene),focus=new THREE.Vector3(0,4,0);sea.setWorld(world);sea.setQuality({atmosphereDetail:1});
+for(let i=0;i<60*8;i++)sea.update(1/60,focus);
+const home=sea.fish[0].home;camera.position.set(home.x+3.5,home.y+1.55,home.z+4);camera.lookAt(home.x,home.y+.65,home.z);
+renderer.render(scene,camera);
+window.seaResult=sea.getStats();
+window.advanceSea=(seconds)=>{for(let i=0;i<seconds*60;i++)sea.update(1/60,focus);renderer.render(scene,camera);return {...sea.getStats(),positions:sea.fish.map(f=>f.position.toArray()),phases:sea.fish.map(f=>f.phase)};};
+window.showSpecies=()=>{
+ scene.fog=null;scene.background.set('#153039');floor.visible=false;water.visible=false;sea.plantMesh.visible=false;
+ const dummy=new THREE.Object3D();
+ for(let i=0;i<3;i++){
+   const mesh=sea.fishMeshes[i];mesh.visible=true;mesh.count=1;
+   dummy.position.set(0,(1-i)*.24,0);dummy.rotation.set(0,.12,0);dummy.scale.setScalar(1);dummy.updateMatrix();mesh.setMatrixAt(0,dummy.matrix);mesh.instanceMatrix.needsUpdate=true;
+   mesh.geometry.attributes.swim.setXYZW(0,2,.012,0,0);mesh.geometry.attributes.swim.needsUpdate=true;
+ }
+ camera.position.set(.18,.06,1.02);camera.lookAt(0,0,0);renderer.render(scene,camera);
+ document.querySelector('#label').textContent='Blender originals · Silver dart / Amber bream / Reef wrasse';
+};
+window.recordSea=async()=>{
+ const stream=renderer.domElement.captureStream(30),recorder=new MediaRecorder(stream,{mimeType:'video/webm;codecs=vp9',videoBitsPerSecond:4000000});const chunks=[];
+ recorder.ondataavailable=e=>chunks.push(e.data);const stopped=new Promise(resolve=>recorder.onstop=resolve);recorder.start();
+ const start=performance.now();let previous=start;
+ await new Promise(resolve=>{function frame(now){sea.update(Math.min(.05,(now-previous)/1000),focus);previous=now;renderer.render(scene,camera);if(now-start<8000)requestAnimationFrame(frame);else resolve();}requestAnimationFrame(frame);});
+ recorder.stop();await stopped;stream.getTracks().forEach(track=>track.stop());
+ const blob=new Blob(chunks,{type:'video/webm'});return await new Promise(resolve=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result.split(',')[1]);reader.readAsDataURL(blob);});
+};
+</script></html>
