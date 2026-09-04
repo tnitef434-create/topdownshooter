@@ -2,6 +2,7 @@ import * as THREE from '../vendor/three.module.min.js';
 import { GLTFLoader } from '../vendor/GLTFLoader.js';
 import { mergeGeometries } from '../vendor/BufferGeometryUtils.js';
 import { BLOCK } from './blocks.js';
+import { attachMeadowWind, tallGrassFieldWeight } from './meadow-wind.js';
 
 const ASSET_URL = new URL('../assets/environment/meadow-plants.glb', import.meta.url).href;
 const DEFAULT_LOAD_TIMEOUT_MS = 8_000;
@@ -11,6 +12,7 @@ const SCAN_RADIUS = 52;
 const RESYNC_INTERVAL = 0.42;
 const MAX_SUNFLOWERS = 240;
 const MAX_SHORT_GRASS = 1200;
+const MAX_TALL_GRASS = 3200;
 
 function clamp(value, minimum, maximum) {
   return Math.max(minimum, Math.min(maximum, Number(value) || 0));
@@ -89,6 +91,7 @@ function createInstancedPlantMeshes(
   sunflowerMaterial,
   grassGeometry,
   grassMaterial,
+  tallGeometry = null,
 ) {
   const sunflower = new THREE.InstancedMesh(
     sunflowerGeometry,
@@ -117,7 +120,13 @@ function createInstancedPlantMeshes(
   shortGrass.frustumCulled = false;
   shortGrass.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   shortGrass.userData.assetRole = 'opaque_meadow_short_grass';
-  return { sunflower, shortGrass };
+  const tallGrass = new THREE.InstancedMesh(tallGeometry || grassGeometry.clone().scale(1.4, 2, 1.4), grassMaterial.clone(), MAX_TALL_GRASS);
+  tallGrass.name = 'Blender knee-high meadow grass';
+  tallGrass.count = 0; tallGrass.visible = false; tallGrass.frustumCulled = false;
+  tallGrass.receiveShadow = true;
+  tallGrass.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  tallGrass.userData.assetRole = 'opaque_meadow_tall_grass';
+  return { sunflower, shortGrass, tallGrass };
 }
 
 function createPlantMeshes(gltf) {
@@ -127,12 +136,16 @@ function createPlantMeshes(gltf) {
   const grassRoot = gltf.scene.getObjectByName('Short_Grass_Asset');
   let sunflowerGeometry = null;
   let grassGeometry = null;
+  let tallGeometry = null;
   try {
     sunflowerGeometry = bakeGeometry(sunflowerRoot, 'Sunflower');
     grassGeometry = bakeGeometry(grassRoot, 'Short grass');
+    const tallRoot = gltf.scene.getObjectByName('Tall_Grass_Asset');
+    if (tallRoot) tallGeometry = bakeGeometry(tallRoot, 'Tall grass');
   } catch (error) {
     sunflowerGeometry?.dispose?.();
     grassGeometry?.dispose?.();
+    tallGeometry?.dispose?.();
     throw error;
   }
 
@@ -163,6 +176,7 @@ function createPlantMeshes(gltf) {
     sunflowerMaterial,
     grassGeometry,
     grassMaterial,
+    tallGeometry,
   );
 }
 
@@ -324,15 +338,16 @@ function disposeMeshes(meshes) {
   valid.forEach((mesh) => {
     mesh.removeFromParent?.();
     mesh.geometry?.dispose?.();
+    mesh.customDepthMaterial?.dispose?.();
   });
   disposeMaterials(valid.map((mesh) => mesh.material));
 }
 
 export function meadowPlantScale(kind, roll) {
   const variation = clamp(roll, 0, 1);
-  // The 0.92m, 16-pixel authored sunflower remains within the one-block
+  // The 0.92m authored sunflower remains within the one-block
   // interaction volume while retaining mild deterministic size variation.
-  return kind === 'sunflower' ? 0.78 + variation * 0.12 : 0.84 + variation * 0.32;
+  return kind === 'sunflower' ? 0.92 + variation * 0.08 : kind === 'tall' ? 0.82 + variation * 0.22 : 0.84 + variation * 0.32;
 }
 
 export function meadowPlantVisualOffset(kind, x, y, z, seed = 0) {
@@ -345,15 +360,15 @@ export function meadowPlantVisualOffset(kind, x, y, z, seed = 0) {
   };
 }
 
-export function scanMeadowPlantChunk(chunk) {
+export function scanMeadowPlantChunk(chunk, seed = 0) {
   const sunflowers = [];
-  const shortGrass = [];
-  if (!chunk?.generated || !chunk.blocks) return { sunflowers, shortGrass };
+  const shortGrass = [], tallGrass = [];
+  if (!chunk?.generated || !chunk.blocks) return { sunflowers, shortGrass, tallGrass };
   const originX = Number(chunk.cx) * CHUNK_SIZE;
   const originZ = Number(chunk.cz) * CHUNK_SIZE;
   for (let index = 0; index < chunk.blocks.length; index++) {
     const id = chunk.blocks[index];
-    if (id !== BLOCK.WILDFLOWER && id !== BLOCK.SHORT_GRASS) continue;
+    if (id !== BLOCK.WILDFLOWER && id !== BLOCK.SHORT_GRASS && id !== BLOCK.TURF) continue;
     const y = Math.floor(index / CHUNK_LAYER);
     const withinLayer = index - y * CHUNK_LAYER;
     const z = Math.floor(withinLayer / CHUNK_SIZE);
@@ -363,9 +378,23 @@ export function scanMeadowPlantChunk(chunk) {
       y,
       z: originZ + z,
     };
-    (id === BLOCK.WILDFLOWER ? sunflowers : shortGrass).push(entry);
+    if (id === BLOCK.TURF) {
+      const above=chunk.blocks[index+CHUNK_LAYER];
+      if (above !== BLOCK.AIR && above !== BLOCK.SHORT_GRASS) continue;
+      const density = tallGrassFieldWeight(entry.x,entry.z,seed);
+      if (density < .2) continue;
+      // Exclude covered ground, pond surfaces and player-built ceilings.
+      let clear=true;
+      for(let dy=2;dy<=7;dy++) {
+        const overhead=chunk.blocks[index+CHUNK_LAYER*dy];
+        if(overhead!==undefined && overhead!==BLOCK.AIR) {clear=false;break;}
+      }
+      if(clear) tallGrass.push({...entry,y:y+1,density});
+    } else if(id === BLOCK.WILDFLOWER) sunflowers.push(entry);
+    else shortGrass.push(entry);
   }
-  return { sunflowers, shortGrass };
+  const tallCells = new Set(tallGrass.map(p=>`${p.x},${p.y},${p.z}`));
+  return { sunflowers, shortGrass:shortGrass.filter(p=>!tallCells.has(`${p.x},${p.y},${p.z}`)), tallGrass };
 }
 
 export class MeadowPlantField {
@@ -388,8 +417,11 @@ export class MeadowPlantField {
     this.error = null;
     this.sunflower = null;
     this.shortGrass = null;
+    this.tallGrass = null;
     this.sunflowers = [];
     this.grasses = [];
+    this.tallGrasses = [];
+    this.windUniforms = { time:{value:0}, strength:{value:1}, player:{value:new THREE.Vector3(1e6,1e6,1e6)} };
     this.chunkCache = new Map();
     this._loadPromise = null;
     this._loadGeneration = 0;
@@ -397,6 +429,7 @@ export class MeadowPlantField {
     this._dummy = new THREE.Object3D();
     this.sunflowerLimit = MAX_SUNFLOWERS;
     this.grassLimit = MAX_SHORT_GRASS;
+    this.tallGrassLimit = MAX_TALL_GRASS;
   }
 
   prepare() {
@@ -444,10 +477,11 @@ export class MeadowPlantField {
           throw error;
         }
         disposeImportedScene(gltf.scene);
-        disposeMeshes([this.sunflower, this.shortGrass]);
+        disposeMeshes([this.sunflower, this.shortGrass, this.tallGrass]);
         this.sunflower = meshes.sunflower;
         this.shortGrass = meshes.shortGrass;
-        this.group.add(this.sunflower, this.shortGrass);
+        this.tallGrass = meshes.tallGrass;
+        this._installWind();
         this.ready = true;
         this.failed = false;
         this.error = null;
@@ -456,10 +490,11 @@ export class MeadowPlantField {
       .catch((error) => {
         if (generation === this._loadGeneration) {
           const fallback = createFallbackPlantMeshes();
-          disposeMeshes([this.sunflower, this.shortGrass]);
+          disposeMeshes([this.sunflower, this.shortGrass, this.tallGrass]);
           this.sunflower = fallback.sunflower;
           this.shortGrass = fallback.shortGrass;
-          this.group.add(this.sunflower, this.shortGrass);
+          this.tallGrass = fallback.tallGrass;
+          this._installWind();
           this.ready = true;
           this.failed = true;
           this.error = error instanceof Error ? error : new Error(String(error || 'Unknown meadow-plant asset error'));
@@ -474,24 +509,34 @@ export class MeadowPlantField {
     return this._loadPromise;
   }
 
+  _installWind() {
+    for(const [mesh,kind] of [[this.sunflower,'sunflower'],[this.shortGrass,'grass'],[this.tallGrass,'tall']]) {
+      attachMeadowWind(mesh,this.windUniforms,kind);
+      this.group.add(mesh);
+    }
+  }
+
   setWorld(world) {
     if (this.world !== world) this._clear();
     this.world = world || null;
     this._syncTimer = 0;
   }
 
-  setQuality(profile = {}) {
+  setQuality(profile = {}, reducedMotion = false) {
+    this.windUniforms.strength.value = reducedMotion ? .15 : 1;
     const detail = clamp(profile.atmosphereDetail ?? 0.7, 0, 1);
     this.sunflowerLimit = Math.round(90 + detail * (MAX_SUNFLOWERS - 90));
     this.grassLimit = Math.round(420 + detail * (MAX_SHORT_GRASS - 420));
+    this.tallGrassLimit = Math.round(900 + detail * (MAX_TALL_GRASS - 900));
     this._syncTimer = 0;
   }
 
   _clear() {
     this.sunflowers.length = 0;
     this.grasses.length = 0;
+    this.tallGrasses.length = 0;
     this.chunkCache.clear();
-    for (const mesh of [this.sunflower, this.shortGrass]) {
+    for (const mesh of [this.sunflower, this.shortGrass, this.tallGrass]) {
       if (!mesh) continue;
       mesh.count = 0;
       mesh.visible = false;
@@ -504,7 +549,7 @@ export class MeadowPlantField {
     const revision = Number(chunk.revision) || 0;
     const cached = this.chunkCache.get(key);
     if (cached?.revision === revision && cached.blocks === chunk.blocks) return cached;
-    const scanned = scanMeadowPlantChunk(chunk);
+    const scanned = scanMeadowPlantChunk(chunk, Number(this.world?.seed)||0);
     const next = { ...scanned, revision, blocks: chunk.blocks };
     this.chunkCache.set(key, next);
     return next;
@@ -530,10 +575,11 @@ export class MeadowPlantField {
         return ax * ax + az * az - (bx * bx + bz * bz);
       });
     const sunflowers = [];
-    const grasses = [];
+    const grasses = [], tallGrasses = [];
     const append = (target, entries, limit) => {
       for (const entry of entries) {
         if (target.length >= limit) break;
+        if (this.world.isPositionRendered && !this.world.isPositionRendered(entry.x+.5,entry.z+.5)) continue;
         const distanceSq = (entry.x + 0.5 - focus.x) ** 2 + (entry.z + 0.5 - focus.z) ** 2;
         if (distanceSq <= radiusSq) target.push({ ...entry, distanceSq });
       }
@@ -542,12 +588,15 @@ export class MeadowPlantField {
       const plants = this._chunkPlants(chunk);
       append(sunflowers, plants.sunflowers, this.sunflowerLimit);
       append(grasses, plants.shortGrass, this.grassLimit);
-      if (sunflowers.length >= this.sunflowerLimit && grasses.length >= this.grassLimit) break;
+      append(tallGrasses, plants.tallGrass, Math.ceil(this.tallGrassLimit/3));
+      if (sunflowers.length >= this.sunflowerLimit && grasses.length >= this.grassLimit && tallGrasses.length >= this.tallGrassLimit/3) break;
     }
     sunflowers.sort((a, b) => a.distanceSq - b.distanceSq);
     grasses.sort((a, b) => a.distanceSq - b.distanceSq);
     this.sunflowers = sunflowers.slice(0, this.sunflowerLimit);
     this.grasses = grasses.slice(0, this.grassLimit);
+    tallGrasses.sort((a,b)=>a.distanceSq-b.distanceSq);
+    this.tallGrasses = tallGrasses.flatMap(entry=>Array.from({length:1+Math.floor(entry.density*2)},(_,clump)=>({...entry,clump}))).slice(0,this.tallGrassLimit);
     const liveKeys = new Set(this.world.chunks.keys());
     for (const key of this.chunkCache.keys()) {
       if (!liveKeys.has(key)) this.chunkCache.delete(key);
@@ -560,10 +609,11 @@ export class MeadowPlantField {
     const count = Math.min(mesh.instanceMatrix.count, entries.length);
     for (let index = 0; index < count; index++) {
       const entry = entries[index];
-      const rotation = unitHash(entry.x, entry.y, entry.z, seed ^ 0x51ed270b) * Math.PI * 2;
-      const roll = unitHash(entry.x, entry.y, entry.z, seed ^ 0x94d049bb);
+      const variationSeed = seed ^ ((entry.clump||0)*29371);
+      const rotation = unitHash(entry.x, entry.y, entry.z, variationSeed ^ 0x51ed270b) * Math.PI * 2;
+      const roll = unitHash(entry.x, entry.y, entry.z, variationSeed ^ 0x94d049bb);
       const scale = meadowPlantScale(kind, roll);
-      const offset = meadowPlantVisualOffset(kind, entry.x, entry.y, entry.z, seed);
+      const offset = meadowPlantVisualOffset(kind, entry.x, entry.y, entry.z, variationSeed);
       this._dummy.position.set(entry.x + 0.5 + offset.x, entry.y, entry.z + 0.5 + offset.z);
       this._dummy.rotation.set(0, rotation, 0);
       this._dummy.scale.setScalar(scale);
@@ -577,12 +627,15 @@ export class MeadowPlantField {
 
   update(dt, focus) {
     if (!this.ready || !this.world || !focus) return;
+    this.windUniforms.time.value += Math.max(0,Number(dt)||0);
+    this.windUniforms.player.value.copy(focus);
     this._syncTimer -= Math.max(0, Number(dt) || 0);
     if (this._syncTimer > 0) return;
     this._syncTimer = RESYNC_INTERVAL;
     this._collect(focus);
     this._write(this.sunflower, this.sunflowers, 'sunflower');
     this._write(this.shortGrass, this.grasses, 'grass');
+    this._write(this.tallGrass, this.tallGrasses, 'tall');
   }
 
   getStats() {
@@ -595,7 +648,8 @@ export class MeadowPlantField {
       error: this.error ? String(this.error.message || this.error) : '',
       sunflowers: sunflowerCount,
       shortGrass: grassCount,
-      draws: Number(sunflowerCount > 0) + Number(grassCount > 0),
+      tallGrass: this.tallGrass?.count || 0,
+      draws: Number(sunflowerCount > 0) + Number(grassCount > 0) + Number(this.tallGrass?.count > 0),
       cachedChunks: this.chunkCache.size,
       assetUrl: this.assetUrl,
     };
@@ -606,9 +660,10 @@ export class MeadowPlantField {
     this._loadPromise = null;
     this._clear();
     this.group.removeFromParent?.();
-    disposeMeshes([this.sunflower, this.shortGrass]);
+    disposeMeshes([this.sunflower, this.shortGrass, this.tallGrass]);
     this.sunflower = null;
     this.shortGrass = null;
+    this.tallGrass = null;
     this.world = null;
     this.ready = false;
     this.failed = false;

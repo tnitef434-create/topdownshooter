@@ -126,11 +126,11 @@ export class CreatureSystem {
   }
   _intent(pig,player) {
     if (pig.hitTime>0) {
-      pig.targetHeading=Math.atan2(pig.root.position.x-player.position.x,pig.root.position.z-player.position.z)+Math.PI;
-      if (pig.state!=='flee') this._setState(pig,'flee',3);
+      if(pig.avoidTime<=0) pig.targetHeading=Math.atan2(pig.root.position.x-player.position.x,pig.root.position.z-player.position.z)+Math.PI;
+      if (pig.state!=='flee') this._setState(pig,'flee',4.5);
     }
     if (pig.state==='flee') {
-      pig.desiredSpeed=1.8;
+      pig.desiredSpeed=3.6;
       if (pig.stateTime>pig.stateDuration) this._setState(pig,'idle',1.5);
       return;
     }
@@ -162,7 +162,8 @@ export class CreatureSystem {
     this._setState(pig,'walk',2+this._random()*3);
   }
   _move(pig,dt,player) {
-    const turn=clamp(angleDelta(pig.heading,pig.targetHeading),-dt*1.8,dt*1.8);
+    const turnRate=pig.state==='flee'?4.8:1.8;
+    const turn=clamp(angleDelta(pig.heading,pig.targetHeading),-dt*turnRate,dt*turnRate);
     // Turning itself can put the long snout into a wall, so validate rotation too.
     if (pig.state!=='graze' && this._canOccupy(pig.root.position.x,pig.ground,pig.root.position.z,pig.heading+turn)) pig.heading+=turn;
     pig.root.rotation.y=pig.heading;
@@ -199,7 +200,8 @@ export class CreatureSystem {
     pig.avoidTime=Math.max(0,pig.avoidTime-dt);
     pig.root.position.y+=(pig.ground-pig.root.position.y)*(1-Math.exp(-dt*16));
     // Actual displacement drives the stride; blocked pigs do not walk in place.
-    pig.gait+=distance/.72*Math.PI*2;
+    const stride=.72+.18*clamp((pig.speed-.7)/2.9,0,1);
+    pig.gait+=distance/stride*Math.PI*2;
     pig.gaitBlend+=((Math.abs(distance)>1e-5?Math.min(1,Math.abs(distance)/dt/.7):0)-pig.gaitBlend)*(1-Math.exp(-dt*14));
   }
 
@@ -234,7 +236,7 @@ export class CreatureSystem {
     LEGS.forEach((name,i)=>{
       const phase=pig.gait+([0,Math.PI,Math.PI,0][i]);
       const leg=pig.parts[name],s=Math.sin(phase),blend=pig.gaitBlend*(1-g);
-      leg.rotation.x=s*.42*blend;
+      leg.rotation.x=s*(.42+.16*clamp((pig.speed-.7)/2.9,0,1))*blend;
       leg.position.y=.375*Math.cos(leg.rotation.x)+Math.abs(Math.sin(leg.rotation.x))*.125+Math.max(0,Math.cos(phase))*.035*blend;
     });
   }

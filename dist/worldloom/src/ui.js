@@ -122,7 +122,7 @@ export class UI {
     const inventoryTip = document.querySelector('.inventory-tip');
     if (inventoryTip) inventoryTip.textContent = 'Drag stacks to move them · drag beyond the window to drop them into the world';
     const titleButton = $('title-button');
-    if (titleButton && window.parent !== window) {
+    if (titleButton) {
       titleButton.textContent = 'Save & return to TacticStrike';
     }
     $('new-world-button')?.addEventListener('click', () => {
@@ -415,7 +415,8 @@ export class UI {
       : null;
     root.replaceChildren();
     for (let index = 0; index < 9; index++) {
-      const slot = this.inventory.slots[index];
+      const raw = this.inventory.slots[index];
+      const slot = raw?.count > 0 ? raw : null;
       const element = button('', `hotbar-slot${index === this.inventory.selected ? ' selected' : ''}`);
       element.dataset.index = `${index}`;
       element.setAttribute('aria-pressed', index === this.inventory.selected ? 'true' : 'false');
@@ -455,7 +456,7 @@ export class UI {
       element.setAttribute('aria-pressed', index === this.inventorySelection ? 'true' : 'false');
       element.setAttribute('aria-grabbed', index === this.inventorySelection ? 'true' : 'false');
       element.setAttribute('aria-label', slot.id ? `${getItem(slot.id).name}, ${slot.count}` : `Empty slot ${index + 1}`);
-      if (slot.id) {
+      if (slot.id && slot.count > 0) {
         const item = getItem(slot.id);
         element.append(itemIcon(item));
         const count = document.createElement('span');

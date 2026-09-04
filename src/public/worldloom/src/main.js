@@ -30,6 +30,7 @@ import { GraphicsPipeline, caveLightingDepth, cavePostProcessAmount } from './gr
 import { SurvivalSystem } from './survival.js';
 import { clampFogToMeshedTerrain } from './fog.js';
 import { cameraFarForViewDistance } from './streaming-config.js';
+import { saveAndReturn } from './portal.js';
 
 const canvas = document.getElementById('game');
 const ui = new UI();
@@ -296,6 +297,9 @@ function bindInput() {
       } else if (state === 'paused') {
         event.preventDefault();
         resumeGame();
+      } else if (state === 'playing' && !input.locked) {
+        event.preventDefault();
+        pauseGame();
       }
       return;
     }
@@ -1043,42 +1047,7 @@ function resumeGame() {
 
 function leaveToTitle() {
   if (!world) return;
-  saveGame(false);
-  if (window.parent !== window) {
-    window.parent.postMessage(
-      { source: 'worldloom', type: 'request-close' },
-      window.location.origin,
-    );
-    return;
-  }
-  transitioning = true;
-  cancelDeathSequence();
-  document.exitPointerLock?.();
-  setState('menu');
-  creatures?.dispose();
-  creatures = null;
-  window.__worldloomCreatures = null;
-  playerAvatar?.dispose();
-  playerAvatar = null;
-  window.__worldloomPlayerAvatar = null;
-  window.__worldloomPlayer = null;
-  clearDroppedItems();
-  environment.updateLocalLights(null, null);
-  environment.setWeatherContext(null);
-  world.dispose();
-  worldWorkToken++;
-  worldWorkScheduled = false;
-  world = null;
-  window.__worldloomWorld = null;
-  player = null;
-  stationContext = null;
-  nearbyTreeLevel = 0;
-  natureProbeTimer = 0;
-  effects.setTarget(null);
-  ui.setContinueAvailable(saves.hasSave());
-  ui.showMain();
-  audio.ui('close');
-  transitioning = false;
+  saveAndReturn(() => saveGame(true));
 }
 
 function saveSnapshot() {

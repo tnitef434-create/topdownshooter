@@ -1,4 +1,5 @@
 node_modules/
+__pycache__/
 # The site is deployed directly from dist. Keep most generated output ignored,
 # but surface Worldloom runtime additions that tracked dist modules import.
 dist/*
@@ -12,6 +13,8 @@ dist/worldloom/src/*
 !dist/worldloom/src/distant-terrain.js
 !dist/worldloom/src/streaming-config.js
 !dist/worldloom/src/meadow-plants.js
+!dist/worldloom/src/meadow-wind.js
+!dist/worldloom/src/portal.js
 !dist/worldloom/src/forest-floor.js
 !dist/worldloom/assets/
 dist/worldloom/assets/*

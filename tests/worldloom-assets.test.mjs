@@ -1282,34 +1282,19 @@ test('hanging-leaf asset failures remain bounded cosmetic failures', async () =>
   field.dispose();
 });
 
-test('raw and roasted meat preserve authored voxel detail in one draw mesh', () => {
-  const raw = createDroppedItemModel(ITEM.RAW_MEAT, null);
-  const cooked = createDroppedItemModel(ITEM.COOKED_MEAT, null);
-  const rawMeshes = meshSummary(raw);
-  const cookedMeshes = meshSummary(cooked);
-  const rawModel = raw.getObjectByName('Pixel raw game steak');
-  const cookedModel = cooked.getObjectByName('Pixel fire-roasted steak');
-
-  assert.equal(rawMeshes.length, 1, 'each raw drop must remain a single draw mesh');
-  assert.equal(cookedMeshes.length, 1, 'each cooked drop must remain a single draw mesh');
-  assert.equal(rawModel?.userData.authoredVoxelParts, 21, 'raw steak lost stepped detail');
-  assert.equal(cookedModel?.userData.authoredVoxelParts, 22, 'roasted steak lost sear detail');
-  assert.equal(rawModel?.userData.drawMeshCount, 1);
-  assert.equal(cookedModel?.userData.drawMeshCount, 1);
-  assert.ok(rawModel?.userData.voxelPaletteSize >= 8, 'raw palette was flattened');
-  assert.ok(cookedModel?.userData.voxelPaletteSize >= 8, 'cooked palette was flattened');
-  assert.equal(rawMeshes[0].geometry.getAttribute('position').count, 21 * 36);
-  assert.equal(cookedMeshes[0].geometry.getAttribute('position').count, 22 * 36);
-  assert.equal(rawMeshes[0].geometry.getAttribute('color').count, 21 * 36);
-  assert.equal(cookedMeshes[0].geometry.getAttribute('color').count, 22 * 36);
-  assert.ok(rawMeshes[0].geometry.boundingSphere, 'merged raw geometry must remain cullable');
-  assert.ok(cookedMeshes[0].geometry.boundingSphere, 'merged cooked geometry must remain cullable');
-  assert.equal(rawModel?.userData.itemModel, 'pixel-bone-steak');
-  assert.equal(rawModel?.userData.cooked, false);
-  assert.equal(cookedModel?.userData.cooked, true);
-
-  disposeItemModel(raw);
-  disposeItemModel(cooked);
+test('raw and roasted Blender porkchops are thin, coloured, and one draw per drop', () => {
+  const raw=createDroppedItemModel(ITEM.RAW_MEAT,null), cooked=createDroppedItemModel(ITEM.COOKED_MEAT,null);
+  const a=meshSummary(raw),b=meshSummary(cooked);
+  assert.equal(a.length,1);assert.equal(b.length,1);
+  for(const mesh of [...a,...b]) {
+    const size=mesh.geometry.boundingBox.getSize(new THREE.Vector3());
+    assert.ok(size.z<.04 && size.x>.4 && size.y>.35);
+    assert.equal(mesh.geometry.attributes.color.count,mesh.geometry.attributes.position.count);
+    assert.ok(mesh.geometry.boundingSphere);
+    assert.equal(mesh.material.depthTest,true);
+  }
+  assert.notDeepEqual(a[0].geometry.attributes.color.array,b[0].geometry.attributes.color.array);
+  disposeItemModel(raw);disposeItemModel(cooked);
 });
 
 test('first-person Wayfarer arms keep their colour panels to one draw each', () => {
@@ -1361,7 +1346,7 @@ test('GPT moon texture is a detailed transparent runtime asset with preserved pr
   assert.match(prompt, /no\s+baked atmospheric glow/);
 });
 
-test('Blender meadow pack uses two opaque vertex-colored voxel meshes', () => {
+test('Blender meadow pack has a pixel sunflower and two segmented opaque grasses', () => {
   const glb = readFileSync(MEADOW_PLANTS_URL);
   const document = parseGlb(glb);
   assert.ok(glb.length >= 24 * 1024, 'meadow-plant GLB is suspiciously small or empty');
@@ -1370,39 +1355,30 @@ test('Blender meadow pack uses two opaque vertex-colored voxel meshes', () => {
   const sunflower = document.nodes?.find((node) => node.name === 'Sunflower_Asset');
   const grass = document.nodes?.find((node) => node.name === 'Short_Grass_Asset');
   assert.equal(pack?.extras?.asset_role, 'worldloom_meadow_plant_pack');
-  assert.equal(pack?.extras?.generator_version, '2.0.0');
-  assert.equal(pack?.extras?.representation, 'hard_pixel_vertex_colour_voxels');
+  assert.equal(pack?.extras?.generator_version, '3.0.0');
+  assert.equal(pack?.extras?.representation, 'segmented_blades_and_pixel_bloom');
   assert.equal(pack?.extras?.material_contract, 'opaque_flat_vertex_colours');
   assert.equal(pack?.extras?.alpha_contract, 'opaque_geometry_only');
   assert.equal(pack?.extras?.texture_contract, 'no_uv_no_texture');
-  assert.equal(pack?.extras?.runtime_draw_budget, 2);
-  assert.equal(sunflower?.extras?.asset_role, 'meadow_sunflower');
-  assert.equal(sunflower?.extras?.representation, 'crossed_16x16_vertex_color_voxel_relief');
-  assert.equal(sunflower?.extras?.logical_grid, '16x16');
-  assert.equal(sunflower?.extras?.logical_pixel_metres, 0.0575);
-  assert.equal(sunflower?.extras?.palette_colours, 8);
-  assert.equal(sunflower?.extras?.texture_contract, 'no_uv_no_texture');
+  assert.equal(pack?.extras?.runtime_draw_budget, 3);
+  assert.equal(sunflower?.extras?.asset_role, 'opaque_voxel_sunflower');
   assert.ok(
     sunflower.extras.authored_height_metres * meadowPlantScale('sunflower', 1) <= 1,
     'the visible sunflower bloom exceeds its one-block interaction volume',
   );
-  assert.equal(grass?.extras?.asset_role, 'meadow_short_grass');
-  assert.equal(grass?.extras?.representation, 'crossed_8x8_vertex_color_voxel_relief');
-  assert.equal(grass?.extras?.logical_grid, '8x8');
-  assert.equal(grass?.extras?.voxel_size_metres, 0.048);
-  assert.equal(grass?.extras?.palette_colours, 5);
-  assert.equal(grass?.extras?.occupied_pixels, 29);
-  assert.equal(grass?.extras?.texture_contract, 'no_uv_no_texture');
-  assert.ok(grass?.extras?.triangle_count > 24,
-    'short grass regressed to a few smooth tapered cards instead of voxel geometry');
-
-  const rootNames = ['Sunflower_Asset', 'Short_Grass_Asset'];
+  assert.equal(grass?.extras?.asset_role, 'opaque_meadow_short_grass');
+  const tall=document.nodes.find(n=>n.name==='Tall_Grass_Asset');
+  assert.ok(tall.extras.authored_height_metres>=.55 && tall.extras.authored_height_metres<=.85);
+  assert.equal(tall.extras.wind_root,0);
+  assert.ok(grass.extras.triangle_count<500);
+  assert.ok(tall.extras.triangle_count<500);
+  const rootNames = ['Sunflower_Asset', 'Short_Grass_Asset', 'Tall_Grass_Asset'];
   const primitives = rootNames.flatMap((name) => descendantNodeIndices(document, name))
     .flatMap((index) => {
       const mesh = document.meshes?.[document.nodes[index]?.mesh];
       return mesh?.primitives || [];
     });
-  assert.equal(primitives.length, 2, 'the meadow pack must bake to exactly two instanced draws');
+  assert.equal(primitives.length, 3, 'the meadow pack must bake to exactly three instanced draws');
   assert.ok(primitives.every((primitive) => (
     Number.isInteger(primitive.attributes?.POSITION)
     && Number.isInteger(primitive.attributes?.NORMAL)
@@ -1483,6 +1459,7 @@ test('meadow field instances live block data with opaque vertex-color materials'
   assert.deepEqual(scanMeadowPlantChunk(chunk), {
     sunflowers: [{ x: 1, y: 1, z: 1 }],
     shortGrass: [{ x: 2, y: 1, z: 2 }, { x: 3, y: 1, z: 2 }],
+    tallGrass: [],
   });
   field.setWorld({ seed: 64, chunks: new Map([['0,0', chunk]]) });
   await field.prepare();
@@ -1494,6 +1471,7 @@ test('meadow field instances live block data with opaque vertex-color materials'
     error: '',
     sunflowers: 1,
     shortGrass: 2,
+    tallGrass: 0,
     draws: 2,
     cachedChunks: 1,
     assetUrl: field.assetUrl,

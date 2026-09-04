@@ -1891,10 +1891,11 @@ function setupUIListeners() {
       }
     }, 9000);
     if (!worldloomFrame) return;
-    const source = btnPlayWorldloom?.dataset.worldloomPath || './worldloom/index.html';
+    const source = new URL(btnPlayWorldloom?.dataset.worldloomPath || './worldloom/index.html', window.location.href);
+    source.searchParams.set('portal', '1');
     if (forceReload) worldloomFrame.removeAttribute('src');
     if (!worldloomFrame.getAttribute('src')) {
-      worldloomFrame.setAttribute('src', source);
+      worldloomFrame.setAttribute('src', source.href);
     }
   };
 

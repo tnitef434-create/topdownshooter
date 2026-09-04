@@ -185,6 +185,37 @@ for tier,metal,shine,edge in [('crude','969c92','c3c6af','434b43'),('stone','818
     DATA[held.name]=dict(pivot=[0,0,0],position=positions,normal=normals,color=colors)
     held.hide_render=True
 
+# Thin extruded pixel porkchops, with clean coplanar colours on both faces.
+# The held variant includes the same wrist and sleeve as the pickaxe assembly.
+meat_pattern = [
+    '................', '.....######.....', '...##FFFFFF##...',
+    '..#FFLLLLLLFF#..', '.#FLLMMMMMMLLF#.', '.#FLMMMMMMMMLF#.',
+    '.#FLMMMLLMMMFF#.', '.#FLMMLFLLMMF#..', '..#FMMMFLLMMF#..',
+    '..#FMMMLLMMF#...', '...#FMMMMMF#....', '....#FFFFF#.....',
+    '.....#####......', '................', '................', '................',
+]
+for name,palette in [('raw',{'#':'743644','F':'f1b6aa','L':'e77981','M':'c85467'}),
+                     ('cooked',{'#':'4d2c21','F':'d79862','L':'bb6e3e','M':'8d4b32'})]:
+    boxes=[]
+    for row,line in enumerate(meat_pattern):
+        for col,ch in enumerate(line):
+            if ch=='.': continue
+            key=name+'_'+ch;TOOL_COLORS[key]=palette[ch]
+            boxes.append(([.04,.04,.032],[(col-7.5)*.04,(8-row)*.04,0],'tool_'+key))
+    meat=segment('tool_'+name+'_meat',[0,0,0],boxes)
+    held=segment('held_'+name+'_meat',[0,0,0],[([.25,.75,.25],[0,-.375,0],'held_arm')])
+    copy=meat.copy();copy.data=meat.data.copy();bpy.context.collection.objects.link(copy)
+    copy.location=xyz([0,.12,.04]);copy.rotation_euler.y=-.25
+    bpy.ops.object.select_all(action='DESELECT');held.select_set(True);copy.select_set(True);bpy.context.view_layer.objects.active=held;bpy.ops.object.join()
+    mesh=held.data;mesh.calc_loop_triangles();positions=[];normals=[];colors=[]
+    for tri in mesh.loop_triangles:
+        for li in tri.loops:
+            q=mesh.vertices[mesh.loops[li].vertex_index].co;n=mesh.polygons[tri.polygon_index].normal
+            positions.extend(round(v,5) for v in (q.x,q.z,-q.y));normals.extend(round(v,4) for v in (n.x,n.z,-n.y))
+            colors.extend(round(v,5) for v in mesh.color_attributes['Color'].data[li].color[:3])
+    DATA[held.name]=dict(pivot=[0,0,0],position=positions,normal=normals,color=colors)
+    held.hide_render=True;meat.hide_render=True
+
 # Blender preview clips use the same rigid shoulder/hip/neck pivots as the game.
 for obj in arms+legs+piglegs+[head,snout]:
     for frame in range(1,50,2):

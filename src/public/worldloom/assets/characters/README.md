@@ -11,3 +11,5 @@ Pig collision uses a rotated body envelope covering the snout, ears and tail, te
 The runtime uses these same rigid mesh pivots. Pig walking follows actual travel distance, with diagonal foot phases and ground compensation. Grazing blends the neck down, stops translation, checks the ground at the snout, removes a grass tuft or converts turf to loam, chews, and recovers. A hit applies a 0.2-second red tint and a damped, collision-checked recoil before fleeing. Each pig owns its material so the tint never affects the herd.
 
 Validation: `npm run test:worldloom`. For visual inspection, serve the repository root locally and open `tests/character-preview.html`.
+
+Raw and roasted porkchops use thin, coplanar pixel faces. Their `held_*_meat` meshes include the matching arm; `tool_*_meat` supplies drops. Fleeing pigs accelerate to 3.6 blocks/second, with distance-driven stride, larger leg arcs and faster collision-checked turns.

@@ -490,6 +490,7 @@ export class Inventory {
       }
     }
     for (const slot of this.slots) {
+      if (!remaining) break;
       if (!slot.id || slot.count <= 0) {
         const added = Math.min(99, remaining);
         slot.id = id;
@@ -498,7 +499,7 @@ export class Inventory {
         if (!remaining) break;
       }
     }
-    this.changed = remaining !== count;
+    this.changed ||= remaining !== count;
     return remaining;
   }
 

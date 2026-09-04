@@ -1,7 +1,6 @@
 import * as THREE from '../vendor/three.module.min.js';
 import { BLOCKS } from './blocks.js';
 import { getItem } from './data.js';
-import { createMergedVoxelGeometry } from './player-avatar.js';
 import { characterMesh } from './character-rig.js';
 
 function material(color, options = {}) {
@@ -75,97 +74,6 @@ function cylinder(parent, radius, height, position, color, rotation = [0, 0, 0],
   return mesh;
 }
 
-function voxelPart(size, position, color, rotation = [0, 0, 0], name = '') {
-  return { size, position, color, rotation, name };
-}
-
-function mergedVoxelMesh(parts, options = {}) {
-  const geometry = createMergedVoxelGeometry(parts);
-  const mesh = new THREE.Mesh(
-    geometry,
-    material(0xffffff, { ...options, vertexColors: true }),
-  );
-  mesh.userData.authoredVoxelParts = geometry.userData.voxelPartCount;
-  mesh.userData.voxelPaletteSize = geometry.userData.voxelPaletteSize;
-  return mesh;
-}
-
-function makePixelMeatModel(item) {
-  const group = new THREE.Group();
-  const cooked = item.cooked === true || /roast|cook/i.test(item.name || '');
-  const palette = cooked
-    ? {
-      outline: 0x3b1b16, rind: 0x71301f, meat: 0xad542e, light: 0xd47a3d,
-      fat: 0xe6a761, boneShade: 0x8d5b39, bone: 0xe7c78d, marrow: 0x744127,
-      accent: 0x2b1713,
-    }
-    : {
-      outline: 0x541f2b, rind: 0xa64c57, meat: 0xd45762, light: 0xf0837e,
-      fat: 0xf4b7aa, boneShade: 0x9f665f, bone: 0xf3d3bb, marrow: 0xad5861,
-      accent: 0xffc0ad,
-    };
-  const parts = [];
-
-  // The overlapping stepped slabs create an irregular steak silhouette using
-  // only cuboids. They are merged after authoring so 256 loose drops still cost
-  // one draw call each instead of thousands.
-  parts.push(
-    voxelPart([0.42, 0.2, 0.13], [-0.025, 0, 0], palette.outline, [0, 0, 0], 'outline centre'),
-    voxelPart([0.31, 0.29, 0.13], [-0.03, 0.005, 0], palette.outline, [0, 0, 0], 'outline crown'),
-    voxelPart([0.16, 0.2, 0.13], [0.21, -0.012, 0], palette.outline, [0, 0, 0], 'outline right step'),
-    voxelPart([0.13, 0.16, 0.13], [-0.245, -0.01, 0], palette.outline, [0, 0, 0], 'outline left step'),
-    voxelPart([0.36, 0.17, 0.03], [-0.025, -0.002, 0.079], palette.rind, [0, 0, 0], 'rind'),
-    voxelPart([0.25, 0.235, 0.03], [-0.035, 0.004, 0.079], palette.meat, [0, 0, 0], 'main cut'),
-    voxelPart([0.105, 0.14, 0.03], [0.19, -0.018, 0.079], palette.meat, [0, 0, 0], 'right cut'),
-    voxelPart([0.095, 0.1, 0.034], [-0.19, -0.038, 0.083], palette.light, [0, 0, 0], 'cut highlight'),
-  );
-
-  // Broken fat cap and square T-bone mirror the inventory silhouette.
-  parts.push(
-    voxelPart([0.19, 0.045, 0.04], [-0.12, 0.137, 0.088], palette.fat, [0, 0, 0], 'fat cap left'),
-    voxelPart([0.12, 0.04, 0.04], [0.05, 0.13, 0.088], palette.fat, [0, 0, 0], 'fat cap right'),
-    voxelPart([0.045, 0.13, 0.04], [-0.245, 0.035, 0.088], palette.fat, [0, 0, 0], 'fat cap edge'),
-    voxelPart([0.12, 0.045, 0.042], [0.09, 0.04, 0.091], palette.boneShade, [0, 0, 0], 'bone shade top'),
-    voxelPart([0.046, 0.16, 0.042], [0.11, -0.02, 0.091], palette.boneShade, [0, 0, 0], 'bone shade stem'),
-    voxelPart([0.14, 0.05, 0.042], [0.11, -0.09, 0.091], palette.boneShade, [0, 0, 0], 'bone shade base'),
-    voxelPart([0.076, 0.034, 0.047], [0.09, 0.04, 0.095], palette.bone, [0, 0, 0], 'bone top'),
-    voxelPart([0.028, 0.115, 0.047], [0.11, -0.02, 0.095], palette.bone, [0, 0, 0], 'bone stem'),
-    voxelPart([0.09, 0.032, 0.048], [0.11, -0.088, 0.096], palette.bone, [0, 0, 0], 'bone base'),
-    voxelPart([0.017, 0.08, 0.052], [0.11, -0.02, 0.1], palette.marrow, [0, 0, 0], 'marrow'),
-  );
-
-  if (cooked) {
-    for (let index = -1; index <= 1; index++) {
-      parts.push(voxelPart(
-        [0.025, 0.19, 0.018],
-        [-0.105 + index * 0.075, -0.005, 0.112],
-        palette.accent,
-        [0, 0, -0.66],
-        `sear mark ${index + 2}`,
-      ));
-    }
-    parts.push(voxelPart([0.055, 0.026, 0.02], [-0.205, 0.065, 0.113], palette.light, [0, 0, 0], 'roast glint'));
-  } else {
-    parts.push(
-      voxelPart([0.018, 0.15, 0.018], [-0.09, 0.002, 0.112], palette.accent, [0, 0, -0.54], 'marbling dark'),
-      voxelPart([0.018, 0.12, 0.018], [-0.015, -0.025, 0.112], palette.fat, [0, 0, -0.54], 'marbling pale'),
-      voxelPart([0.042, 0.026, 0.02], [-0.18, 0.07, 0.113], palette.accent, [0, 0, 0], 'moisture glint'),
-    );
-  }
-
-  group.name = cooked ? 'Pixel fire-roasted steak' : 'Pixel raw game steak';
-  group.userData.itemModel = 'pixel-bone-steak';
-  group.userData.cooked = cooked;
-  group.userData.authoredVoxelParts = parts.length;
-  group.userData.voxelPaletteSize = new Set(parts.map((entry) => entry.color)).size;
-  group.userData.drawMeshCount = 1;
-  const mesh = mergedVoxelMesh(parts, { roughness: cooked ? 0.94 : 0.8 });
-  mesh.name = `${group.name} merged voxel mesh`;
-  mesh.userData.itemModel = 'pixel-bone-steak';
-  group.add(mesh);
-  return group;
-}
-
 function makeToolModel(item, held = false) {
   const group = new THREE.Group();
   const handleColor = 0x8c5b37;
@@ -196,7 +104,14 @@ function makeToolModel(item, held = false) {
     group.add(tip);
     cylinder(group, 0.047, 0.075, [0, -0.44, 0], 0xd4b05f, [0, 0, 0], { metalness: 0.68, roughness: 0.26 });
   } else if (item.category === 'food') {
-    group.add(makePixelMeatModel(item));
+    const cooked = item.cooked === true || /roast|cook/i.test(item.name || '');
+    const mesh = characterMesh(`${held ? 'held' : 'tool'}_${cooked ? 'cooked' : 'raw'}_meat`, material(0xffffff, {vertexColors:true,roughness:.94}));
+    group.add(mesh);
+    group.name = cooked ? 'Blender roasted pixel porkchop' : 'Blender raw pixel porkchop';
+    group.userData = {authoredIn:'Blender',heldAssembly:held,itemModel:'pixel-porkchop',cooked,drawMeshCount:1};
+    group.rotation.set(-.32,-.18,-.12);
+    group.scale.setScalar(.8);
+    return finishModel(group);
   } else if (item.category === 'relic') {
     const core = new THREE.Mesh(
       new THREE.OctahedronGeometry(0.2, 1),

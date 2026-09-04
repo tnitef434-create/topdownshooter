@@ -1,0 +1,41 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>Worldloom meadow and held food preview</title>
+<style>body{margin:0;background:#b9cfd5;font:14px system-ui}nav{position:absolute;top:18px;left:18px;display:flex;gap:8px}button{border:0;background:#fffe;padding:12px 18px;border-radius:5px;cursor:pointer}output{position:absolute;bottom:18px;left:18px;background:#fffe;padding:12px;white-space:pre;font:12px monospace;max-width:70vw}canvas{display:block}</style>
+<nav><button id="wind">Pause wind</button><button id="raw">Hold raw porkchop</button><button id="cooked">Hold roasted porkchop</button><button id="empty">Empty hand</button><button id="swing">Swing</button><button id="flee">Hit pig</button><button id="walk">Walk through field</button></nav><output id="status">Loading Blender assets…</output>
+<script type="module">
+import * as THREE from '/src/public/worldloom/vendor/three.module.min.js';
+import { MeadowPlantField } from '/src/public/worldloom/src/meadow-plants.js';
+import { tallGrassFieldWeight } from '/src/public/worldloom/src/meadow-wind.js';
+import { HeldItemView } from '/src/public/worldloom/src/viewmodel.js';
+import { CreatureSystem } from '/src/public/worldloom/src/creatures.js';
+import { BLOCK } from '/src/public/worldloom/src/blocks.js';
+import { ITEM } from '/src/public/worldloom/src/data.js';
+const errors=[];const originalError=console.error;console.error=(...args)=>{errors.push(args.map(String).join(' '));originalError(...args);};
+window.addEventListener('error',e=>errors.push(e.message));
+const scene=new THREE.Scene();scene.background=new THREE.Color('#b9cfd5');scene.fog=new THREE.Fog('#b9cfd5',32,80);
+const camera=new THREE.PerspectiveCamera(75,innerWidth/innerHeight,.03,120);scene.add(camera);
+const renderer=new THREE.WebGLRenderer({antialias:true});renderer.setPixelRatio(Math.min(1.5,devicePixelRatio));renderer.setSize(innerWidth,innerHeight);renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;renderer.toneMapping=THREE.ACESFilmicToneMapping;document.body.append(renderer.domElement);
+scene.add(new THREE.HemisphereLight(0xd9eeff,0x72733d,2));
+const sun=new THREE.DirectionalLight(0xffedcd,2.8);sun.castShadow=true;sun.shadow.mapSize.set(2048,2048);Object.assign(sun.shadow.camera,{left:-20,right:20,top:20,bottom:-20,far:80});scene.add(sun,sun.target);
+let center;
+for(let z=-100;z<100&&!center;z++)for(let x=-100;x<100;x++)if(tallGrassFieldWeight(x,z,41)>.99){center=new THREE.Vector3(x,1,z);break;}
+camera.position.copy(center).add(new THREE.Vector3(0,1.6,7));camera.lookAt(center.clone().add(new THREE.Vector3(0,.5,-9)));sun.position.copy(center).add(new THREE.Vector3(-10,20,4));sun.target.position.copy(center);
+const ground=new THREE.Mesh(new THREE.PlaneGeometry(200,200),new THREE.MeshStandardMaterial({color:0x6d873f,roughness:1}));ground.rotation.x=-Math.PI/2;ground.position.copy(center);ground.receiveShadow=true;scene.add(ground);
+const chunks=new Map();for(let cz=Math.floor(center.z/16)-3;cz<=Math.floor(center.z/16)+3;cz++)for(let cx=Math.floor(center.x/16)-3;cx<=Math.floor(center.x/16)+3;cx++){
+ const blocks=new Uint8Array(16*16*10);for(let z=0;z<16;z++)for(let x=0;x<16;x++){blocks[x+16*z]=BLOCK.TURF;const n=Math.abs((cx*16+x)*13+(cz*16+z)*31);if(n%7===0)blocks[x+16*z+256]=BLOCK.SHORT_GRASS;if(n%193===0)blocks[x+16*z+256]=BLOCK.WILDFLOWER;}
+ const key=`${cx},${cz}`;chunks.set(key,{key,cx,cz,blocks,generated:true,wanted:true,revision:1});
+}
+const world={seed:41,chunks,worldHeight:10,terrainHeight:()=>0,isPositionRendered:()=>true,getBlock(x,y,z){const c=chunks.get(`${Math.floor(x/16)},${Math.floor(z/16)}`);return c?.blocks[((x%16)+16)%16+16*(((z%16)+16)%16)+256*y]??0;}};
+const field=new MeadowPlantField(scene);field.setWorld(world);await field.prepare();field.setQuality({atmosphereDetail:1});
+const held=new HeldItemView(camera,null);held.setItem(0);held.setVisible(true);
+const pigs=new CreatureSystem(scene,world);pigs._spawnTimer=Infinity;const pig=pigs._makePig(center.x+1,1,center.z+3,0);pigs._setState(pig,'idle',1000);
+let paused=false,walking=false,last=performance.now(),ticks=0,fps=60;
+document.querySelector('#wind').onclick=()=>{paused=!paused;document.querySelector('#wind').textContent=paused?'Resume wind':'Pause wind';};
+document.querySelector('#raw').onclick=()=>held.setItem(ITEM.RAW_MEAT);
+document.querySelector('#cooked').onclick=()=>held.setItem(ITEM.COOKED_MEAT);
+document.querySelector('#empty').onclick=()=>held.setItem(0);
+document.querySelector('#swing').onclick=()=>held.use();
+document.querySelector('#walk').onclick=()=>{walking=!walking;};
+document.querySelector('#flee').onclick=()=>{pig.root.position.copy(center).add(new THREE.Vector3(1,0,3));pig.heading=0;pig.targetHeading=0;pig.health=5;pigs._time+=1;const origin=pig.root.position.clone().add(new THREE.Vector3(0,.55,2));pigs.attack(origin,new THREE.Vector3(0,0,-1),4,1,.4);};
+function frame(now){requestAnimationFrame(frame);const dt=Math.min(.05,(now-last)/1000);last=now;if(walking)camera.position.z-=dt*1.8;field.update(paused?0:dt,camera.position.clone().add(new THREE.Vector3(0,-1.6,0)));pigs.update(dt,{position:camera.position});held.update(dt,{moving:walking?1.8:0});renderer.render(scene,camera);fps+=(1/Math.max(.001,dt)-fps)*.04;if(++ticks%15===0)document.querySelector('#status').textContent=JSON.stringify({assets:field.getStats(),fps:Math.round(fps),draws:renderer.info.render.calls,triangles:renderer.info.render.triangles,windTime:+field.windUniforms.time.value.toFixed(2),pigSpeed:+pig.speed.toFixed(2),pigState:pig.state,errors},null,2);}
+requestAnimationFrame(frame);window.onresize=()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);};
+</script></html>
