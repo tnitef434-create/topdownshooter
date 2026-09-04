@@ -3,7 +3,7 @@
 Run: blender --background --factory-startup --python tools/generate_voxel_characters.py
 No downloaded artwork, rigs, textures or add-ons are used.
 """
-import bpy, json, math
+import bpy, bmesh, json, math
 from pathlib import Path
 from mathutils import Vector
 
@@ -41,6 +41,7 @@ def pixel(kind, face, u, v, w, h):
         if face=='front' and u in (3,4): key='seam'
         if v==h-1 and u in (3,4): key='skin'
     elif kind == 'arm': key = 'tunic' if v>=8 or face=='top' else 'skin'
+    elif kind == 'held_arm': key = 'tunic' if v<4 or face=='bottom' else 'skin'
     elif kind == 'leg': key = 'boot' if v<3 else 'pants'
     elif kind == 'pig_leg': key = 'hoof' if v<1 else 'skin'
     elif kind == 'pig_head' and face=='front':
@@ -78,7 +79,7 @@ def segment(name, pivot, boxes, parent=None):
                     expected=[0,0,0]; expected[axis]=sign
                     if normal.dot(Vector(xyz(expected)))<0: quad.reverse()
                     start=len(verts); verts.extend(quad); faces.append(tuple(range(start,start+4)))
-                    colors.append(pixel(kind,label,u,v,nu,nv))
+                    colors.append(pixel(kind,label,v,u,nv,nu) if axis==0 else pixel(kind,label,u,v,nu,nv))
     mesh=bpy.data.meshes.new(name); mesh.from_pydata(verts,[],faces); mesh.update()
     attr=mesh.color_attributes.new(name='Color',type='FLOAT_COLOR',domain='CORNER')
     for poly,col in zip(mesh.polygons,colors):
@@ -152,6 +153,37 @@ for tier,metal,shine,edge in [('crude','969c92','c3c6af','434b43'),('stone','818
             key=tier+'_'+ch; TOOL_COLORS[key]=palette[ch]
             boxes.append(([.055,.055,.055],[(col-6)*.055,(15-row-6)*.055,0],'tool_'+key))
     pickaxes.append(segment('tool_'+tier+'_pick',[0,0,0],boxes))
+    # The held version is modeled around the closed fist in Blender and exported
+    # as ONE mesh. The shaft intersects the palm; it cannot drift independently.
+    assembly_boxes=[([.25,.75,.25],[0,-.375,0],'held_arm')]
+    # Rotate the diagonal sprite shaft upright with grid-preserving geometry.
+    # Each voxel retains its original rotation via the evaluated Blender mesh.
+    held=segment('held_'+tier+'_pick',[0,0,0],assembly_boxes)
+    tool=pickaxes[-1]
+    # Use Blender's mesh transform/join pipeline so the runtime is the exact assembly.
+    copy=tool.copy();copy.data=tool.data.copy();bpy.context.collection.objects.link(copy)
+    copy.rotation_euler.y=-math.pi/4
+    copy.scale=(.7,.7,.7);copy.location=xyz([0,-.075,0])
+    hand_faces=len(held.data.polygons)
+    bpy.ops.object.select_all(action='DESELECT');held.select_set(True);copy.select_set(True);bpy.context.view_layer.objects.active=held
+    bpy.ops.object.join()
+    # Remove shaft surfaces enclosed by the fist. The first-person pass suppresses
+    # world depth, so hidden interior polygons must not draw over the skin.
+    bm=bmesh.new();bm.from_mesh(held.data);bm.faces.ensure_lookup_table()
+    buried=[face for face in bm.faces if face.index>=hand_faces and all(abs(v.co.x)<=.1251 and abs(v.co.y)<=.1251 and -.7501<=v.co.z<=.0001 for v in face.verts)]
+    bmesh.ops.delete(bm,geom=buried,context='FACES');bm.to_mesh(held.data);bm.free();held.data.update()
+    mesh=held.data;mesh.calc_loop_triangles()
+    positions=[];normals=[];colors=[]
+    attr=mesh.color_attributes['Color']
+    for tri in mesh.loop_triangles:
+        for loopidx in tri.loops:
+            q=mesh.vertices[mesh.loops[loopidx].vertex_index].co
+            n=mesh.polygons[tri.polygon_index].normal
+            positions.extend(round(v,5) for v in (q.x,q.z,-q.y))
+            normals.extend(round(v,4) for v in (n.x,n.z,-n.y))
+            colors.extend(round(v,5) for v in attr.data[loopidx].color[:3])
+    DATA[held.name]=dict(pivot=[0,0,0],position=positions,normal=normals,color=colors)
+    held.hide_render=True
 
 # Blender preview clips use the same rigid shoulder/hip/neck pivots as the game.
 for obj in arms+legs+piglegs+[head,snout]:

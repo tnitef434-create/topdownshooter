@@ -7,6 +7,17 @@ const smooth = t => { t = clamp(t, 0, 1); return t*t*(3-2*t); };
 const angleDelta = (a,b) => Math.atan2(Math.sin(b-a), Math.cos(b-a));
 const LEGS = ['front_left','front_right','back_left','back_right'];
 
+function overlaps(a,b) {
+  if(a.maxY<=b.minY+.001 || a.minY>=b.maxY-.001) return false;
+  const axes=r=>[[Math.cos(r.yaw),-Math.sin(r.yaw)],[Math.sin(r.yaw),Math.cos(r.yaw)]];
+  const aa=axes(a),bb=axes(b),dx=b.x-a.x,dz=b.z-a.z;
+  for(const [x,z] of [...aa,...bb]) {
+    const radius=r=>r.halfX*Math.abs(x*Math.cos(r.yaw)-z*Math.sin(r.yaw))+r.halfZ*Math.abs(x*Math.sin(r.yaw)+z*Math.cos(r.yaw));
+    if(Math.abs(dx*x+dz*z)>=radius(a)+radius(b)-.001) return false;
+  }
+  return true;
+}
+
 /** One original species; no imported animals, night monsters or flying wildlife. */
 export class CreatureSystem {
   constructor(scene, world) {
@@ -31,17 +42,28 @@ export class CreatureSystem {
     }
     return null;
   }
-  _canOccupy(x,y,z) {
+  _canOccupy(x,y,z,heading=0) {
     if (!Number.isFinite(y)) return false;
-    // Validate the full footprint against water, ledges and unpublished chunks.
-    for (const dx of [-.34,.34]) for (const dz of [-.59,.59]) {
-      if (!this._hasVisibleTerrain(x+dx,z+dz)) return false;
-      const ground=this._groundHeight(x+dx,z+dz,y);
+    const s=Math.sin(heading),c=Math.cos(heading);
+    // The rotated envelope includes the snout, ears and tail, not just the torso.
+    const bounds={x:x-.16*s,z:z-.16*c,minY:y+.015,maxY:y+1.08,halfX:.36,halfZ:.9,yaw:heading};
+    for (const dx of [-.22,.22]) for (const dz of [-.32,.32]) {
+      const px=x+dx*c+dz*s,pz=z-dx*s+dz*c;
+      if (!this._hasVisibleTerrain(px,pz)) return false;
+      const ground=this._groundHeight(px,pz,y);
       if (ground===null || Math.abs(ground-y)>.55) return false;
-      for (const h of [.05,.7]) {
-        const id=this.world?.getBlock?.(Math.floor(x+dx),Math.floor(y+h),Math.floor(z+dz));
-        if (isSolid(id)||isLiquid(id)) return false;
+    }
+    for(let bx=Math.floor(x-1.3);bx<=Math.floor(x+1.3);bx++) for(let bz=Math.floor(z-1.3);bz<=Math.floor(z+1.3);bz++) {
+      const column={x:bx+.5,z:bz+.5,minY:y,maxY:y+2,halfX:.5,halfZ:.5,yaw:0};
+      if(!overlaps(bounds,column)) continue;
+      if(!this._hasVisibleTerrain(bx+.5,bz+.5)) return false;
+      for(let by=Math.floor(y+.015);by<=Math.floor(y+1.08);by++) {
+        const id=this.world?.getBlock?.(bx,by,bz);
+        if((isSolid(id)||isLiquid(id)) && overlaps(bounds,{...column,minY:by,maxY:by+blockShapeHeight(id)})) return false;
       }
+    }
+    for(const collider of this.world?.getForestFloorCollidersNear?.(x,z,1.5)||[]) {
+      if(overlaps(bounds,{...collider,yaw:collider.yaw||0})) return false;
     }
     return true;
   }
@@ -55,11 +77,13 @@ export class CreatureSystem {
   }
   _makePig(x,y,z,seed=0) {
     const rig=makePigRig(); rig.root.position.set(x,y,z);
+    const desiredHeading=(seed%100)*.0628;
+    const heading=this._canOccupy(x,y,z,desiredHeading)?desiredHeading:0;
     const pig={...rig,id:this._nextId++,type:'pig',name:'Meadow pig',health:5,maxHealth:5,
       centerHeight:.55,radius:.64,dead:false,state:'idle',stateTime:0,stateDuration:2,
-      speed:0,desiredSpeed:0,heading:(seed%100)*.0628,targetHeading:(seed%100)*.0628,
+      speed:0,desiredSpeed:0,heading,targetHeading:heading,
       gait:0,gaitBlend:0,grazeBlend:0,bites:0,chewTime:0,hitTime:0,deathTime:0,
-      ground:y,randomPhase:seed*.31,foodTarget:null,knockbackX:0,knockbackZ:0,flashTime:0};
+      ground:y,randomPhase:seed*.31,foodTarget:null,knockbackX:0,knockbackZ:0,flashTime:0,avoidTime:0,blockedTime:0};
     rig.root.rotation.y=pig.heading;
     this.scene?.add(rig.root); this.creatures.push(pig); return pig;
   }
@@ -139,7 +163,8 @@ export class CreatureSystem {
   }
   _move(pig,dt,player) {
     const turn=clamp(angleDelta(pig.heading,pig.targetHeading),-dt*1.8,dt*1.8);
-    if (pig.state!=='graze') pig.heading+=turn;
+    // Turning itself can put the long snout into a wall, so validate rotation too.
+    if (pig.state!=='graze' && this._canOccupy(pig.root.position.x,pig.ground,pig.root.position.z,pig.heading+turn)) pig.heading+=turn;
     pig.root.rotation.y=pig.heading;
     let target=pig.desiredSpeed;
     if (Math.abs(angleDelta(pig.heading,pig.targetHeading))>.8) target*=.3;
@@ -154,17 +179,43 @@ export class CreatureSystem {
     const z=pig.root.position.z-Math.cos(pig.heading)*distance+recoilZ;
     const y=this._groundHeight(x,z,pig.ground);
     const crowded=this.creatures.some(other=>other!==pig&&!other.dead&&Math.hypot(other.root.position.x-x,other.root.position.z-z)<1.15);
-    if (y!==null && Math.abs(y-pig.ground)<.56 && this._canOccupy(x,y,z) && !crowded) {
+    if (y!==null && Math.abs(y-pig.ground)<.56 && this._canOccupy(x,y,z,pig.heading) && !crowded) {
       pig.root.position.x=x; pig.root.position.z=z; pig.ground=y;
+      pig.blockedTime=0;
     } else {
       distance=0; pig.speed=0;
-      pig.targetHeading=pig.heading+(this._random()>.5?1:-1)*1.3;
-      if (pig.state==='walk') pig.stateDuration=pig.stateTime+.6;
+      pig.blockedTime+=dt;
+      // Hold a chosen avoidance direction instead of changing it randomly every frame.
+      if(pig.avoidTime<=0) {
+        for(const offset of [.65,-.65,1.3,-1.3,Math.PI]) {
+          const h=pig.heading+offset,px=pig.root.position.x-Math.sin(h)*.4,pz=pig.root.position.z-Math.cos(h)*.4;
+          if(this._canOccupy(px,pig.ground,pz,h)) {pig.targetHeading=h;break;}
+        }
+        pig.avoidTime=.8;
+      }
+      const bx=pig.root.position.x+Math.sin(pig.heading)*dt*.65,bz=pig.root.position.z+Math.cos(pig.heading)*dt*.65;
+      if(this._canOccupy(bx,pig.ground,bz,pig.heading)) {pig.root.position.x=bx;pig.root.position.z=bz;distance=-dt*.65;}
     }
+    pig.avoidTime=Math.max(0,pig.avoidTime-dt);
     pig.root.position.y+=(pig.ground-pig.root.position.y)*(1-Math.exp(-dt*16));
     // Actual displacement drives the stride; blocked pigs do not walk in place.
     pig.gait+=distance/.72*Math.PI*2;
-    pig.gaitBlend+=((distance>1e-5?Math.min(1,pig.speed/.7):0)-pig.gaitBlend)*(1-Math.exp(-dt*14));
+    pig.gaitBlend+=((Math.abs(distance)>1e-5?Math.min(1,Math.abs(distance)/dt/.7):0)-pig.gaitBlend)*(1-Math.exp(-dt*14));
+  }
+
+  _recover(pig) {
+    if(this._canOccupy(pig.root.position.x,pig.ground,pig.root.position.z,pig.heading)) return true;
+    // Repair newly placed blocks or older intersecting spawns at the nearest clear pose.
+    for(let radius=.2;radius<=2.01;radius+=.2) for(let i=0;i<12;i++) {
+      const angle=pig.heading+Math.PI+i*Math.PI/6;
+      const x=pig.root.position.x-Math.sin(angle)*radius,z=pig.root.position.z-Math.cos(angle)*radius;
+      const y=this._groundHeight(x,z,pig.ground);
+      if(y!==null && Math.abs(y-pig.ground)<.56 && this._canOccupy(x,y,z,pig.heading)) {
+        pig.root.position.set(x,y,z);pig.ground=y;pig.speed=0;pig.gaitBlend=0;
+        this._setState(pig,'idle',.5);return true;
+      }
+    }
+    return false;
   }
   _animate(pig,dt) {
     pig.flashTime=Math.max(0,pig.flashTime-dt);
@@ -195,6 +246,7 @@ export class CreatureSystem {
       if (pig.root.position.distanceToSquared(player.position)>96*96) { this._removeCreature(pig); continue; }
       pig.root.visible=this._hasVisibleTerrain(pig.root.position.x,pig.root.position.z);
       if (!pig.root.visible) continue;
+      if(!pig.dead && !this._recover(pig)) {this._removeCreature(pig);continue;}
       pig.stateTime+=dt; pig.hitTime=Math.max(0,pig.hitTime-dt);
       if (pig.dead) {
         pig.flashTime=Math.max(0,pig.flashTime-dt);

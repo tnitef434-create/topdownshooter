@@ -383,7 +383,7 @@ export class ForestFloorField {
         disposeRuntimePack(this.pack);
         this.pack = pack;
         pack.meshes.forEach((mesh) => this.group.add(mesh));
-        this.group.add(pack.insects);
+        // Wildlife is exclusively meadow pigs; insect geometry is not attached.
         this.ready = true;
         this.failed = false;
         this.error = null;
@@ -489,7 +489,7 @@ export class ForestFloorField {
         || (item.kind === 'stump' ? 0.755 : 0.515),
     }));
     this.mushrooms = this.items.filter((item) => item.mushrooms);
-    this.insectAnchors = this.items.filter((item) => item.insects).slice(0, this.insectAnchorLimit);
+    this.insectAnchors = [];
     this._lastFocus.copy(focus);
     this._lastStreamRevision = Number(this.world.streamRevision) || 0;
     this._lastEditRevision = Number(this.world.editRevision) || 0;

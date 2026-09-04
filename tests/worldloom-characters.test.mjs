@@ -146,12 +146,41 @@ test('all pickaxe tiers use one matching Blender pixel mesh and remain attached 
   for(const id of [ITEM.CRUDE_PICK,ITEM.STONE_PICK,ITEM.COPPER_PICK]) {
     held.setItem(id);held.setVisible(true);
     assert.equal(held.model.userData.authoredIn,'Blender');
+    assert.equal(held.model.userData.heldAssembly,true);
     assert.equal(held.model.children.length,1);
     assert.ok(held.model.children[0].geometry.attributes.color.count>100);
     const local=held.model.position.clone();
     held.use();for(let i=0;i<30;i++)held.update(1/60);
     assert.deepEqual(held.model.position.toArray(),local.toArray());
     assert.equal(held.model.parent,held.itemArm.parent);
+    assert.equal(held.itemArm.visible,false,'the Blender assembly includes the only gripping arm');
   }
   held.dispose();
+});
+
+test('pig snout cannot enter walls, rotation validates the full body, and an obstructed spawn recovers',()=>{
+  const {system,pig,player,world}=fixture();
+  const original=world.getBlock;
+  world.getBlock=(x,y,z)=>z<0&&y>=11?BLOCK.STONE:original(x,y,z);
+  assert.equal(system._canOccupy(.5,11,.5,0),false,'snout intersects wall before torso does');
+  system.update(1/60,player);
+  assert.ok(pig.root.position.z>=1.05,'old overlapping pose is pushed into free space');
+  for(let i=0;i<360;i++) {system.update(1/60,player);assert.ok(system._canOccupy(pig.root.position.x,pig.ground,pig.root.position.z,pig.heading));}
+  world.getBlock=(x,y,z)=>x<0&&y>=11?BLOCK.STONE:original(x,y,z);
+  assert.equal(system._canOccupy(.5,11,3,0),true);
+  assert.equal(system._canOccupy(.5,11,3,Math.PI/2),false,'turning a long snout also needs clearance');
+  pig.root.position.set(.5,11,3);pig.heading=0;pig.targetHeading=Math.PI/2;pig.desiredSpeed=0;
+  for(let i=0;i<90;i++){system._move(pig,1/60,player);assert.ok(system._canOccupy(pig.root.position.x,11,pig.root.position.z,pig.heading));}
+  system.dispose();
+});
+
+test('pig respects raised obstacles and Blender forest props, not just full voxel walls',()=>{
+  const {system,world}=fixture();
+  const original=world.getBlock;
+  world.getBlock=(x,y,z)=>y===12?BLOCK.STONE:original(x,y,z);
+  assert.equal(system._canOccupy(.5,11,.5,0),false,'ears must clear low ceilings');
+  world.getBlock=original;
+  world.getForestFloorCollidersNear=()=>[{x:.5,z:-.25,minY:11,maxY:11.8,halfX:.25,halfZ:.3,yaw:.4}];
+  assert.equal(system._canOccupy(.5,11,.5,0),false,'snout cannot pass through a log or stump');
+  system.dispose();
 });

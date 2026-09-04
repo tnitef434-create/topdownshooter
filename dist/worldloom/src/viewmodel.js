@@ -166,19 +166,20 @@ function makePixelMeatModel(item) {
   return group;
 }
 
-function makeToolModel(item) {
+function makeToolModel(item, held = false) {
   const group = new THREE.Group();
   const handleColor = 0x8c5b37;
   if (item.tool === 'pickaxe') {
     const tier = /copper/i.test(item.name) ? 'copper' : /stone/i.test(item.name) ? 'stone' : 'crude';
-    const mesh = characterMesh(`tool_${tier}_pick`, material(0xffffff, { vertexColors: true, roughness: .9 }));
+    const mesh = characterMesh(`${held ? 'held' : 'tool'}_${tier}_pick`, material(0xffffff, { vertexColors: true, roughness: .9 }));
     mesh.castShadow = false;
     group.add(mesh);
     group.name = `Blender pixel ${tier} pickaxe`;
     group.userData.authoredIn = 'Blender';
-    group.position.set(-.04, -.11, -.04);
-    group.rotation.set(-.1,-.32,.08);
-    group.scale.setScalar(.6);
+    group.userData.heldAssembly = held;
+    group.position.set(0, -.03, 0);
+    group.rotation.set(-.32,-.18,-.12);
+    group.scale.setScalar(held ? .8 : .6);
     return finishModel(group);
   } else if (item.tool === 'axe') {
     cylinder(group, 0.031, 0.5, [0.02, -0.07, 0], handleColor, [0, 0, -0.34], { roughness: 0.78 });
@@ -322,10 +323,10 @@ export class HeldItemView {
     // earlier permanent cube obscured cave detail and made every empty-hand
     // moment look like a placement preview. Tools, weapons, food and relics
     // retain a proper first-person model.
-    this.model = id && !block?.tiles ? makeToolModel(item) : null;
+    this.model = id && !block?.tiles ? makeToolModel(item, true) : null;
     if (this.model) this.root.add(this.model);
     this.actionHand.visible = !this.model;
-    this.itemArm.visible = Boolean(this.model);
+    this.itemArm.visible = Boolean(this.model && !this.model.userData.heldAssembly);
     this.root.visible = this.presentationVisible;
   }
 
@@ -353,7 +354,7 @@ export class HeldItemView {
     this.root.rotation.z += (this.restRotation.z+arc*.12-this.root.rotation.z)*ease;
     if (this.model && getItem(this.itemId).category === 'relic') this.model.rotation.y += dt*1.4;
     this.actionHand.visible = !this.model;
-    this.itemArm.visible = Boolean(this.model);
+    this.itemArm.visible = Boolean(this.model && !this.model.userData.heldAssembly);
     this.root.visible = this.presentationVisible;
   }
 

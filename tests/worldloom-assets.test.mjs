@@ -1771,7 +1771,7 @@ function createTestForestFloorGltf() {
   return { scene, animations: [] };
 }
 
-test('forest-floor field instances every habitat prop, darkens in rain, and batches rare insects', async () => {
+test('forest-floor field instances every habitat prop, darkens in rain, and excludes insects', async () => {
   const scene = new THREE.Scene();
   let descriptors = [
     { key: 'log', kind: 'fallen_log', x: 0, y: 1, z: 0, yaw: 0.2, scale: 1, wetnessSeed: 0.2, mushrooms: true, insects: true },
@@ -1817,9 +1817,9 @@ test('forest-floor field instances every habitat prop, darkens in rain, and batc
     rocks: 1,
   });
   assert.equal(dry.mushrooms, 2);
-  assert.equal(dry.insectAnchors, 1, 'non-log props must never acquire crawling insects');
-  assert.equal(dry.insectDots, 3);
-  assert.equal(dry.draws, 8, 'six prop draws, mushrooms, and one point draw should be the ceiling here');
+  assert.equal(dry.insectAnchors, 0, 'retired insects must never spawn');
+  assert.equal(dry.insectDots, 0);
+  assert.equal(dry.draws, 7, 'six prop draws and mushrooms remain, with no insect draw');
   assert.equal(dry.vertexColours, true);
   assert.equal(dry.opaque, true);
   field.pack.meshes.forEach((mesh) => {
