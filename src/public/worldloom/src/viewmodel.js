@@ -41,6 +41,12 @@ function finishModel(group) {
     if (!node.isMesh) return;
     node.renderOrder = 1000;
     node.frustumCulled = false;
+    // Water renders after the opaque list regardless of opaque renderOrder.
+    // Put the fully opaque viewmodel in the final transparent queue so water
+    // cannot paint through an arm whose world-depth writes are disabled.
+    for (const entry of Array.isArray(node.material) ? node.material : [node.material]) {
+      entry.transparent = true;
+    }
   });
   return group;
 }
@@ -188,6 +194,7 @@ export function createDroppedItemModel(id, atlas) {
     for (const entry of materials) {
       if (!entry) continue;
       entry.depthTest = true;
+      entry.transparent = entry.opacity < 1;
       entry.depthWrite = !entry.transparent;
       entry.needsUpdate = true;
     }

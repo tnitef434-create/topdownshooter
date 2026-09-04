@@ -3,6 +3,7 @@ import { GLTFLoader } from '../vendor/GLTFLoader.js';
 import { mergeGeometries } from '../vendor/BufferGeometryUtils.js';
 import { BLOCK } from './blocks.js';
 import { attachMeadowWind, tallGrassFieldWeight } from './meadow-wind.js';
+import { hasPlantGround, selectStablePlants } from './plant-visibility.js';
 
 const ASSET_URL = new URL('../assets/environment/meadow-plants.glb', import.meta.url).href;
 const DEFAULT_LOAD_TIMEOUT_MS = 8_000;
@@ -576,27 +577,23 @@ export class MeadowPlantField {
       });
     const sunflowers = [];
     const grasses = [], tallGrasses = [];
-    const append = (target, entries, limit) => {
+    const append = (target, entries) => {
       for (const entry of entries) {
-        if (target.length >= limit) break;
-        if (this.world.isPositionRendered && !this.world.isPositionRendered(entry.x+.5,entry.z+.5)) continue;
+        if (!hasPlantGround(this.world,entry.x+.5,entry.z+.5)) continue;
         const distanceSq = (entry.x + 0.5 - focus.x) ** 2 + (entry.z + 0.5 - focus.z) ** 2;
         if (distanceSq <= radiusSq) target.push({ ...entry, distanceSq });
       }
     };
     for (const chunk of chunks) {
       const plants = this._chunkPlants(chunk);
-      append(sunflowers, plants.sunflowers, this.sunflowerLimit);
-      append(grasses, plants.shortGrass, this.grassLimit);
-      append(tallGrasses, plants.tallGrass, Math.ceil(this.tallGrassLimit/3));
-      if (sunflowers.length >= this.sunflowerLimit && grasses.length >= this.grassLimit && tallGrasses.length >= this.tallGrassLimit/3) break;
+      append(sunflowers, plants.sunflowers);
+      append(grasses, plants.shortGrass);
+      append(tallGrasses, plants.tallGrass);
     }
-    sunflowers.sort((a, b) => a.distanceSq - b.distanceSq);
-    grasses.sort((a, b) => a.distanceSq - b.distanceSq);
-    this.sunflowers = sunflowers.slice(0, this.sunflowerLimit);
-    this.grasses = grasses.slice(0, this.grassLimit);
-    tallGrasses.sort((a,b)=>a.distanceSq-b.distanceSq);
-    this.tallGrasses = tallGrasses.flatMap(entry=>Array.from({length:1+Math.floor(entry.density*2)},(_,clump)=>({...entry,clump}))).slice(0,this.tallGrassLimit);
+    this.sunflowers = selectStablePlants(sunflowers,this.sunflowers,this.sunflowerLimit);
+    this.grasses = selectStablePlants(grasses,this.grasses,this.grassLimit);
+    this.tallGrasses = selectStablePlants(tallGrasses,this.tallGrasses,this.tallGrassLimit)
+      .flatMap(entry=>Array.from({length:1+Math.floor(entry.density*2)},(_,clump)=>({...entry,clump}))).slice(0,this.tallGrassLimit);
     const liveKeys = new Set(this.world.chunks.keys());
     for (const key of this.chunkCache.keys()) {
       if (!liveKeys.has(key)) this.chunkCache.delete(key);

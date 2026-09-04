@@ -1,0 +1,30 @@
+<!doctype html><html><meta charset="utf-8"><title>Worldloom automated nature render</title><style>body{margin:0;background:#abc8d1}canvas{display:block}</style><script type="module">
+import * as THREE from '/src/public/worldloom/vendor/three.module.min.js';
+import { HeldItemView } from '/src/public/worldloom/src/viewmodel.js';
+import { ITEM } from '/src/public/worldloom/src/data.js';
+import { BLOCK } from '/src/public/worldloom/src/blocks.js';
+import { SandWindField,sandGustAt } from '/src/public/worldloom/src/sand-wind.js';
+const renderer=new THREE.WebGLRenderer({antialias:false,preserveDrawingBuffer:true});renderer.setSize(1000,700);document.body.append(renderer.domElement);
+const scene=new THREE.Scene(),camera=new THREE.PerspectiveCamera(75,1000/700,.03,100);scene.add(camera,new THREE.AmbientLight(0xffffff,2));scene.background=new THREE.Color(0);
+const held=new HeldItemView(camera,null);held.setVisible(true);
+const water=new THREE.Mesh(new THREE.PlaneGeometry(30,30),new THREE.MeshBasicMaterial({color:0x1695db,transparent:true,opacity:.7,depthWrite:false}));water.position.z=-3;water.renderOrder=2;
+const target=new THREE.WebGLRenderTarget(1000,700),read=()=>{renderer.setRenderTarget(target);renderer.render(scene,camera);const data=new Uint8Array(1000*700*4);renderer.readRenderTargetPixels(target,0,0,1000,700,data);return data;};
+const results=[];
+for(const id of [0,ITEM.RAW_MEAT,ITEM.COOKED_MEAT,ITEM.CRUDE_PICK,ITEM.STONE_PICK,ITEM.COPPER_PICK]) {
+ held.setItem(id);scene.remove(water);const base=read();scene.add(water);const wet=read();let covered=0,changed=0;
+ for(let i=0;i<base.length;i+=4)if(base[i]+base[i+1]+base[i+2]>20){covered++;if(base[i]!==wet[i]||base[i+1]!==wet[i+1]||base[i+2]!==wet[i+2])changed++;}
+ results.push({id,covered,changed});
+}
+held.dispose();scene.remove(water);target.dispose();renderer.setRenderTarget(null);
+scene.background=new THREE.Color('#aac9d3');scene.fog=new THREE.Fog('#aac9d3',28,80);
+camera.position.set(7,3.3,15);camera.lookAt(0,1,-7);
+const floor=new THREE.Mesh(new THREE.PlaneGeometry(100,100),new THREE.MeshStandardMaterial({color:0xcbb780,roughness:1}));floor.rotation.x=-Math.PI/2;floor.position.y=1;scene.add(floor);
+const sun=new THREE.DirectionalLight(0xffe0ae,1.3);sun.position.set(-10,12,8);scene.add(sun);
+const world={seed:41,hasVisibleTerrainAt:()=>true,terrainHeight:()=>0,getBlock:(x,y,z)=>y<=0?BLOCK.SAND:BLOCK.AIR};
+const sand=new SandWindField(scene);sand.setWorld(world);sand.setQuality({atmosphereDetail:1});
+let peak=0;for(let t=0;t<200;t++)if(sandGustAt(0,0,t,41).strength>.9){peak=t;break;}
+sand.time=peak;for(let i=0;i<80;i++)sand.update(.05,new THREE.Vector3(0,1,0),{dayAmount:1});
+renderer.render(scene,camera);
+window.natureResult={water:results,sand:sand.getStats(),triangles:renderer.info.render.triangles};
+window.sandRender=(seconds)=>{for(let t=0;t<seconds;t+=.05)sand.update(.05,new THREE.Vector3(0,1,0),{dayAmount:1});renderer.render(scene,camera);return sand.getStats();};
+</script></html>

@@ -8,6 +8,7 @@ import { GroundLeafField } from './ground-leaves.js';
 import { ForestFloorField } from './forest-floor.js';
 import { RedFlowerField } from './red-flowers.js';
 import { MeadowPlantField } from './meadow-plants.js';
+import { SandWindField } from './sand-wind.js';
 import { SummitCrossField } from './summit-crosses.js';
 import { atmosphericFogRange } from './fog.js';
 
@@ -1521,6 +1522,7 @@ export class Environment {
     this.hangingLeaves = new HangingLeavesField(scene, this.graphicsUniforms);
     this.redFlowers = new RedFlowerField(scene);
     this.meadowPlants = new MeadowPlantField(scene);
+    this.sandWind = new SandWindField(scene);
     // Wildlife is owned exclusively by the custom pig system.
     this.summitCrosses = new SummitCrossField(scene);
     this.localLights = Array.from({ length: 8 }, (_, index) => {
@@ -1550,6 +1552,7 @@ export class Environment {
     this.hangingLeaves.setWorld(this.weatherWorld);
     this.redFlowers.setWorld(this.weatherWorld);
     this.meadowPlants.setWorld(this.weatherWorld);
+    this.sandWind.setWorld(this.weatherWorld);
     this.summitCrosses.setWorld(this.weatherWorld);
     if (worldChanged) this._resetWeatherCycle(Boolean(this.weatherWorld));
   }
@@ -1655,6 +1658,7 @@ export class Environment {
     this.pondEcology.setQuality(profile, settings.reducedMotion);
     this.hangingLeaves.setQuality(profile, settings.reducedMotion);
     this.meadowPlants.setQuality(profile, settings.reducedMotion);
+    this.sandWind.setQuality(profile, settings.reducedMotion, this.weatherEnabled);
     this.summitCrosses.setQuality(profile);
     this.graphicsUniforms.windStrength.value = settings.reducedMotion ? 0.22 : 1;
 
@@ -2236,6 +2240,7 @@ export class Environment {
     this.hangingLeaves.update(dt, focus, context);
     this.redFlowers.update(dt, focus);
     this.meadowPlants.update(dt, focus);
+    this.sandWind.update(dt, focus, {...context, rainIntensity:this.rainIntensity, skyExposure:this.skyExposure, dayAmount:this.dayAmount});
     this.summitCrosses.update(dt, focus, viewDistance);
 
     const lightningEvent = this.lightning.update(
