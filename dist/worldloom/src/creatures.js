@@ -1,1780 +1,247 @@
 import * as THREE from '../vendor/three.module.min.js';
-import { GLTFLoader } from '../vendor/GLTFLoader.js';
-import { clone as cloneSkeleton } from '../vendor/SkeletonUtils.js';
-import { isLiquid, isSolid, blockShapeHeight } from './blocks.js';
+import { BLOCK, isLiquid, isSolid, blockShapeHeight } from './blocks.js';
+import { makePigRig, disposeCharacter } from './character-rig.js';
 
-const MAX_CREATURES = 14;
-const MIN_SPAWN_RADIUS = 38;
-const MAX_SPAWN_RADIUS = 66;
-const DESPAWN_DISTANCE_SQ = 96 * 96;
-const PLAYER_DAMAGE_INTERVAL = 0.46;
-const GRAVITY = 21;
+const clamp = THREE.MathUtils.clamp;
+const smooth = t => { t = clamp(t, 0, 1); return t*t*(3-2*t); };
+const angleDelta = (a,b) => Math.atan2(Math.sin(b-a), Math.cos(b-a));
+const LEGS = ['front_left','front_right','back_left','back_right'];
 
-export const CREATURE_COMBAT = Object.freeze({
-  bramblehog: Object.freeze({
-    damage: 0.22,
-    windup: 0.34,
-    duration: 0.82,
-    cooldown: 1.38,
-    range: 2.08,
-    knockback: 4.9,
-  }),
-  gloomling: Object.freeze({
-    damage: 0.18,
-    windup: 0.28,
-    duration: 0.7,
-    cooldown: 1.16,
-    range: 1.92,
-    knockback: 4.25,
-  }),
-});
-
-export function creatureCombatProfile(type) {
-  return CREATURE_COMBAT[type] ?? CREATURE_COMBAT.gloomling;
-}
-
-const QUATERNIUS_SOURCE = 'https://quaternius.com/packs/ultimateanimatedanimals.html';
-
-export const LICENSED_ANIMAL_ASSETS = Object.freeze({
-  alpaca: Object.freeze({
-    key: 'alpaca', name: 'Alpaca', file: 'alpaca.gltf', targetHeight: 1.62,
-    source: QUATERNIUS_SOURCE, license: 'CC0-1.0',
-  }),
-  bull: Object.freeze({
-    key: 'bull', name: 'Bull', file: 'bull.gltf', targetHeight: 1.48,
-    source: QUATERNIUS_SOURCE, license: 'CC0-1.0',
-  }),
-  cow: Object.freeze({
-    key: 'cow', name: 'Cow', file: 'cow.gltf', targetHeight: 1.42,
-    source: QUATERNIUS_SOURCE, license: 'CC0-1.0',
-  }),
-  deer: Object.freeze({
-    key: 'deer', name: 'Deer', file: 'deer.gltf', targetHeight: 1.58,
-    source: QUATERNIUS_SOURCE, license: 'CC0-1.0',
-  }),
-  fox: Object.freeze({
-    key: 'fox', name: 'Fox', file: 'fox.gltf', targetHeight: 0.78,
-    source: QUATERNIUS_SOURCE, license: 'CC0-1.0',
-  }),
-  wolf: Object.freeze({
-    key: 'wolf', name: 'Wolf', file: 'wolf.gltf', targetHeight: 0.98,
-    source: QUATERNIUS_SOURCE, license: 'CC0-1.0',
-  }),
-});
-
-const CREATURE_ASSET_POOLS = Object.freeze({
-  dapple: Object.freeze(['deer', 'cow', 'fox']),
-  bramblehog: Object.freeze(['bull']),
-  dunetail: Object.freeze(['alpaca']),
-  gloomling: Object.freeze(['wolf']),
-});
-
-const STATE_CLIP_CANDIDATES = Object.freeze({
-  attack: Object.freeze(['Attack', 'Attack_Headbutt', 'Attack_Kick']),
-  death: Object.freeze(['Death']),
-  hit: Object.freeze(['Idle_HitReact1', 'Idle_HitReact2']),
-  graze: Object.freeze(['Eating', 'Idle_Headlow', 'Idle_2_HeadLow']),
-  root: Object.freeze(['Eating', 'Idle_Headlow', 'Idle_2_HeadLow']),
-  peck: Object.freeze(['Eating', 'Idle_Headlow', 'Idle_2_HeadLow']),
-  charge: Object.freeze(['Gallop', 'Walk']),
-  chase: Object.freeze(['Gallop', 'Walk']),
-  flee: Object.freeze(['Gallop', 'Walk']),
-  sprint: Object.freeze(['Gallop', 'Walk']),
-  wander: Object.freeze(['Walk', 'Idle']),
-  guard: Object.freeze(['Idle_2', 'Idle']),
-  scan: Object.freeze(['Idle_2', 'Idle']),
-  idle: Object.freeze(['Idle', 'Idle_2']),
-});
-
-export function licensedAnimalForCreature(type, seed = 0) {
-  const pool = CREATURE_ASSET_POOLS[type];
-  if (!pool?.length) return null;
-  const index = Math.min(pool.length - 1, Math.floor(unitHash(seed, 37, 0xd1b54a35) * pool.length));
-  return LICENSED_ANIMAL_ASSETS[pool[index]] ?? null;
-}
-
-export function animationCandidatesForState(state) {
-  return STATE_CLIP_CANDIDATES[state] ?? STATE_CLIP_CANDIDATES.idle;
-}
-
-const CREATURE_CAPS = Object.freeze({
-  dapple: 4,
-  bramblehog: 3,
-  dunetail: 4,
-  gloomling: 5,
-});
-
-function clamp(value, minimum, maximum) {
-  return Math.min(maximum, Math.max(minimum, value));
-}
-
-function mix32(value) {
-  let mixed = value >>> 0;
-  mixed = Math.imul(mixed ^ (mixed >>> 16), 0x7feb352d);
-  mixed = Math.imul(mixed ^ (mixed >>> 15), 0x846ca68b);
-  return (mixed ^ (mixed >>> 16)) >>> 0;
-}
-
-function unitHash(seed, value, salt = 0) {
-  return mix32((seed >>> 0) ^ Math.imul(value | 0, 0x9e3779b9) ^ salt) / 0x100000000;
-}
-
-function nextRandom(creature) {
-  creature.randomState = (creature.randomState + 0x6d2b79f5) >>> 0;
-  let value = creature.randomState;
-  value = Math.imul(value ^ (value >>> 15), value | 1);
-  value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
-  return ((value ^ (value >>> 14)) >>> 0) / 0x100000000;
-}
-
-function shortestAngle(from, to) {
-  return Math.atan2(Math.sin(to - from), Math.cos(to - from));
-}
-
-function prepareMesh(mesh, castsShadow = true) {
-  mesh.castShadow = castsShadow;
-  mesh.receiveShadow = true;
-  mesh.frustumCulled = true;
-  return mesh;
-}
-
-function setState(creature, state, duration = 1) {
-  if (creature.state === state) return;
-  creature.state = state;
-  creature.stateTime = 0;
-  creature.stateDuration = duration;
-  if (state === 'attack') creature.attackLanded = false;
-  creature.assetAnimator?.play(state);
-}
-
-/** A lightweight manager for Worldloom's procedural ambient creatures. */
+/** One original species; no imported animals, night monsters or flying wildlife. */
 export class CreatureSystem {
   constructor(scene, world) {
-    this.scene = scene ?? null;
-    this.world = world ?? null;
-    this.onPlayerDamage = null;
-    this.creatures = [];
-    this._time = 0;
-    this._spawnTimer = 0.7;
-    this._spawnSerial = 0;
-    this._nextId = 1;
-    this._lastPlayerDamage = -Infinity;
-    this._playerAttackReadyAt = 0;
-    this._disposed = false;
-    this._geometries = new Set();
-    this._materials = new Set();
+    this.scene = scene; this.world = world;
+    this.creatures = []; this._time = 0; this._spawnTimer = .8;
+    this._nextId = 1; this._playerAttackReadyAt = 0; this._disposed = false;
+    this._seed = (Number(world?.seed) || 7391) >>> 0;
     this.assetErrors = new Map();
-    this._animalAssets = new Map();
-    this._animalAssetPromises = new Map();
-    this._assetGeometries = new Set();
-    this._assetMaterials = new Set();
-    this._assetTextures = new Set();
-    this._animalLoader = typeof window !== 'undefined' && this.scene ? new GLTFLoader() : null;
-    this._attackDirection = new THREE.Vector3();
-    this._attackPoint = new THREE.Vector3();
-    this._strikeOrigin = new THREE.Vector3();
-    this._strikeDirection = new THREE.Vector3();
-    this._spawnForward = new THREE.Vector3();
-    this._resources = this._createResources();
-  }
-
-  get count() {
-    return this.creatures.length;
-  }
-
-  get playerAttackRecovery() {
-    return Math.max(0, this._playerAttackReadyAt - this._time);
-  }
-
-  hasThreatNear(position, radius = 8) {
-    if (!position) return false;
-    const radiusSq = radius * radius;
-    return this.creatures.some((creature) => {
-      if (creature.dead) return false;
-      const hostile = creature.type === 'gloomling'
-        || (creature.type === 'bramblehog' && creature.provoked > 0);
-      if (!hostile) return false;
-      const dx = creature.root.position.x - position.x;
-      const dy = creature.root.position.y - position.y;
-      const dz = creature.root.position.z - position.z;
-      return dx * dx + dy * dy + dz * dz <= radiusSq;
-    });
-  }
-
-  _geometry(geometry) {
-    this._geometries.add(geometry);
-    return geometry;
-  }
-
-  _material(parameters) {
-    const material = new THREE.MeshStandardMaterial(parameters);
-    this._materials.add(material);
-    return material;
-  }
-
-  _basicMaterial(parameters) {
-    const material = new THREE.MeshBasicMaterial(parameters);
-    this._materials.add(material);
-    return material;
-  }
-
-  _createResources() {
-    const geometries = {
-      dappleBody: this._geometry(new THREE.BoxGeometry(1.3, 0.68, 0.76)),
-      dappleHead: this._geometry(new THREE.BoxGeometry(0.56, 0.52, 0.52)),
-      dappleMuzzle: this._geometry(new THREE.BoxGeometry(0.38, 0.23, 0.3)),
-      dappleLeg: this._geometry(new THREE.BoxGeometry(0.17, 0.56, 0.17)),
-      dappleHoof: this._geometry(new THREE.BoxGeometry(0.2, 0.13, 0.27)),
-      dappleEar: this._geometry(new THREE.ConeGeometry(0.12, 0.31, 3)),
-      dappleTail: this._geometry(new THREE.ConeGeometry(0.12, 0.34, 4)),
-      dapplePatch: this._geometry(new THREE.BoxGeometry(0.025, 0.24, 0.3)),
-      eye: this._geometry(new THREE.BoxGeometry(0.095, 0.095, 0.035)),
-      pupil: this._geometry(new THREE.BoxGeometry(0.04, 0.052, 0.012)),
-      antler: this._geometry(new THREE.CylinderGeometry(0.035, 0.052, 0.38, 5)),
-      brambleBody: this._geometry(new THREE.DodecahedronGeometry(0.72, 0)),
-      brambleShell: this._geometry(new THREE.IcosahedronGeometry(0.73, 1)),
-      brambleHead: this._geometry(new THREE.BoxGeometry(0.58, 0.45, 0.56)),
-      brambleSnout: this._geometry(new THREE.BoxGeometry(0.42, 0.27, 0.36)),
-      brambleLeg: this._geometry(new THREE.CylinderGeometry(0.105, 0.13, 0.47, 5)),
-      brambleFoot: this._geometry(new THREE.BoxGeometry(0.23, 0.14, 0.31)),
-      brambleTusk: this._geometry(new THREE.ConeGeometry(0.065, 0.31, 5)),
-      brambleSpine: this._geometry(new THREE.ConeGeometry(0.1, 0.34, 5)),
-      brambleTail: this._geometry(new THREE.ConeGeometry(0.085, 0.3, 5)),
-      duneBody: this._geometry(new THREE.DodecahedronGeometry(0.55, 0)),
-      duneNeck: this._geometry(new THREE.CylinderGeometry(0.13, 0.2, 0.72, 5)),
-      duneHead: this._geometry(new THREE.DodecahedronGeometry(0.31, 0)),
-      duneBeak: this._geometry(new THREE.ConeGeometry(0.14, 0.43, 4)),
-      duneLeg: this._geometry(new THREE.CylinderGeometry(0.055, 0.075, 0.66, 5)),
-      duneFoot: this._geometry(new THREE.BoxGeometry(0.16, 0.08, 0.38)),
-      duneWing: this._geometry(new THREE.BoxGeometry(0.06, 0.46, 0.66)),
-      duneTail: this._geometry(new THREE.ConeGeometry(0.13, 0.8, 4)),
-      crest: this._geometry(new THREE.ConeGeometry(0.095, 0.3, 4)),
-      gloomBody: this._geometry(new THREE.OctahedronGeometry(0.67, 0)),
-      gloomHead: this._geometry(new THREE.BoxGeometry(0.58, 0.47, 0.5)),
-      gloomLeg: this._geometry(new THREE.ConeGeometry(0.14, 0.56, 4)),
-      gloomHorn: this._geometry(new THREE.ConeGeometry(0.115, 0.37, 4)),
-      gloomEye: this._geometry(new THREE.BoxGeometry(0.34, 0.075, 0.035)),
-      gloomJaw: this._geometry(new THREE.BoxGeometry(0.38, 0.1, 0.25)),
-      gloomPlate: this._geometry(new THREE.BoxGeometry(0.66, 0.12, 0.5)),
-      gloomClaw: this._geometry(new THREE.ConeGeometry(0.055, 0.22, 4)),
-    };
-
-    const materials = {
-      dappleHide: this._material({ color: 0xd6bd87, roughness: 0.92, metalness: 0, flatShading: true }),
-      dappleCream: this._material({ color: 0xead9ae, roughness: 0.9, metalness: 0, flatShading: true }),
-      dappleDark: this._material({ color: 0x5e4a3b, roughness: 1, metalness: 0, flatShading: true }),
-      dapplePatch: this._material({ color: 0x91734f, roughness: 0.95, metalness: 0, flatShading: true }),
-      eyeWhite: this._material({ color: 0xf1ead7, roughness: 0.72, metalness: 0, flatShading: true }),
-      eyeDark: this._material({ color: 0x15191c, roughness: 0.55, metalness: 0, flatShading: true }),
-      antler: this._material({ color: 0xcbb994, roughness: 0.9, metalness: 0, flatShading: true }),
-      brambleHide: this._material({ color: 0x55483a, roughness: 0.98, metalness: 0, flatShading: true }),
-      brambleMoss: this._material({ color: 0x4f7042, roughness: 1, metalness: 0, flatShading: true }),
-      brambleMossLight: this._material({ color: 0x76955c, roughness: 1, metalness: 0, flatShading: true }),
-      brambleTusk: this._material({ color: 0xe7d8aa, roughness: 0.72, metalness: 0, flatShading: true }),
-      duneFeather: this._material({ color: 0xc97b45, roughness: 0.92, metalness: 0, flatShading: true }),
-      duneLight: this._material({ color: 0xefd18a, roughness: 0.9, metalness: 0, flatShading: true }),
-      duneDark: this._material({ color: 0x5d3a32, roughness: 0.94, metalness: 0, flatShading: true }),
-      duneBeak: this._material({ color: 0xe6ad45, roughness: 0.74, metalness: 0.02, flatShading: true }),
-      gloomHide: this._material({ color: 0x24243b, roughness: 0.72, metalness: 0.08, flatShading: true }),
-      gloomPlate: this._material({ color: 0x3c3659, roughness: 0.64, metalness: 0.12, flatShading: true }),
-      gloomClaw: this._material({ color: 0x70698a, roughness: 0.7, metalness: 0.1, flatShading: true }),
-      gloomEye: this._material({
-        color: 0x65736e,
-        emissive: 0x000000,
-        emissiveIntensity: 0,
-        roughness: 0.78,
-        metalness: 0,
-        toneMapped: true,
-      }),
-      hit: this._basicMaterial({
-        color: 0xff6652,
-        transparent: true,
-        opacity: 0.7,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending,
-        toneMapped: false,
-      }),
-    };
-
-    for (const material of Object.values(materials)) material.name = `Creature ${material.name || 'material'}`;
-    return { geometries, materials };
-  }
-
-  _applyCoatVariation(node, definition) {
-    const geometry = node.geometry;
-    const position = geometry?.getAttribute?.('position');
-    if (!position) return;
-    const materials = Array.isArray(node.material) ? node.material : [node.material];
-    const coatMaterial = materials.some((material) => /^(main(?:_|$)|grey$)/i.test(material?.name || ''));
-    if (!coatMaterial) return;
-    if (geometry.getAttribute('color')) {
-      for (const material of materials) if (material) material.vertexColors = true;
-      return;
-    }
-
-    let seed = 0x811c9dc5;
-    for (const character of definition.key) seed = Math.imul(seed ^ character.charCodeAt(0), 0x01000193);
-    const colors = new Float32Array(position.count * 3);
-    for (let index = 0; index < position.count; index += 1) {
-      const x = position.getX(index);
-      const y = position.getY(index);
-      const z = position.getZ(index);
-      const broad = Math.sin(x * 4.7 + z * 3.2 + seed * 1e-7) * 0.035;
-      const fine = (unitHash(seed, index, 0x7f4a7c15) - 0.5) * 0.055;
-      const lowerBody = clamp(y * 0.012, -0.025, 0.025);
-      const shade = clamp(0.965 + broad + fine + lowerBody, 0.86, 1.055);
-      colors[index * 3] = shade * 1.012;
-      colors[index * 3 + 1] = shade;
-      colors[index * 3 + 2] = shade * 0.984;
-    }
-    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-    for (const material of materials) if (material) material.vertexColors = true;
-  }
-
-  _loadAnimalAsset(definition) {
-    if (!definition || !this._animalLoader) return Promise.resolve(null);
-    if (this._animalAssets.has(definition.key)) {
-      return Promise.resolve(this._animalAssets.get(definition.key));
-    }
-    if (this._animalAssetPromises.has(definition.key)) {
-      return this._animalAssetPromises.get(definition.key);
-    }
-
-    const url = new URL(`../assets/animals/${definition.file}`, import.meta.url).href;
-    const request = this._animalLoader.loadAsync(url).then((gltf) => {
-      if (!gltf?.scene || !gltf.animations?.length) throw new Error('missing rig or animation clips');
-      gltf.scene.updateMatrixWorld(true);
-      const bounds = new THREE.Box3().setFromObject(gltf.scene);
-      const size = bounds.getSize(new THREE.Vector3());
-      if (bounds.isEmpty() || size.y <= 0.01) throw new Error('invalid animal bounds');
-      if (this._disposed) {
-        gltf.scene.traverse((node) => {
-          node.geometry?.dispose?.();
-          const materials = Array.isArray(node.material) ? node.material : [node.material];
-          for (const material of materials) material?.dispose?.();
-        });
-        return null;
-      }
-
-      gltf.scene.traverse((node) => {
-        if (!node.isMesh) return;
-        node.castShadow = true;
-        node.receiveShadow = true;
-        node.frustumCulled = true;
-        this._applyCoatVariation(node, definition);
-        if (node.geometry) this._assetGeometries.add(node.geometry);
-        const materials = Array.isArray(node.material) ? node.material : [node.material];
-        for (const material of materials) {
-          if (!material) continue;
-          this._assetMaterials.add(material);
-          if ('roughness' in material) material.roughness = Math.max(0.72, material.roughness ?? 0.85);
-          if ('metalness' in material) material.metalness = Math.min(0.04, material.metalness ?? 0);
-          for (const value of Object.values(material)) {
-            if (value?.isTexture) this._assetTextures.add(value);
-          }
-        }
-      });
-
-      const asset = { definition, scene: gltf.scene, animations: gltf.animations, bounds, size };
-      this._animalAssets.set(definition.key, asset);
-      return asset;
-    }).catch((error) => {
-      this.assetErrors.set(definition.key, String(error?.message || error));
-      return null;
-    }).finally(() => {
-      this._animalAssetPromises.delete(definition.key);
-    });
-
-    this._animalAssetPromises.set(definition.key, request);
-    return request;
-  }
-
-  _makeAssetAnimator(scene, clips, initialState) {
-    const mixer = new THREE.AnimationMixer(scene);
-    const actions = new Map();
-    const clipByName = new Map(clips.map((clip) => [clip.name.toLowerCase(), clip]));
-    let currentAction = null;
-    let currentClip = null;
-    let currentState = '';
-
-    const findClip = (state) => {
-      const candidates = animationCandidatesForState(state);
-      for (const candidate of candidates) {
-        const exact = clipByName.get(candidate.toLowerCase());
-        if (exact) return exact;
-      }
-      for (const candidate of candidates) {
-        const lower = candidate.toLowerCase();
-        const partial = clips.find((clip) => clip.name.toLowerCase().includes(lower));
-        if (partial) return partial;
-      }
-      return clipByName.get('idle') ?? clips[0] ?? null;
-    };
-
-    const play = (state, immediate = false) => {
-      const clip = findClip(state);
-      if (!clip || (clip === currentClip && state === currentState)) return;
-      const nextAction = actions.get(clip) ?? mixer.clipAction(clip);
-      actions.set(clip, nextAction);
-      const oneShot = state === 'attack' || state === 'hit' || state === 'death';
-      nextAction.enabled = true;
-      nextAction.clampWhenFinished = oneShot;
-      nextAction.setLoop(oneShot ? THREE.LoopOnce : THREE.LoopRepeat, oneShot ? 1 : Infinity);
-      nextAction.reset();
-      nextAction.setEffectiveWeight(1);
-      const oneShotWindow = state === 'attack' ? 0.64 : state === 'hit' ? 0.25 : null;
-      nextAction.setEffectiveTimeScale(oneShotWindow
-        ? clamp(clip.duration / oneShotWindow, 0.8, 3)
-        : 1);
-      if (currentAction && currentAction !== nextAction) {
-        if (immediate) currentAction.stop();
-        else currentAction.fadeOut(state === 'hit' ? 0.08 : 0.16);
-      }
-      if (!immediate) nextAction.fadeIn(state === 'hit' ? 0.06 : 0.16);
-      nextAction.play();
-      currentAction = nextAction;
-      currentClip = clip;
-      currentState = state;
-    };
-
-    const update = (dt, speed = 0) => {
-      if (currentAction && ['wander', 'charge', 'chase', 'flee', 'sprint'].includes(currentState)) {
-        const galloping = currentClip?.name.toLowerCase().includes('gallop');
-        const referenceSpeed = galloping ? 2.5 : 0.9;
-        currentAction.setEffectiveTimeScale(clamp(speed / referenceSpeed, 0.65, 1.65));
-      }
-      mixer.update(dt);
-    };
-
-    const animator = {
-      mixer,
-      play,
-      update,
-      get deathDuration() {
-        return clamp(findClip('death')?.duration ?? 0.9, 0.9, 2.4);
-      },
-      dispose() {
-        mixer.stopAllAction();
-        mixer.uncacheRoot(scene);
-        actions.clear();
-      },
-    };
-    animator.play(initialState || 'idle', true);
-    return animator;
-  }
-
-  _attachAnimalAsset(creature, asset) {
-    if (!asset || this._disposed || creature.dead || !creature.root.parent) return;
-    const animalScene = cloneSkeleton(asset.scene);
-    const visual = new THREE.Group();
-    visual.name = `${asset.definition.name} licensed animal visual`;
-    animalScene.name = `${asset.definition.name} rig`;
-    visual.add(animalScene);
-
-    animalScene.traverse((node) => {
-      if (!node.isMesh) return;
-      node.castShadow = true;
-      node.receiveShadow = true;
-      node.frustumCulled = true;
-    });
-
-    const baseScale = Math.max(0.01, creature.baseScale || creature.root.scale.x || 1);
-    const localScale = asset.definition.targetHeight / (asset.size.y * baseScale);
-    visual.scale.setScalar(localScale);
-    visual.position.y = -asset.bounds.min.y * localScale;
-    creature.root.add(visual);
-    creature.model.visible = false;
-    creature.assetVisual = visual;
-    creature.assetAnimator = this._makeAssetAnimator(animalScene, asset.animations, creature.state);
-    creature.assetKey = asset.definition.key;
-    creature.name = asset.definition.name;
-    creature.root.name = `${asset.definition.name} ${creature.id}`;
-
-    const worldDepth = asset.size.z * localScale * baseScale;
-    creature.radius = Math.max(creature.radius, Math.min(1.4, worldDepth * 0.43));
-    creature.centerHeight = asset.definition.targetHeight * 0.52;
-  }
-
-  _requestAnimalVisual(creature, seed) {
-    const definition = licensedAnimalForCreature(creature.type, seed);
-    if (!definition || !this._animalLoader) return;
-    creature.requestedAssetKey = definition.key;
-    this._loadAnimalAsset(definition).then((asset) => {
-      if (!asset || this._disposed || creature.requestedAssetKey !== definition.key) return;
-      if (!this.creatures.includes(creature) || creature.assetVisual) return;
-      this._attachAnimalAsset(creature, asset);
-    });
-  }
-
-  _makeDapple(x, y, z, seed) {
-    const { geometries: geometry, materials: material } = this._resources;
-    const root = new THREE.Group();
-    const model = new THREE.Group();
-    root.add(model);
-
-    const body = prepareMesh(new THREE.Mesh(geometry.dappleBody, material.dappleHide));
-    body.position.y = 0.88;
-    model.add(body);
-
-    const headPivot = new THREE.Group();
-    headPivot.position.set(0, 0.92, 0.53);
-    const head = prepareMesh(new THREE.Mesh(geometry.dappleHead, material.dappleCream));
-    head.position.z = 0.17;
-    headPivot.add(head);
-
-    const muzzle = prepareMesh(new THREE.Mesh(geometry.dappleMuzzle, material.dappleHide));
-    muzzle.position.set(0, -0.12, 0.48);
-    headPivot.add(muzzle);
-
-    for (const side of [-1, 1]) {
-      const eye = prepareMesh(new THREE.Mesh(geometry.eye, material.eyeWhite), false);
-      eye.position.set(side * 0.286, 0.08, 0.3);
-      eye.rotation.y = side * 0.05;
-      const pupil = prepareMesh(new THREE.Mesh(geometry.pupil, material.eyeDark), false);
-      pupil.position.set(side * 0.003, 0, 0.023);
-      eye.add(pupil);
-      headPivot.add(eye);
-    }
-    model.add(headPivot);
-
-    const ears = [];
-    for (const side of [-1, 1]) {
-      const ear = prepareMesh(new THREE.Mesh(geometry.dappleEar, material.dappleDark));
-      ear.position.set(side * 0.23, 0.28, 0.13);
-      ear.rotation.z = side * 0.92;
-      headPivot.add(ear);
-      ears.push(ear);
-
-      const antler = prepareMesh(new THREE.Mesh(geometry.antler, material.antler));
-      antler.position.set(side * 0.16, 0.43, 0.04);
-      antler.rotation.z = side * -0.28;
-      headPivot.add(antler);
-    }
-
-    const legs = [];
-    for (const [legX, legZ] of [[-0.43, -0.25], [0.43, -0.25], [-0.43, 0.25], [0.43, 0.25]]) {
-      const pivot = new THREE.Group();
-      pivot.position.set(legX, 0.57, legZ);
-      const leg = prepareMesh(new THREE.Mesh(geometry.dappleLeg, material.dappleDark));
-      leg.position.y = -0.27;
-      pivot.add(leg);
-      const hoof = prepareMesh(new THREE.Mesh(geometry.dappleHoof, material.dappleDark));
-      hoof.position.set(0, -0.56, 0.045);
-      pivot.add(hoof);
-      model.add(pivot);
-      legs.push(pivot);
-    }
-
-    const tail = new THREE.Group();
-    tail.position.set(0, 0.93, -0.43);
-    const tailMesh = prepareMesh(new THREE.Mesh(geometry.dappleTail, material.dappleDark));
-    tailMesh.position.y = -0.12;
-    tailMesh.rotation.x = -0.95;
-    tail.add(tailMesh);
-    model.add(tail);
-
-    for (const [side, patchY, patchZ, scale] of [[1, 0.98, 0.12, 1], [-1, 0.77, -0.14, 0.72]]) {
-      const patch = prepareMesh(new THREE.Mesh(geometry.dapplePatch, material.dapplePatch), false);
-      patch.position.set(side * 0.658, patchY, patchZ);
-      patch.scale.set(1, scale, scale);
-      model.add(patch);
-    }
-
-    const hitGlow = prepareMesh(new THREE.Mesh(geometry.dappleBody, material.hit), false);
-    hitGlow.position.copy(body.position);
-    hitGlow.scale.setScalar(1.06);
-    hitGlow.visible = false;
-    hitGlow.renderOrder = 4;
-    model.add(hitGlow);
-
-    const scale = 0.88 + unitHash(seed, 3, 0x87a219f1) * 0.17;
-    root.position.set(x, y, z);
-    root.scale.setScalar(scale);
-    root.name = `Dapple ${this._nextId}`;
-    this.scene?.add(root);
-
-    return {
-      id: this._nextId++,
-      type: 'dapple',
-      name: 'Dapple',
-      root,
-      model,
-      parts: { body, headPivot, ears, legs, tail, hitGlow },
-      radius: 0.83 * scale,
-      centerHeight: 0.78 * scale,
-      baseScale: scale,
-      heading: unitHash(seed, 11, 0x2c9277b5) * Math.PI * 2,
-      targetHeading: 0,
-      desiredSpeed: 0,
-      verticalVelocity: 0,
-      knockbackX: 0,
-      knockbackZ: 0,
-      state: 'idle',
-      stateTime: 0,
-      stateDuration: 1.6,
-      health: 3,
-      maxHealth: 3,
-      hitTime: 0,
-      dead: false,
-      deathTime: 0,
-      age: 0,
-      mismatchTime: 0,
-      phase: unitHash(seed, 17, 0x51ed270b) * Math.PI * 2,
-      randomState: mix32(seed ^ 0xa24baed5),
-      attackCooldown: 0,
-      attackLanded: false,
-      provoked: 0,
-      turnRate: 4.1,
-      homeBiome: 'plains',
-      activeMin: 0.3,
-      activeMax: 1,
-    };
-  }
-
-  _makeBramblehog(x, y, z, seed) {
-    const { geometries: geometry, materials: material } = this._resources;
-    const root = new THREE.Group();
-    const model = new THREE.Group();
-    root.add(model);
-
-    const body = prepareMesh(new THREE.Mesh(geometry.brambleBody, material.brambleHide));
-    body.position.y = 0.78;
-    body.scale.set(1.1, 0.72, 1.28);
-    model.add(body);
-
-    const shell = prepareMesh(new THREE.Mesh(geometry.brambleShell, material.brambleMoss));
-    shell.position.set(0, 0.97, -0.05);
-    shell.scale.set(1.03, 0.49, 1.12);
-    model.add(shell);
-
-    const spines = [];
-    for (const [sx, sy, sz, lean] of [
-      [-0.38, 1.37, -0.2, -0.25], [0, 1.47, -0.12, 0], [0.38, 1.37, -0.2, 0.25],
-      [-0.25, 1.32, 0.28, -0.18], [0.25, 1.32, 0.28, 0.18],
-    ]) {
-      const spine = prepareMesh(new THREE.Mesh(geometry.brambleSpine, material.brambleMossLight));
-      spine.position.set(sx, sy, sz);
-      spine.rotation.z = lean;
-      model.add(spine);
-      spines.push(spine);
-    }
-
-    const headPivot = new THREE.Group();
-    headPivot.position.set(0, 0.81, 0.67);
-    const head = prepareMesh(new THREE.Mesh(geometry.brambleHead, material.brambleHide));
-    head.position.z = 0.12;
-    headPivot.add(head);
-    const snout = prepareMesh(new THREE.Mesh(geometry.brambleSnout, material.brambleMossLight));
-    snout.position.set(0, -0.13, 0.47);
-    headPivot.add(snout);
-    for (const side of [-1, 1]) {
-      const eye = prepareMesh(new THREE.Mesh(geometry.eye, material.eyeDark), false);
-      eye.position.set(side * 0.298, 0.08, 0.29);
-      headPivot.add(eye);
-      const tusk = prepareMesh(new THREE.Mesh(geometry.brambleTusk, material.brambleTusk));
-      tusk.position.set(side * 0.2, -0.26, 0.51);
-      tusk.rotation.x = -0.55;
-      tusk.rotation.z = side * 0.18;
-      headPivot.add(tusk);
-    }
-    model.add(headPivot);
-
-    const legs = [];
-    for (const [legX, legZ] of [[-0.42, -0.3], [0.42, -0.3], [-0.42, 0.34], [0.42, 0.34]]) {
-      const pivot = new THREE.Group();
-      pivot.position.set(legX, 0.5, legZ);
-      const leg = prepareMesh(new THREE.Mesh(geometry.brambleLeg, material.brambleHide));
-      leg.position.y = -0.22;
-      pivot.add(leg);
-      const foot = prepareMesh(new THREE.Mesh(geometry.brambleFoot, material.dappleDark));
-      foot.position.set(0, -0.48, 0.055);
-      pivot.add(foot);
-      model.add(pivot);
-      legs.push(pivot);
-    }
-
-    const tail = new THREE.Group();
-    tail.position.set(0, 0.91, -0.78);
-    const tailMesh = prepareMesh(new THREE.Mesh(geometry.brambleTail, material.brambleMossLight));
-    tailMesh.rotation.x = -0.9;
-    tail.add(tailMesh);
-    model.add(tail);
-
-    const hitGlow = prepareMesh(new THREE.Mesh(geometry.brambleBody, material.hit), false);
-    hitGlow.position.copy(body.position);
-    hitGlow.scale.set(1.17, 0.78, 1.36);
-    hitGlow.visible = false;
-    hitGlow.renderOrder = 4;
-    model.add(hitGlow);
-
-    const scale = 0.88 + unitHash(seed, 7, 0x2f6e2b1) * 0.2;
-    root.position.set(x, y, z);
-    root.scale.setScalar(scale);
-    root.name = `Bramblehog ${this._nextId}`;
-    this.scene?.add(root);
-
-    return {
-      id: this._nextId++, type: 'bramblehog', name: 'Bramblehog', root, model,
-      parts: { body, shell, spines, headPivot, legs, tail, hitGlow },
-      radius: 0.95 * scale, centerHeight: 0.82 * scale, baseScale: scale,
-      heading: unitHash(seed, 11, 0xf1695a1d) * Math.PI * 2, targetHeading: 0,
-      desiredSpeed: 0, verticalVelocity: 0, knockbackX: 0, knockbackZ: 0,
-      state: 'idle', stateTime: 0, stateDuration: 1.5, health: 6, maxHealth: 6,
-      hitTime: 0, dead: false, deathTime: 0, age: 0, mismatchTime: 0,
-      phase: unitHash(seed, 13, 0x487dbf21) * Math.PI * 2,
-      randomState: mix32(seed ^ 0x51a3be81), attackCooldown: 0, attackLanded: false,
-      provoked: 0, turnRate: 3.6, homeBiome: 'forest', activeMin: 0.22, activeMax: 1,
-    };
-  }
-
-  _makeDunetail(x, y, z, seed) {
-    const { geometries: geometry, materials: material } = this._resources;
-    const root = new THREE.Group();
-    const model = new THREE.Group();
-    root.add(model);
-
-    const body = prepareMesh(new THREE.Mesh(geometry.duneBody, material.duneFeather));
-    body.position.y = 1.17;
-    body.scale.set(0.82, 0.82, 1.18);
-    model.add(body);
-
-    const neckPivot = new THREE.Group();
-    neckPivot.position.set(0, 1.37, 0.32);
-    const neck = prepareMesh(new THREE.Mesh(geometry.duneNeck, material.duneLight));
-    neck.position.set(0, 0.28, 0.08);
-    neck.rotation.x = -0.25;
-    neckPivot.add(neck);
-    const head = prepareMesh(new THREE.Mesh(geometry.duneHead, material.duneFeather));
-    head.position.set(0, 0.64, 0.22);
-    neckPivot.add(head);
-    const beak = prepareMesh(new THREE.Mesh(geometry.duneBeak, material.duneBeak));
-    beak.position.set(0, 0.61, 0.55);
-    beak.rotation.x = Math.PI / 2;
-    neckPivot.add(beak);
-    for (const side of [-1, 1]) {
-      const eye = prepareMesh(new THREE.Mesh(geometry.eye, material.eyeWhite), false);
-      eye.position.set(side * 0.245, 0.71, 0.34);
-      const pupil = prepareMesh(new THREE.Mesh(geometry.pupil, material.eyeDark), false);
-      pupil.position.z = 0.023;
-      eye.add(pupil);
-      neckPivot.add(eye);
-      const crest = prepareMesh(new THREE.Mesh(geometry.crest, material.duneDark));
-      crest.position.set(side * 0.09, 0.94, 0.15 - Math.abs(side) * 0.02);
-      crest.rotation.z = side * 0.2;
-      neckPivot.add(crest);
-    }
-    model.add(neckPivot);
-
-    const wings = [];
-    for (const side of [-1, 1]) {
-      const pivot = new THREE.Group();
-      pivot.position.set(side * 0.48, 1.2, 0);
-      const wing = prepareMesh(new THREE.Mesh(geometry.duneWing, material.duneDark));
-      wing.position.x = side * 0.05;
-      pivot.add(wing);
-      model.add(pivot);
-      wings.push(pivot);
-    }
-
-    const legs = [];
-    for (const side of [-1, 1]) {
-      const pivot = new THREE.Group();
-      pivot.position.set(side * 0.22, 0.86, -0.04);
-      const leg = prepareMesh(new THREE.Mesh(geometry.duneLeg, material.duneDark));
-      leg.position.y = -0.31;
-      pivot.add(leg);
-      const foot = prepareMesh(new THREE.Mesh(geometry.duneFoot, material.duneBeak));
-      foot.position.set(0, -0.65, 0.12);
-      pivot.add(foot);
-      model.add(pivot);
-      legs.push(pivot);
-    }
-
-    const tail = new THREE.Group();
-    tail.position.set(0, 1.2, -0.48);
-    for (const side of [-1, 0, 1]) {
-      const feather = prepareMesh(new THREE.Mesh(geometry.duneTail, side === 0 ? material.duneFeather : material.duneDark));
-      feather.position.set(side * 0.17, 0, -0.3 - Math.abs(side) * 0.04);
-      feather.rotation.x = -Math.PI / 2;
-      feather.rotation.z = side * 0.14;
-      tail.add(feather);
-    }
-    model.add(tail);
-
-    const hitGlow = prepareMesh(new THREE.Mesh(geometry.duneBody, material.hit), false);
-    hitGlow.position.copy(body.position);
-    hitGlow.scale.set(0.9, 0.9, 1.28);
-    hitGlow.visible = false;
-    hitGlow.renderOrder = 4;
-    model.add(hitGlow);
-
-    const scale = 0.9 + unitHash(seed, 5, 0xba627d13) * 0.18;
-    root.position.set(x, y, z);
-    root.scale.setScalar(scale);
-    root.name = `Dunetail ${this._nextId}`;
-    this.scene?.add(root);
-
-    return {
-      id: this._nextId++, type: 'dunetail', name: 'Dunetail', root, model,
-      parts: { body, neckPivot, wings, legs, tail, hitGlow },
-      radius: 0.78 * scale, centerHeight: 1.17 * scale, baseScale: scale,
-      heading: unitHash(seed, 11, 0x65b4e21f) * Math.PI * 2, targetHeading: 0,
-      desiredSpeed: 0, verticalVelocity: 0, knockbackX: 0, knockbackZ: 0,
-      state: 'idle', stateTime: 0, stateDuration: 1.2, health: 3, maxHealth: 3,
-      hitTime: 0, dead: false, deathTime: 0, age: 0, mismatchTime: 0,
-      phase: unitHash(seed, 17, 0xd7a53c6d) * Math.PI * 2,
-      randomState: mix32(seed ^ 0x845cd36b), attackCooldown: 0, attackLanded: false,
-      provoked: 0, turnRate: 6.4, homeBiome: 'desert', activeMin: 0.4, activeMax: 1,
-    };
-  }
-
-  _makeGloomling(x, y, z, seed) {
-    const { geometries: geometry, materials: material } = this._resources;
-    const root = new THREE.Group();
-    const model = new THREE.Group();
-    root.add(model);
-
-    const body = prepareMesh(new THREE.Mesh(geometry.gloomBody, material.gloomHide));
-    body.position.y = 0.9;
-    body.scale.set(1, 0.74, 0.82);
-    model.add(body);
-
-    const shoulderPlates = [];
-    for (const side of [-1, 1]) {
-      const plate = prepareMesh(new THREE.Mesh(geometry.gloomPlate, material.gloomPlate));
-      plate.position.set(side * 0.43, 1.03, 0.02);
-      plate.rotation.z = side * 0.48;
-      plate.scale.set(0.72, 1, 0.72);
-      model.add(plate);
-      shoulderPlates.push(plate);
-    }
-
-    const headPivot = new THREE.Group();
-    headPivot.position.set(0, 0.86, 0.5);
-    const head = prepareMesh(new THREE.Mesh(geometry.gloomHead, material.gloomPlate));
-    head.position.z = 0.13;
-    headPivot.add(head);
-
-    const eye = prepareMesh(new THREE.Mesh(geometry.gloomEye, material.gloomEye), false);
-    eye.position.set(0, 0.06, 0.397);
-    headPivot.add(eye);
-
-    const jaw = prepareMesh(new THREE.Mesh(geometry.gloomJaw, material.gloomHide));
-    jaw.position.set(0, -0.27, 0.23);
-    headPivot.add(jaw);
-
-    for (const side of [-1, 1]) {
-      const horn = prepareMesh(new THREE.Mesh(geometry.gloomHorn, material.gloomClaw));
-      horn.position.set(side * 0.23, 0.35, 0.03);
-      horn.rotation.z = side * -0.34;
-      headPivot.add(horn);
-    }
-    model.add(headPivot);
-
-    const legs = [];
-    for (const [legX, legZ] of [[-0.38, -0.25], [0.38, -0.25], [-0.38, 0.22], [0.38, 0.22]]) {
-      const pivot = new THREE.Group();
-      pivot.position.set(legX, 0.56, legZ);
-      const leg = prepareMesh(new THREE.Mesh(geometry.gloomLeg, material.gloomClaw));
-      leg.position.y = -0.27;
-      pivot.add(leg);
-      for (const side of [-1, 1]) {
-        const claw = prepareMesh(new THREE.Mesh(geometry.gloomClaw, material.gloomClaw));
-        claw.position.set(side * 0.07, -0.54, 0.12);
-        claw.rotation.x = Math.PI / 2;
-        pivot.add(claw);
-      }
-      model.add(pivot);
-      legs.push(pivot);
-    }
-
-    const hitGlow = prepareMesh(new THREE.Mesh(geometry.gloomBody, material.hit), false);
-    hitGlow.position.copy(body.position);
-    hitGlow.scale.set(1.07, 0.8, 0.88);
-    hitGlow.visible = false;
-    hitGlow.renderOrder = 4;
-    model.add(hitGlow);
-
-    const scale = 0.88 + unitHash(seed, 5, 0x165667b1) * 0.16;
-    root.position.set(x, y, z);
-    root.scale.setScalar(scale);
-    root.name = `Gloomling ${this._nextId}`;
-    this.scene?.add(root);
-
-    return {
-      id: this._nextId++,
-      type: 'gloomling',
-      name: 'Gloomling',
-      root,
-      model,
-      parts: { body, shoulderPlates, headPivot, eye, jaw, legs, hitGlow },
-      radius: 0.78 * scale,
-      centerHeight: 0.76 * scale,
-      baseScale: scale,
-      heading: unitHash(seed, 13, 0xc2b2ae35) * Math.PI * 2,
-      targetHeading: 0,
-      desiredSpeed: 0,
-      verticalVelocity: 0,
-      knockbackX: 0,
-      knockbackZ: 0,
-      state: 'idle',
-      stateTime: 0,
-      stateDuration: 1.2,
-      health: 4,
-      maxHealth: 4,
-      hitTime: 0,
-      dead: false,
-      deathTime: 0,
-      age: 0,
-      mismatchTime: 0,
-      phase: unitHash(seed, 19, 0x94d049bb) * Math.PI * 2,
-      randomState: mix32(seed ^ 0x8cb92baa),
-      attackCooldown: unitHash(seed, 23) * 0.6,
-      attackLanded: false,
-      provoked: 0,
-      turnRate: 5.8,
-      homeBiome: null,
-      activeMin: 0,
-      activeMax: 0.56,
-    };
-  }
-
-  _groundHeight(x, z, referenceY) {
-    if (!this.world) return Number.isFinite(referenceY) ? referenceY : 0;
-    const worldHeight = Math.max(8, Number(this.world.worldHeight) || 64);
-    let terrain = Number(this.world.terrainHeight?.(x, z));
-    if (!Number.isFinite(terrain)) terrain = (Number(referenceY) || 1) - 1;
-    const base = clamp(Math.floor(terrain), 0, worldHeight - 2);
-    const top = Math.min(worldHeight - 2, base + 3);
-    const bottom = Math.max(0, base - 7);
-    const blockX = Math.floor(x);
-    const blockZ = Math.floor(z);
-
-    for (let y = top; y >= bottom; y -= 1) {
-      if (!isSolid(this.world.getBlock?.(blockX, y, blockZ))) continue;
-      const above = this.world.getBlock?.(blockX, y + 1, blockZ);
-      if (!isSolid(above)) return y + 1;
-    }
-    return base + 1;
-  }
-
-  _hasVisibleTerrain(x, z) {
-    if (this.world?.hasVisibleTerrainAt) return this.world.hasVisibleTerrainAt(x, z);
-    if (this.world?.isPositionRendered) return this.world.isPositionRendered(x, z);
-    return true;
-  }
-
-  _canOccupy(x, ground, z) {
-    if (!this.world || !Number.isFinite(ground)) return true;
-    // Generated voxel data can precede its visible mesh by several streaming
-    // slices. Never let an animal walk onto that invisible ground and appear to
-    // float in open sky while the terrain catches up.
-    if (!this._hasVisibleTerrain(x, z)) return false;
-    const blockX = Math.floor(x);
-    const blockZ = Math.floor(z);
-    const feet = Math.floor(ground + 0.05);
-    const atFeet = this.world.getBlock?.(blockX, feet, blockZ);
-    const atHead = this.world.getBlock?.(blockX, feet + 1, blockZ);
-    return !isSolid(atFeet) && !isSolid(atHead) && !isLiquid(atFeet);
-  }
-
-  _validSpawn(x, z, playerPosition) {
-    if (this.world?.isPositionReady && !this.world.isPositionReady(x, z)) return null;
-    if (!this._hasVisibleTerrain(x, z)) return null;
-    const ground = this._groundHeight(x, z, playerPosition.y);
-    const terrain = Number(this.world?.terrainHeight?.(x, z));
-    if (Number.isFinite(terrain) && Math.abs(ground - (terrain + 1)) > 1.1) return null;
-    if (!this._canOccupy(x, ground, z)) return null;
-
-    const groundBlock = this.world?.getBlock?.(Math.floor(x), Math.floor(ground - 0.05), Math.floor(z));
-    if (!isSolid(groundBlock)) return null;
-    const waterAtFeet = this.world?.getBlock?.(Math.floor(x), Math.floor(ground + 0.05), Math.floor(z));
-    if (isLiquid(waterAtFeet)) return null;
-
-    if (this.world?.terrainHeight) {
-      const h0 = Number(this.world.terrainHeight(x, z));
-      const slope = Math.max(
-        Math.abs(h0 - Number(this.world.terrainHeight(x + 1, z))),
-        Math.abs(h0 - Number(this.world.terrainHeight(x - 1, z))),
-        Math.abs(h0 - Number(this.world.terrainHeight(x, z + 1))),
-        Math.abs(h0 - Number(this.world.terrainHeight(x, z - 1))),
-      );
-      if (!Number.isFinite(slope) || slope > 1.2) return null;
-    }
-
-    for (const creature of this.creatures) {
-      const dx = creature.root.position.x - x;
-      const dz = creature.root.position.z - z;
-      if (dx * dx + dz * dz < 4.5 * 4.5) return null;
-    }
-    return ground;
-  }
-
-  _typeForSpawn(biome, daylight, roll) {
-    if (daylight <= 0.36) return 'gloomling';
-    if (biome === 'desert') return 'dunetail';
-    if (biome === 'forest') return roll < 0.62 ? 'bramblehog' : 'dapple';
-    return roll < 0.82 ? 'dapple' : 'dunetail';
-  }
-
-  _createCreature(type, x, ground, z, seed) {
-    let creature;
-    if (type === 'dapple') creature = this._makeDapple(x, ground, z, seed);
-    else if (type === 'bramblehog') creature = this._makeBramblehog(x, ground, z, seed);
-    else if (type === 'dunetail') creature = this._makeDunetail(x, ground, z, seed);
-    else creature = this._makeGloomling(x, ground, z, seed);
-    this._requestAnimalVisual(creature, seed);
-    return creature;
-  }
-
-  _trySpawn(player, dayAmount) {
-    if (this.creatures.length >= MAX_CREATURES) return;
-    const playerPosition = player?.position ?? player?.camera?.position;
-    if (!playerPosition) return;
-
-    const daylight = clamp(Number(dayAmount) || 0, 0, 1);
-    player.getLookDirection?.(this._spawnForward);
-    this._spawnForward.y = 0;
-    if (this._spawnForward.lengthSq() < 0.01) {
-      this._spawnForward.set(-Math.sin(Number(player.yaw) || 0), 0, -Math.cos(Number(player.yaw) || 0));
-    } else this._spawnForward.normalize();
-
-    const worldSeed = Number(this.world?.seed) >>> 0;
-    for (let attempt = 0; attempt < 10; attempt += 1) {
-      const serial = ++this._spawnSerial;
-      const seed = mix32(worldSeed ^ Math.imul(serial, 0x9e3779b9));
-      const angle = unitHash(seed, 1, 0xa24baed5) * Math.PI * 2;
-      const radius = MIN_SPAWN_RADIUS
-        + unitHash(seed, 2, 0x9fb21c65) * (MAX_SPAWN_RADIUS - MIN_SPAWN_RADIUS);
-      const x = Math.floor(playerPosition.x + Math.cos(angle) * radius) + 0.5;
-      const z = Math.floor(playerPosition.z + Math.sin(angle) * radius) + 0.5;
-      const dx = x - playerPosition.x;
-      const dz = z - playerPosition.z;
-      if (dx * dx + dz * dz < MIN_SPAWN_RADIUS * MIN_SPAWN_RADIUS) continue;
-      const inverseDistance = 1 / Math.max(0.001, Math.hypot(dx, dz));
-      const viewDot = this._spawnForward.x * dx * inverseDistance + this._spawnForward.z * dz * inverseDistance;
-      // New animals enter from the distant rear hemisphere. They can later
-      // wander into view, but never materialize beneath the player's crosshair.
-      if (viewDot > -0.12) continue;
-      const biome = this.world?.biomeAt?.(x, z) || 'plains';
-      const type = this._typeForSpawn(biome, daylight, unitHash(seed, 8, 0xac2f91d3));
-      const typeCount = this.creatures.reduce(
-        (total, creature) => total + (creature.type === type ? 1 : 0), 0,
-      );
-      if (typeCount >= (CREATURE_CAPS[type] ?? 4)) continue;
-      const ground = this._validSpawn(x, z, playerPosition);
-      if (ground == null) continue;
-
-      const creature = this._createCreature(type, x, ground, z, seed);
-      creature.targetHeading = creature.heading;
-      creature.spawnBiome = biome;
-      this.creatures.push(creature);
-      return;
-    }
-  }
-
-  _removeCreature(creature) {
-    creature.assetAnimator?.dispose();
-    this.scene?.remove(creature.root);
-    const index = this.creatures.indexOf(creature);
-    if (index >= 0) this.creatures.splice(index, 1);
-  }
-
-  _chooseWander(creature) {
-    creature.targetHeading = creature.heading + (nextRandom(creature) - 0.5) * Math.PI * 1.35;
-    setState(creature, 'wander', 1.8 + nextRandom(creature) * 3.4);
-  }
-
-  _steerWithFlock(creature, cohesion = 0.16) {
-    let centerX = 0;
-    let centerZ = 0;
-    let separationX = 0;
-    let separationZ = 0;
-    let nearby = 0;
-    for (const other of this.creatures) {
-      if (other === creature || other.dead || other.type !== creature.type) continue;
-      const dx = other.root.position.x - creature.root.position.x;
-      const dz = other.root.position.z - creature.root.position.z;
-      const distanceSq = dx * dx + dz * dz;
-      if (distanceSq > 11 * 11) continue;
-      nearby += 1;
-      centerX += other.root.position.x;
-      centerZ += other.root.position.z;
-      if (distanceSq < 2.4 * 2.4) {
-        const inverse = 1 / Math.max(0.3, distanceSq);
-        separationX -= dx * inverse;
-        separationZ -= dz * inverse;
-      }
-    }
-    if (!nearby) return;
-    const towardX = centerX / nearby - creature.root.position.x;
-    const towardZ = centerZ / nearby - creature.root.position.z;
-    const steerX = towardX * cohesion + separationX * 1.35;
-    const steerZ = towardZ * cohesion + separationZ * 1.35;
-    if (steerX * steerX + steerZ * steerZ > 0.01) {
-      const socialHeading = Math.atan2(steerX, steerZ);
-      creature.targetHeading += shortestAngle(creature.targetHeading, socialHeading) * 0.24;
-    }
-  }
-
-  _updateDappleIntent(creature, playerPosition, daylight) {
-    const dx = playerPosition.x - creature.root.position.x;
-    const dz = playerPosition.z - creature.root.position.z;
-    const distanceSq = dx * dx + dz * dz;
-
-    // Preserve the authored hit clip for its short reaction window. The former
-    // proximity check immediately changed every struck animal to `flee`, so the
-    // mixer never got a frame in which to show the impact animation.
-    if (creature.state === 'hit' && creature.hitTime > 0) {
-      creature.desiredSpeed = 0;
-      return;
-    }
-
-    if (distanceSq < 5.2 * 5.2 || daylight < 0.34) {
-      creature.targetHeading = Math.atan2(-dx, -dz) + (nextRandom(creature) - 0.5) * 0.35;
-      creature.desiredSpeed = daylight < 0.34 ? 2.05 : 2.65;
-      setState(creature, 'flee', 1.5);
-      return;
-    }
-
-    if (creature.state === 'flee' && creature.stateTime < creature.stateDuration) {
-      creature.desiredSpeed = 2.35;
-      return;
-    }
-
-    if (creature.stateTime >= creature.stateDuration) {
-      const choice = nextRandom(creature);
-      if (choice < 0.36) setState(creature, 'graze', 2.2 + nextRandom(creature) * 4.2);
-      else if (choice < 0.63) setState(creature, 'idle', 1.2 + nextRandom(creature) * 2.7);
-      else this._chooseWander(creature);
-    }
-    creature.desiredSpeed = creature.state === 'wander' ? 0.78 : 0;
-    if (creature.state === 'wander') this._steerWithFlock(creature, 0.14);
-  }
-
-  _updateBramblehogIntent(creature, player, playerPosition, daylight) {
-    const combat = CREATURE_COMBAT.bramblehog;
-    const dx = playerPosition.x - creature.root.position.x;
-    const dz = playerPosition.z - creature.root.position.z;
-    const dy = playerPosition.y - creature.root.position.y;
-    const distance = Math.hypot(dx, dz);
-    if (creature.state === 'hit' && creature.hitTime > 0) {
-      creature.desiredSpeed = 0;
-      return;
-    }
-    if (creature.state === 'attack') {
-      creature.targetHeading = Math.atan2(dx, dz);
-      // A readable head-lower windup precedes one committed lunge. Moving the
-      // damage frame after the visual tell keeps the hit threatening but fair.
-      creature.desiredSpeed = creature.stateTime >= combat.windup - 0.1
-        && creature.stateTime < combat.windup + 0.12 ? 3.55 : 0;
-      if (!creature.attackLanded && creature.stateTime >= combat.windup) {
-        creature.attackLanded = true;
-        if (distance < combat.range && Math.abs(dy) < 2.2 && this._canDamagePlayer(creature, playerPosition)) {
-          this._damagePlayer(player, creature);
-        }
-      }
-      if (creature.stateTime >= combat.duration) {
-        creature.attackCooldown = combat.cooldown;
-        setState(creature, 'guard', 0.8);
-      }
-      return;
-    }
-
-    if (creature.provoked > 0 && daylight >= 0.12) {
-      creature.targetHeading = Math.atan2(dx, dz);
-      if (distance < 1.72 && creature.attackCooldown <= 0) {
-        setState(creature, 'attack', combat.duration);
-        creature.desiredSpeed = 0;
-      } else {
-        setState(creature, 'charge', 1);
-        creature.desiredSpeed = distance > 2.2 ? 2.3 : 0.45;
-      }
-      return;
-    }
-
-    if (distance < 4.2) {
-      creature.targetHeading = Math.atan2(dx, dz);
-      creature.desiredSpeed = 0;
-      setState(creature, 'guard', 1.1);
-      return;
-    }
-    if (daylight < 0.18) {
-      creature.targetHeading = Math.atan2(-dx, -dz);
-      creature.desiredSpeed = 1.55;
-      setState(creature, 'flee', 1.5);
-      return;
-    }
-    if (creature.state === 'hit' && creature.hitTime > 0) {
-      creature.desiredSpeed = 0;
-      return;
-    }
-    if (creature.stateTime >= creature.stateDuration) {
-      const choice = nextRandom(creature);
-      if (choice < 0.48) setState(creature, 'root', 2.1 + nextRandom(creature) * 3.8);
-      else if (choice < 0.68) setState(creature, 'idle', 1.2 + nextRandom(creature) * 2.2);
-      else this._chooseWander(creature);
-    }
-    creature.desiredSpeed = creature.state === 'wander' ? 0.58 : 0;
-    if (creature.state === 'wander') this._steerWithFlock(creature, 0.1);
-  }
-
-  _updateDunetailIntent(creature, playerPosition, daylight) {
-    const dx = playerPosition.x - creature.root.position.x;
-    const dz = playerPosition.z - creature.root.position.z;
-    const distanceSq = dx * dx + dz * dz;
-    if (creature.state === 'hit' && creature.hitTime > 0) {
-      creature.desiredSpeed = 0;
-      return;
-    }
-    if (distanceSq < 7.2 * 7.2 || daylight < 0.3) {
-      creature.targetHeading = Math.atan2(-dx, -dz) + (nextRandom(creature) - 0.5) * 0.22;
-      creature.desiredSpeed = 3.65;
-      setState(creature, 'sprint', 1.7);
-      return;
-    }
-    if (creature.state === 'sprint' && creature.stateTime < creature.stateDuration) {
-      creature.desiredSpeed = 3.3;
-      return;
-    }
-    if (creature.stateTime >= creature.stateDuration) {
-      const choice = nextRandom(creature);
-      if (choice < 0.32) setState(creature, 'peck', 1.1 + nextRandom(creature) * 1.6);
-      else if (choice < 0.6) setState(creature, 'scan', 1.4 + nextRandom(creature) * 2.3);
-      else this._chooseWander(creature);
-    }
-    creature.desiredSpeed = creature.state === 'wander' ? 1.12 : 0;
-    if (creature.state === 'wander') this._steerWithFlock(creature, 0.18);
-  }
-
-  _damagePlayer(player, creature) {
-    if (this._time - this._lastPlayerDamage < PLAYER_DAMAGE_INTERVAL) return false;
-    this._lastPlayerDamage = this._time;
-    const combat = creatureCombatProfile(creature.type);
-    const damage = combat.damage;
-
-    if (typeof this.onPlayerDamage === 'function') {
-      // The callback owns damage application so game modes can ignore or alter it.
-      this.onPlayerDamage(damage, creature.root.position, creature, combat);
-    } else {
-      if (Number.isFinite(player?.health)) player.health = Math.max(0, player.health - damage);
-      player?.onDamage?.(damage, creature);
-
-      const playerPosition = player?.position;
-      const velocity = player?.velocity;
-      if (playerPosition && velocity?.isVector3) {
-        let dx = playerPosition.x - creature.root.position.x;
-        let dz = playerPosition.z - creature.root.position.z;
-        const length = Math.hypot(dx, dz) || 1;
-        dx /= length;
-        dz /= length;
-        velocity.x += dx * combat.knockback;
-        velocity.y = Math.max(velocity.y, 2.5 + combat.knockback * 0.12);
-        velocity.z += dz * combat.knockback;
-      }
-    }
-    return true;
-  }
-
-  _updateGloomlingIntent(creature, player, playerPosition, daylight) {
-    const combat = CREATURE_COMBAT.gloomling;
-    const dx = playerPosition.x - creature.root.position.x;
-    const dz = playerPosition.z - creature.root.position.z;
-    const dy = playerPosition.y - creature.root.position.y;
-    const distanceSq = dx * dx + dz * dz;
-    const distance = Math.sqrt(distanceSq);
-    const nighttime = daylight <= 0.43;
-
-    creature.attackCooldown = Math.max(0, creature.attackCooldown);
-    if (!nighttime) {
-      creature.targetHeading = Math.atan2(-dx, -dz);
-      creature.desiredSpeed = 2.7;
-      setState(creature, 'flee', 1.2);
-      return;
-    }
-
-    if (creature.state === 'hit' && creature.hitTime > 0) {
-      creature.desiredSpeed = 0;
-      return;
-    }
-
-    if (creature.state === 'attack') {
-      creature.desiredSpeed = creature.stateTime >= combat.windup - 0.07
-        && creature.stateTime < combat.windup + 0.09 ? 2.6 : 0;
-      creature.targetHeading = Math.atan2(dx, dz);
-      if (!creature.attackLanded && creature.stateTime >= combat.windup) {
-        creature.attackLanded = true;
-        if (distance < combat.range && Math.abs(dy) < 2.25 && this._canDamagePlayer(creature, playerPosition)) {
-          this._damagePlayer(player, creature);
-        }
-      }
-      if (creature.stateTime >= combat.duration) {
-        creature.attackCooldown = combat.cooldown;
-        setState(creature, 'chase', 0.5);
-      }
-      return;
-    }
-
-    if (distance < 1.62 && Math.abs(dy) < 2.25 && creature.attackCooldown <= 0) {
-      setState(creature, 'attack', combat.duration);
-      creature.targetHeading = Math.atan2(dx, dz);
-      creature.desiredSpeed = 0;
-      return;
-    }
-
-    if (distanceSq < 18 * 18) {
-      creature.targetHeading = Math.atan2(dx, dz);
-      creature.desiredSpeed = distance < 2.2 ? 0.45 : 1.72;
-      setState(creature, 'chase', 1);
-      return;
-    }
-
-    if (creature.stateTime >= creature.stateDuration) {
-      if (nextRandom(creature) < 0.38) setState(creature, 'idle', 0.8 + nextRandom(creature) * 1.8);
-      else this._chooseWander(creature);
-    }
-    creature.desiredSpeed = creature.state === 'wander' ? 0.95 : 0;
-  }
-
-  _moveCreature(creature, dt) {
-    const turnRate = creature.turnRate ?? (creature.type === 'gloomling' ? 5.5 : 3.6);
-    const angleDelta = shortestAngle(creature.heading, creature.targetHeading);
-    creature.heading += clamp(angleDelta, -turnRate * dt, turnRate * dt);
-
-    let speed = creature.dead || creature.state === 'hit' ? 0 : creature.desiredSpeed;
-    const moveX = Math.sin(creature.heading) * speed + creature.knockbackX;
-    const moveZ = Math.cos(creature.heading) * speed + creature.knockbackZ;
-    const nextX = creature.root.position.x + moveX * dt;
-    const nextZ = creature.root.position.z + moveZ * dt;
-
-    const nextGround = this._groundHeight(nextX, nextZ, creature.root.position.y);
-    const climb = nextGround - creature.root.position.y;
-
-    if (this._canOccupy(nextX, nextGround, nextZ) && climb <= 1.06) {
-      creature.root.position.x = nextX;
-      creature.root.position.z = nextZ;
-      if (climb > 0.02 && climb <= 1.06) {
-        creature.root.position.y = nextGround;
-        creature.verticalVelocity = 0;
-      }
-    } else {
-      creature.targetHeading += (nextRandom(creature) > 0.5 ? 1 : -1) * (1.2 + nextRandom(creature));
-      creature.knockbackX *= 0.25;
-      creature.knockbackZ *= 0.25;
-      speed = 0;
-    }
-
-    const ground = this._groundHeight(creature.root.position.x, creature.root.position.z, creature.root.position.y);
-    if (creature.root.position.y > ground + 0.025 || creature.verticalVelocity > 0) {
-      creature.verticalVelocity -= GRAVITY * dt;
-      creature.root.position.y += creature.verticalVelocity * dt;
-      if (creature.root.position.y <= ground) {
-        creature.root.position.y = ground;
-        creature.verticalVelocity = 0;
-      }
-    } else {
-      creature.root.position.y = ground;
-      creature.verticalVelocity = 0;
-    }
-
-    const knockbackDamping = Math.exp(-5.2 * dt);
-    creature.knockbackX *= knockbackDamping;
-    creature.knockbackZ *= knockbackDamping;
-    creature.root.rotation.y = creature.heading;
-    return speed;
-  }
-
-  _animateDapple(creature, speed) {
-    const { body, headPivot, ears, legs, tail, hitGlow } = creature.parts;
-    const moving = speed > 0.08;
-    const pace = creature.state === 'flee' ? 10.5 : 6.2;
-    const cycle = this._time * pace + creature.phase;
-    const stride = moving ? Math.min(0.72, speed * 0.28) : 0;
-    const breathe = Math.sin(this._time * 2.1 + creature.phase) * 0.018;
-    body.position.y = 0.88 + breathe + (moving ? Math.abs(Math.sin(cycle)) * 0.025 : 0);
-    body.rotation.z = moving ? Math.sin(cycle * 0.5) * 0.025 : 0;
-
-    for (let index = 0; index < legs.length; index += 1) {
-      const phase = index === 0 || index === 3 ? 0 : Math.PI;
-      legs[index].rotation.x = Math.sin(cycle + phase) * stride;
-    }
-
-    const grazing = creature.state === 'graze' && creature.stateTime > 0.2;
-    headPivot.rotation.x = grazing
-      ? 0.68 + Math.sin(this._time * 1.4 + creature.phase) * 0.07
-      : -0.04 + Math.sin(this._time * 2.7 + creature.phase) * 0.035;
-    headPivot.rotation.z = creature.state === 'hit' ? Math.sin(this._time * 31) * 0.08 : 0;
-    ears[0].rotation.y = Math.sin(this._time * 3.4 + creature.phase) * 0.16;
-    ears[1].rotation.y = -ears[0].rotation.y;
-    tail.rotation.z = Math.sin(this._time * (creature.state === 'flee' ? 12 : 4.8) + creature.phase) * 0.28;
-    hitGlow.visible = creature.hitTime > 0 && Math.floor(creature.hitTime * 32) % 2 === 0;
-  }
-
-  _animateBramblehog(creature, speed) {
-    const { body, shell, spines, headPivot, legs, tail, hitGlow } = creature.parts;
-    const moving = speed > 0.08;
-    const charging = creature.state === 'charge' || creature.state === 'attack';
-    const cycle = this._time * (charging ? 11.5 : 5.3) + creature.phase;
-    const stride = moving ? Math.min(charging ? 0.64 : 0.42, speed * 0.25) : 0;
-    const stomp = moving ? Math.abs(Math.sin(cycle)) * (charging ? 0.065 : 0.028) : 0;
-    body.position.y = 0.78 + stomp + Math.sin(this._time * 1.8 + creature.phase) * 0.012;
-    shell.position.y = 0.97 + stomp * 0.8;
-    shell.rotation.z = moving ? Math.sin(cycle * 0.5) * 0.03 : 0;
-    for (let index = 0; index < legs.length; index += 1) {
-      const phase = index === 0 || index === 3 ? 0 : Math.PI;
-      legs[index].rotation.x = Math.sin(cycle + phase) * stride;
-    }
-    const rooting = creature.state === 'root';
-    const guard = creature.state === 'guard';
-    const attackPulse = creature.state === 'attack'
-      ? Math.sin(clamp(creature.stateTime / CREATURE_COMBAT.bramblehog.duration, 0, 1) * Math.PI)
-      : 0;
-    headPivot.rotation.x = rooting
-      ? 0.62 + Math.sin(this._time * 5.2 + creature.phase) * 0.12
-      : guard ? -0.18 : charging ? 0.22 - attackPulse * 0.32 : 0;
-    headPivot.position.z = 0.67 + attackPulse * 0.24;
-    for (let index = 0; index < spines.length; index += 1) {
-      spines[index].rotation.y = Math.sin(this._time * 1.7 + creature.phase + index) * 0.055;
-      spines[index].scale.y = guard || charging ? 1.12 : 1;
-    }
-    tail.rotation.z = Math.sin(this._time * (guard ? 8 : 3.2) + creature.phase) * 0.22;
-    hitGlow.visible = creature.hitTime > 0 && Math.floor(creature.hitTime * 34) % 2 === 0;
-  }
-
-  _animateDunetail(creature, speed) {
-    const { body, neckPivot, wings, legs, tail, hitGlow } = creature.parts;
-    const moving = speed > 0.08;
-    const sprinting = creature.state === 'sprint';
-    const pace = sprinting ? 15 : 8.2;
-    const cycle = this._time * pace + creature.phase;
-    const stride = moving ? Math.min(0.95, speed * 0.29) : 0;
-    body.position.y = 1.17 + (moving ? Math.abs(Math.sin(cycle)) * (sprinting ? 0.11 : 0.05) : 0);
-    body.rotation.x = sprinting ? -0.18 : 0;
-    body.rotation.z = moving ? Math.sin(cycle * 0.5) * 0.045 : 0;
-    legs[0].rotation.x = Math.sin(cycle) * stride;
-    legs[1].rotation.x = Math.sin(cycle + Math.PI) * stride;
-    const peck = creature.state === 'peck'
-      ? Math.max(0, Math.sin(creature.stateTime * 8.5))
-      : 0;
-    const scan = creature.state === 'scan'
-      ? Math.sin(this._time * 2.5 + creature.phase) * 0.35
-      : 0;
-    neckPivot.rotation.x = peck * 0.72 + (sprinting ? 0.2 : 0);
-    neckPivot.rotation.y = scan;
-    for (let index = 0; index < wings.length; index += 1) {
-      const side = index === 0 ? -1 : 1;
-      wings[index].rotation.z = side * (sprinting ? 0.34 + Math.sin(cycle * 1.35) * 0.23 : 0.08);
-      wings[index].rotation.x = sprinting ? Math.sin(cycle) * 0.12 : 0;
-    }
-    tail.rotation.x = sprinting ? -0.2 + Math.sin(cycle) * 0.08 : Math.sin(this._time * 2 + creature.phase) * 0.05;
-    tail.rotation.z = moving ? -Math.sin(cycle * 0.5) * 0.08 : 0;
-    hitGlow.visible = creature.hitTime > 0 && Math.floor(creature.hitTime * 36) % 2 === 0;
-  }
-
-  _animateGloomling(creature, speed) {
-    const { body, shoulderPlates, headPivot, eye, jaw, legs, hitGlow } = creature.parts;
-    const moving = speed > 0.08;
-    const pace = creature.state === 'chase' ? 11 : creature.state === 'flee' ? 12 : 7;
-    const cycle = this._time * pace + creature.phase;
-    const stride = moving ? Math.min(0.8, speed * 0.34) : 0;
-    body.position.y = 0.9 + Math.sin(this._time * 3.8 + creature.phase) * 0.035;
-    body.rotation.z = Math.sin(this._time * 2.5 + creature.phase) * 0.035;
-    body.scale.set(1, 0.74 + Math.sin(this._time * 3 + creature.phase) * 0.018, 0.82);
-
-    for (let index = 0; index < shoulderPlates.length; index += 1) {
-      shoulderPlates[index].position.y = 1.03 + Math.sin(this._time * 3.1 + creature.phase + index) * 0.025;
-    }
-
-    for (let index = 0; index < legs.length; index += 1) {
-      const phase = index === 0 || index === 3 ? 0 : Math.PI;
-      legs[index].rotation.x = Math.sin(cycle + phase) * stride;
-      legs[index].rotation.z = Math.sin(cycle * 0.5 + index) * 0.05;
-    }
-
-    const attackPulse = creature.state === 'attack'
-      ? Math.sin(Math.min(1, creature.stateTime / CREATURE_COMBAT.gloomling.duration) * Math.PI)
-      : 0;
-    headPivot.position.z = 0.5 + attackPulse * 0.28;
-    headPivot.rotation.x = -attackPulse * 0.16;
-    jaw.rotation.x = attackPulse * 0.65;
-    eye.scale.x = 0.9 + Math.sin(this._time * 5 + creature.phase) * 0.1 + attackPulse * 0.3;
-    hitGlow.visible = creature.hitTime > 0 && Math.floor(creature.hitTime * 34) % 2 === 0;
-  }
-
-  _animateDeath(creature, dt) {
-    if (creature.assetAnimator) {
-      creature.assetAnimator.update(dt, 0);
-      creature.root.scale.setScalar(creature.baseScale);
-      creature.root.rotation.z = 0;
-      creature.model.position.y = 0;
-      return;
-    }
-    const progress = clamp(creature.deathTime / 0.72, 0, 1);
-    const scale = creature.baseScale * (1 - progress * 0.72);
-    creature.root.scale.setScalar(Math.max(0.03, scale));
-    creature.root.rotation.z = progress * 1.28;
-    creature.model.position.y = -progress * 0.16;
-    creature.parts.hitGlow.visible = progress < 0.3;
-  }
-
-  update(dt, player, dayAmount = 1) {
-    if (this._disposed) return;
-    dt = clamp(Number(dt) || 0, 0, 0.08);
-    if (dt <= 0) return;
-    this._time += dt;
-    const daylight = clamp(Number(dayAmount) || 0, 0, 1);
-    const playerPosition = player?.position ?? player?.camera?.position;
-    if (!playerPosition) return;
-
-    this._spawnTimer -= dt;
-    if (this._spawnTimer <= 0) {
-      const jitter = unitHash(Number(this.world?.seed) >>> 0, this._spawnSerial + 31, 0x632be5ab);
-      this._spawnTimer = 1.25 + jitter * 1.65;
-      this._trySpawn(player, daylight);
-    }
-
-    for (let index = this.creatures.length - 1; index >= 0; index -= 1) {
-      const creature = this.creatures[index];
-      creature.age += dt;
-      creature.stateTime += dt;
-      creature.hitTime = Math.max(0, creature.hitTime - dt);
-      creature.attackCooldown = Math.max(0, creature.attackCooldown - dt);
-      creature.provoked = Math.max(0, (creature.provoked || 0) - dt);
-      const dx = creature.root.position.x - playerPosition.x;
-      const dz = creature.root.position.z - playerPosition.z;
-      const distanceSq = dx * dx + dz * dz;
-
-      const renderedGround = this._hasVisibleTerrain(creature.root.position.x, creature.root.position.z);
-      creature.root.visible = renderedGround;
-      if (!renderedGround) {
-        // Keep simulation and animation frozen rather than allowing an unseen
-        // actor to cross more pending chunks. It will resume seamlessly once
-        // its supporting mesh is published, or despawn if the player left it.
-        if (distanceSq > DESPAWN_DISTANCE_SQ) this._removeCreature(creature);
-        continue;
-      }
-
-      if (creature.dead) {
-        creature.deathTime += dt;
-        this._animateDeath(creature, dt);
-        const deathDuration = creature.assetAnimator?.deathDuration ?? 0.72;
-        if (creature.deathTime >= deathDuration) this._removeCreature(creature);
-        continue;
-      }
-
-      const compatibleTime = daylight >= (creature.activeMin ?? 0)
-        && daylight <= (creature.activeMax ?? 1);
-      creature.mismatchTime = compatibleTime ? 0 : creature.mismatchTime + dt;
-      if (distanceSq > DESPAWN_DISTANCE_SQ
-        || (creature.mismatchTime > 10 && distanceSq > 21 * 21)
-        || (creature.age > 240 && distanceSq > 32 * 32)) {
-        this._removeCreature(creature);
-        continue;
-      }
-
-      if (creature.type === 'dapple') this._updateDappleIntent(creature, playerPosition, daylight);
-      else if (creature.type === 'bramblehog') {
-        this._updateBramblehogIntent(creature, player, playerPosition, daylight);
-      } else if (creature.type === 'dunetail') {
-        this._updateDunetailIntent(creature, playerPosition, daylight);
-      } else this._updateGloomlingIntent(creature, player, playerPosition, daylight);
-
-      if (creature.state === 'hit' && creature.hitTime <= 0) {
-        if (creature.type === 'bramblehog') setState(creature, 'charge', 1.2);
-        else if (creature.type === 'gloomling') setState(creature, daylight <= 0.43 ? 'chase' : 'flee', 1.2);
-        else setState(creature, 'flee', 1.8);
-      }
-
-      const speed = this._moveCreature(creature, dt);
-      if (creature.assetAnimator) creature.assetAnimator.update(dt, speed);
-      else if (creature.type === 'dapple') this._animateDapple(creature, speed);
-      else if (creature.type === 'bramblehog') this._animateBramblehog(creature, speed);
-      else if (creature.type === 'dunetail') this._animateDunetail(creature, speed);
-      else this._animateGloomling(creature, speed);
-    }
-  }
-
-  _lineBlocked(origin, direction, distance) {
-    if (!this.world?.getBlock || distance <= 0.35) return false;
-    for (let step = 0.32; step < distance - 0.2; step += 0.34) {
-      const x = Math.floor(origin.x + direction.x * step);
-      const sampleY = origin.y + direction.y * step;
-      const y = Math.floor(sampleY);
-      const z = Math.floor(origin.z + direction.z * step);
-      const id = this.world.getBlock(x, y, z);
-      if (isSolid(id) && sampleY <= y + blockShapeHeight(id)) return true;
-    }
-    return false;
-  }
-
-  _canDamagePlayer(creature, playerPosition) {
-    if (!creature?.root || !playerPosition) return false;
-    this._strikeOrigin.set(
-      creature.root.position.x,
-      creature.root.position.y + Math.max(0.45, creature.centerHeight * 0.72),
-      creature.root.position.z,
-    );
-    this._strikeDirection.set(
-      playerPosition.x - this._strikeOrigin.x,
-      playerPosition.y + 0.92 - this._strikeOrigin.y,
-      playerPosition.z - this._strikeOrigin.z,
-    );
-    const distance = this._strikeDirection.length();
-    if (distance <= 0.2) return true;
-    this._strikeDirection.multiplyScalar(1 / distance);
-    return !this._lineBlocked(this._strikeOrigin, this._strikeDirection, distance);
-  }
-
-  hasAttackTarget(origin, direction, reach = 4) {
-    if (this._disposed || !origin || !direction) return false;
-    const maxReach = clamp(Number(reach) || 0, 0, 4.75);
-    if (maxReach <= 0) return false;
-    this._attackDirection.set(Number(direction.x) || 0, Number(direction.y) || 0, Number(direction.z) || 0);
-    if (this._attackDirection.lengthSq() < 1e-8) return false;
-    this._attackDirection.normalize();
-    for (const creature of this.creatures) {
-      if (creature.dead || creature.root.visible === false) continue;
-      const toX = creature.root.position.x - Number(origin.x || 0);
-      const toY = creature.root.position.y + creature.centerHeight - Number(origin.y || 0);
-      const toZ = creature.root.position.z - Number(origin.z || 0);
-      const along = toX * this._attackDirection.x
-        + toY * this._attackDirection.y
-        + toZ * this._attackDirection.z;
-      if (along < 0 || along > maxReach) continue;
-      const distanceSq = toX * toX + toY * toY + toZ * toZ;
-      const perpendicularSq = Math.max(0, distanceSq - along * along);
-      const radiusSq = creature.radius * creature.radius;
-      if (perpendicularSq > radiusSq) continue;
-      const entry = Math.max(0, along - Math.sqrt(radiusSq - perpendicularSq));
-      if (!this._lineBlocked(origin, this._attackDirection, entry)) return true;
-    }
-    return false;
-  }
-
-  attack(origin, direction, reach = 4, damage = 1, recovery = null) {
-    if (this._disposed || !origin || !direction) return null;
-    const maxReach = clamp(Number(reach) || 0, 0, 4.75);
-    if (maxReach <= 0) return null;
-    this._attackDirection.set(Number(direction.x) || 0, Number(direction.y) || 0, Number(direction.z) || 0);
-    if (this._attackDirection.lengthSq() < 1e-8) return null;
-    this._attackDirection.normalize();
-    if (this._time + 1e-6 < this._playerAttackReadyAt) return null;
-
-    const appliedDamage = clamp(Number(damage) || 1, 0.5, 8);
-    const recoverySeconds = clamp(
-      recovery != null && Number.isFinite(Number(recovery))
-        ? Number(recovery)
-        : 0.4 + appliedDamage * 0.12,
-      0.38,
-      1.2,
-    );
-    // Recovery starts even on a miss. Otherwise rapid clicks can probe every
-    // frame until one connects, effectively bypassing the visible swing speed.
-    this._playerAttackReadyAt = this._time + recoverySeconds;
-
-    let nearest = null;
-    let nearestDistance = maxReach + 1;
-    for (const creature of this.creatures) {
-      if (creature.dead || creature.root.visible === false) continue;
-      const centerX = creature.root.position.x;
-      const centerY = creature.root.position.y + creature.centerHeight;
-      const centerZ = creature.root.position.z;
-      const toX = centerX - Number(origin.x || 0);
-      const toY = centerY - Number(origin.y || 0);
-      const toZ = centerZ - Number(origin.z || 0);
-      const along = toX * this._attackDirection.x
-        + toY * this._attackDirection.y
-        + toZ * this._attackDirection.z;
-      if (along < 0 || along > maxReach) continue;
-      const distanceSq = toX * toX + toY * toY + toZ * toZ;
-      const perpendicularSq = Math.max(0, distanceSq - along * along);
-      const radiusSq = creature.radius * creature.radius;
-      if (perpendicularSq > radiusSq) continue;
-      const entry = Math.max(0, along - Math.sqrt(radiusSq - perpendicularSq));
-      if (entry >= nearestDistance || this._lineBlocked(origin, this._attackDirection, entry)) continue;
-      nearest = creature;
-      nearestDistance = entry;
-    }
-
-    if (!nearest) return null;
-    nearest.health -= appliedDamage;
-    nearest.hitTime = 0.29 + Math.min(0.11, appliedDamage * 0.025);
-    if (nearest.type === 'bramblehog') nearest.provoked = 9;
-    const resistance = nearest.type === 'bramblehog' ? 0.62 : nearest.type === 'gloomling' ? 0.82 : 1;
-    let pushX = nearest.root.position.x - Number(origin.x || 0);
-    let pushZ = nearest.root.position.z - Number(origin.z || 0);
-    const pushLength = Math.hypot(pushX, pushZ);
-    if (pushLength > 1e-5) {
-      pushX /= pushLength;
-      pushZ /= pushLength;
-    } else {
-      pushX = this._attackDirection.x;
-      pushZ = this._attackDirection.z;
-    }
-    const knockback = (3.15 + Math.min(3.1, appliedDamage * 0.72)) * resistance;
-    nearest.knockbackX = clamp(nearest.knockbackX + pushX * knockback, -6.4, 6.4);
-    nearest.knockbackZ = clamp(nearest.knockbackZ + pushZ * knockback, -6.4, 6.4);
-    nearest.verticalVelocity = Math.max(
-      nearest.verticalVelocity,
-      (1.45 + Math.min(1.15, appliedDamage * 0.3)) * resistance,
-    );
-    const killed = nearest.health <= 0;
-    if (killed) {
-      nearest.health = 0;
-      nearest.dead = true;
-      nearest.deathTime = 0;
-      setState(nearest, 'death', 0.72);
-    } else {
-      setState(nearest, 'hit', 0.26);
-      nearest.targetHeading = Math.atan2(-this._attackDirection.x, -this._attackDirection.z);
-    }
-
-    this._attackPoint
-      .set(Number(origin.x) || 0, Number(origin.y) || 0, Number(origin.z) || 0)
-      .addScaledVector(this._attackDirection, nearestDistance);
-    return {
-      id: nearest.id,
-      type: nearest.type,
-      name: nearest.name,
-      damage: appliedDamage,
-      health: nearest.health,
-      maxHealth: nearest.maxHealth,
-      killed,
-      defeated: killed,
-      distance: nearestDistance,
-      point: this._attackPoint.clone(),
-      position: nearest.root.position.clone(),
-      creature: nearest,
-      recovery: recoverySeconds,
-      meat: killed && ['dapple', 'bramblehog', 'dunetail'].includes(nearest.type)
-        ? (nearest.type === 'bramblehog' ? 4 : nearest.type === 'dapple' ? 3 : 2)
-        : 0,
-    };
-  }
-
-  dispose() {
-    if (this._disposed) return;
-    this._disposed = true;
-    for (const creature of this.creatures) {
-      creature.assetAnimator?.dispose();
-      this.scene?.remove(creature.root);
-    }
-    this.creatures.length = 0;
-    for (const geometry of this._geometries) geometry.dispose();
-    for (const material of this._materials) material.dispose();
-    this._geometries.clear();
-    this._materials.clear();
-    for (const geometry of this._assetGeometries) geometry.dispose();
-    for (const material of this._assetMaterials) material.dispose();
-    for (const texture of this._assetTextures) texture.dispose();
-    this._assetGeometries.clear();
-    this._assetMaterials.clear();
-    this._assetTextures.clear();
-    this._animalAssets.clear();
-    this._animalAssetPromises.clear();
-    this._animalLoader = null;
     this.onPlayerDamage = null;
   }
+  get count() { return this.creatures.length; }
+  get playerAttackRecovery() { return Math.max(0,this._playerAttackReadyAt-this._time); }
+  hasThreatNear() { return false; }
+  _random() { this._seed = (Math.imul(this._seed,1664525)+1013904223)>>>0; return this._seed/4294967296; }
+  _hasVisibleTerrain(x,z) { return this.world?.hasVisibleTerrainAt?.(x,z) ?? this.world?.isPositionRendered?.(x,z) ?? true; }
+  _groundHeight(x,z,referenceY=0) {
+    if (!this.world) return referenceY;
+    const base = Math.floor(this.world.terrainHeight?.(x,z) ?? referenceY-1);
+    for (let y=Math.min((this.world.worldHeight||192)-2,base+3); y>=Math.max(0,base-8); y--) {
+      const id=this.world.getBlock(Math.floor(x),y,Math.floor(z));
+      if (isSolid(id) && !isSolid(this.world.getBlock(Math.floor(x),y+1,Math.floor(z)))) return y+blockShapeHeight(id);
+    }
+    return null;
+  }
+  _canOccupy(x,y,z) {
+    if (!Number.isFinite(y)) return false;
+    // Validate the full footprint against water, ledges and unpublished chunks.
+    for (const dx of [-.34,.34]) for (const dz of [-.59,.59]) {
+      if (!this._hasVisibleTerrain(x+dx,z+dz)) return false;
+      const ground=this._groundHeight(x+dx,z+dz,y);
+      if (ground===null || Math.abs(ground-y)>.55) return false;
+      for (const h of [.05,.7]) {
+        const id=this.world?.getBlock?.(Math.floor(x+dx),Math.floor(y+h),Math.floor(z+dz));
+        if (isSolid(id)||isLiquid(id)) return false;
+      }
+    }
+    return true;
+  }
+  _validSpawn(x,z,playerPosition) {
+    if (this.world?.isPositionReady && !this.world.isPositionReady(x,z)) return null;
+    const y=this._groundHeight(x,z,playerPosition.y);
+    if (!this._canOccupy(x,y,z)) return null;
+    if (this.world?.getBlock(Math.floor(x),Math.floor(y-.01),Math.floor(z))!==BLOCK.TURF) return null;
+    if (this.creatures.some(c => Math.hypot(c.root.position.x-x,c.root.position.z-z)<3)) return null;
+    return y;
+  }
+  _makePig(x,y,z,seed=0) {
+    const rig=makePigRig(); rig.root.position.set(x,y,z);
+    const pig={...rig,id:this._nextId++,type:'pig',name:'Meadow pig',health:5,maxHealth:5,
+      centerHeight:.55,radius:.64,dead:false,state:'idle',stateTime:0,stateDuration:2,
+      speed:0,desiredSpeed:0,heading:(seed%100)*.0628,targetHeading:(seed%100)*.0628,
+      gait:0,gaitBlend:0,grazeBlend:0,bites:0,chewTime:0,hitTime:0,deathTime:0,
+      ground:y,randomPhase:seed*.31,foodTarget:null,knockbackX:0,knockbackZ:0,flashTime:0};
+    rig.root.rotation.y=pig.heading;
+    this.scene?.add(rig.root); this.creatures.push(pig); return pig;
+  }
+  _setState(pig,state,duration) {
+    pig.state=state; pig.stateTime=0; pig.stateDuration=duration;
+    if (state==='graze') { pig.bites=0; pig.chewTime=0; }
+  }
+  _trySpawn(player) {
+    if (this.count>=10) return;
+    const p=player.position;
+    for (let i=0;i<16;i++) {
+      const a=this._random()*Math.PI*2,r=12+this._random()*28;
+      const x=Math.floor(p.x+Math.cos(a)*r)+.5,z=Math.floor(p.z+Math.sin(a)*r)+.5;
+      const y=this._validSpawn(x,z,p);
+      if (y!==null) { this._makePig(x,y,z,this._nextId*37); return; }
+    }
+  }
+  _mouth(pig) {
+    pig.root.updateMatrixWorld(true);
+    return pig.parts.snout.localToWorld(new THREE.Vector3(0,-.08,-.078));
+  }
+  _foodAtMouth(pig) {
+    const mouth=this._mouth(pig),x=Math.floor(mouth.x),z=Math.floor(mouth.z);
+    const ground=this._groundHeight(mouth.x,mouth.z,pig.ground);
+    if (ground===null || Math.abs(ground-pig.ground)>.2) return null;
+    const y=Math.floor(ground+.02),id=this.world?.getBlock?.(x,y,z);
+    if (id===BLOCK.SHORT_GRASS) return {x,y,z,id,ground};
+    const under=this.world?.getBlock?.(x,y-1,z);
+    return under===BLOCK.TURF ? {x,y:y-1,z,id:under,ground} : null;
+  }
+  _bite(pig) {
+    const food=this._foodAtMouth(pig),mouth=this._mouth(pig);
+    if (!food || Math.abs(mouth.y-food.ground)>.2) return false;
+    // Consume the actual tuft, or expose soil, through normal saved world edits.
+    const changed=this.world.setBlock?.(food.x,food.y,food.z,food.id===BLOCK.SHORT_GRASS?BLOCK.AIR:BLOCK.LOAM,{skipStats:true});
+    if (changed===false) return false;
+    pig.bites++; pig.chewTime=1.6;
+    pig.lastBite={...food,mouth:mouth.toArray(),time:this._time};
+    return true;
+  }
+  _intent(pig,player) {
+    if (pig.hitTime>0) {
+      pig.targetHeading=Math.atan2(pig.root.position.x-player.position.x,pig.root.position.z-player.position.z)+Math.PI;
+      if (pig.state!=='flee') this._setState(pig,'flee',3);
+    }
+    if (pig.state==='flee') {
+      pig.desiredSpeed=1.8;
+      if (pig.stateTime>pig.stateDuration) this._setState(pig,'idle',1.5);
+      return;
+    }
+    if (pig.state==='graze') {
+      pig.desiredSpeed=0;
+      if (pig.stateTime>1.5 && pig.bites===0) {
+        if (!this._bite(pig)) this._setState(pig,'idle',.8);
+      }
+      if (pig.stateTime>pig.stateDuration) this._setState(pig,'idle',1.2);
+      return;
+    }
+    pig.desiredSpeed=pig.state==='walk'?.7:0;
+    if (pig.stateTime<pig.stateDuration) return;
+    if (pig.state==='walk' && this._foodAtMouth(pig)) {
+      this._setState(pig,'graze',4.8); pig.desiredSpeed=0; return;
+    }
+    let target=null,best=Infinity;
+    for (let dx=-4;dx<=4;dx++) for (let dz=-4;dz<=4;dz++) {
+      const x=Math.floor(pig.root.position.x)+dx+.5,z=Math.floor(pig.root.position.z)+dz+.5;
+      const y=this._groundHeight(x,z,pig.ground);
+      if (y===null || !this._canOccupy(x,y,z)) continue;
+      const turf=this.world?.getBlock?.(Math.floor(x),Math.floor(y-.01),Math.floor(z));
+      const grass=this.world?.getBlock?.(Math.floor(x),Math.floor(y+.01),Math.floor(z));
+      const score=dx*dx+dz*dz+(grass===BLOCK.SHORT_GRASS?0:8);
+      if (turf===BLOCK.TURF && score<best && score>.2) { best=score; target={x,z}; }
+    }
+    pig.foodTarget=target;
+    pig.targetHeading=target ? Math.atan2(pig.root.position.x-target.x,pig.root.position.z-target.z) : pig.heading+(this._random()-.5)*2.4;
+    this._setState(pig,'walk',2+this._random()*3);
+  }
+  _move(pig,dt,player) {
+    const turn=clamp(angleDelta(pig.heading,pig.targetHeading),-dt*1.8,dt*1.8);
+    if (pig.state!=='graze') pig.heading+=turn;
+    pig.root.rotation.y=pig.heading;
+    let target=pig.desiredSpeed;
+    if (Math.abs(angleDelta(pig.heading,pig.targetHeading))>.8) target*=.3;
+    if (pig.state==='walk' && Math.hypot(pig.root.position.x-player.position.x,pig.root.position.z-player.position.z)<1.6) target=0;
+    pig.speed+=(target-pig.speed)*(1-Math.exp(-dt*7));
+    let distance=pig.speed*dt;
+    if (pig.grazeBlend>.05) distance=0;
+    // Short, damped horizontal recoil goes through the same footprint collision checks.
+    const recoilX=pig.knockbackX*dt,recoilZ=pig.knockbackZ*dt;
+    pig.knockbackX*=Math.exp(-dt*11);pig.knockbackZ*=Math.exp(-dt*11);
+    const x=pig.root.position.x-Math.sin(pig.heading)*distance+recoilX;
+    const z=pig.root.position.z-Math.cos(pig.heading)*distance+recoilZ;
+    const y=this._groundHeight(x,z,pig.ground);
+    const crowded=this.creatures.some(other=>other!==pig&&!other.dead&&Math.hypot(other.root.position.x-x,other.root.position.z-z)<1.15);
+    if (y!==null && Math.abs(y-pig.ground)<.56 && this._canOccupy(x,y,z) && !crowded) {
+      pig.root.position.x=x; pig.root.position.z=z; pig.ground=y;
+    } else {
+      distance=0; pig.speed=0;
+      pig.targetHeading=pig.heading+(this._random()>.5?1:-1)*1.3;
+      if (pig.state==='walk') pig.stateDuration=pig.stateTime+.6;
+    }
+    pig.root.position.y+=(pig.ground-pig.root.position.y)*(1-Math.exp(-dt*16));
+    // Actual displacement drives the stride; blocked pigs do not walk in place.
+    pig.gait+=distance/.72*Math.PI*2;
+    pig.gaitBlend+=((distance>1e-5?Math.min(1,pig.speed/.7):0)-pig.gaitBlend)*(1-Math.exp(-dt*14));
+  }
+  _animate(pig,dt) {
+    pig.flashTime=Math.max(0,pig.flashTime-dt);
+    const flash=Math.min(1,pig.flashTime/.07);
+    pig.material.color.setRGB(1,1-flash*.68,1-flash*.65);
+    const target=pig.state==='graze'?smooth(pig.stateTime/1.1):0;
+    pig.grazeBlend+=(target-pig.grazeBlend)*(1-Math.exp(-dt*10));
+    const g=pig.grazeBlend;
+    pig.parts.head.rotation.x=-.92*g;
+    pig.parts.head.position.y=.6875-.12*g;
+    pig.parts.head.rotation.y=Math.sin(this._time*.7+pig.randomPhase)*.06*(1-g);
+    pig.chewTime=Math.max(0,pig.chewTime-dt);
+    pig.parts.snout.rotation.x=pig.chewTime>0?Math.sin(this._time*17)*.035:0;
+    pig.parts.snout.position.y=-.09375+(pig.chewTime>0?Math.sin(this._time*17)*.008:0);
+    pig.parts.tail.rotation.z=Math.sin(this._time*1.8+pig.randomPhase)*.13;
+    LEGS.forEach((name,i)=>{
+      const phase=pig.gait+([0,Math.PI,Math.PI,0][i]);
+      const leg=pig.parts[name],s=Math.sin(phase),blend=pig.gaitBlend*(1-g);
+      leg.rotation.x=s*.42*blend;
+      leg.position.y=.375*Math.cos(leg.rotation.x)+Math.abs(Math.sin(leg.rotation.x))*.125+Math.max(0,Math.cos(phase))*.035*blend;
+    });
+  }
+  update(dt,player) {
+    if (this._disposed||!player?.position) return;
+    dt=clamp(Number(dt)||0,0,.08); this._time+=dt; this._spawnTimer-=dt;
+    if (this._spawnTimer<=0) { this._spawnTimer=2; this._trySpawn(player); }
+    for (const pig of [...this.creatures]) {
+      if (pig.root.position.distanceToSquared(player.position)>96*96) { this._removeCreature(pig); continue; }
+      pig.root.visible=this._hasVisibleTerrain(pig.root.position.x,pig.root.position.z);
+      if (!pig.root.visible) continue;
+      pig.stateTime+=dt; pig.hitTime=Math.max(0,pig.hitTime-dt);
+      if (pig.dead) {
+        pig.flashTime=Math.max(0,pig.flashTime-dt);
+        const flash=Math.min(1,pig.flashTime/.07);
+        pig.material.color.setRGB(1,1-flash*.68,1-flash*.65);
+        pig.deathTime+=dt; pig.root.rotation.z=smooth(pig.deathTime/.6)*Math.PI/2;
+        if (pig.deathTime>.85) this._removeCreature(pig);
+        continue;
+      }
+      this._intent(pig,player); this._move(pig,dt,player); this._animate(pig,dt);
+    }
+  }
+  _lineBlocked(origin,direction,distance) {
+    for(let s=.15;s<distance;s+=.15) {
+      const p=origin.clone().addScaledVector(direction,s),id=this.world?.getBlock?.(Math.floor(p.x),Math.floor(p.y),Math.floor(p.z));
+      if(isSolid(id)&&p.y<=Math.floor(p.y)+blockShapeHeight(id)) return true;
+    }
+    return false;
+  }
+  _target(origin,direction,reach) {
+    const ray=new THREE.Ray(origin,new THREE.Vector3().copy(direction).normalize());
+    let target=null;
+    for(const pig of this.creatures) {
+      if(pig.dead||!pig.root.visible) continue;
+      const point=ray.intersectSphere(new THREE.Sphere(pig.root.position.clone().add(new THREE.Vector3(0,.55,0)),pig.radius),new THREE.Vector3());
+      if(!point) continue;
+      const distance=origin.distanceTo(point);
+      if(distance<=reach&&(!target||distance<target.distance)&&!this._lineBlocked(origin,ray.direction,distance)) target={pig,point,distance};
+    }
+    return target;
+  }
+  hasAttackTarget(origin,direction,reach=4) { return Boolean(this._target(origin,direction,clamp(reach,0,4.75))); }
+  attack(origin,direction,reach=4,damage=1,recovery=.6) {
+    if(this._disposed||this.playerAttackRecovery>0||!origin||!direction) return null;
+    recovery=clamp(recovery??.6,.38,1.2); this._playerAttackReadyAt=this._time+recovery;
+    const target=this._target(origin,direction,clamp(reach,0,4.75)); if(!target) return null;
+    const pig=target.pig; pig.health=Math.max(0,pig.health-clamp(damage,.5,8)); pig.hitTime=1;
+    const push=pig.root.position.clone().sub(origin);push.y=0;
+    if(push.lengthSq()<.0001) push.set(direction.x,0,direction.z);
+    push.normalize().multiplyScalar(2.6);
+    pig.knockbackX=push.x;pig.knockbackZ=push.z;pig.flashTime=.2;
+    pig.material.color.setRGB(1,.32,.35);
+    pig.dead=pig.health===0;
+    return {id:pig.id,type:'pig',name:pig.name,health:pig.health,maxHealth:pig.maxHealth,damage,killed:pig.dead,defeated:pig.dead,
+      point:target.point,distance:target.distance,position:pig.root.position.clone(),creature:pig,recovery,meat:pig.dead?3:0};
+  }
+  _removeCreature(pig) { disposeCharacter(pig.root); this.creatures.splice(this.creatures.indexOf(pig),1); }
+  dispose() { this._disposed=true; for(const pig of [...this.creatures]) this._removeCreature(pig); }
 }
-
 export default CreatureSystem;

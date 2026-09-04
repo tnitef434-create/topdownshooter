@@ -366,7 +366,7 @@ export class PondEcologyField {
         this.padMesh = meshes.padMesh;
         this.mistMesh = meshes.mistMesh;
         this.flyMesh = meshes.flyMesh;
-        this.group.add(this.padMesh, this.mistMesh, this.flyMesh);
+        this.group.add(this.padMesh, this.mistMesh);
         this.ready = true;
         this.failed = false;
         this.error = null;
@@ -437,7 +437,7 @@ export class PondEcologyField {
     const radius = Number(this.profile.pondDetailRadius) || 0;
     const padCap = Math.min(MAX_PADS, Math.max(0, Math.floor(this.profile.pondPadCap || 0)));
     const mistCap = Math.min(MAX_MIST, Math.max(0, Math.floor(this.profile.pondMistCap || 0)));
-    const flyCap = Math.min(MAX_SWARMS, Math.max(0, Math.floor(this.profile.pondFlyCap || 0)));
+    const flyCap = 0; // All wildlife is now the custom meadow pig.
     const padsPerPond = Math.max(1, Math.floor(this.profile.pondPadsPerPond || 2));
     const ponds = this.world.getPondsNear?.(focus.x, focus.z, radius) || [];
     this.padAnchors.length = 0;

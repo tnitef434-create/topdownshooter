@@ -8,7 +8,6 @@ import { GroundLeafField } from './ground-leaves.js';
 import { ForestFloorField } from './forest-floor.js';
 import { RedFlowerField } from './red-flowers.js';
 import { MeadowPlantField } from './meadow-plants.js';
-import { BirdField } from './birds.js';
 import { SummitCrossField } from './summit-crosses.js';
 import { atmosphericFogRange } from './fog.js';
 
@@ -1522,7 +1521,7 @@ export class Environment {
     this.hangingLeaves = new HangingLeavesField(scene, this.graphicsUniforms);
     this.redFlowers = new RedFlowerField(scene);
     this.meadowPlants = new MeadowPlantField(scene);
-    this.birds = new BirdField(scene);
+    // Wildlife is owned exclusively by the custom pig system.
     this.summitCrosses = new SummitCrossField(scene);
     this.localLights = Array.from({ length: 8 }, (_, index) => {
       const light = new THREE.PointLight(0xffb45f, 0, 10, 2);
@@ -1551,7 +1550,6 @@ export class Environment {
     this.hangingLeaves.setWorld(this.weatherWorld);
     this.redFlowers.setWorld(this.weatherWorld);
     this.meadowPlants.setWorld(this.weatherWorld);
-    this.birds.setWorld(this.weatherWorld);
     this.summitCrosses.setWorld(this.weatherWorld);
     if (worldChanged) this._resetWeatherCycle(Boolean(this.weatherWorld));
   }
@@ -1601,9 +1599,7 @@ export class Environment {
     return this.meadowPlants.prepare();
   }
 
-  prepareBirds() {
-    return this.birds.prepare();
-  }
+
 
   prepareSummitCrosses() {
     return this.summitCrosses.prepare();
@@ -1659,7 +1655,6 @@ export class Environment {
     this.pondEcology.setQuality(profile, settings.reducedMotion);
     this.hangingLeaves.setQuality(profile, settings.reducedMotion);
     this.meadowPlants.setQuality(profile);
-    this.birds.setQuality(profile, settings.reducedMotion);
     this.summitCrosses.setQuality(profile);
     this.graphicsUniforms.windStrength.value = settings.reducedMotion ? 0.22 : 1;
 
@@ -2242,12 +2237,7 @@ export class Environment {
     this.redFlowers.update(dt, focus);
     this.meadowPlants.update(dt, focus);
     this.summitCrosses.update(dt, focus, viewDistance);
-    this.birds.update(dt, focus, {
-      ...context,
-      dayAmount: this.dayAmount,
-      rainIntensity: this.rainIntensity,
-      skyExposure: this.skyExposure,
-    });
+
     const lightningEvent = this.lightning.update(
       dt,
       focus,

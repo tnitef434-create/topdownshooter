@@ -190,7 +190,6 @@ function initRenderer() {
   window.__worldloomHangingLeaves = environment.hangingLeaves;
   window.__worldloomGroundLeaves = environment.groundLeaves;
   window.__worldloomForestFloor = environment.forestFloor;
-  window.__worldloomBirds = environment.birds;
   window.__worldloomSummitCrosses = environment.summitCrosses;
   // World-avatar geometry is structurally absent from the gameplay and GTAO
   // camera, but remains part of the sun's shadow pass.
@@ -416,6 +415,7 @@ async function startWorld({ seed, mode: selectedMode, saveData = null }) {
 
   creatures?.dispose();
   creatures = null;
+  window.__worldloomCreatures = null;
   playerAvatar?.dispose();
   playerAvatar = null;
   clearDroppedItems();
@@ -433,7 +433,7 @@ async function startWorld({ seed, mode: selectedMode, saveData = null }) {
   streamingFogFar = null;
   environment.enhanceWorldMaterials(world);
   environment.setWeatherContext(world);
-  ui.setLoading(0.075, 'Growing lily ponds, living forest floors, summit crosses and rare birds…');
+  ui.setLoading(0.075, 'Growing lily ponds, living forest floors, summit crosses and meadow pigs…');
   await Promise.all([
     environment.preparePondEcology(),
     environment.prepareHangingLeaves(),
@@ -441,7 +441,6 @@ async function startWorld({ seed, mode: selectedMode, saveData = null }) {
     environment.prepareForestFloor(),
     environment.prepareRedFlowers(),
     environment.prepareMeadowPlants(),
-    environment.prepareBirds(),
     environment.prepareSummitCrosses(),
   ]);
   world.setForestFloorCollisionEnabled?.(environment.forestFloor?.ready === true);
@@ -477,6 +476,7 @@ async function startWorld({ seed, mode: selectedMode, saveData = null }) {
   player.flying = mode === 'builder' ? Boolean(saveData?.player?.flying ?? true) : false;
   connectPlayerAudio();
   creatures = new CreatureSystem(scene, world);
+  window.__worldloomCreatures = creatures;
   creatures.onPlayerDamage = (amount, sourcePosition, creature, combat) => damagePlayer(
     amount,
     sourcePosition,
@@ -606,6 +606,7 @@ async function startWorld({ seed, mode: selectedMode, saveData = null }) {
     console.error('Worldloom could not start this world.', error);
     creatures?.dispose();
     creatures = null;
+  window.__worldloomCreatures = null;
     playerAvatar?.dispose();
     playerAvatar = null;
     window.__worldloomPlayerAvatar = null;
@@ -1056,6 +1057,7 @@ function leaveToTitle() {
   setState('menu');
   creatures?.dispose();
   creatures = null;
+  window.__worldloomCreatures = null;
   playerAvatar?.dispose();
   playerAvatar = null;
   window.__worldloomPlayerAvatar = null;
@@ -1823,7 +1825,7 @@ function updateHUD() {
       `${fps.toFixed(0)} FPS · ${renderer.info.render.calls} draws · ${renderer.info.render.triangles.toLocaleString()} tris`,
       `XYZ ${player.position.x.toFixed(1)} / ${player.position.y.toFixed(1)} / ${player.position.z.toFixed(1)}`,
       `Chunks ${stats.generated}/${stats.loaded} · queue ${stats.queued} · horizon ${stats.distantTerrain?.ready ? 'ready' : stats.distantTerrain?.pending ? 'building' : 'detail only'}`,
-      `Seed ${world.seed} · ${world.biomeAt(player.position.x, player.position.z)} · ${creatures?.count || 0} creatures · ${environment?.birds?.count || 0} birds`,
+      `Seed ${world.seed} · ${world.biomeAt(player.position.x, player.position.z)} · ${creatures?.count || 0} meadow pigs`,
       `Day ${survival.dayNumber} · food ${(survival.nourishment * 100).toFixed(0)}% · wet ${(survival.wetness * 100).toFixed(0)}% · air ${(survival.oxygen * 100).toFixed(0)}%`,
     ].join('\n')
     : '';

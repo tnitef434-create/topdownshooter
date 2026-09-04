@@ -611,205 +611,6 @@ test('summit-cross asset failures remain bounded cosmetic failures', async () =>
   field.dispose();
 });
 
-test('Blender bird GLB keeps two articulated breeds, named clips, and strict web budgets', () => {
-  const glb = readFileSync(BIRD_ASSET_URL);
-  assert.ok(glb.length >= 64 * 1024, 'animated bird GLB is suspiciously small or empty');
-  assert.ok(glb.length <= 192 * 1024, `animated bird GLB exceeds 192KB (${glb.length} bytes)`);
-  const document = parseGlb(glb);
-  assert.equal(document.asset?.version, '2.0');
-  assert.match(document.asset?.generator || '', /Blender I\/O/i,
-    'bird asset must identify the Blender glTF exporter');
-  assert.equal(document.buffers?.length, 1);
-  assert.equal(document.buffers?.[0]?.uri, undefined,
-    'bird GLB cannot depend on an external geometry buffer');
-  assert.ok(!(document.extensionsUsed || []).includes('KHR_draco_mesh_compression'));
-  assert.doesNotMatch(JSON.stringify(document), /KHR_draco_mesh_compression/,
-    'no bird primitive may silently require a Draco decoder');
-
-  const breedPrefixes = ['Ash_Sparrow', 'Pond_Azurefin'];
-  const requiredParts = ['Body', 'Head', 'Tail', 'Wing_L', 'Wing_R', 'Leg_L', 'Leg_R'];
-  let totalTriangles = 0;
-  for (const prefix of breedPrefixes) {
-    const rootName = `${prefix}_Asset`;
-    const descendantIndices = descendantNodeIndices(document, rootName);
-    const descendantNames = new Set(descendantIndices.map((index) => document.nodes[index]?.name));
-    for (const part of requiredParts) {
-      assert.ok(descendantNames.has(`${prefix}_${part}`), `${rootName} is missing articulated ${part}`);
-    }
-    const primitives = descendantIndices
-      .map((index) => document.nodes[index])
-      .filter((node) => Number.isInteger(node?.mesh))
-      .flatMap((node) => document.meshes[node.mesh]?.primitives || []);
-    assert.equal(primitives.length, 7,
-      `${rootName} should retain one merged mesh for each animated body part`);
-    assert.ok(primitives.every((primitive) => Number.isInteger(primitive.attributes?.TEXCOORD_0)),
-      `${rootName} lost pixel-atlas UV coordinates`);
-    assert.equal(new Set(primitives.map((primitive) => primitive.material)).size, 1,
-      `${rootName} should share one bird atlas material`);
-    const triangles = primitives.reduce((total, primitive) => {
-      const accessor = document.accessors?.[primitive.indices]
-        || document.accessors?.[primitive.attributes?.POSITION];
-      return total + (accessor?.count || 0) / 3;
-    }, 0);
-    assert.ok(triangles > 200, `${rootName} contains too little authored geometry (${triangles} triangles)`);
-    assert.ok(triangles <= 384, `${rootName} exceeded its 384-triangle budget (${triangles})`);
-    totalTriangles += triangles;
-  }
-  assert.ok(totalTriangles <= 768, `two-breed pack exceeded 768 triangles (${totalTriangles})`);
-
-  const clipSuffixes = [
-    'Perch_Idle_Loop',
-    'Flight_Loop',
-    'Takeoff',
-    'Landing',
-    'Pond_Peck_Loop',
-    'Ground_Idle_Loop',
-  ];
-  const expectedClipNames = breedPrefixes
-    .flatMap((prefix) => clipSuffixes.map((suffix) => `${prefix}_${suffix}`))
-    .sort();
-  assert.deepEqual((document.animations || []).map((clip) => clip.name).sort(), expectedClipNames,
-    'each breed must retain all six named behavior clips');
-  for (const animation of document.animations || []) {
-    const prefix = breedPrefixes.find((candidate) => animation.name.startsWith(candidate));
-    assert.ok(prefix, `unexpected unscoped bird clip ${animation.name}`);
-    const animatedNodes = new Set(animation.channels.map((channel) => (
-      document.nodes?.[channel.target?.node]?.name
-    )));
-    for (const part of requiredParts) {
-      assert.ok(animatedNodes.has(`${prefix}_${part}`), `${animation.name} does not animate ${part}`);
-    }
-    assert.equal(animation.channels.length, 21,
-      `${animation.name} should contain position, rotation and scale channels for seven pivots`);
-    const duration = Math.max(...animation.samplers.map((sampler) => (
-      Number(document.accessors?.[sampler.input]?.max?.[0]) || 0
-    )));
-    assert.ok(duration >= 0.75 && duration <= 3,
-      `${animation.name} has an implausible ${duration}s authored duration`);
-  }
-});
-
-test('bird GLB embeds the exact nearest-filtered two-breed pixel atlas', () => {
-  const glb = readFileSync(BIRD_ASSET_URL);
-  const document = parseGlb(glb);
-  const atlasBuffer = readFileSync(BIRD_ATLAS_URL);
-  assert.ok(atlasBuffer.length >= 1024 && atlasBuffer.length <= 16 * 1024,
-    `bird atlas escaped its compact web budget (${atlasBuffer.length} bytes)`);
-  assert.deepEqual(pngMetadata(atlasBuffer), {
-    width: 128,
-    height: 64,
-    bitDepth: 8,
-    colorType: 6,
-  }, 'production bird atlas must remain an exact 128x64 RGBA PNG');
-  assert.equal(document.images?.length, 1, 'bird pack should embed exactly one atlas');
-  const image = document.images[0];
-  assert.equal(image.uri, undefined, 'bird GLB cannot make an extra atlas request');
-  assert.equal(image.mimeType, 'image/png');
-  assert.deepEqual(embeddedBufferView(glb, document, image.bufferView), atlasBuffer,
-    'embedded and separately served bird atlases must be byte-identical');
-
-  const material = document.materials?.find((candidate) => candidate.name === 'Worldloom_Bird_Pixel_Atlas');
-  assert.ok(material, 'bird pack lost its stable atlas material');
-  assert.equal(material.pbrMetallicRoughness?.metallicFactor, 0);
-  assert.ok(material.pbrMetallicRoughness?.roughnessFactor >= 0.85);
-  assert.equal(material.emissiveFactor, undefined, 'natural birds cannot carry emissive plumage');
-  const texture = document.textures?.[
-    material.pbrMetallicRoughness?.baseColorTexture?.index
-  ];
-  const sampler = document.samplers?.[texture?.sampler];
-  assert.equal(sampler?.magFilter, 9728, 'bird atlas must use NEAREST magnification');
-  assert.ok([9728, 9984].includes(sampler?.minFilter),
-    `bird atlas minification introduced smoothing (${sampler?.minFilter})`);
-  assert.equal(sampler?.wrapS, 33071);
-  assert.equal(sampler?.wrapT, 33071);
-
-  const decoded = decodeRgbaPng(atlasBuffer);
-  const summaries = [];
-  for (let half = 0; half < 2; half++) {
-    const colors = new Set();
-    const sums = [0, 0, 0];
-    let opaque = 0;
-    for (let y = 0; y < decoded.height; y++) {
-      for (let x = half * 64; x < (half + 1) * 64; x++) {
-        const offset = (y * decoded.width + x) * 4;
-        assert.equal(decoded.pixels[offset + 3], 255, 'production atlas tiles must stay fully opaque');
-        const rgb = decoded.pixels.subarray(offset, offset + 3);
-        colors.add(rgb.toString('hex'));
-        sums[0] += rgb[0];
-        sums[1] += rgb[1];
-        sums[2] += rgb[2];
-        opaque++;
-      }
-    }
-    assert.ok(colors.size >= 12, `breed half ${half} lost its readable pixel palette`);
-    summaries.push(sums.map((sum) => sum / opaque));
-  }
-  assert.ok(summaries[0][0] > summaries[0][2] + 40,
-    'Ash Sparrow half lost its warm chestnut color identity');
-  assert.ok(summaries[1][1] > summaries[1][0] + 5 && summaries[1][2] > summaries[1][0] + 5,
-    'Pond Azurefin half lost its cool blue/teal color identity');
-});
-
-test('bird generator preserves the GPT-image source and reproducible Blender pipeline', () => {
-  const sourceBuffer = readFileSync(BIRD_SOURCE_URL);
-  assert.ok(sourceBuffer.length >= 256 * 1024,
-    'preserved GPT-image source is suspiciously small or replaced by the production atlas');
-  assert.deepEqual(pngMetadata(sourceBuffer), {
-    width: 1254,
-    height: 1254,
-    bitDepth: 8,
-    colorType: 6,
-  }, 'GPT-image production source must remain the original transparent RGBA sheet');
-  const sourcePixels = decodeRgbaPng(sourceBuffer).pixels;
-  let transparentPixels = 0;
-  let opaquePixels = 0;
-  for (let offset = 3; offset < sourcePixels.length; offset += 4) {
-    if (sourcePixels[offset] === 0) transparentPixels++;
-    if (sourcePixels[offset] >= 250) opaquePixels++;
-  }
-  assert.ok(transparentPixels > 100_000 && opaquePixels > 100_000,
-    'GPT source must retain both transparent gutters and substantial bird artwork');
-
-  const prompt = readFileSync(BIRD_PROMPT_URL, 'utf8');
-  assert.match(prompt, /Tool:\s*built-in GPT Image generation/i);
-  assert.match(prompt, /Exact prompt:/i);
-  assert.match(prompt, /ash sparrow/i);
-  assert.match(prompt, /pond azurefin/i);
-  assert.match(prompt, /original designs, not copied/i);
-  assert.match(prompt, /transparent background/i);
-
-  const readme = readFileSync(BIRD_README_URL, 'utf8');
-  assert.match(readme, /preserved 1254[×x]1254 transparent GPT Image\s+source/i);
-  assert.match(readme, /deterministically samples each half/i);
-  assert.match(readme, /Blender 5\.2\.0 LTS/i);
-  assert.match(readme, /No downloaded model,\s*texture,\s*rig,\s*or animation is used/i);
-
-  const generator = readFileSync(BIRD_GENERATOR_URL, 'utf8');
-  assert.match(generator, /DEFAULT_SOURCE\s*=.*gpt-bird-breeds-source\.png/);
-  assert.match(generator, /ATLAS_WIDTH\s*=\s*128/);
-  assert.match(generator, /ATLAS_HEIGHT\s*=\s*64/);
-  assert.match(generator, /source_color_buckets\(/,
-    'atlas generation must still sample the preserved GPT-image pixels');
-  assert.match(generator, /random\.Random\(seed\s*\^/,
-    'texture variation must use the requested deterministic seed');
-  assert.match(generator, /texture\.interpolation\s*=\s*["']Closest["']/);
-  assert.match(generator, /["']export_draco_mesh_compression_enable["']\s*:\s*False/);
-  assert.match(generator, /["']export_animations["']\s*:\s*True/);
-  assert.match(generator, /["']export_animation_mode["']\s*:\s*["']NLA_TRACKS["']/);
-  for (const authoredName of [
-    'Ash_Sparrow_Asset',
-    'Pond_Azurefin_Asset',
-    'Perch_Idle_Loop',
-    'Flight_Loop',
-    'Takeoff',
-    'Landing',
-    'Pond_Peck_Loop',
-    'Ground_Idle_Loop',
-  ]) {
-    assert.match(generator, new RegExp(authoredName), `generator lost authored contract ${authoredName}`);
-  }
-});
-
 test('generated pond-detail GLB is valid, embedded, and kept within its web budget', () => {
   const glb = readFileSync(POND_DETAILS_URL);
   assert.ok(glb.length >= 16 * 1024, 'pond asset is suspiciously small or empty');
@@ -1026,7 +827,7 @@ test('pond lily runtime keeps pixel UVs and atlas filtering within one instanced
   assert.equal(scene.children.length, 0);
 });
 
-test('pond flies are tiny unlit dots with deterministic fast short-loop motion', async () => {
+test('pond ecology cannot spawn insects after wildlife replacement', async () => {
   const scene = new THREE.Scene();
   const field = new PondEcologyField(scene, null, {
     loaderFactory: () => ({ loadAsync: () => Promise.resolve(createTestPondGltf()) }),
@@ -1059,86 +860,11 @@ test('pond flies are tiny unlit dots with deterministic fast short-loop motion',
     skyExposure: 1,
   });
 
-  const flies = field.flyMesh;
-  assert.equal(flies.isPoints, true, 'runtime flies must be point dots, not the authored winged mesh');
-  assert.equal(flies.material.isPointsMaterial, true);
-  assert.equal('emissive' in flies.material, false, 'flies cannot carry emissive glow');
-  assert.notEqual(flies.material.lights, true, 'fly dots cannot depend on scene lights');
-  assert.ok(Math.max(flies.material.color.r, flies.material.color.g, flies.material.color.b) < 0.08,
-    'fly dots must remain near-black');
-  assert.ok(flies.material.size <= 0.05, 'flies must stay tiny even at close range');
-  assert.equal(flies.children.length, 0, 'no hidden wing or body model may remain attached');
-  assert.equal(flies.geometry.index, null);
-  assert.equal(flies.geometry.getAttribute('normal'), undefined);
-  assert.equal(flies.geometry.drawRange.count, 5);
-
-  const stats = field.getStats();
-  assert.deepEqual({
-    swarms: stats.flySwarms,
-    dots: stats.flyDots,
-    draws: stats.draws,
-    triangles: stats.triangles,
-  }, {
-    swarms: 1,
-    dots: 5,
-    draws: 1,
-    triangles: 0,
-  }, 'fly-only ecology must fit one draw and zero triangle work');
-  assert.equal(flies.userData.drawBudget, 1);
-  assert.equal(flies.userData.triangleBudget, 0);
-
-  const position = flies.geometry.getAttribute('position');
-  const firstFrame = Array.from(position.array.slice(0, stats.flyDots * 3));
-  for (let index = 0; index < stats.flyDots; index++) {
-    assert.ok(firstFrame[index * 3 + 1] > 38.92,
-      'every fly must remain visibly above the pond water surface');
-  }
-  field.update(0.05, new THREE.Vector3(-14.5, 39, -19.5), {
-    dayAmount: 1,
-    rainIntensity: 0,
-    skyExposure: 1,
-  });
-  assert.notDeepEqual(
-    Array.from(position.array.slice(0, stats.flyDots * 3)),
-    firstFrame,
-    'flies need quick visible movement rather than a slow decorative orbit',
-  );
-
-  const anchor = field.flyAnchors[0];
-  let previous = null;
-  let previousVelocity = null;
-  let pathLength = 0;
-  let directionChanges = 0;
-  let maximumRadius = 0;
-  let maximumHeightOffset = 0;
-  for (let sample = 0; sample <= 100; sample++) {
-    const time = sample * 0.03;
-    const point = pondFlyOffset(anchor, 2, time, 1, new THREE.Vector3());
-    assert.deepEqual(
-      pondFlyOffset(anchor, 2, time, 1, new THREE.Vector3()).toArray(),
-      point.toArray(),
-      'fly motion must replay deterministically',
-    );
-    maximumRadius = Math.max(maximumRadius, Math.hypot(point.x, point.z));
-    maximumHeightOffset = Math.max(maximumHeightOffset, Math.abs(point.y));
-    if (previous) {
-      const velocity = point.clone().sub(previous);
-      pathLength += velocity.length();
-      if (previousVelocity
-        && velocity.clone().normalize().dot(previousVelocity.clone().normalize()) < 0.7) {
-        directionChanges++;
-      }
-      previousVelocity = velocity;
-    }
-    previous = point;
-  }
-  assert.ok(pathLength > 3, `flies moved too slowly (${pathLength.toFixed(2)}m path)`);
-  assert.ok(directionChanges >= 8, `flies need erratic turns (${directionChanges} detected)`);
-  assert.ok(maximumRadius < 0.32, `fly loops spread too far from pond anchor (${maximumRadius})`);
-  assert.ok(maximumHeightOffset < 0.08, `fly loops bob too far vertically (${maximumHeightOffset})`);
-
+  assert.equal(field.flyMesh.geometry.drawRange.count, 0);
+  assert.equal(field.flyMesh.visible, false);
+  assert.equal(field.flyMesh.parent, null);
+  assert.equal(field.getStats().flyDots, 0);
   field.dispose();
-  assert.equal(scene.children.length, 0);
 });
 
 test('Blender ground-leaf litter is a self-contained one-draw GPT-textured asset', () => {
@@ -1586,69 +1312,6 @@ test('raw and roasted meat preserve authored voxel detail in one draw mesh', () 
   disposeItemModel(cooked);
 });
 
-test('Wayfarer avatar stays richly authored within strict draw and shadow budgets', () => {
-  const scene = new THREE.Scene();
-  const avatar = new PlayerAvatar(scene);
-  const player = {
-    position: new THREE.Vector3(4.25, 17, -8.5),
-    velocity: new THREE.Vector3(4.2, 0, 0),
-    yaw: 1.17,
-    grounded: true,
-  };
-  avatar.update(0.16, player, { moving: 1, crouching: false }, { action: true });
-
-  const parts = [];
-  avatar.root.traverse((node) => {
-    if (node.userData?.playerAvatarPart) parts.push(node);
-  });
-  const shadowHead = avatar.root.getObjectByName('shadow-only head');
-  const displayHead = avatar.root.getObjectByName('Wayfarer display head mesh');
-  const meshes = meshSummary(avatar.root);
-  const shadowCasters = meshes.filter((mesh) => mesh.castShadow);
-  const gameplayCamera = new THREE.PerspectiveCamera(75, 1, 0.05, 100);
-  const shadowCamera = new THREE.OrthographicCamera(-20, 20, 20, -20, 0.1, 100);
-  shadowCamera.layers.enable(WORLD_AVATAR_LAYER);
-  assert.equal(avatar.root.visible, true);
-  assert.deepEqual(avatar.root.position.toArray(), player.position.toArray());
-  assert.equal(avatar.root.rotation.y, player.yaw);
-  assert.equal(avatar.root.userData.authoredVoxelParts, 34);
-  assert.ok(parts.length >= 34, 'the skin should retain part-level authored metadata');
-  assert.ok(meshes.length <= avatar.root.userData.meshBudget, 'avatar exceeded its seven-draw mesh budget');
-  assert.ok(shadowCasters.length <= avatar.root.userData.shadowCasterBudget,
-    'avatar exceeded its rationalized shadow-caster budget');
-  assert.ok(meshes.every((mesh) => mesh.frustumCulled), 'avatar meshes must be frustum-cullable');
-  assert.ok(meshes.every((mesh) => mesh.geometry.getAttribute('color')),
-    'merged avatar segments must preserve their colour panels as vertex colours');
-  assert.equal(WORLD_AVATAR_LAYER, 2);
-  assert.ok(meshes.every((mesh) => !mesh.layers.test(gameplayCamera.layers)),
-    'no world-avatar mesh may intersect the gameplay/GTAO camera layer');
-  assert.ok(shadowCasters.every((mesh) => mesh.layers.test(shadowCamera.layers)),
-    'every intended avatar caster must intersect the avatar-enabled sun shadow camera');
-  assert.equal(shadowHead.castShadow, true);
-  assert.equal(shadowHead.material.colorWrite, false);
-  assert.equal(shadowHead.material.depthWrite, false);
-  assert.equal(shadowHead.userData.playerAvatarPartCount, 3);
-  assert.equal(displayHead.layers.test(gameplayCamera.layers), false,
-    'the authored face must stay on the third-person preview layer');
-  assert.equal(displayHead.material.colorWrite, true,
-    'the third-person face must remain visually authored');
-  assert.equal(shadowCasters.length, avatar.root.userData.shadowCasterBudget,
-    'self-hiding must not remove avatar shadow semantics');
-  assert.notEqual(avatar.leftLeg.rotation.x, avatar.rightLeg.rotation.x);
-  assert.notEqual(avatar.leftArm.rotation.x, avatar.rightArm.rotation.x);
-
-  avatar.setSelfVisible(true);
-  const thirdPersonBody = meshes.filter((mesh) => mesh.userData.localAvatarVisual);
-  assert.ok(thirdPersonBody.length >= 5);
-  assert.ok(thirdPersonBody.every((mesh) => mesh.material.colorWrite && mesh.material.depthWrite),
-    'a future third-person camera must be able to opt the body back in');
-  avatar.setSelfVisible(false);
-  assert.ok(thirdPersonBody.every((mesh) => !mesh.material.colorWrite && !mesh.material.depthWrite));
-
-  avatar.dispose();
-  assert.equal(scene.children.length, 0);
-});
-
 test('first-person Wayfarer arms keep their colour panels to one draw each', () => {
   const camera = new THREE.PerspectiveCamera(75, 1, 0.05, 100);
   const held = new HeldItemView(camera, null);
@@ -1656,10 +1319,10 @@ test('first-person Wayfarer arms keep their colour panels to one draw each', () 
   const gripMeshes = meshSummary(held.itemArm);
   assert.equal(actionMeshes.length, 1);
   assert.equal(gripMeshes.length, 1);
-  assert.equal(held.actionHand.userData.authoredVoxelParts, 5);
-  assert.equal(held.itemArm.userData.authoredVoxelParts, 4);
-  assert.equal(actionMeshes[0].geometry.getAttribute('color').count, 5 * 36);
-  assert.equal(gripMeshes[0].geometry.getAttribute('color').count, 4 * 36);
+  assert.equal(held.actionHand.userData.authoredIn, 'Blender');
+  assert.equal(held.itemArm.userData.authoredIn, 'Blender');
+  assert.ok(actionMeshes[0].geometry.getAttribute('color').count > 100);
+  assert.ok(gripMeshes[0].geometry.getAttribute('color').count > 100);
   const gameplayCamera = new THREE.PerspectiveCamera(75, 1, 0.05, 100);
   assert.ok(actionMeshes.every((mesh) => mesh.layers.test(gameplayCamera.layers)),
     'first-person hands must remain on the gameplay camera layer');

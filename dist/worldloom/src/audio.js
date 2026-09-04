@@ -255,17 +255,7 @@ export class AudioSystem {
 
   _prepareNatureRecordings() {
     if (!this.context || typeof Audio === 'undefined') return;
-    if (!this.birdsElement) {
-      const element = new Audio(BIRDS_RECORDING_URL);
-      element.preload = 'auto';
-      element.loop = true;
-      element.volume = 1;
-      this.birdsRecordingGain = this.context.createGain();
-      this.birdsRecordingGain.gain.value = 0.0001;
-      this.birdsElement = element;
-      this.birdsSource = this.context.createMediaElementSource(element);
-      this.birdsSource.connect(this.birdsRecordingGain).connect(this.ambience);
-    }
+
     if (!this.seawaterElement) {
       const element = new Audio(SEAWATER_RECORDING_URL);
       element.preload = 'auto';
@@ -403,15 +393,7 @@ export class AudioSystem {
       this.rainRecordingGain.gain.setTargetAtTime(Math.max(0.0001, rainLevel), now, 0.65);
       this.rainRecordingFilter.frequency.setTargetAtTime(inWater ? 620 : sheltered ? 2100 : 15000, now, 0.25);
     }
-    if (this.birdsRecordingGain) {
-      const birdsAllowed = nearTrees > 0.08
-        && caveDepth < 0.08
-        && !inWater
-        && !inOcean
-        && biome !== 'desert';
-      const birdLevel = birdsAllowed ? 26 * smoothstep(nearTrees, 0.08, 0.72) : 0;
-      this.birdsRecordingGain.gain.setTargetAtTime(Math.max(0.0001, birdLevel), now, 0.45);
-    }
+
     if (this.seawaterRecordingGain && this.seawaterRecordingFilter) {
       this.seawaterRecordingGain.gain.setTargetAtTime(inWater ? 24 : 0.0001, now, inWater ? 0.22 : 0.08);
       this.seawaterRecordingFilter.frequency.setTargetAtTime(inWater ? 1250 : 1450, now, 0.2);

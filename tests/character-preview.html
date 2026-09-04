@@ -1,0 +1,37 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>Worldloom character QA</title>
+<style>body{margin:0;background:#b1c8ca;font:14px system-ui;color:#24382c}nav{position:absolute;top:20px;left:20px;display:flex;gap:8px;z-index:2}button{padding:12px 18px;border:0;background:#fff;border-radius:6px;cursor:pointer}output{position:absolute;bottom:20px;left:20px;white-space:pre;font:14px monospace;background:#fffe;padding:14px;border-radius:8px}canvas{display:block}</style>
+<nav><button id="idle">Idle</button><button id="walk">Walk</button><button id="graze">Graze</button><button id="hand">First-person hand</button><button id="swing">Swing</button><button id="tool">Hold pickaxe</button></nav><output id="status">Loading</output>
+<script type="module">
+import * as THREE from '/src/public/worldloom/vendor/three.module.min.js';
+import { CreatureSystem } from '/src/public/worldloom/src/creatures.js';
+import { PlayerAvatar, WORLD_AVATAR_LAYER } from '/src/public/worldloom/src/player-avatar.js';
+import { HeldItemView } from '/src/public/worldloom/src/viewmodel.js';
+import { BLOCK } from '/src/public/worldloom/src/blocks.js';
+import { ITEM } from '/src/public/worldloom/src/data.js';
+const scene=new THREE.Scene();scene.background=new THREE.Color('#b1c8ca');
+const camera=new THREE.PerspectiveCamera(75,innerWidth/innerHeight,.03,100);camera.position.set(3,2.2,-5);camera.lookAt(0,.8,0);camera.layers.enable(WORLD_AVATAR_LAYER);scene.add(camera);
+scene.add(new THREE.HemisphereLight(0xe7f4ff,0x707951,2));
+const light=new THREE.DirectionalLight(0xffe8cd,3);light.position.set(3,6,-4);light.castShadow=true;light.shadow.mapSize.set(2048,2048);scene.add(light);
+const renderer=new THREE.WebGLRenderer({antialias:true});renderer.setSize(innerWidth,innerHeight);renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;renderer.toneMapping=THREE.ACESFilmicToneMapping;document.body.append(renderer.domElement);
+const soil=new THREE.Mesh(new THREE.BoxGeometry(14,.25,14),new THREE.MeshStandardMaterial({color:0x749356,roughness:1}));soil.position.y=-.125;soil.receiveShadow=true;scene.add(soil);
+const tufts=[];
+for(let x=-2;x<=2;x++)for(let z=-2;z<=2;z++)for(let i=0;i<4;i++){const blade=new THREE.Mesh(new THREE.BoxGeometry(.045,.18,.04),new THREE.MeshStandardMaterial({color:0x487637}));blade.position.set(x+.3+i*.07,.09,z+.36);scene.add(blade);tufts.push(blade);}
+let bites=0;const edits=new Map();
+const world={terrainHeight:()=>-1,worldHeight:32,getBlock:(x,y,z)=>edits.get(`${x},${y},${z}`)??(y<0?BLOCK.TURF:BLOCK.AIR),setBlock(x,y,z,id){edits.set(`${x},${y},${z}`,id);bites++;const patch=new THREE.Mesh(new THREE.PlaneGeometry(1,1),new THREE.MeshStandardMaterial({color:0x876548}));patch.rotation.x=-Math.PI/2;patch.position.set(x+.5,.002,z+.5);scene.add(patch);for(const t of tufts)if(Math.floor(t.position.x)===x&&Math.floor(t.position.z)===z)t.visible=false;return true;}};
+const system=new CreatureSystem(scene,world);system._groundHeight=()=>0;system._spawnTimer=Infinity;
+const pig=system._makePig(.85,0,0,0);
+const avatar=new PlayerAvatar(scene);avatar.root.visible=true;avatar.root.position.x=-.85;
+const held=new HeldItemView(camera,null);held.setItem(0);
+const player={position:new THREE.Vector3(-.85,0,0),velocity:new THREE.Vector3(),grounded:true};
+let mode='idle',hand=false,swing=false;
+for(const id of ['idle','walk','graze'])document.getElementById(id).onclick=()=>{mode=id;hand=false;held.setVisible(false);avatar.root.visible=true;camera.position.set(3,2.2,-5);camera.lookAt(0,.8,0);pig.heading=0;pig.targetHeading=0;pig.root.rotation.y=0;pig.root.position.set(.85,0,0);pig.grazeBlend=0;pig.stateTime=0;pig.bites=0;edits.clear();system._setState(pig,id,id==='graze'?4.8:100);};
+document.getElementById('hand').onclick=()=>{hand=true;camera.position.set(0,1.6,-4);camera.lookAt(0,1.6,0);avatar.root.visible=false;held.setItem(0);held.setVisible(true);};
+document.getElementById('swing').onclick=()=>{swing=!swing;held.use();};
+document.getElementById('tool').onclick=()=>{hand=true;avatar.root.visible=false;camera.position.set(0,1.6,-4);camera.lookAt(0,1.6,0);held.setItem(ITEM.CRUDE_PICK);held.setVisible(true);};
+let last=performance.now();function frame(now){requestAnimationFrame(frame);const dt=Math.min(.05,(now-last)/1000);last=now;
+if(mode==='walk'){pig.gait+=dt/.72*.7*Math.PI*2;pig.gaitBlend=1;pig.stateTime+=dt;system._animate(pig,dt);player.velocity.x=3;avatar.update(dt,player);}else{if(mode==='graze')system.update(dt,{position:new THREE.Vector3(8,0,8)});else system._animate(pig,dt);player.velocity.x=0;if(!hand)avatar.update(dt,player);}
+held.update(dt,{mining:swing,moving:mode==='walk'?3:0});
+document.getElementById('status').textContent=JSON.stringify({state:pig.state,bites,mouth:system._mouth(pig).toArray().map(n=>+n.toFixed(3)),hand,meshes:renderer.info.render.calls},null,2);
+renderer.render(scene,camera);}
+requestAnimationFrame(frame);window.onresize=()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);};
+</script></html>
