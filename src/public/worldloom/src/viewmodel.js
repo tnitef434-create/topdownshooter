@@ -106,6 +106,7 @@ function makeToolModel(item, held = false) {
   } else if (item.category === 'food') {
     const cooked = item.cooked === true || /roast|cook/i.test(item.name || '');
     const mesh = characterMesh(`${held ? 'held' : 'tool'}_${cooked ? 'cooked' : 'raw'}_meat`, material(0xffffff, {vertexColors:true,roughness:.94}));
+    mesh.castShadow = false;
     group.add(mesh);
     group.name = cooked ? 'Blender roasted pixel porkchop' : 'Blender raw pixel porkchop';
     group.userData = {authoredIn:'Blender',heldAssembly:held,itemModel:'pixel-porkchop',cooked,drawMeshCount:1};
