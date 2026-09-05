@@ -1,0 +1,24 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Worldloom land discovery review</title><style>*{box-sizing:border-box}body{margin:0;background:#17251e;font-family:Arial,sans-serif;color:#f1f5da}canvas{display:block}aside{position:fixed;left:32px;top:28px;padding:20px 24px;background:#10261ddb;border:1px solid #77945a55;border-radius:10px;max-width:400px}small{letter-spacing:.2em;color:#bcda8b}h1{font-size:28px;margin:10px 0}p{color:#bcccbb;font-size:14px;line-height:1.5;margin:0}footer{position:fixed;bottom:22px;left:32px;font:12px monospace;color:#ecf3d3;background:#11291ec9;padding:10px 14px;border-radius:5px}</style></head><body><aside><small>WORLDLOOM · LAND DISCOVERIES</small><h1 id="name"></h1><p id="detail"></p></aside><footer id="status"></footer><script type="module">
+import * as THREE from '/src/public/worldloom/vendor/three.module.min.js';
+import { World } from '/src/public/worldloom/src/world.js';
+import { createTextureAtlas } from '/src/public/worldloom/src/blocks.js';
+import { LandDiscoveryField } from '/src/public/worldloom/src/discovery-field.js';
+const renderer=new THREE.WebGLRenderer({antialias:true,preserveDrawingBuffer:true});renderer.setSize(1200,800);renderer.setPixelRatio(1);renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.18;document.body.append(renderer.domElement);
+const scene=new THREE.Scene();scene.background=new THREE.Color('#a7c5bc');scene.fog=new THREE.Fog('#a7c5bc',48,110);
+const camera=new THREE.PerspectiveCamera(42,1.5,.1,180);scene.add(new THREE.HemisphereLight('#e4f1dd','#716141',2.1));
+const sun=new THREE.DirectionalLight('#fff0c0',3.2);sun.castShadow=true;sun.shadow.mapSize.set(2048,2048);sun.shadow.camera.left=-22;sun.shadow.camera.right=22;sun.shadow.camera.top=22;sun.shadow.camera.bottom=-22;sun.shadow.bias=-.0002;sun.shadow.normalBias=.04;sun.shadow.radius=2;scene.add(sun,sun.target);
+const world=new World(64,scene,createTextureAtlas(),{generatorVersion:3,discoveryVersion:1});const field=new LandDiscoveryField(scene);field.setWorld(world);
+async function show(kind){
+ const d=world.getLandDiscoveryForRegion(...(kind==='bell_shrine'?[-1,-1]:[1,-4]));
+ for(let z=-2;z<=2;z++)for(let x=-2;x<=2;x++)world.ensurePositionGenerated(d.x+x*16,d.z+z*16);
+ let count=0;while(count++<1200){world.processQueue(5,50);world.rebuildDirty(8,50);if(!world.generationQueue.length&&[...world.chunks.values()].every(c=>!c.meshDirty))break;}
+ field.timer=0;field.update(1,new THREE.Vector3(d.x,d.y,d.z),3);
+ const quarter=d.yaw,c=Math.cos(quarter),s=Math.sin(quarter),ox=11,oz=15;
+ camera.position.set(d.x+.5+ox*c+oz*s,d.y+9,d.z+.5-ox*s+oz*c);camera.lookAt(d.x+.5,d.y+1.7,d.z+.5);
+ sun.position.set(d.x-12,d.y+23,d.z+12);sun.target.position.set(d.x,d.y,d.z);sun.target.updateMatrixWorld();
+ document.getElementById('name').textContent=d.name;document.getElementById('detail').textContent=kind==='bell_shrine'?'A hollow bronze bell hangs beneath a weathered stone arch. A forgotten supply chest waits in the open courtyard.':'A timber derrick, hanging chain and copper rubble mark an abandoned worksite. Its supply chest still holds a miner’s essentials.';
+ document.getElementById('status').textContent=`Seed 64 · ${d.x}, ${d.y}, ${d.z} · Natural dry-land placement · Blender-authored voxel geometry`;
+ renderer.render(scene,camera);return {descriptor:d,meshes:field.meshes.size,triangles:renderer.info.render.triangles,chunkCount:world.chunks.size};
+}
+window.discoveryReview={world,field,scene,camera,renderer,show};await show('bell_shrine');window.discoveryReady=true;
+</script></body></html>

@@ -3,6 +3,7 @@ import path from 'path';
 import { randomInt } from 'node:crypto';
 import { neon } from '@neondatabase/serverless';
 import { normalizeUsername, usernameTakenError } from './accountUsername.js';
+import { createGoogleAccountStore, initializeGoogleAccountSchema } from './googleAccountStore.js';
 
 // Null is an explicitly persistent session; missing/malformed expiry is invalid.
 export function isAccountSessionActive(session, now = Date.now()) {
@@ -37,6 +38,7 @@ function mapDatabaseUser(row) {
     credits: Number(row.credits || 0),
     purchasedWeapons: Array.isArray(row.purchased_weapons) ? row.purchased_weapons : [],
     emailVerifiedAt: row.email_verified_at ? new Date(row.email_verified_at).toISOString() : null,
+    googleSubject: row.google_subject || null,
     friendCode: row.friend_code || null,
     createdAt: new Date(row.created_at).toISOString(),
     updatedAt: new Date(row.updated_at).toISOString()
@@ -116,6 +118,10 @@ export function createAccountStore({ databaseUrl = '', localFile, sqlClient = nu
     fs.renameSync(temporaryFile, localFile);
   }
 
+  const { findOrCreateGoogleUser } = createGoogleAccountStore({
+    sql, getLocalDatabase: () => localDatabase, saveLocalDatabase, mapDatabaseUser
+  });
+
   async function initialize() {
     initializationError = null;
     try {
@@ -160,9 +166,12 @@ export function createAccountStore({ databaseUrl = '', localFile, sqlClient = nu
         )
       `;
       await sql`ALTER TABLE operative_accounts ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ`;
+      await initializeGoogleAccountSchema(sql);
       // Preserve the old expiry column during rolling deployments so an older
       // server cannot mistake an upgraded session for an expired one and delete it.
       await sql`ALTER TABLE operative_sessions ADD COLUMN IF NOT EXISTS persistent BOOLEAN NOT NULL DEFAULT FALSE`;
+      // Null preserves sessions issued before credential-bound sessions existed.
+      await sql`ALTER TABLE operative_sessions ADD COLUMN IF NOT EXISTS credential_key TEXT`;
       await sql`UPDATE operative_sessions SET persistent = TRUE WHERE persistent = FALSE AND expires_at > NOW()`;
       await sql`ALTER TABLE operative_accounts ADD COLUMN IF NOT EXISTS friend_code TEXT CHECK (friend_code ~ '^[0-9]{4}$')`;
       await sql`CREATE UNIQUE INDEX IF NOT EXISTS operative_accounts_friend_code_idx ON operative_accounts(friend_code)`;
@@ -174,6 +183,17 @@ export function createAccountStore({ databaseUrl = '', localFile, sqlClient = nu
           sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           window_started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           send_count INTEGER NOT NULL DEFAULT 1
+        )
+      `;
+      await sql`
+        CREATE TABLE IF NOT EXISTS operative_password_resets (
+          user_id UUID PRIMARY KEY REFERENCES operative_accounts(id) ON DELETE CASCADE,
+          token_hash TEXT UNIQUE NOT NULL,
+          expires_at TIMESTAMPTZ NOT NULL,
+          sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          window_started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          send_count INTEGER NOT NULL DEFAULT 1,
+          consumed_at TIMESTAMPTZ
         )
       `;
       await sql`
@@ -325,18 +345,31 @@ export function createAccountStore({ databaseUrl = '', localFile, sqlClient = nu
     return user;
   }
 
-  async function createSession(tokenHash, userId, expiresAt = null) {
+  async function createSession(tokenHash, userId, expiresAt = null, expectedPassword = null) {
     if (sql) {
       const persistent = expiresAt === null;
       const legacyExpiry = persistent ? Date.now() + 30 * 86400000 : expiresAt;
-      await sql`
-        INSERT INTO operative_sessions (token_hash, user_id, expires_at, persistent)
-        VALUES (${tokenHash}, ${userId}, ${new Date(legacyExpiry).toISOString()}, ${persistent})
+      const rows = await sql`
+        INSERT INTO operative_sessions (token_hash, user_id, expires_at, persistent, credential_key)
+        SELECT ${tokenHash}, id, ${new Date(legacyExpiry).toISOString()}::timestamptz, ${persistent},
+          jsonb_build_array(password_algorithm, password_salt, password_hash)::text
+        FROM operative_accounts WHERE id = ${userId}
+          AND (${expectedPassword === null} OR (password_algorithm = ${expectedPassword?.algorithm || ''}
+            AND password_salt = ${expectedPassword?.salt || ''} AND password_hash = ${expectedPassword?.hash || ''}))
+        RETURNING token_hash
       `;
-      return;
+      if (!rows.length) return false;
+      // A reset may have completed while INSERT used an older statement snapshot.
+      // The credential stamp also rejects this session on every subsequent read.
+      if (expectedPassword && !await findSession(tokenHash)) { await deleteSession(tokenHash); return false; }
+      return true;
     }
-    localDatabase.sessions[tokenHash] = { userId, expiresAt };
+    const user = localDatabase.users[userId];
+    if (!user || (expectedPassword && ['algorithm','salt','hash'].some(key=>user.password?.[key] !== expectedPassword[key]))) return false;
+    const credentialKey = JSON.stringify([user.password?.algorithm, user.password?.salt, user.password?.hash]);
+    localDatabase.sessions[tokenHash] = { userId, expiresAt, credentialKey };
     saveLocalDatabase();
+    return true;
   }
 
   // One outstanding link per account; the database enforces resend limits across instances.
@@ -394,6 +427,76 @@ export function createAccountStore({ databaseUrl = '', localFile, sqlClient = nu
     delete localDatabase.emailVerifications[entry[0]];
     for (const [key,session] of Object.entries(localDatabase.sessions)) if (session.userId === user.id) delete localDatabase.sessions[key];
     user.emailVerifiedAt ||= new Date(now).toISOString();
+    user.password = password;
+    user.updatedAt = new Date(now).toISOString();
+    saveLocalDatabase();
+    return user;
+  }
+
+  // Reset links are separate from activation links and only apply to verified accounts.
+  // Keep consumed records so using a link cannot bypass its account's resend budget.
+  async function reservePasswordReset(userId, tokenHash, expiresAt, now = Date.now()) {
+    if (sql) {
+      const rows = await sql`
+        INSERT INTO operative_password_resets (user_id, token_hash, expires_at, sent_at, window_started_at)
+        SELECT id, ${tokenHash}, ${new Date(expiresAt).toISOString()}::timestamptz,
+          ${new Date(now).toISOString()}::timestamptz, ${new Date(now).toISOString()}::timestamptz
+        FROM operative_accounts WHERE id = ${userId} AND email_verified_at IS NOT NULL
+        ON CONFLICT (user_id) DO UPDATE SET
+          token_hash = EXCLUDED.token_hash, expires_at = EXCLUDED.expires_at, sent_at = EXCLUDED.sent_at, consumed_at = NULL,
+          window_started_at = CASE WHEN operative_password_resets.window_started_at <= EXCLUDED.sent_at - INTERVAL '24 hours' THEN EXCLUDED.sent_at ELSE operative_password_resets.window_started_at END,
+          send_count = CASE WHEN operative_password_resets.window_started_at <= EXCLUDED.sent_at - INTERVAL '24 hours' THEN 1 ELSE operative_password_resets.send_count + 1 END
+        WHERE operative_password_resets.sent_at <= EXCLUDED.sent_at - INTERVAL '60 seconds'
+          AND (operative_password_resets.send_count < 5 OR operative_password_resets.window_started_at <= EXCLUDED.sent_at - INTERVAL '24 hours')
+        RETURNING user_id
+      `;
+      return rows.length > 0;
+    }
+    if (!localDatabase.users[userId]?.emailVerifiedAt) return false;
+    localDatabase.passwordResets ||= {};
+    const old = localDatabase.passwordResets[userId];
+    const fresh = !old || old.windowStartedAt <= now - 86400000;
+    if (old && (old.sentAt > now - 60000 || (!fresh && old.sendCount >= 5))) return false;
+    localDatabase.passwordResets[userId] = {tokenHash, expiresAt, sentAt:now, windowStartedAt:fresh?now:old.windowStartedAt, sendCount:fresh?1:old.sendCount+1, consumedAt:null};
+    saveLocalDatabase();
+    return true;
+  }
+
+  async function findPasswordReset(tokenHash) {
+    if (sql) {
+      const rows = await sql`SELECT user_id, expires_at FROM operative_password_resets WHERE token_hash = ${tokenHash} AND consumed_at IS NULL`;
+      return rows[0] ? {userId:rows[0].user_id, expiresAt:new Date(rows[0].expires_at).getTime()} : null;
+    }
+    const entry = Object.entries(localDatabase.passwordResets || {}).find(([,v])=>v.tokenHash === tokenHash && v.consumedAt == null);
+    return entry ? {userId:entry[0], expiresAt:entry[1].expiresAt} : null;
+  }
+
+  async function consumePasswordReset(tokenHash, password, now = Date.now()) {
+    if (sql) {
+      const rows = await sql`
+        WITH consumed AS (
+          UPDATE operative_password_resets SET consumed_at = ${new Date(now).toISOString()}::timestamptz
+          WHERE token_hash = ${tokenHash} AND consumed_at IS NULL AND expires_at > ${new Date(now).toISOString()}::timestamptz
+            AND user_id IN (SELECT id FROM operative_accounts WHERE email_verified_at IS NOT NULL)
+          RETURNING user_id
+        ), revoked AS (
+          DELETE FROM operative_sessions WHERE user_id IN (SELECT user_id FROM consumed)
+        ), unlinked AS (
+          DELETE FROM operative_email_verifications WHERE user_id IN (SELECT user_id FROM consumed)
+        )
+        UPDATE operative_accounts SET password_algorithm = ${password.algorithm}, password_salt = ${password.salt},
+          password_hash = ${password.hash}, updated_at = ${new Date(now).toISOString()}::timestamptz
+        WHERE id IN (SELECT user_id FROM consumed) RETURNING *
+      `;
+      return mapDatabaseUser(rows[0]);
+    }
+    const entry = Object.entries(localDatabase.passwordResets || {}).find(([,v])=>v.tokenHash === tokenHash && v.consumedAt == null && v.expiresAt > now);
+    const user = entry && localDatabase.users[entry[0]];
+    if (!user?.emailVerifiedAt) return null;
+    // Commit the password and revocations together in the existing atomic file replacement.
+    entry[1].consumedAt = now;
+    if (localDatabase.emailVerifications) delete localDatabase.emailVerifications[user.id];
+    for (const [key,session] of Object.entries(localDatabase.sessions)) if (session.userId === user.id) delete localDatabase.sessions[key];
     user.password = password;
     user.updatedAt = new Date(now).toISOString();
     saveLocalDatabase();
@@ -458,9 +561,10 @@ export function createAccountStore({ databaseUrl = '', localFile, sqlClient = nu
   async function findSession(tokenHash) {
     if (sql) {
       const rows = await sql`
-        SELECT token_hash, user_id, expires_at, persistent
-        FROM operative_sessions
-        WHERE token_hash = ${tokenHash}
+        SELECT session.token_hash, session.user_id, session.expires_at, session.persistent
+        FROM operative_sessions AS session JOIN operative_accounts AS account ON account.id = session.user_id
+        WHERE session.token_hash = ${tokenHash}
+          AND (session.credential_key IS NULL OR session.credential_key = jsonb_build_array(account.password_algorithm, account.password_salt, account.password_hash)::text)
         LIMIT 1
       `;
       const row = rows[0];
@@ -471,7 +575,12 @@ export function createAccountStore({ databaseUrl = '', localFile, sqlClient = nu
         expiresAt: row.persistent ? null : new Date(row.expires_at).getTime()
       };
     }
-    return localDatabase.sessions[tokenHash] || null;
+    const session = localDatabase.sessions[tokenHash];
+    if (!session) return null;
+    const user = localDatabase.users[session.userId];
+    if (!user) return null;
+    const credentialKey = JSON.stringify([user.password?.algorithm, user.password?.salt, user.password?.hash]);
+    return session.credentialKey == null || session.credentialKey === credentialKey ? session : null;
   }
 
   async function deleteSession(tokenHash) {
@@ -778,6 +887,7 @@ export function createAccountStore({ databaseUrl = '', localFile, sqlClient = nu
   return {
     initialize,
     findUserByEmail,
+    findOrCreateGoogleUser,
     findUserById,
     findUserByFriendCode,
     createUser,
@@ -788,6 +898,9 @@ export function createAccountStore({ databaseUrl = '', localFile, sqlClient = nu
     reserveEmailVerification,
     findEmailVerification,
     consumeEmailVerification,
+    reservePasswordReset,
+    findPasswordReset,
+    consumePasswordReset,
     generateFriendCode,
     createPurchaseIntent,
     createPurchaseCase,

@@ -60,3 +60,11 @@ button,a{-webkit-tap-highlight-color:transparent}
   .arrow svg{width:19px;height:19px}.poster,.film{object-position:center 52%}
 }
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important}.game:hover .poster,.game:hover .film{transform:scale(1.02)}}
+/* A small release note attached to the existing mark. */
+.hub-news-trigger { display:grid;place-items:center;border:0;padding:5px;margin:-5px;background:none;color:inherit;cursor:pointer;border-radius:6px;pointer-events:auto; }
+.hub-news-trigger:focus-visible { outline:2px solid #ff6339;outline-offset:5px; }
+.hub-news { position:fixed;inset:auto;margin:0;width:248px;max-width:calc(100vw - 24px);padding:20px;border:1px solid #ff63394a;border-radius:8px;background:#100e0e;color:#f4f6dc;box-shadow:0 14px 36px #0007;font:500 14px/1.6 Arial,sans-serif;pointer-events:auto; }
+.hub-news p { margin:0; }
+.hub-news .hub-news-label { margin-bottom:7px;color:#ff8b64;font-size:10px;font-weight:800;letter-spacing:1.5px; }
+.hub-news:popover-open { animation:hub-news-in 180ms ease-out; }
+@keyframes hub-news-in { from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)} }

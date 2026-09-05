@@ -69,3 +69,8 @@
 @media(prefers-reduced-motion:reduce){.account-dialog[open]{animation:none}.account-tabs button,.account-dialog .account-primary{transition:none}}
 .account-username-form { padding-bottom:24px;border-bottom:1px solid #39231a;gap:12px; }
 .account-username-form .account-hint,.hub-account-form label>.account-hint { margin:0;font-weight:400; }
+.account-dialog .account-forgot{margin:10px 0 0;padding:7px 0;text-align:left;min-height:44px;font-size:13px}
+.account-google{display:flex;align-items:center;justify-content:center;min-height:44px;margin-top:25px}
+.account-auth-divider{display:flex;align-items:center;gap:12px;color:#a6958a;font:12px Arial,sans-serif;margin:22px 0 -8px}
+.account-auth-divider::before,.account-auth-divider::after{content:"";height:1px;flex:1;background:#39231a}
+.account-dialog .hub-account-form input:focus-visible{outline-offset:-3px}

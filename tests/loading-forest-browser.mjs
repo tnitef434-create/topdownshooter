@@ -12,6 +12,19 @@ try {
   await page.waitForFunction(()=>document.querySelector('#loading-screen').classList.contains('hidden'),{timeout:120000});
   assert.equal(await page.$eval('#loading-film',v=>v.getAttribute('src')),null,'no chunk video download in the menu');
   assert.equal(await page.$eval('#loading-birds',a=>a.paused),true);
+  await page.evaluate(()=>{
+    const video=document.querySelector('#loading-film');
+    window.loadingFrameGaps={frames:0,maxGap:0,last:0};
+    const frame=now=>{
+      const sample=window.loadingFrameGaps;
+      if(!document.querySelector('#loading-screen').classList.contains('hidden')){
+        if(sample.last)sample.maxGap=Math.max(sample.maxGap,now-sample.last);
+        sample.last=now;sample.frames++;
+      }
+      video.requestVideoFrameCallback(frame);
+    };
+    video.requestVideoFrameCallback(frame);
+  });
   await page.$eval('#seed-input',e=>e.value='41');
   await page.click('#new-world-button');
   await page.waitForFunction(()=>window.__worldloomPlayer&&document.querySelector('#loading-screen').classList.contains('hidden'),{timeout:240000});
@@ -21,6 +34,9 @@ try {
   const playback=await page.$eval('#loading-film',v=>{const q=v.getVideoPlaybackQuality();return {width:v.videoWidth,frames:q.totalVideoFrames-q.droppedVideoFrames,time:v.currentTime};});
   console.log('Frames presented during chunk loading',playback);
   assert.equal(playback.width,3840);assert.ok(playback.frames>3,'video frames are presented during chunk work');
+  const gaps=await page.evaluate(()=>window.loadingFrameGaps);
+  console.log('Loading video frame continuity',gaps);
+  assert.ok(gaps.frames>3&&gaps.maxGap<4500,'chunk work must not freeze presented video frames for the watchdog interval');
   assert.ok(await page.$eval('#loading-birds',a=>a.currentTime>.3),'original bird recording plays during loading');
   assert.equal(await page.$eval('#loading-film',v=>v.paused),true);
   assert.equal(await page.$eval('#loading-birds',v=>v.paused),true,'loading birds stop on spawn');

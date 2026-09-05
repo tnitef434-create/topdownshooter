@@ -21,8 +21,8 @@ const TOOL_ITEMS = {
   [ITEM.ASH_HATCHET]: { id: ITEM.ASH_HATCHET, name: 'Ash Hatchet', color: '#c58a5c', category: 'tool', tool: 'axe', speed: 4.6, description: 'Makes short work of ashwood.' },
   [ITEM.COPPER_INGOT]: { id: ITEM.COPPER_INGOT, name: 'Copper Ingot', color: '#e08b5f', category: 'material', description: 'Warm metal refined in a nearby kiln.' },
   [ITEM.LIGHTCORE]: { id: ITEM.LIGHTCORE, name: 'Lightcore', color: '#6fffe1', category: 'relic', description: 'A pulsing heart of copper and captured lumen.' },
-  [ITEM.RAW_MEAT]: { id: ITEM.RAW_MEAT, name: 'Raw Game Steak', color: '#c95e63', category: 'food', model: 'bone-steak', cooked: false, food: 0.04, nutrition: 0.12, foodRisk: 0.35, description: 'A fresh bone-in cut. Cook it over steady heat for a safe, filling meal.' },
-  [ITEM.COOKED_MEAT]: { id: ITEM.COOKED_MEAT, name: 'Fire-Roasted Steak', color: '#a95732', category: 'food', model: 'bone-steak', cooked: true, food: 0.24, nutrition: 0.48, description: 'A browned, bone-in steak with a crisp seared edge. Restores vitality and nourishment.' },
+  [ITEM.RAW_MEAT]: { id: ITEM.RAW_MEAT, name: 'Raw Game Steak', color: '#c95e63', category: 'food', model: 'bone-steak', cooked: false, food: 0, nutrition: 0.12, saturation: 0.03, foodRisk: 0.15, description: 'Restores 12% food, but has a 15% chance of illness. Cook over steady heat for a safe, filling meal.' },
+  [ITEM.COOKED_MEAT]: { id: ITEM.COOKED_MEAT, name: 'Fire-Roasted Steak', color: '#a95732', category: 'food', model: 'bone-steak', cooked: true, food: 0, nutrition: 0.48, saturation: 0.24, description: 'Restores 48% food and a lasting energy reserve. Stay above 80% food and rest to recover health.' },
   [ITEM.COPPER_SWORD]: { id: ITEM.COPPER_SWORD, name: 'Copper Longblade', color: '#dc8453', category: 'weapon', tool: 'sword', speed: 1.25, damage: 2.4, attackSpeed: 1.45, reach: 3.75, description: 'A balanced forged blade with a wrapped ashwood grip.' },
 };
 

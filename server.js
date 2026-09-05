@@ -8,8 +8,10 @@ import crypto from 'crypto';
 import { promisify } from 'util';
 import { createAccountStore, isAccountSessionActive } from './accountStore.js';
 import { createAccountMailer } from './accountEmail.js';
+import { createGoogleAuth } from './google-auth.js';
 import { normalizeUsername, accountPlayerName } from './accountUsername.js';
 import { installShooterAccountIdentity } from './shooterAccountIdentity.js';
+import { createShooterRoomRecovery, SHOOTER_SOCKET_OPTIONS } from './shooterRoomRecovery.js';
 import { createWorldStore } from './worldStore.js';
 import { installWorldServer } from './worldServer.js';
 
@@ -149,9 +151,10 @@ function publicAccount(user) {
   };
 }
 
-async function createSession(userId) {
+async function createSession(userId, expectedPassword = null) {
   const token = crypto.randomBytes(32).toString('base64url');
-  await accountStore.createSession(hashSessionToken(token), userId);
+  const issued = await accountStore.createSession(hashSessionToken(token), userId, null, expectedPassword);
+  if (!issued) return null;
   return { token, expiresAt: null };
 }
 
@@ -185,6 +188,7 @@ async function sendAccountVerification(user) {
 }
 
 const verificationMessage='Check your inbox for a verification link. If you already have an active account, sign in instead.';
+const passwordResetMessage='If an active account uses that email, a password reset link will arrive shortly. You can request another link after one minute.';
 
 async function authenticateAccount(req, res, next) {
   try {
@@ -246,7 +250,7 @@ function authRateLimit(req, res, next) {
 
 // In-memory Users database and persistent file storage
 let users = {};
-const USERS_FILE = path.join(__dirname, 'users.json');
+const USERS_FILE = process.env.LOCAL_USERS_DATABASE_FILE || path.join(__dirname, 'users.json');
 
 function loadUsers() {
   try {
@@ -280,9 +284,12 @@ const socketToUser = new Map();
 const app = express();
 const httpServer = createServer(app);
 app.set('trust proxy', 1);
+// Account/game endpoints use JSON bodies and do not need nested query parsing.
+app.set('query parser', 'simple');
 
 // Configure Socket.io with CORS enabled for local development
 const io = new Server(httpServer, {
+  ...SHOOTER_SOCKET_OPTIONS,
   cors: {
     origin: "*",
     methods: ["GET", "POST"]
@@ -297,6 +304,7 @@ const configuredOrigins = (process.env.ALLOWED_ORIGINS || 'https://tacticstrike.
   .filter(Boolean);
 // Keep existing deployments working while the hub moves to its own domain.
 configuredOrigins.push('https://unpaused.online', 'https://www.unpaused.online');
+const googleAuth = createGoogleAuth({ store: accountStore, createSession, publicAccount, allowedOrigins: configuredOrigins });
 
 app.use((req, res, next) => {
   const origin = req.get('origin');
@@ -324,21 +332,20 @@ app.get('/api/auth/status', (req, res) => {
     storage: persistent ? 'postgresql' : 'local-development',
     persistentSessions: true,
     accountUsernames: true,
+    googleClientId: googleAuth.clientId,
+    revision: /^[a-f0-9]{40}$/i.test(process.env.RENDER_GIT_COMMIT || '') ? process.env.RENDER_GIT_COMMIT : null,
     emailVerification:accountMailer.configured
   });
 });
 
+app.post('/api/auth/google', requireAccountStore, authRateLimit, googleAuth.handle);
+
 app.post('/api/auth/register', requireAccountStore, authRateLimit, async (req, res) => {
   try {
     const email = normalizeEmail(req.body?.email);
-    const password = String(req.body?.password || '');
 
     if (!isValidEmail(email)) {
       res.status(400).json({ error: 'INVALID_EMAIL', message: 'Enter a valid email address.' });
-      return;
-    }
-    if (password.length < 8 || password.length > 128) {
-      res.status(400).json({ error: 'INVALID_PASSWORD', message: 'Passcode must be between 8 and 128 characters.' });
       return;
     }
     if (!accountMailer.configured) return res.status(503).json({error:'EMAIL_UNAVAILABLE',message:'Email verification is being configured. Please try again soon.'});
@@ -351,15 +358,14 @@ app.post('/api/auth/register', requireAccountStore, authRateLimit, async (req, r
 
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
-    // Older cached clients may omit this; those accounts choose it in Account.
-    const username = req.body?.username == null ? null : normalizeUsername(req.body.username);
-    const displayName = username || 'Guest';
+    // Only the inbox owner chooses a password or claims a username after verification.
+    // Ignore values supplied by older clients or somebody preregistering another address.
     const user = await accountStore.createUser({
       id,
       email,
-      displayName,
-      username,
-      password: await createPasswordRecord(password),
+      displayName: 'Guest',
+      username: null,
+      password: await createPasswordRecord(crypto.randomBytes(48).toString('base64url')),
       credits: 0,
       purchasedWeapons: [],
       createdAt: now,
@@ -385,7 +391,10 @@ app.post('/api/auth/login', requireAccountStore, authRateLimit, async (req, res)
     const password = String(req.body?.password || '');
     if (!isValidEmail(email)||password.length>128) return res.status(401).json({error:'INVALID_CREDENTIALS',message:'Incorrect email or password.'});
     const user = await accountStore.findUserByEmail(email);
-    if (!user || !(await verifyPassword(password, user.password))) {
+    // Local account records can change while scrypt is running. Retain the exact
+    // credential checked here and require it again when the session is issued.
+    const verifiedPassword = user?.password ? {...user.password} : null;
+    if (!user || !(await verifyPassword(password, verifiedPassword))) {
       res.status(401).json({ error: 'INVALID_CREDENTIALS', message: 'Incorrect email or passcode.' });
       return;
     }
@@ -393,7 +402,8 @@ app.post('/api/auth/login', requireAccountStore, authRateLimit, async (req, res)
       await sendAccountVerification(user);
       return res.status(202).json({verificationRequired:true,message:'Check your inbox and verify your email before signing in. You can request another link after one minute.'});
     }
-    const session = await createSession(user.id);
+    const session = await createSession(user.id, verifiedPassword);
+    if (!session) return res.status(401).json({error:'INVALID_CREDENTIALS',message:'Incorrect email or password.'});
     res.json({ ...session, user: publicAccount(user) });
   } catch (error) {
     if (error?.code === 'EMAIL_UNAVAILABLE' || error?.code === 'EMAIL_DELIVERY_FAILED') return res.status(503).json({error:'EMAIL_UNAVAILABLE',message:'Verification email could not be sent. Please try again in a minute.'});
@@ -420,11 +430,11 @@ app.post('/api/auth/username', authenticateAccount, requireVerifiedEmail, authRa
 app.post('/api/auth/verify-email', requireAccountStore, authRateLimit, async (req,res)=>{
   try {
     const token=String(req.body?.token||''), password=String(req.body?.password||'');
-    if (!/^[A-Za-z0-9_-]{43}$/.test(token)||password.length<8||password.length>128) return res.status(400).json({error:'INVALID_VERIFICATION',message:'This link is invalid or expired. Request a new link by signing in.'});
+    if (!/^[A-Za-z0-9_-]{43}$/.test(token)||password.length<8||password.length>128) return res.status(400).json({error:'INVALID_VERIFICATION',message:'This link is invalid or expired. Request a new verification email.'});
     const hash=hashSessionToken(token);
     const verification=await accountStore.findEmailVerification(hash);
     const user=verification&&verification.expiresAt>Date.now()?await accountStore.findUserById(verification.userId):null;
-    if (!user) return res.status(400).json({error:'INVALID_VERIFICATION',message:'This link is invalid or expired. Request a new link by signing in.'});
+    if (!user) return res.status(400).json({error:'INVALID_VERIFICATION',message:'This link is invalid or expired. Request a new verification email.'});
     const verified=await accountStore.consumeEmailVerification(hash,await createPasswordRecord(password));
     if (!verified) return res.status(400).json({error:'INVALID_VERIFICATION',message:'This link has already been used or expired.'});
     const session=await createSession(verified.id);
@@ -432,6 +442,41 @@ app.post('/api/auth/verify-email', requireAccountStore, authRateLimit, async (re
   } catch(error) {
     console.error('Email verification failed:',error.code||'DATABASE_ERROR');
     res.status(503).json({error:'VERIFICATION_FAILED',message:'Verification is temporarily unavailable. Please try again.'});
+  }
+});
+
+app.post('/api/auth/password-reset/request', requireAccountStore, authRateLimit, async(req,res)=>{
+  const email=normalizeEmail(req.body?.email);
+  if (!isValidEmail(email)) return res.status(400).json({error:'INVALID_EMAIL',message:'Enter a valid email address.'});
+  // Reply before account lookup or email delivery: existence, per-account throttling,
+  // and delivery failures must not change the response or reveal the account by latency.
+  res.status(202).json({message:passwordResetMessage});
+  try {
+    if (!accountMailer.configured) return;
+    const user=await accountStore.findUserByEmail(email);
+    if (!user?.emailVerifiedAt) return;
+    const token=crypto.randomBytes(32).toString('base64url');
+    if (!await accountStore.reservePasswordReset(user.id,hashSessionToken(token),Date.now()+30*60*1000)) return;
+    await accountMailer.sendPasswordReset(user.email,token);
+  } catch(error) {
+    console.error('Password reset email failed:',error.code||'DELIVERY_ERROR');
+  }
+});
+
+app.post('/api/auth/password-reset/confirm', requireAccountStore, authRateLimit, async(req,res)=>{
+  try {
+    const token=String(req.body?.token||''), password=String(req.body?.password||'');
+    if (!/^[A-Za-z0-9_-]{43}$/.test(token)) return res.status(400).json({error:'INVALID_PASSWORD_RESET',message:'This reset link is invalid or expired. Request a new reset email.'});
+    if (password.length<8||password.length>128) return res.status(400).json({error:'INVALID_PASSWORD',message:'Password must be between 8 and 128 characters.'});
+    const hash=hashSessionToken(token);
+    const reset=await accountStore.findPasswordReset(hash);
+    if (!reset||reset.expiresAt<=Date.now()) return res.status(400).json({error:'INVALID_PASSWORD_RESET',message:'This reset link is invalid or expired. Request a new reset email.'});
+    const user=await accountStore.consumePasswordReset(hash,await createPasswordRecord(password));
+    if (!user) return res.status(400).json({error:'INVALID_PASSWORD_RESET',message:'This reset link has already been used or expired. Request a new reset email.'});
+    res.json({message:'Password updated. Sign in with your new password.'});
+  } catch(error) {
+    console.error('Password reset failed:',error.code||'DATABASE_ERROR');
+    res.status(503).json({error:'PASSWORD_RESET_FAILED',message:'Your password could not be updated. Please try again.'});
   }
 });
 
@@ -801,9 +846,11 @@ function generateRoomId() {
 }
 
 installShooterAccountIdentity(io,{accounts:accountStore,hashToken:hashSessionToken});
+const shooterRecovery = createShooterRoomRecovery({ io, rooms, onLeave: handleRoomLeave });
 io.on('connection', (socket) => {
   console.log(`User connected: ${socket.id}`);
-  let currentRoomId = null;
+  let currentRoomId = shooterRecovery.resume(socket);
+  if (socket.recovered && socket.data.legacyUserKey) socketToUser.set(socket.id, socket.data.legacyUserKey);
   socket.on('account-session',()=>{
     const name=socket.data.accountName;
     socket.emit('account-name',{name});
@@ -853,6 +900,7 @@ io.on('connection', (socket) => {
     
     // Bind socket session to user record
     socketToUser.set(socket.id, lowerName);
+    socket.data.legacyUserKey = lowerName;
     socket.emit('login-response', { 
       success: true, 
       username: user.username,
@@ -906,6 +954,7 @@ io.on('connection', (socket) => {
     rooms.set(roomId, room);
     socket.join(roomId);
     currentRoomId = roomId;
+    shooterRecovery.joined(socket, roomId);
 
     socket.emit('room-created', { roomId, players: room.players, mode: roomMode, mapId: room.mapId, renderStyle: room.renderStyle, isRanked: false });
     console.log(`Room created: ${roomId} (${roomMode}, Map: ${room.mapId}, Style: ${room.renderStyle}) by player: ${playerName} (${socket.id})`);
@@ -977,6 +1026,7 @@ io.on('connection', (socket) => {
     
     socket.join(cleanRoomId);
     currentRoomId = cleanRoomId;
+    shooterRecovery.joined(socket, cleanRoomId);
 
     socket.emit('room-joined', { roomId: cleanRoomId, players: room.players, mode: room.mode, mapId: room.mapId || 'manor', renderStyle: room.renderStyle || 'realistic', isRanked: false });
     socket.to(cleanRoomId).emit('player-joined', { players: room.players });
@@ -1024,6 +1074,7 @@ io.on('connection', (socket) => {
       targetRoom.players.push(newPlayer);
       socket.join(targetRoom.id);
       currentRoomId = targetRoom.id;
+      shooterRecovery.joined(socket, targetRoom.id);
 
       socket.emit('room-joined', { roomId: targetRoom.id, players: targetRoom.players, mode: targetRoom.mode, isRanked: true, mapId: targetRoom.mapId || 'manor', renderStyle: targetRoom.renderStyle || 'realistic' });
       socket.to(targetRoom.id).emit('player-joined', { players: targetRoom.players });
@@ -1057,6 +1108,7 @@ io.on('connection', (socket) => {
       rooms.set(roomId, room);
       socket.join(roomId);
       currentRoomId = roomId;
+      shooterRecovery.joined(socket, roomId);
 
       socket.emit('room-created', { roomId, players: room.players, autoMatch: true, mode: searchMode, isRanked: true, mapId: room.mapId || 'manor', renderStyle: room.renderStyle || 'realistic' });
       console.log(`Auto-match created room: ${roomId} (${searchMode}) for player: ${playerName} (RP: ${playerRP})`);
@@ -1190,7 +1242,8 @@ io.on('connection', (socket) => {
   socket.on('player-state', (state) => {
     if (!currentRoomId) return;
     state.id = socket.id; // inject sender ID
-    socket.to(currentRoomId).emit('opponent-state', state);
+    const relay = state.droppedItem || state.justDashed ? socket.to(currentRoomId) : socket.to(currentRoomId).volatile;
+    relay.emit('opponent-state', state);
   });
 
   // 7. In-game: Relay Shooting Action
@@ -1341,18 +1394,18 @@ io.on('connection', (socket) => {
   // 14. Leave Room
   socket.on('leave-room', () => {
     if (currentRoomId) {
-      handleRoomLeave(socket, currentRoomId);
+      shooterRecovery.leave(socket, currentRoomId);
       currentRoomId = null;
       broadcastPlayerCounts();
     }
   });
 
   // 15. Disconnection
-  socket.on('disconnect', () => {
+  socket.on('disconnect', (reason) => {
     console.log(`User disconnected: ${socket.id}`);
     socketToUser.delete(socket.id);
     if (currentRoomId) {
-      handleRoomLeave(socket, currentRoomId);
+      shooterRecovery.disconnect(socket, reason);
     }
     broadcastPlayerCounts();
   });

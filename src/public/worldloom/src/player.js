@@ -375,7 +375,7 @@ export class PlayerController {
     const sideInput = (input.isDown('KeyD') ? 1 : 0) - (input.isDown('KeyA') ? 1 : 0);
     const crouching = input.isDown('ControlLeft', 'ControlRight');
     const wantsSprint = input.isDown('ShiftLeft', 'ShiftRight') && forwardInput > 0 && !crouching;
-    const sprinting = wantsSprint && this.stamina > 0.025 && !this.inWater;
+    const sprinting = wantsSprint && settings.canSprint !== false && this.stamina > 0.025 && !this.inWater;
     const speedMultiplier = THREE.MathUtils.clamp(Number(settings.speedMultiplier) || 1, 0.5, 1.25);
     const sprintCostMultiplier = THREE.MathUtils.clamp(Number(settings.sprintCostMultiplier) || 1, 0.5, 3);
     const staminaRecoveryMultiplier = THREE.MathUtils.clamp(Number(settings.staminaRecoveryMultiplier) || 1, 0.2, 2);

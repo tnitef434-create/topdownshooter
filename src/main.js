@@ -318,6 +318,9 @@ function updateWeaponLocksUI() {
 let socket = null;
 let gameEngine = null;
 let currentRoom = null;
+let shooterRoomPaused = false;
+let shooterRoomPauseMessage = '';
+let shooterReconnectDeadline = null;
 let myName = 'Operative';
 let myWeapon = 'pistol';
 let myColor = 'cyan';
@@ -1226,6 +1229,46 @@ function updateLobbyUI(players) {
 }
 
 // 5. Connect to Socket.io Server
+function updateShooterConnectionStatus() {
+  const onlineMatch = gameEngine?.mode === 'online' && gameEngine.active;
+  const paused = Boolean(currentRoom && (!socket?.connected || shooterRoomPaused || document.hidden));
+  const message = !socket?.connected ? 'Connection interrupted · reconnecting. Match paused.'
+    : document.hidden ? 'Match paused while this tab is in the background'
+      : shooterRoomPauseMessage;
+  if (onlineMatch) gameEngine.setNetworkPaused(paused, message);
+  let banner = document.getElementById('match-connection-status');
+  if (!banner && paused) {
+    banner = document.createElement('div');
+    banner.id = 'match-connection-status';
+    banner.setAttribute('role', 'status');
+    banner.style.cssText = 'position:fixed;top:20px;left:50%;transform:translateX(-50%);z-index:10000;max-width:calc(100vw - 40px);padding:12px 20px;border:1px solid #d8a952;border-radius:8px;background:#172126;color:#fff0c8;font:600 14px/1.5 system-ui;text-align:center;pointer-events:none;';
+    document.body.appendChild(banner);
+  }
+  if (banner) { banner.hidden = !paused; banner.textContent = message; }
+}
+
+function finishUnavailableShooterRecovery() {
+  clearTimeout(shooterReconnectDeadline);
+  shooterReconnectDeadline = null;
+  currentRoom = null;
+  shooterRoomPaused = false;
+  safeStorage.removeItem('tacticstrike_active_match');
+  updateShooterConnectionStatus();
+  if (gameEngine?.mode === 'online') {
+    gameEngine.endGameDueToDisconnect('The match connection could not be restored. Please join a new match.');
+  } else {
+    disconnectSocket();
+    showScreen('menu');
+    addSystemChatMessage('The room connection expired. Please join again.');
+  }
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (socket?.connected) socket.emit('match-visibility', { hidden: document.hidden });
+  if (gameEngine?.mode === 'offline' && gameEngine.active) gameEngine.setNetworkPaused(document.hidden);
+  updateShooterConnectionStatus();
+});
+
 function connectSocket() {
   if (socket) return;
 
@@ -1238,10 +1281,38 @@ function connectSocket() {
   socket.on('connect_error', () => {
     // Fail silently or fallback for auto-login without annoying alerts
     console.warn('Failed to connect to multiplayer server.');
+    updateShooterConnectionStatus();
+  });
+
+  socket.on('disconnect', reason => {
+    if (reason === 'io client disconnect') return;
+    shooterRoomPaused = true;
+    shooterRoomPauseMessage = 'Restoring the match connection…';
+    if (currentRoom && !shooterReconnectDeadline) shooterReconnectDeadline = setTimeout(finishUnavailableShooterRecovery, 120000);
+    updateShooterConnectionStatus();
+  });
+
+  socket.on('room-connection-state', data => {
+    if (currentRoom && data.roomId !== currentRoom) return;
+    shooterRoomPaused = Boolean(data.paused);
+    shooterRoomPauseMessage = data.reason || '';
+    updateShooterConnectionStatus();
+  });
+
+  socket.on('room-recovered', data => {
+    if (currentRoom && data.roomId !== currentRoom) { finishUnavailableShooterRecovery(); return; }
+    if (data.roomId) updateLobbyUI(data.players);
+    updateShooterConnectionStatus();
   });
 
   socket.on('connect', () => {
     console.log('Socket connected.');
+    clearTimeout(shooterReconnectDeadline);
+    shooterReconnectDeadline = null;
+    if (currentRoom && !socket.recovered) { finishUnavailableShooterRecovery(); return; }
+    // Old movement or combat clicks must never burst out after a reconnect.
+    socket.emit('match-visibility', { hidden: document.hidden });
+    updateShooterConnectionStatus();
     
     // Double redundant device sync
     const uuid = getOrCreateUUID();
@@ -1300,6 +1371,7 @@ function connectSocket() {
   // Socket Events
   socket.on('room-created', ({ roomId, players, autoMatch, mode, mapId, renderStyle, isRanked }) => {
     currentRoom = roomId;
+    updateShooterConnectionStatus();
     if (mode) myMode = mode;
     currentMatchSource = isRanked ? 'ranked' : 'casual';
     displays.roomCode.innerText = roomId;
@@ -1335,6 +1407,7 @@ function connectSocket() {
 
   socket.on('room-joined', ({ roomId, players, mode, mapId, renderStyle, isRanked }) => {
     currentRoom = roomId;
+    updateShooterConnectionStatus();
     if (mode) myMode = mode;
     currentMatchSource = isRanked ? 'ranked' : 'casual';
     displays.roomCode.innerText = roomId;
@@ -1501,6 +1574,7 @@ function connectSocket() {
       });
 
       showScreen('game');
+      updateShooterConnectionStatus();
     };
 
     playRankedStartVideo(initGame);
@@ -1522,12 +1596,17 @@ function connectSocket() {
 }
 
 function disconnectSocket() {
+  clearTimeout(shooterReconnectDeadline);
+  shooterReconnectDeadline = null;
+  shooterRoomPaused = false;
+  shooterRoomPauseMessage = '';
   if (socket) {
     socket.disconnect();
     socket = null;
     currentRoom = null;
     window.AppSocket = null;
   }
+  updateShooterConnectionStatus();
   if (displays && displays.roomCode) {
     displays.roomCode.innerText = '-----';
   }
@@ -2475,8 +2554,8 @@ function addKillFeedMessage(killer, victim, weaponKey) {
   const wName = WEAPON_STATS[weaponKey]?.name || weaponKey;
   
   killEl.innerHTML = `
-    <span class="killer">${escapeHTML(killer)}</span> 
-    🔫 [<span class="weapon">${wName}</span>] ➔ 
+    <span class="killer">${escapeHTML(killer)}</span>
+    🔫 [<span class="weapon">${wName}</span>] ➔
     <span class="victim">${escapeHTML(victim)}</span>
   `;
   

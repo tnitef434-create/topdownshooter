@@ -4,6 +4,8 @@ import { accountPlayerName } from './accountUsername.js';
 import { isWorldMember, worldError } from './worldStore.js';
 import { validVector, validCell, cellKey, personalSave, unpackEdits, worldSave } from './src/public/worldloom/src/shared-world.js';
 import { WORLD_GENERATOR_VERSION, isSupportedWorldGeneratorVersion } from './src/public/worldloom/src/generator-version.js';
+import { createDiscoveryVerifier, applyDiscoveryLootClaim } from './worldDiscoveryLoot.js';
+import { isDiscoveryLootLedger } from './src/public/worldloom/src/discovery-loot.js';
 
 const uuid = value => typeof value==='string' && /^[0-9a-f-]{36}$/i.test(value);
 const brief = (w,id) => ({id:w.id,name:w.name,mode:w.mode,owner:w.ownerId===id,ownerName:w.ownerName,guestName:w.guestName||null,accepted:w.accepted,createdAt:w.createdAt,updatedAt:w.updatedAt});
@@ -25,6 +27,7 @@ export function installWorldServer({app,io,store,accounts,authenticate,verified,
     let guest=null;
     if(body.friendCode){if(!/^\d{4}$/.test(body.friendCode))throw worldError('Enter the four-digit friend code.');guest=await accounts.findUserByFriendCode(body.friendCode);if(!guest?.emailVerifiedAt||guest.id===req.account.id)throw worldError('Use a verified friend’s code, different from your own.');}
     const imported=body.importSave;
+    if(imported?.discoveryLoot!==undefined&&!isDiscoveryLootLedger(imported.discoveryLoot))throw worldError('The local save contains invalid discovery loot.');
     if(imported&&(!isSupportedWorldGeneratorVersion(imported.generatorVersion??1)||imported.seed!==body.seed))throw worldError('This local save cannot be imported.');
     const edits=imported?unpackEdits(imported.world):{blocks:{},fluids:{}};
     if(Object.keys(edits.blocks).length>100_000)throw worldError('This save has too many edits to import.');
@@ -34,7 +37,7 @@ export function installWorldServer({app,io,store,accounts,authenticate,verified,
       if(Object.keys(drops).length>=256||!validVector(drop.position)||!Number.isInteger(drop.id)||drop.id<1||drop.id>4096||!Number.isInteger(drop.count)||drop.count<1||drop.count>99)throw worldError('The local save contains an invalid loose item.');
       const key=randomUUID();drops[key]={key,id:drop.id,count:drop.count,position:drop.position,velocity:validVector(drop.velocity,40)?drop.velocity:[0,0,0]};
     }
-    const w=await store.create(req.account.id,{name,seed:body.seed,mode:body.mode,generatorVersion:imported?(imported.generatorVersion??1):WORLD_GENERATOR_VERSION,ownerName:publicPlayer(req.account).name,guestId:guest?.id||null,guestName:guest?publicPlayer(guest).name:null,accepted:false,...edits,players,drops,ecosystem:null,receipts:[],timeOfDay:imported?.timeOfDay??.31});
+    const w=await store.create(req.account.id,{name,seed:body.seed,mode:body.mode,generatorVersion:imported?(imported.generatorVersion??1):WORLD_GENERATOR_VERSION,discoveryVersion:imported?(imported.discoveryVersion===1?1:0):1,discoveryLoot:imported?.discoveryLoot||{},ownerName:publicPlayer(req.account).name,guestId:guest?.id||null,guestName:guest?publicPlayer(guest).name:null,accepted:false,...edits,players,drops,ecosystem:null,receipts:[],timeOfDay:imported?.timeOfDay??.31});
     res.status(201).json({world:brief(w,req.account.id)});
   }));
   app.post('/api/worlds/:id/join',route(async(req,res)=>{
@@ -65,7 +68,7 @@ export function installWorldServer({app,io,store,accounts,authenticate,verified,
       socket.data={user,worldId,sessionKey:hashToken(token),expiresAt:session.expiresAt};next();
     }catch(error){const response=new Error(error.permanent?error.message:'The world service is temporarily unavailable. Reconnecting…');response.data={permanent:Boolean(error.permanent)};next(response);}
   });
-  function leader(room){return room.sockets.keys().next().value||null;}
+  function leader(room){return [...room.sockets.values()].find(s=>s.data.active!==false)?.data.user.id||room.sockets.keys().next().value||null;}
   function announce(room){namespace.to(room.id).emit('members',{leader:leader(room),players:[...room.sockets.values()].map(s=>({...publicPlayer(s.data.user),pose:s.data.pose||null}))});}
   namespace.on('connection',socket=>{
     const {worldId,user}=socket.data;
@@ -75,6 +78,11 @@ export function installWorldServer({app,io,store,accounts,authenticate,verified,
     const old=room.sockets.get(user.id);
     if(old){old.emit('closed',{message:'This world was opened in another tab.'});old.disconnect(true);}
     room.sockets.set(user.id,socket);socket.join(worldId);announce(room);
+    socket.on('presence',data=>{
+      const active=data?.active!==false;
+      if(socket.data.active===active)return;
+      socket.data.active=active;announce(room);
+    });
     socket.on('snapshot',async(_,ack)=>{
       if(typeof ack!=='function')return;
       try{const w=await store.get(worldId);if(!w||w.deleted)throw worldError('World unavailable.',404);ack({world:w.id,revision:w.revision,save:worldSave(w,user.id),blocks:w.blocks,fluids:w.fluids,drops:w.drops,ecosystem:w.ecosystem,leader:leader(room),you:publicPlayer(user),players:[...room.sockets.values()].map(s=>({...publicPlayer(s.data.user),pose:s.data.pose||null}))});}catch(e){ack(replyError(e));}
@@ -132,6 +140,22 @@ export function installWorldServer({app,io,store,accounts,authenticate,verified,
         namespace.to(worldId).emit('drop-removed',{key:message.key,remaining:result.remaining,revision:w.revision});ack({ok:true,...result});
       }catch(e){ack(replyError(e));}
     });
+    socket.on('claim-loot',async(message,ack)=>{
+      if(typeof ack!=='function')return;
+      let ownsPending=false;
+      try{
+        if(socket.data.pending)throw worldError('Wait for the previous save.',429);
+        if(Date.now()-(socket.data.lootAt||0)<200)throw worldError('Wait a moment before opening the chest again.',429);
+        socket.data.lootAt=Date.now();socket.data.pending=true;ownsPending=true;
+        const {world:w,result}=await store.mutate(worldId,user.id,w=>{
+          if(w.deleted)throw worldError('World deleted.',404);
+          if(!room.discoveryVerifier)room.discoveryVerifier=createDiscoveryVerifier(w);
+          return applyDiscoveryLootClaim(w,user.id,socket.data.pose,message,room.discoveryVerifier);
+        });
+        if(result.ok)namespace.to(worldId).emit('discovery-looted',{key:result.key,remaining:result.remaining,revision:w.revision});
+        ack({...result,revision:w.revision});
+      }catch(e){ack(replyError(e));}finally{if(ownsPending)socket.data.pending=false;}
+    });
     socket.on('ecology',data=>{
       if(user.id!==leader(room)||!data||!Array.isArray(data.pigs)||data.pigs.length>12||!Array.isArray(data.drops)||data.drops.length>256||JSON.stringify(data).length>75_000)return;
       const now=Date.now();if(now-(socket.data.ecologyAt||0)<90)return;socket.data.ecologyAt=now;
@@ -148,12 +172,14 @@ export function installWorldServer({app,io,store,accounts,authenticate,verified,
       if(room.sockets.get(user.id)!==socket)return;
       room.sockets.delete(user.id);announce(room);
       if(room.ecosystem){const ecology=room.ecosystem;store.mutate(worldId,user.id,w=>{w.ecosystem=ecology;}).catch(()=>{});namespace.to(worldId).emit('ecology',ecology);}
-      if(!room.sockets.size)rooms.delete(worldId);
+      if(!room.sockets.size){room.discoveryVerifier?.dispose();rooms.delete(worldId);}
     });
   });
   const sessionCheck=setInterval(async()=>{
     for(const room of rooms.values())for(const socket of room.sockets.values()){
-      try{const session=await accounts.findSession(socket.data.sessionKey);if(!isAccountSessionActive(session))socket.disconnect(true);}catch{socket.disconnect(true);}
+      // A transient database timeout must not evict a verified player.
+      // Confirmed sign-out/revocation still ends the connection immediately.
+      try{const session=await accounts.findSession(socket.data.sessionKey);if(!isAccountSessionActive(session))socket.disconnect(true);}catch{/* Retry the next session check. */}
     }
   },60_000);sessionCheck.unref();
   return {close(){clearInterval(sessionCheck);namespace.disconnectSockets(true);},rooms};

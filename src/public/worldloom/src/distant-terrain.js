@@ -247,6 +247,19 @@ export class DistantTerrainHorizon {
     this.waterCoverage.magFilter=this.waterCoverage.minFilter=THREE.NearestFilter;
     this.waterCoverage.needsUpdate=true;
     this.coverageOrigin=new THREE.Vector2();
+    // The coarse triangles are only a horizon. Interpolated slopes can rise
+    // above voxel steps, so depth testing alone cannot hide their near overlap.
+    this.material.onBeforeCompile=shader=>{
+      shader.uniforms.distantCoverage={value:this.waterCoverage};
+      shader.uniforms.distantCoverageOrigin={value:this.coverageOrigin};
+      shader.vertexShader=shader.vertexShader.replace('#include <common>', '#include <common>\nvarying vec2 vHorizonXZ;')
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvHorizonXZ=(modelMatrix*vec4(position,1.)).xz;');
+      shader.fragmentShader=shader.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec2 vHorizonXZ;uniform sampler2D distantCoverage;uniform vec2 distantCoverageOrigin;')
+        .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
+          vec2 coverageCell=floor(vHorizonXZ/16.)-distantCoverageOrigin;
+          if(all(greaterThanEqual(coverageCell,vec2(0.)))&&all(lessThan(coverageCell,vec2(32.)))&&texture2D(distantCoverage,(coverageCell+.5)/32.).r>.5)discard;`);
+    };
+    this.material.customProgramCacheKey=()=> 'worldloom-distant-terrain-coverage-v2';
 
     this._requested = null;
     this._pending = null;
@@ -542,14 +555,14 @@ export class DistantTerrainHorizon {
   }
 
   updateWaterCoverage(){
-    // Only the completed voxel surface owns nearby water. A small coverage
-    // texture prevents double blending while strips of chunks arrive or leave.
+    // Share exact ownership between the land and water horizon. Centre on the
+    // active footprint, not dormant cached chunks left behind while travelling.
     const chunks=[...(this.world?.chunks?.values()||[])];
-    if(!chunks.length)return;
-    const x=Math.min(...chunks.map(c=>c.cx)),z=Math.min(...chunks.map(c=>c.cz));
+    const center=this.world?.centerChunk||{cx:0,cz:0};
+    const x=center.cx-16,z=center.cz-16;
     const next=new Uint8Array(32*32);
-    for(const c of chunks)if(c.generated&&c.opaqueMesh?.visible){
-      const dx=c.cx-x,dz=c.cz-z;if(dx<32&&dz<32)next[dx+dz*32]=255;
+    for(const c of chunks)if(c.generated&&c.wanted!==false&&(c.opaqueMesh?.visible||c.waterMesh?.visible)){
+      const dx=c.cx-x,dz=c.cz-z;if(dx>=0&&dz>=0&&dx<32&&dz<32)next[dx+dz*32]=255;
     }
     const data=this.waterCoverage.image.data;
     if(this.coverageOrigin.x!==x||this.coverageOrigin.y!==z||next.some((v,i)=>v!==data[i])){

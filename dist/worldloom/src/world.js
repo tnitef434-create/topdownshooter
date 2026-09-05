@@ -1,6 +1,8 @@
 import { CaveField } from './cave-generation.js';
+import { discoveryPlacementForRegion, DISCOVERY_REGION_SIZE } from './land-discoveries.js';
+import { DISCOVERY_ASSETS } from './discovery-assets.js';
 import * as THREE from '../vendor/three.module.min.js';
-import { BLOCK, BLOCKS, isSolid, isTransparent, isLiquid } from './blocks.js';
+import { BLOCK, BLOCKS, isSolid, isTransparent, isLiquid, blockShapeHeight } from './blocks.js';
 import {
   hash2D,
   hash3D,
@@ -464,6 +466,12 @@ export class World {
     this.generatorVersion = [1,2,3].includes(requestedGeneratorVersion)
       ? requestedGeneratorVersion : WORLD_GENERATOR_VERSION;
     this.caveField = this.generatorVersion >= 3 ? new CaveField(this.seed) : null;
+    // Discovery content is independently versioned: loading a pre-discovery save
+    // cannot introduce landmarks into a previously explored or edited landscape.
+    this.discoveryVersion = options?.discoveryVersion === 1 ? 1 : 0;
+    this.discoveryLoot = {};
+    this.discoveryCollisionEnabled = false;
+    this._discoveryCache = new Map();
     this.pondsEnabled = this.generatorVersion >= 2;
     this.summitCrossesEnabled = this.generatorVersion >= 2;
     this.forestFloorEnabled = this.generatorVersion >= 2;
@@ -1852,6 +1860,7 @@ export class World {
     );
     const rootX = cellX * TREE_CELL_SIZE + offsetX;
     const rootZ = cellZ * TREE_CELL_SIZE + offsetZ;
+    if (this.getLandDiscoveriesNear(rootX,rootZ,8).some(d=>Math.abs(d.x-rootX)<8&&Math.abs(d.z-rootZ)<8))return null;
     // Column information already owns the bounded terrain/cave/pond cache. Keep
     // tree descriptors as pure derived values so visual queries and voxel
     // decoration share one decision path without a second invalidation layer.
@@ -2253,11 +2262,12 @@ export class World {
   }
 
   getForestFloorCollidersNear(x, z, radius = 3.25) {
-    if (!this.forestFloorCollisionEnabled) return [];
+    const discoveries = this.getLandDiscoveryCollidersNear(x,z,radius);
+    if (!this.forestFloorCollisionEnabled) return discoveries;
     const centerX = Number.isFinite(Number(x)) ? Number(x) : 0;
     const centerZ = Number.isFinite(Number(z)) ? Number(z) : 0;
     const safeRadius = THREE.MathUtils.clamp(Number(radius) || 0, 0, 12);
-    return this.getForestFloorNear(centerX, centerZ, safeRadius + 2)
+    return discoveries.concat(this.getForestFloorNear(centerX, centerZ, safeRadius + 2)
       .filter((descriptor) => (
         (!this.isPositionReady || this.isPositionReady(descriptor.x, descriptor.z))
         && this.forestFloorPlacementIsLive(descriptor)
@@ -2266,7 +2276,73 @@ export class World {
       .filter((collider) => (
         Math.hypot(collider.x - centerX, collider.z - centerZ)
           <= safeRadius + Math.hypot(collider.halfX, collider.halfZ)
-      ));
+      )));
+  }
+
+  getLandDiscoveryForRegion(rx,rz) {
+    if(!this.discoveryVersion)return null;
+    const key=`${rx},${rz}`;
+    if(this._discoveryCache.has(key))return this._discoveryCache.get(key);
+    const found=discoveryPlacementForRegion(this,rx,rz);
+    trimCache(this._discoveryCache,1024);this._discoveryCache.set(key,found);
+    return found;
+  }
+
+  getLandDiscoveriesNear(x,z,radius=80) {
+    if(!this.discoveryVersion||![x,z,radius].every(Number.isFinite))return [];
+    const reach=Math.min(256,Math.max(0,radius)),result=[];
+    for(let rz=Math.floor((z-reach)/DISCOVERY_REGION_SIZE);rz<=Math.floor((z+reach)/DISCOVERY_REGION_SIZE);rz++)
+      for(let rx=Math.floor((x-reach)/DISCOVERY_REGION_SIZE);rx<=Math.floor((x+reach)/DISCOVERY_REGION_SIZE);rx++){
+        const d=this.getLandDiscoveryForRegion(rx,rz);
+        if(d&&Math.hypot(d.x-x,d.z-z)<=reach+6)result.push(d);
+      }
+    return result;
+  }
+
+  landDiscoveryIsLive(d) {
+    if(!d||!this.isPositionReady(d.x,d.z))return false;
+    // If a player digs out the support, remove the whole decorative structure
+    // and its collision together, rather than leaving unsupported floating art.
+    for(const [dx,dz] of [[0,0],[-2,-2],[2,2],[-2,2],[2,-2]]){
+      if(!isSolid(this.getBlock(d.x+dx,d.y-1,d.z+dz)))return false;
+    }
+    return true;
+  }
+
+  getLandDiscoveryCollidersNear(x,z,radius=3.25) {
+    if(!this.discoveryCollisionEnabled)return [];
+    const result=[];
+    for(const d of this.getLandDiscoveriesNear(x,z,radius+6)){
+      if(!this.landDiscoveryIsLive(d))continue;
+      const c=Math.cos(d.yaw),s=Math.sin(d.yaw);
+      for(const [i,b] of DISCOVERY_ASSETS[d.kind].colliders.entries()){
+        const collider={key:`${d.key}:${i}`,sourceKey:d.key,kind:d.kind,x:d.x+.5+b.x*c+b.z*s,z:d.z+.5-b.x*s+b.z*c,minY:d.y+b.y-b.height/2,maxY:d.y+b.y+b.height/2,halfX:b.halfX,halfZ:b.halfZ,yaw:d.yaw,stepable:b.height<=.5};
+        if(Math.hypot(collider.x-x,collider.z-z)<=radius+Math.hypot(b.halfX,b.halfZ))result.push(collider);
+      }
+    }
+    return result;
+  }
+
+  getLandDiscoveryChest(x,y,z) {
+    if(![x,y,z].every(Number.isInteger))return null;
+    const d=this.getLandDiscoveryForRegion(Math.floor(x/DISCOVERY_REGION_SIZE),Math.floor(z/DISCOVERY_REGION_SIZE));
+    if(!d||d.chest.x!==x||d.chest.y!==y||d.chest.z!==z)return null;
+    return this.getBlock(x,y,z)===BLOCK.CHEST?d:null;
+  }
+
+  _decorateLandDiscoveries(chunk) {
+    for(const d of this.getLandDiscoveriesNear(chunk.cx*CHUNK_SIZE+8,chunk.cz*CHUNK_SIZE+8,18)){
+      for(let dz=-4;dz<=4;dz++)for(let dx=-4;dx<=4;dx++){
+        if(Math.abs(dx)===4&&Math.abs(dz)===4)continue;
+        const x=d.x+dx,z=d.z+dz;
+        const info=this._columnInfo(x,z);
+        for(let y=info.height;y<d.y;y++)this._writeGenerated(chunk,x,y,z,BLOCK.STONE_BRICK);
+        // The paved clearing is part of this versioned content, never a terrain
+        // edit. Existing player edits are restored in the following phase.
+        for(let y=d.y;y<d.y+7;y++)this._writeGenerated(chunk,x,y,z,AIR);
+      }
+      this._writeGenerated(chunk,d.chest.x,d.chest.y,d.chest.z,BLOCK.CHEST);
+    }
   }
 
   _mountainSummitCrossForCell(cellX, cellZ) {
@@ -2678,6 +2754,11 @@ export class World {
     }
     if (chunk.generationPhase === 'cave-life') {
       this._decorateCaveLife(chunk);
+      chunk.generationPhase = 'discoveries';
+      if (now() >= deadline) return false;
+    }
+    if (chunk.generationPhase === 'discoveries') {
+      this._decorateLandDiscoveries(chunk);
       chunk.generationPhase = 'finalize';
       if (now() >= deadline) return false;
     }
@@ -2729,7 +2810,7 @@ export class World {
       }
       slices++;
       const warmingSpawn = this._preloadChunksRemaining > 0;
-      const completeChunks = warmingSpawn || options?.completeChunks === true;
+      const completeChunks = (warmingSpawn && options?.incremental !== true) || options?.completeChunks === true;
       const completed = completeChunks
         ? (this._generateChunk(chunk), true)
         : this._stepChunkGeneration(chunk, 128, maxMilliseconds);
@@ -2996,6 +3077,24 @@ export class World {
     }
   }
 
+  isClearSpawnColumn(position) {
+    if (!position || ![position.x, position.y, position.z].every(Number.isFinite)) return false;
+    const x = Math.floor(position.x), z = Math.floor(position.z);
+    this.ensurePositionGenerated(x, z);
+    const supportY = Math.floor(position.y - 0.05);
+    const supportId = this.getBlock(x, supportY, z);
+    const support = BLOCKS[supportId];
+    const foliage = id => id === BLOCK.ASH_LEAVES || id === BLOCK.PINE_NEEDLES;
+    if (!support?.solid || support.liquid || support.hazard || foliage(supportId)) return false;
+    if (position.y - (supportY + blockShapeHeight(supportId)) > 0.06) return false;
+    for (let y = Math.floor(position.y); y <= Math.floor(position.y + 1.78); y++) {
+      const id = this.getBlock(x, y, z), block = BLOCKS[id];
+      if (block?.hazard || block?.liquid || foliage(id)) return false;
+      if (block?.solid && y + blockShapeHeight(id) > position.y + 0.001) return false;
+    }
+    return true;
+  }
+
   findSpawn(maxRadius = 256) {
     const radiusLimit = Math.max(8, Math.floor(maxRadius));
     let fallback = new THREE.Vector3(0.5, this.terrainHeight(0, 0) + 1.02, 0.5);
@@ -3016,14 +3115,20 @@ export class World {
           );
           if (slope <= 1) {
             const candidate = new THREE.Vector3(x + 0.5, info.height + 1.02, z + 0.5);
+            let preferred = false;
             if (info.biome !== 'desert') {
               const greenNeighbors = [
                 [-10, 0], [10, 0], [0, -10], [0, 10],
                 [-8, -8], [8, -8], [-8, 8], [8, 8],
               ].reduce((count, [dx, dz]) => count + (this.biomeAt(x + dx, z + dz) !== 'desert' ? 1 : 0), 0);
-              if (greenNeighbors >= 7) return candidate;
+              preferred = greenNeighbors >= 7;
             }
-            if (!dryFallback) dryFallback = candidate;
+            // Only materialize candidates we would actually select. Terrain
+            // alone cannot reveal a pine growing through the initial camera.
+            if ((preferred || !dryFallback) && this.isClearSpawnColumn(candidate)) {
+              if (preferred) return candidate;
+              dryFallback = candidate;
+            }
           }
           fallback = new THREE.Vector3(x + 0.5, info.height + 1.02, z + 0.5);
         }
@@ -3204,6 +3309,7 @@ export class World {
     this._pondCellCache.clear();
     this._forestFloorCache.clear();
     this._mountainSummitCache.clear();
+    this._discoveryCache.clear();
     this._refreshStats();
   }
 }

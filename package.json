@@ -10,11 +10,14 @@
     "dev:client": "vite src --config vite.config.js",
     "build": "vite build src --config vite.config.js --outDir ../dist --emptyOutDir",
     "preview": "vite preview src --config vite.config.js --outDir ../dist",
-    "test": "node --test --test-isolation=none tests/worldloom-core.test.mjs tests/worldloom-assets.test.mjs tests/bot-tactics.test.mjs tests/tacticstrike-bot-navigation.test.mjs tests/worldloom-characters.test.mjs tests/worldloom-nature-regressions.test.mjs tests/worldloom-sea-life.test.mjs tests/worldloom-water.test.mjs tests/worldloom-water-interaction.test.mjs tests/worldloom-caves.test.mjs tests/account-session.test.mjs tests/account-persistence.test.mjs tests/account-verification.test.mjs tests/account-username.test.mjs && npm run test:multiplayer",
-    "test:worldloom": "node --test --test-isolation=none tests/worldloom-core.test.mjs tests/worldloom-assets.test.mjs tests/worldloom-characters.test.mjs tests/worldloom-nature-regressions.test.mjs tests/worldloom-sea-life.test.mjs tests/worldloom-water.test.mjs tests/worldloom-water-interaction.test.mjs tests/worldloom-caves.test.mjs",
+    "test": "node --test --test-isolation=none tests/worldloom-core.test.mjs tests/worldloom-survival.test.mjs tests/worldloom-discoveries.test.mjs tests/worldloom-assets.test.mjs tests/bot-tactics.test.mjs tests/tacticstrike-bot-navigation.test.mjs tests/tacticstrike-recovery.test.mjs tests/worldloom-characters.test.mjs tests/worldloom-nature-regressions.test.mjs tests/worldloom-sea-life.test.mjs tests/worldloom-water.test.mjs tests/worldloom-water-interaction.test.mjs tests/worldloom-caves.test.mjs tests/account-session.test.mjs tests/account-persistence.test.mjs tests/account-verification.test.mjs tests/account-password-reset.test.mjs tests/google-auth.test.mjs tests/account-username.test.mjs && npm run test:multiplayer",
+    "test:worldloom": "node --test --test-isolation=none tests/worldloom-core.test.mjs tests/worldloom-survival.test.mjs tests/worldloom-discoveries.test.mjs tests/worldloom-assets.test.mjs tests/worldloom-characters.test.mjs tests/worldloom-nature-regressions.test.mjs tests/worldloom-sea-life.test.mjs tests/worldloom-water.test.mjs tests/worldloom-water-interaction.test.mjs tests/worldloom-caves.test.mjs",
     "test:bots": "node --test --test-isolation=none tests/bot-tactics.test.mjs tests/tacticstrike-bot-navigation.test.mjs",
     "test:bot-navigation": "node --test --test-isolation=none tests/tacticstrike-bot-navigation.test.mjs",
     "test:bots:browser": "node tests/tacticstrike-bot-browser-smoke.mjs",
+    "test:recovery:browser": "node tests/tacticstrike-recovery-browser.mjs",
+    "test:worldloom:recovery:browser": "node tests/worldloom-multiplayer-recovery-browser.mjs",
+    "test:media:browser": "node tests/hub-media-recovery-browser.mjs && node tests/loading-forest-browser.mjs",
     "test:browser": "node tests/worldloom-browser-smoke.mjs",
     "test:hub": "node tests/unpaused-hub-browser.mjs",
     "test:entry": "node tests/worldloom-entry-browser.mjs",
@@ -22,11 +25,15 @@
     "test:account-popup": "node tests/worldloom-account-popup-browser.mjs",
     "test:multiplayer": "node --test --test-isolation=none tests/worldloom-multiplayer.test.mjs",
     "test:multiplayer:browser": "node tests/worldloom-multiplayer-browser.mjs",
-    "test:menu-music": "node tests/worldloom-menu-music-browser.mjs"
+    "test:menu-music": "node tests/worldloom-menu-music-browser.mjs",
+    "test:gameplay:browser": "node tests/worldloom-gameplay-browser.mjs",
+    "test:auth-ui:browser": "node tests/account-auth-ui-browser.mjs",
+    "test:password-reset:browser": "node tests/account-reset-browser.mjs"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",
     "express": "^4.19.2",
+    "google-auth-library": "^11.0.2",
     "socket.io": "^4.7.5",
     "socket.io-client": "^4.7.5",
     "three": "^0.184.0"

@@ -17,6 +17,7 @@ import { sampleWaterView, underwaterOptics } from './water-view.js';
 import { WaterInteractionEffects } from './water-effects.js';
 import { WaterSceneCapture } from './water-capture.js';
 import { CavePlantField } from './cave-plants.js';
+import { LandDiscoveryField } from './discovery-field.js';
 import { Headlamp } from './headlamp.js';
 import { MushroomField } from './mushrooms.js';
 
@@ -1473,6 +1474,7 @@ export class Environment {
     this.meadowPlants = new MeadowPlantField(scene);
     this.mushrooms = new MushroomField(scene);
     this.cavePlants = new CavePlantField(scene);
+    this.landDiscoveries = new LandDiscoveryField(scene);
     this.headlamp = new Headlamp(scene);
     this.sandWind = new SandWindField(scene);
     this.seaLife = new SeaLifeField(scene);
@@ -1514,6 +1516,7 @@ export class Environment {
     this.meadowPlants.setWorld(this.weatherWorld);
     this.mushrooms.setWorld(this.weatherWorld);
     this.cavePlants.setWorld(this.weatherWorld);
+    this.landDiscoveries.setWorld(this.weatherWorld);
     this.sandWind.setWorld(this.weatherWorld);
     this.seaLife.setWorld(this.weatherWorld);
     this.waterReflection.setWorld(this.weatherWorld);
@@ -2230,6 +2233,7 @@ export class Environment {
     this.meadowPlants.update(dt, focus);
     this.mushrooms.update(dt, focus);
     this.cavePlants.update(dt, focus);
+    this.landDiscoveries.update(dt, focus, viewDistance);
     this.headlamp.update(context.cameraPosition,context.playerForward,context.active!==false&&context.headlampEnabled);
     this.sandWind.update(dt, focus, {...context, rainIntensity:this.rainIntensity, skyExposure:this.skyExposure, dayAmount:this.dayAmount});
     this.seaLife.update(dt, focus, context);

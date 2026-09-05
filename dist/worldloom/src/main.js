@@ -11,6 +11,7 @@ import { InputController, PlayerController, fallDamageForImpact } from './player
 import { AudioSystem } from './audio.js';
 import { MenuMusic } from './menu-music.js';
 import { LoadingScene } from './loading-scene.js';
+import { claimDiscoveryLoot } from './discovery-loot.js';
 import { Environment, BlockEffects } from './environment.js';
 import { SaveStore, Inventory, DEFAULT_SETTINGS, GRAPHICS_PRESETS } from './save.js';
 import {
@@ -29,7 +30,7 @@ import { CreatureSystem } from './creatures.js';
 import { HeldItemView, createDroppedItemModel, disposeItemModel } from './viewmodel.js';
 import { PlayerAvatar, WORLD_AVATAR_LAYER } from './player-avatar.js';
 import { GraphicsPipeline, caveLightingDepth, cavePostProcessAmount } from './graphics.js';
-import { SurvivalSystem } from './survival.js';
+import { SurvivalSystem, SURVIVAL_BALANCE } from './survival.js';
 import { clampFogToMeshedTerrain } from './fog.js';
 import { cameraFarForViewDistance } from './streaming-config.js';
 import { saveAndReturn } from './portal.js';
@@ -59,6 +60,8 @@ let creatures = null;
 let heldItem = null;
 let playerAvatar = null;
 let sharedWorld = null;
+let leavingWorld = false;
+let collectingLoot = false;
 let receivingDrop = null;
 let latestMotion = {};
 let graphicsPipeline = null;
@@ -142,11 +145,10 @@ function seedFromText(value) {
 }
 
 function yieldLoadingWork() {
-  // scheduler.yield keeps input, progress painting and the parent portal alive
-  // without paying a full display-frame delay after every couple of chunks.
-  // Older browsers still receive a macrotask break through setTimeout.
-  if (typeof globalThis.scheduler?.yield === 'function') return globalThis.scheduler.yield();
-  return new Promise((resolve) => setTimeout(resolve, 0));
+  // Give the compositor a frame before the next bounded CPU slice. A chain of
+  // scheduler.yield continuations can otherwise starve video compositing.
+  if (document.hidden) return new Promise(resolve=>setTimeout(resolve,100));
+  return new Promise(resolve=>requestAnimationFrame(()=>setTimeout(resolve,0)));
 }
 
 function setState(next) {
@@ -155,7 +157,7 @@ function setState(next) {
   if (next !== 'playing') input.clear();
   heldItem?.setVisible(next === 'playing' && Boolean(input?.locked));
   audio.setPaused(!['playing', 'inventory'].includes(next));
-  menuMusic.setActive(next === 'menu');
+  menuMusic.setActive(next === 'menu' || next === 'loading');
   loadingScene.setActive(next === 'loading');
 }
 
@@ -345,6 +347,7 @@ function bindInput() {
     } else if (code === 'KeyR' && state === 'playing') {
       const hit=player.raycast(4.25);
       if(hit?.block?.id===BLOCK.BED)trySleepAtBed(hit);
+      else if(hit?.block?.id===BLOCK.CHEST&&world.getLandDiscoveryChest?.(hit.block.x,hit.block.y,hit.block.z))collectDiscovery(hit.block);
       else if([BLOCK.CAMP_BENCH,BLOCK.KILN,BLOCK.FURNACE,BLOCK.CHEST].includes(hit?.block?.id))openInventory(hit.block);
     } else if (code === 'F3') {
       event.preventDefault();
@@ -465,7 +468,8 @@ async function startWorld({ seed, mode: selectedMode, saveData = null }) {
     : WORLD_GENERATOR_VERSION;
   // Generator selection must happen before edits are loaded: loadEdits removes
   // entries equal to deterministic base terrain, which differs between v1 and v2.
-  world = new World(seed, scene, atlas, { generatorVersion });
+  world = new World(seed, scene, atlas, { generatorVersion, discoveryVersion: saveData ? (saveData.discoveryVersion||0) : 1 });
+  world.discoveryLoot=structuredClone(saveData?.discoveryLoot||{});
   window.__worldloomWorld = world;
   streamingFogFar = null;
   environment.enhanceWorldMaterials(world);
@@ -532,12 +536,15 @@ async function startWorld({ seed, mode: selectedMode, saveData = null }) {
   // work landing on the first few chunk boundaries the player crosses.
   const preloadRenderedRadius = initialStream.streamDistance;
   const preloadTarget = (preloadRenderedRadius * 2 + 1) ** 2;
-  let preloadGenerated = 0;
+  // Spawn validation may already have generated its decorated support chunks.
+  // Count actual coverage so those chunks cannot leave loading two short forever.
+  let preloadGenerated = world.getStreamingCoverage().generated;
   let generationSlice = 0;
   let generationProgressMarker = '';
   let generationProgressAt = performance.now();
   while (preloadGenerated < preloadTarget) {
-    preloadGenerated += world.processQueue(1, 12, { completeChunks: true });
+    world.processQueue(1, 7, { incremental: true });
+    preloadGenerated = world.getStreamingCoverage().generated;
     generationSlice++;
     const headChunk = world.chunks.get(world.generationQueue[0]);
     const marker = `${preloadGenerated}:${world.generationQueue.length}:${headChunk?.key || ''}:${headChunk?.generationPhase || ''}:${headChunk?.generationCursor || 0}`;
@@ -554,7 +561,7 @@ async function startWorld({ seed, mode: selectedMode, saveData = null }) {
         ? 'Raising the mountain chains…'
         : `Carving rivers, caves and wilds · ${preloadGenerated} / ${preloadTarget} chunks`,
     );
-    if (generationSlice % 2 === 0) await yieldLoadingWork();
+    await yieldLoadingWork();
   }
   if (
     preloadGenerated < preloadTarget
@@ -567,7 +574,7 @@ async function startWorld({ seed, mode: selectedMode, saveData = null }) {
   let meshProgressMarker = '';
   let meshProgressAt = performance.now();
   while (!world.isNeighborhoodRendered(player.position.x, player.position.z, preloadRenderedRadius)) {
-    world.rebuildDirty(1, 12, { completeChunks: true });
+    world.rebuildDirty(1, 7);
     meshSlice++;
     const coverage = world.getStreamingCoverage();
     const partialChunk = [...world.chunks.values()].find((chunk) => chunk.meshJob);
@@ -582,7 +589,7 @@ async function startWorld({ seed, mode: selectedMode, saveData = null }) {
       0.52 + Math.min(1, coverage.rendered / Math.max(1, preloadMeshTarget)) * 0.42,
       `Painting the complete playable horizon · ${coverage.rendered} / ${preloadMeshTarget} chunks`,
     );
-    if (meshSlice % 2 === 0) await yieldLoadingWork();
+    await yieldLoadingWork();
   }
   if (!world.isNeighborhoodRendered(player.position.x, player.position.z, preloadRenderedRadius)) {
     throw new Error('The starting horizon could not be prepared safely.');
@@ -592,7 +599,7 @@ async function startWorld({ seed, mode: selectedMode, saveData = null }) {
   let horizonProgressAt = performance.now();
   let horizonProgressMarker = `${initialHorizonWork}`;
   while (world.distantTerrain?.pending) {
-    world.processDistantTerrain(6, 12);
+    world.processDistantTerrain(6, 7);
     horizonSlice++;
     const remaining = world.distantTerrain.pendingWork;
     const marker = `${remaining}:${world.distantTerrain.getStats?.().publishedBuilds || 0}`;
@@ -606,7 +613,7 @@ async function startWorld({ seed, mode: selectedMode, saveData = null }) {
       ? 1 - remaining / initialHorizonWork
       : 1;
     ui.setLoading(0.94 + Math.min(1, completed) * 0.05, 'Finishing the far landscape…');
-    if (horizonSlice % 2 === 0) await yieldLoadingWork();
+    await yieldLoadingWork();
   }
   // Loading has just proven this complete radius. Open directly to that safe
   // boundary; only later background-grown rings use the gentle outward fade.
@@ -705,9 +712,9 @@ function findSafeSpawnNear(origin, minRadius = 0, maxRadius = 5) {
           if (!support?.solid || support.liquid || support.hazard) continue;
           const feetY = supportY + blockShapeHeight(supportId) + 0.002;
           const candidate = new THREE.Vector3(x + 0.5, feetY, z + 0.5);
-          const feetId = world.getBlock(x, Math.floor(feetY + 0.08), z);
-          const headId = world.getBlock(x, Math.floor(feetY + 1.68), z);
-          if (BLOCKS[feetId]?.hazard || BLOCKS[headId]?.hazard || isLiquid(feetId) || isLiquid(headId)) continue;
+          // New spawns and unsafe-position recovery need clear body/head space
+          // on a solid surface, rather than climbing onto a nearby tree canopy.
+          if (!world.isClearSpawnColumn(candidate)) continue;
           if (!player.isCollidingAt(candidate)) return candidate;
         }
       }
@@ -1087,13 +1094,23 @@ function resumeGame() {
 }
 
 async function leaveToTitle() {
-  if (!world) return;
-  if(sharedWorld){
-    try{await sharedWorld.flush(true);sharedWorld.dispose();location.assign('/?account=worlds');}
-    catch(error){ui.toast(error.message,'error',4500);}
-    return;
+  if (!world || leavingWorld) return;
+  leavingWorld=true;
+  const button=document.getElementById('title-button'),label=button.textContent;
+  button.disabled=true;button.textContent='Saving…';
+  setState('leaving');
+  if(sharedWorld)sharedWorld.exiting=true;
+  // Show immediate feedback and stop producing new simulation edits while the
+  // final save drains. Previously those edits could prolong the flush forever.
+  await yieldLoadingWork();
+  try{
+    if(sharedWorld){await sharedWorld.flush(true);sharedWorld.dispose();location.assign('/?account=worlds');}
+    else if(!saveAndReturn(()=>saveGame(false)))throw new Error('The world could not be saved. Free browser storage and try again.');
+  }catch(error){
+    leavingWorld=false;if(sharedWorld)sharedWorld.exiting=false;
+    setState('paused');button.disabled=false;button.textContent=label;
+    ui.toast(error.message,'error',4500);
   }
-  saveAndReturn(() => saveGame(true));
 }
 
 function saveSnapshot() {
@@ -1101,6 +1118,8 @@ function saveSnapshot() {
   return {
     seed: world.seed,
     generatorVersion: world.generatorVersion,
+    discoveryVersion: world.discoveryVersion,
+    discoveryLoot: world.discoveryLoot,
     mode,
     name: 'My Worldloom',
     createdAt: worldCreatedAt,
@@ -1123,6 +1142,7 @@ async function resumeSharedWorld(snapshot) {
   }
   // Keep the same world, player, camera and visible frame throughout recovery.
   world.loadEdits(snapshot.save.world, {onlyChanged:true});
+  world.discoveryLoot=structuredClone(snapshot.save.discoveryLoot||{});
   if(snapshot.save.player)player.loadState(snapshot.save.player);
   if(snapshot.save.inventory)inventory.load(snapshot.save.inventory);
   flags={...(snapshot.save.flags||{})};
@@ -1132,10 +1152,20 @@ async function resumeSharedWorld(snapshot) {
   if(Number.isFinite(snapshot.save.timeOfDay))environment.time=snapshot.save.timeOfDay;
   clearDroppedItems();refreshInventoryUI();checkObjectives(true);
   input.clear();attackGesture=false;resetMining();
-  let slice=0;
+  let progressMarker='',progressAt=performance.now();
   while(world.stats.dirty>0){
-    world.rebuildDirty(1,12,{completeChunks:true});
-    if(++slice%2===0)await yieldLoadingWork();
+    if(sharedWorld?.stopped||!sharedWorld?.socket.connected)throw new Error('Connection interrupted while restoring terrain.');
+    // The normal streamer is paused until recovery completes. Changed meshes
+    // still need their admitted neighbors generated before they can publish.
+    // Keep both stages moving here, without admitting a new distant footprint.
+    world.processQueue(1,7,{incremental:true});
+    world.rebuildDirty(1,7);
+    const head=world.chunks.get(world.generationQueue[0]);
+    const partial=[...world.chunks.values()].find(chunk=>chunk.meshJob);
+    const marker=`${world.stats.dirty}:${world.stats.rebuiltTotal}:${world.generationQueue.length}:${head?.key}:${head?.generationPhase}:${head?.generationCursor}:${partial?.key}:${partial?.meshJob?.voxelCursor}:${partial?.meshJob?.finishCursor}`;
+    if(marker!==progressMarker||document.hidden){progressMarker=marker;progressAt=performance.now();}
+    else if(performance.now()-progressAt>30000)throw new Error('Terrain recovery stopped making progress. Reconnecting…');
+    await yieldLoadingWork();
   }
 }
 
@@ -1304,7 +1334,7 @@ function trySleepAtBed(hit) {
   environment.time = survival.sleep(environment.time);
   flags.sleptInBed = true;
   flags.lastSleepDay = survival.elapsedDays;
-  player.health = Math.min(1, player.health + 0.55);
+  player.health = Math.min(1, player.health + (mode === 'builder' ? 0.55 : survival.healWhileFed(player.health, 0.3)));
   player.stamina = 1;
   audio.setMusicActive(true, 2.8);
   audio.objective();
@@ -1374,6 +1404,7 @@ function finishDeathRespawn() {
 function placeSelectedBlock() {
   if (!player || !world || state !== 'playing') return;
   const hit = player.raycast();
+  if(hit?.block?.id===BLOCK.CHEST&&world.getLandDiscoveryChest?.(hit.block.x,hit.block.y,hit.block.z)){collectDiscovery(hit.block);return;}
   const slot = inventory.selectedSlot();
   const item = getItem(slot.id);
   const selectedIndex = inventory.selected;
@@ -1429,6 +1460,20 @@ function placeSelectedBlock() {
   }
 }
 
+async function collectDiscovery(cell) {
+  if(collectingLoot||leavingWorld||(sharedWorld&&!sharedWorld.ready))return;
+  collectingLoot=true;input.clear();input.enabled=false;resetMining();
+  try{
+    const result=sharedWorld?await sharedWorld.claimLoot(cell):claimDiscoveryLoot(world,inventory,cell);
+    if(result.ok){
+      refreshInventoryUI();checkObjectives();audio.ui('open');
+      ui.toast(result.items.map(item=>`${item.count} ${getItem(item.id).name}`).join(' · '),'success',4200);
+      if(!sharedWorld)saveGame(false);
+    }else ui.toast(result.full?'Your pack is full · loot stays in the chest':result.empty?'This cache is empty':'This cache is unavailable',result.full?'error':'normal',2500);
+  }catch(error){ui.toast(error.message||'The cache could not be opened. Try again.','error',3000);}
+  finally{collectingLoot=false;input.enabled=['playing','paused','inventory'].includes(state);}
+}
+
 function placementProblem(blockId, x, y, z) {
   const below = world.getBlock(x, y - 1, z);
   const solidBelow = Boolean(BLOCKS[below]?.solid);
@@ -1456,23 +1501,29 @@ function useSelectedItem() {
   if(sharedWorld&&(!sharedWorld.ready||sharedWorld.picking))return;
   if (!inventory || !player || state !== 'playing') return;
   const slot = inventory.selectedSlot();
+  if (!slot.id || slot.count <= 0) return;
   const item = getItem(slot.id);
   if (item.food || item.nutrition) {
-    if (player.health >= 0.995 && survival.nourishment >= 0.995) {
-      ui.toast('You are already well fed and at full vitality', 'normal', 1100);
+    if (mode === 'builder') {
+      ui.toast('Builder mode keeps your food full', 'normal', 1100);
       return;
     }
+    if (survival.nourishment >= 0.995 && (player.health >= 0.995 || survival.saturation >= SURVIVAL_BALANCE.maxSaturation - 0.005)) {
+      ui.toast(player.health < 0.995 ? 'You are well fed · rest to recover health' : 'You are already well fed', 'normal', 1300);
+      return;
+    }
+    if (!inventory.consume(inventory.selected, 1)) return;
     const result = survival.eat(item);
     player.health = Math.min(1, player.health + result.healing);
-    if (mode !== 'builder') inventory.consume(inventory.selected, 1);
     heldItem?.use(0.55);
     audio.pickup();
     if (item.id === ITEM.COOKED_MEAT) flags.cookedMeal = true;
     if (result.sick) {
-      const lethal = damagePlayer(0.1, null, { deathReason: 'Illness overcame you.' });
-      if (!lethal) ui.toast('Raw meat made you ill', 'error', 1700);
+      const lethal = damagePlayer(0.06, null, { deathReason: 'Illness overcame you.' });
+      if (!lethal) ui.toast('Raw meat made you ill · cook it first for a safe meal', 'error', 2000);
     } else {
-      ui.toast(`${item.name} restored nourishment`, 'success', 1400);
+      const restored = Math.round(result.nourishment * 100);
+      ui.toast(restored > 0 ? `${item.name} · +${restored}% food` : 'Energy restored · rest to recover health', 'success', 1600);
     }
     refreshInventoryUI();
     checkObjectives();
@@ -1491,11 +1542,15 @@ function resetMining() {
 
 function updateMining(dt, hit) {
   suppressMining = Math.max(0, suppressMining - dt);
-  if (!hit || !input.buttons.has(0) || attackGesture || suppressMining > 0) {
+  if (!hit || !input.buttons.has(0) || collectingLoot || attackGesture || suppressMining > 0) {
     resetMining();
     return false;
   }
   const { x, y, z, id } = hit.block;
+  const cache=id===BLOCK.CHEST&&world.getLandDiscoveryChest?.(x,y,z);
+  if(cache&&(!Object.hasOwn(world.discoveryLoot,cache.key)||world.discoveryLoot[cache.key].length)){
+    resetMining();if(unbreakableToastTimer<=0){unbreakableToastTimer=2.2;ui.toast('R to collect this cache first · loot stays safe until your pack has room','normal',2100);}return false;
+  }
   if (!id || id === BLOCK.WATER || id === BLOCK.LAVA) {
     resetMining();
     return false;
@@ -1593,10 +1648,11 @@ function placementIsValid(hit) {
 
 function damagePlayer(amount, sourcePosition, combat = null) {
   if (!player || mode === 'builder' || respawnInvulnerability > 0 || state === 'dead') return false;
-  const applied = Math.max(0, Math.min(1, Number(amount) || 0));
+  const applied = Math.max(0, Math.min(player.health, 1, Number(amount) || 0));
   if (applied <= 0) return false;
   player.health = Math.max(0, player.health - applied);
-  ui.damageFlash(applied);
+  survival.noteDamage();
+  ui.damageFlash(applied, settings.reducedMotion);
   audio.playerHurt(Math.min(1.8, 0.55 + applied * 3));
   if (sourcePosition) {
     const away = player.position.clone().sub(sourcePosition).setY(0).normalize();
@@ -1613,13 +1669,13 @@ function damagePlayer(amount, sourcePosition, combat = null) {
 
 function scheduleWorldWork() {
   if(sharedWorld&&!sharedWorld.ready)return;
-  if (worldWorkScheduled || !world) return;
+  if (worldWorkScheduled || !world || leavingWorld || document.hidden) return;
   const scheduledWorld = world;
   const token = worldWorkToken;
   worldWorkScheduled = true;
   const work = (deadline = null) => {
     worldWorkScheduled = false;
-    if (!world || world !== scheduledWorld || token !== worldWorkToken || (sharedWorld && !sharedWorld.ready)) return;
+    if (!world || world !== scheduledWorld || token !== worldWorkToken || leavingWorld || document.hidden || (sharedWorld && !sharedWorld.ready)) return;
     const timedOut = Boolean(deadline?.didTimeout);
     const startedAt = performance.now();
     const inputPendingAtStart = navigator.scheduling?.isInputPending?.() === true;
@@ -1736,7 +1792,7 @@ function updateGame(dt) {
   const motion = player.update(
     dt,
     interactive ? input : passiveGameplayInput,
-    { ...settings, ...survival.getModifiers() },
+    { ...settings, ...survival.getModifiers(mode === 'builder') },
   );
   if (state === 'dead') return;
   hazardDamageTimer = Math.max(0, hazardDamageTimer - dt);
@@ -1794,9 +1850,14 @@ function updateGame(dt) {
     nearHeat,
     moving: motion.moving,
     sprinting: motion.sprinting,
+    mining: interactive && miningProgress > 0,
+    attacking: attackRecovery > 0,
+    health: player.health,
     cycleSeconds: environment.cycleSeconds,
   });
-  survivalDamage += survivalTick.damage;
+  // Clear partial hazard damage once safe; eating or surfacing must not leave
+  // a delayed hit waiting for the next unrelated encounter.
+  survivalDamage = survivalTick.damage > 0 ? survivalDamage + survivalTick.damage : 0;
   survivalDamageTimer -= dt;
   if (survivalDamageTimer <= 0 && survivalDamage >= 0.012) {
     const applied = Math.min(0.16, survivalDamage);
@@ -1819,7 +1880,7 @@ function updateGame(dt) {
     ui.toast('You are running out of breath!', 'error', 1300);
   } else if (survivalWarningTimer <= 0 && survivalTick.starving) {
     survivalWarningTimer = 8;
-    ui.toast('Nourishment is critically low · cook some food', 'error', 1800);
+    ui.toast(survival.nourishment <= 0 ? 'Starving · eat now to stop losing health' : 'Food is critically low · cook a meal soon', 'error', 2100);
   } else if (survivalWarningTimer <= 0 && survivalTick.coldExposure) {
     survivalWarningTimer = 8;
     ui.toast('You are soaked and freezing · find shelter or heat', 'error', 1900);
@@ -1858,9 +1919,10 @@ function updateHUD() {
     if (miningProgress > 0) {
       target = `${block?.name || 'Unknown'} · ${Math.min(99, Math.floor(miningProgress * 100))}%`;
     } else if (hit.block.id === BLOCK.BED) {
-      target = `${block.name} · F sleep / bind respawn`;
+      target = `${block.name} · R sleep / bind respawn`;
     } else if ([BLOCK.CAMP_BENCH, BLOCK.KILN, BLOCK.FURNACE, BLOCK.CHEST].includes(hit.block.id)) {
-      target = `${block.name} · R interact`;
+      const discovery=world.getLandDiscoveryChest?.(hit.block.x,hit.block.y,hit.block.z);
+      target = discovery ? `${discovery.name} · R collect loot` : `${block.name} · R interact`;
     } else if (block?.unbreakable) {
       target = `${block.name} · unbreakable foundation`;
     } else {
@@ -1896,6 +1958,9 @@ function animate(now) {
   requestAnimationFrame(animate);
   const dt = Math.min(0.05, Math.max(0, (now - lastTime) / 1000));
   lastTime = now;
+  // Chunk generation and the native loading video own this phase. Avoid
+  // rebuilding particles, weather probes and render targets behind the film.
+  if (state === 'loading' || state === 'menu' || state === 'dead' || leavingWorld || document.hidden) return;
   // Do not advance physics, daylight, particles, viewmodels or render targets
   // during an outage. The last finished frame stays up while the client syncs.
   if(sharedWorld&&!sharedWorld.ready&&world)return;
@@ -1995,10 +2060,12 @@ window.addEventListener('message', (event) => {
 });
 
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden && world) saveGame(false);
-  audio.setPaused(document.hidden || !['playing', 'inventory'].includes(state));
+  if (document.hidden && world && !leavingWorld) saveGame(false);
+  if(!document.hidden){input?.clear();lastTime=performance.now();scheduleWorldWork();}
+  audio.setPaused(document.hidden || (sharedWorld&&!sharedWorld.ready) || !['playing', 'inventory'].includes(state));
 });
 window.addEventListener('beforeunload', (event) => {
+  if(leavingWorld)return;
   if(sharedWorld&&(sharedWorld.busy||sharedWorld.pending||sharedWorld.edits.length||sharedWorld.dropAdds.length)){event.preventDefault();event.returnValue='';}
   if (world) saveGame(false);
 });

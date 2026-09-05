@@ -35,7 +35,9 @@ try {
   await page.click('#account-close');
   await page.click('#new-world-button');
   await page.waitForFunction(()=>document.querySelector('#main-menu').classList.contains('hidden'));
-  await page.waitForFunction(()=>document.querySelector('#menu-theme').paused,{timeout:30000});
+  assert.equal(await page.$eval('#menu-theme',a=>a.paused),false,'menu theme continues throughout chunk loading');
+  await page.waitForFunction(()=>window.__worldloomPlayer&&document.querySelector('#loading-screen').classList.contains('hidden'),{timeout:240000});
+  await page.waitForFunction(()=>document.querySelector('#menu-theme').paused,{timeout:10000});
   assert.equal(await page.$eval('#menu-theme',a=>a.volume),0,'theme fades fully out when the world starts');
   assert.deepEqual(errors,[]);
   console.log(JSON.stringify({passed:true,originalTrack:true,loop:true,settings:true,accountPopup:true,worldEntryFade:true}));

@@ -10,10 +10,10 @@ async function request(path,body,token){
   return {status:response.status,data:await response.json().catch(()=>null)};
 }
 const email=`api-${randomUUID()}@example.invalid`,password=`initial-${randomUUID()}`,finalPassword=`owner-${randomUUID()}`;
-const signup=await request('/api/auth/register',{email,password});
+const signup=await request('/api/auth/register',{email});
 assert.equal(signup.status,202);assert.equal(signup.data.token,undefined);
 const pending=await request('/api/auth/login',{email,password});
-assert.equal(pending.status,202);assert.equal(pending.data.token,undefined);
+assert.equal(pending.status,401);assert.equal(pending.data.token,undefined);
 assert.equal((await request('/api/auth/friend-code')).status,401);
 assert.equal((await request('/api/credits/checkout',{packageId:'50'},'made-up-token')).status,401);
 const mails=()=>readFile(process.env.TEST_EMAIL_OUTBOX,'utf8').then(s=>s.trim().split('\n').map(line=>JSON.parse(line)).filter(m=>m.to===email));

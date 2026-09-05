@@ -67,9 +67,8 @@ try {
     ['menu card', mainMenuPresentation.menu],
     ['title plate', mainMenuPresentation.titlePlate],
   ]) {
-    assert.deepEqual(plate.borderWidths, ['4px', '4px', '4px', '4px'], `${plateName} lost its 4px block bevel`);
+    assert(plate.borderWidths.every((width) => Number.parseFloat(width) <= 2), `${plateName} restored the heavy bevel`);
     assert(plate.radii.every((radius) => Number.parseFloat(radius) <= 2), `${plateName} is no longer square-edged`);
-    assert.notEqual(plate.borderColors[0], plate.borderColors[2], `${plateName} lost its light/shadow bevel contrast`);
     assert.equal(plate.backdropFilter, 'none', `${plateName} reintroduced backdrop blur`);
   }
   assert.match(mainMenuPresentation.titleFont, /Consolas|Courier New|monospace/i,
@@ -101,7 +100,7 @@ try {
       borderColors: [panelStyle.borderTopColor, panelStyle.borderRightColor, panelStyle.borderBottomColor, panelStyle.borderLeftColor],
       radii: [panelStyle.borderTopLeftRadius, panelStyle.borderTopRightRadius, panelStyle.borderBottomRightRadius, panelStyle.borderBottomLeftRadius],
       backdropFilter: panelStyle.backdropFilter || panelStyle.webkitBackdropFilter || 'none',
-      font: panelStyle.fontFamily,
+      font: getComputedStyle(panel.querySelector('#settings-title')).fontFamily,
       groupCount: panel.querySelectorAll('.settings-group').length,
       rowCount: panel.querySelectorAll('.setting-row').length,
       blockMark: Boolean(panel.querySelector('.settings-block-mark')),
@@ -113,9 +112,8 @@ try {
     };
   });
   assert(settingsPresentation, 'Settings presentation is missing');
-  assert.deepEqual(settingsPresentation.borderWidths, ['4px', '4px', '4px', '4px'], 'Settings lost its 4px block bevel');
+  assert(settingsPresentation.borderWidths.every((width) => Number.parseFloat(width) <= 2), 'Settings restored the heavy bevel');
   assert(settingsPresentation.radii.every((radius) => Number.parseFloat(radius) <= 2), 'Settings became rounded');
-  assert.notEqual(settingsPresentation.borderColors[0], settingsPresentation.borderColors[2], 'Settings lost bevel contrast');
   assert.equal(settingsPresentation.backdropFilter, 'none', 'Settings reintroduced glass blur');
   assert.match(settingsPresentation.font, /Consolas|Courier New|monospace/i);
   assert.equal(settingsPresentation.groupCount, 3, 'Settings controls are no longer grouped into authored control banks');
@@ -123,9 +121,9 @@ try {
   assert.equal(settingsPresentation.blockMark, true, 'Settings lost its control-block mark');
   assert.match(settingsPresentation.overflowY, /auto|scroll/);
   assert.equal(settingsPresentation.scrollable, true, 'Settings does not expose overflow through its custom scrollbar');
-  assert.match(settingsPresentation.scrollbarColor, /119\D+119\D+119|#777/i, 'Settings scrollbar is not block-grey');
-  assert.match(settingsPresentation.thumbRule, /(?:#8e8e8e|rgb\(142\s*,\s*142\s*,\s*142\))/i,
-    'Settings is missing its custom square WebKit scrollbar thumb');
+  assert.notEqual(settingsPresentation.scrollbarColor, 'auto', 'Settings lost its visible custom scrollbar');
+  assert.match(settingsPresentation.thumbRule, /border-radius:\s*0/i,
+    'Settings is missing its square WebKit scrollbar thumb');
   assert.equal(Number.parseFloat(settingsPresentation.toggleRadius), 0, 'Settings toggles reverted to pill switches');
   const maximumViewSettings = await frame.evaluate(async () => {
     const input = document.querySelector('#view-distance');
@@ -197,9 +195,8 @@ try {
     ['time HUD plate', hudPresentation.time],
   ]) {
     assert(plate, `${plateName} is missing`);
-    assert.deepEqual(plate.borderWidths, ['3px', '3px', '3px', '3px'], `${plateName} lost its square bevel`);
+    assert(plate.borderWidths.every((width) => Number.parseFloat(width) <= 3), `${plateName} restored the heavy bevel`);
     assert(plate.radii.every((radius) => Number.parseFloat(radius) <= 1), `${plateName} became rounded`);
-    assert.notEqual(plate.borderColors[0], plate.borderColors[2], `${plateName} lost its light/shadow bevel contrast`);
     assert.equal(plate.backdropFilter, 'none', `${plateName} reintroduced glass blur`);
   }
 
@@ -214,26 +211,64 @@ try {
       flash: vignette?.classList.contains('flash') || false,
       borderWidth: Number.parseFloat(style.borderTopWidth),
       borderColor: style.borderTopColor,
+      edgeShadow: style.boxShadow,
+      background: style.backgroundImage,
       deathHidden: document.querySelector('#death-screen')?.classList.contains('hidden'),
     };
   });
   assert(nonLethalDamage.health < 1 && nonLethalDamage.health > 0,
     'real fall damage did not pass through the central player damage gateway');
   assert.equal(nonLethalDamage.flash, true, 'damage did not trigger the edge-feedback animation');
-  assert(nonLethalDamage.borderWidth >= 5, 'damage feedback is not a visible perimeter border');
-  assert.match(nonLethalDamage.borderColor, /rgba?\(255\D+47\D+34/i,
-    `damage border is not authored red: ${nonLethalDamage.borderColor}`);
+  assert.equal(nonLethalDamage.borderWidth, 0, 'damage restored the hard perimeter border');
+  assert.match(nonLethalDamage.edgeShadow, /inset/, 'damage lost its soft edge feedback');
+  assert.match(nonLethalDamage.background, /(?:transparent|rgba\(0, 0, 0, 0\))\s+66%/, 'damage tint no longer keeps the center clear');
   assert.equal(nonLethalDamage.deathHidden, true, 'nonlethal damage incorrectly opened the death screen');
 
-  await frame.evaluate(() => {
+  const deathTiming = await frame.evaluate(() => {
     const player = window.__worldloomPlayer;
-    player.health = 0.04;
-    player.onLand?.(100);
+    const world = window.__worldloomWorld;
+    const ensurePositionGenerated = world.ensurePositionGenerated;
+    const findSpawn = world.findSpawn;
+    let spawnSearchMs = 0;
+    let generationMs = 0;
+    let spawnSearches = 0;
+    world.ensurePositionGenerated = function (...args) {
+      const start = performance.now();
+      try { return ensurePositionGenerated.apply(this, args); }
+      finally { generationMs += performance.now() - start; }
+    };
+    world.findSpawn = function (...args) {
+      const start = performance.now();
+      spawnSearches++;
+      try { return findSpawn.apply(this, args); }
+      finally { spawnSearchMs += performance.now() - start; }
+    };
+    const start = performance.now();
+    const button = document.querySelector('#respawn-button');
+    const observer = new MutationObserver(() => {
+      if (!button.disabled) {
+        window.__deathReadyMs = performance.now() - start;
+        observer.disconnect();
+      }
+    });
+    observer.observe(button, { attributes: true, attributeFilter: ['disabled'] });
+    try {
+      player.health = 0.04;
+      player.onLand?.(100);
+    } finally {
+      world.ensurePositionGenerated = ensurePositionGenerated;
+      world.findSpawn = findSpawn;
+    }
+    return { synchronousMs: performance.now() - start, generationMs, spawnSearchMs, spawnSearches };
   });
   await frame.waitForFunction(() => !document.querySelector('#death-screen')?.classList.contains('hidden'));
   await frame.waitForFunction(() => document.querySelector('#respawn-button')?.disabled === false, {
-    timeout: 3_000,
+    // SwiftShader can finish a queued full-distance frame after the UI timer.
+    polling: 100,
+    timeout: 15_000,
   });
+  deathTiming.readyMs = await frame.evaluate(() => window.__deathReadyMs);
+  console.log('death transition:', JSON.stringify(deathTiming));
   const deathPresentation = await frame.evaluate(() => {
     const screen = document.querySelector('#death-screen');
     const player = window.__worldloomPlayer;
@@ -259,7 +294,8 @@ try {
   assert.equal(deathPresentation.hudSoftHidden, true);
   await frame.evaluate(() => document.querySelector('#respawn-button')?.click());
   await frame.waitForFunction(() => document.querySelector('#death-screen')?.classList.contains('hidden'), {
-    timeout: 3_000,
+    polling: 100,
+    timeout: 15_000,
   });
   const respawnedState = await frame.evaluate(() => ({
     health: window.__worldloomPlayer?.health,
@@ -316,8 +352,8 @@ try {
       webgl2: Boolean(document.querySelector('#game')?.getContext('webgl2')),
       timeIcon: Boolean(document.querySelector('.time-chip__sun')),
       timeText: document.querySelector('#time-text')?.textContent || '',
-      vitality: document.querySelector('[aria-label="Vitality"]')?.getAttribute('aria-valuenow'),
-      nourishment: document.querySelector('[aria-label="Nourishment"]')?.getAttribute('aria-valuenow'),
+      vitality: document.querySelector('[aria-label="Health"]')?.getAttribute('aria-valuenow'),
+      nourishment: document.querySelector('[aria-label="Food"]')?.getAttribute('aria-valuenow'),
       objective: document.querySelector('#objective-text')?.textContent || '',
       portalReturnLabel: document.querySelector('#title-button')?.textContent?.trim() || '',
       renderer: Boolean(graphics),
@@ -360,13 +396,13 @@ try {
       meadowPlants: (() => {
         const field = environment?.meadowPlants;
         const stats = field?.getStats?.() || null;
-        const meshes = [field?.sunflower, field?.shortGrass].filter(Boolean);
+        const meshes = [field?.sunflower, field?.shortGrass, field?.tallGrass].filter(Boolean);
         return {
           ...stats,
           groupAttached: field?.group?.parent === graphics?.scene,
-          twoInstancedMeshes: meshes.length === 2
+          threeInstancedMeshes: meshes.length === 3
             && meshes.every((mesh) => mesh.isInstancedMesh),
-          opaqueVoxelMaterials: meshes.length === 2 && meshes.every((mesh) => {
+          opaqueVoxelMaterials: meshes.length === 3 && meshes.every((mesh) => {
             const material = mesh.material;
             return material?.transparent === false
               && material?.alphaTest === 0
@@ -497,9 +533,11 @@ try {
       })(),
       avatar: Boolean(window.__worldloomPlayerAvatar?.root?.visible),
       avatarParts: (() => {
-        let count = 0;
-        window.__worldloomPlayerAvatar?.root?.traverse?.((node) => { if (node.userData?.playerAvatarPart) count++; });
-        return count;
+        const names = [];
+        window.__worldloomPlayerAvatar?.root?.traverse?.((node) => {
+          if (node.isMesh && node.userData?.authoredIn === 'Blender' && node.name.startsWith('player_')) names.push(node.name);
+        });
+        return names.sort();
       })(),
       avatarSelfDrawables: (() => {
         let count = 0;
@@ -537,8 +575,8 @@ try {
   assert(Number(gameState.nourishment) >= 75 && Number(gameState.nourishment) <= 90,
     `Nourishment left its expected live-test range: ${gameState.nourishment}`);
   assert.notEqual(gameState.objective.trim(), '');
-  assert.match(gameState.portalReturnLabel, /return to all games/i,
-    'The pause menu has no replacement route back after removing the portal bar');
+  assert.match(gameState.portalReturnLabel, /^Save & (?:leave|return to all games)$/i,
+    'The pause menu lost its concise save-and-leave action');
   assert.equal(gameState.renderer, true);
   assert.equal(gameState.environment, true);
   assert.equal(gameState.weather.phase, 'clear', 'a new map inherited or immediately scripted storm weather');
@@ -569,14 +607,15 @@ try {
   assert.equal(gameState.meadowPlants.failed, false);
   assert.match(gameState.meadowPlants.assetUrl, /meadow-plants\.glb(?:$|[?#])/i);
   assert.equal(gameState.meadowPlants.groupAttached, true);
-  assert.equal(gameState.meadowPlants.twoInstancedMeshes, true,
-    'The sunflower and short grass lost their two-draw instanced render structure');
+  assert.equal(gameState.meadowPlants.threeInstancedMeshes, true,
+    'The sunflower, short grass and tall grass lost their three-draw instanced render structure');
   assert.equal(gameState.meadowPlants.opaqueVoxelMaterials, true,
     'The live Blender plants lost their opaque flat-shaded vertex-color voxel contract');
   assert(gameState.meadowPlants.sunflowers > 0
     && gameState.meadowPlants.shortGrass > 0
-    && gameState.meadowPlants.draws <= 2,
-  `Seed 64 did not render both opaque meadow plants: ${JSON.stringify(gameState.meadowPlants)}`);
+    && gameState.meadowPlants.tallGrass > 0
+    && gameState.meadowPlants.draws <= 3,
+  `Seed 64 did not render all three opaque meadow plants: ${JSON.stringify(gameState.meadowPlants)}`);
   assert.equal(gameState.forestFloor.ready, true,
     `The Blender forest-floor pack did not load: ${gameState.forestFloor.error}`);
   assert.equal(gameState.forestFloor.failed, false);
@@ -605,7 +644,8 @@ try {
   assert.equal(gameState.fallingLeaves.pausedHidden, true,
     'paused falling leaves remained visibly frozen in mid-air');
   assert.equal(gameState.avatar, true, 'The Wayfarer player avatar is not active');
-  assert(gameState.avatarParts >= 25, 'The Wayfarer player avatar lost authored body parts');
+  assert.deepEqual(gameState.avatarParts, ['player_head', 'player_left_arm', 'player_left_leg', 'player_right_arm', 'player_right_leg', 'player_torso'],
+    'The Wayfarer lost a merged Blender body segment');
   assert.equal(gameState.avatarSelfDrawables, 0,
     'The local avatar body/head still intersects the gameplay/GTAO camera layer');
   assert(gameState.avatarShadowCoverage.casters > 0);
@@ -677,6 +717,8 @@ try {
       horizon: {
         ready: horizon?.ready === true,
         meshes: horizon?.group?.children?.filter?.((child) => child.isMesh)?.length ?? 0,
+        landMeshes: horizon?.group?.children?.filter?.((child) => child.isMesh && child.userData.distantTerrain)?.length ?? 0,
+        waterMeshes: horizon?.group?.children?.filter?.((child) => child.isMesh && child.name === 'Worldloom distant moving water')?.length ?? 0,
         tagged: mesh?.userData?.distantTerrain === true,
         vertices: position?.count || 0,
         triangles: position?.count ? position.count / 3 : 0,
@@ -690,15 +732,18 @@ try {
   assert(maxDistanceState.stats.loaded <= 441,
     `maximum view distance loaded too many full voxel chunks: ${JSON.stringify(maxDistanceState.stats)}`);
   assert.equal(maxDistanceState.horizon.ready, true);
-  assert.equal(maxDistanceState.horizon.meshes, 1, 'The distant horizon must remain one merged draw mesh');
+  assert.equal(maxDistanceState.horizon.meshes, 2, 'The distant horizon exceeded its separate land/water draw budget');
+  assert.equal(maxDistanceState.horizon.landMeshes, 1, 'The land horizon must remain one merged draw mesh');
+  assert.equal(maxDistanceState.horizon.waterMeshes, 1, 'The moving distant water mesh disappeared');
   assert.equal(maxDistanceState.horizon.tagged, true, 'The published horizon mesh lost its runtime marker');
   assert.equal(maxDistanceState.horizon.finiteGeometry, true, 'The distant horizon contains invalid geometry data');
   assert(maxDistanceState.horizon.vertices > 0 && maxDistanceState.horizon.triangles > 0,
     `The distant horizon published no visible triangles: ${JSON.stringify(maxDistanceState.horizon)}`);
   assert(Number.isFinite(maxDistanceState.cameraFar) && maxDistanceState.cameraFar >= 400,
     `The camera clips the 20-chunk horizon at ${maxDistanceState.cameraFar}m`);
-  assert(maxDistanceState.cameraFar > maxDistanceState.fogFar,
-    `Fog extends beyond the camera plane (${maxDistanceState.fogFar} >= ${maxDistanceState.cameraFar})`);
+  // Clear-distance fog is deliberately outside the visible camera range.
+  assert(maxDistanceState.safeTerrainFar > maxDistanceState.cameraFar,
+    `The camera clips beyond completed terrain (${maxDistanceState.cameraFar} >= ${maxDistanceState.safeTerrainFar})`);
   assert(Number.isFinite(maxDistanceState.safeTerrainFar));
   assert(maxDistanceState.fogFar <= maxDistanceState.safeTerrainFar + 1.5,
     `Fog exposed terrain beyond the live safe horizon (${maxDistanceState.fogFar} > ${maxDistanceState.safeTerrainFar})`);
@@ -843,7 +888,7 @@ try {
     'High sunlight lost its authored golden optical tint');
   assert(caveLightingState.highGodRays.colorGrade.saturation > 1.05,
     'High mode no longer applies its sunlight-aware color separation');
-  const gtaoIndex = caveLightingState.passOrder.indexOf('GTAOPass');
+  const gtaoIndex = caveLightingState.passOrder.findIndex((name) => name.endsWith('GTAOPass'));
   const shaftsIndex = caveLightingState.passOrder.indexOf('WorldloomVolumetricSunPass');
   const bloomIndex = caveLightingState.passOrder.indexOf('UnrealBloomPass');
   assert(gtaoIndex >= 0 && shaftsIndex > gtaoIndex && bloomIndex > shaftsIndex,
@@ -858,7 +903,7 @@ try {
   assert(caveLightingState.balancedGodRays.volumetricSunState.intensity
     < caveLightingState.highGodRays.volumetricSunState.intensity,
   'Balanced shafts no longer remain below the High cinematic tier');
-  assert.equal(caveLightingState.balancedPassOrder.includes('GTAOPass'), false,
+  assert.equal(caveLightingState.balancedPassOrder.some((name) => name.endsWith('GTAOPass')), false,
     'Balanced added the expensive GTAO pass');
   assert.equal(caveLightingState.balancedPassOrder.includes('UnrealBloomPass'), false,
     'Balanced added the expensive multi-blur bloom pass');
@@ -958,12 +1003,8 @@ try {
           && ponds.padMesh.material.map.generateMipmaps === false
           && ponds.padMesh.material.alphaTest >= 0.5,
         ),
-        flyDotsReady: Boolean(
-          ponds.flyMesh?.isPoints
-          && ponds.flyMesh.material?.isPointsMaterial
-          && ponds.flyMesh.userData?.representation === 'unlit-points'
-          && ponds.flyMesh.userData?.activePointCount > 0,
-        ),
+        fliesHidden: ponds.flyMesh?.visible === false
+          && ponds.flyMesh.userData?.activePointCount === 0,
         groupAttached: ponds.group?.parent === environment.scene,
       },
       initial,
@@ -986,17 +1027,17 @@ try {
     'Pond detail GLB did not produce its instanced lily/mist and point-fly render set');
   assert.equal(pondState.asset.atlasReady, true,
     'The live lily mesh did not preserve its hard nearest-filtered pixel atlas');
-  assert.equal(pondState.asset.flyDotsReady, true,
-    'The live pond flies are not using the one-draw procedural black-dot representation');
+  assert.equal(pondState.asset.fliesHidden, true,
+    'Removed pond flies still submit visible points');
   assert.equal(pondState.asset.groupAttached, true, 'Pond ecology is detached from the live scene');
   assert(pondState.nearbyPondCount > 0, 'The spawned player has no generated pond within the balanced detail radius');
   assert(pondState.initial.pads > 0, 'No visible lily pads were instanced near the spawned player');
   assert(pondState.initial.mist > 0, 'Clear balanced weather has no visible low pond mist');
-  assert(pondState.initial.flySwarms > 0, 'Clear daytime balanced weather has no visible pond flies');
+  assert.equal(pondState.initial.flySwarms, 0, 'Removed pond flies returned in clear daytime');
   assert(pondState.nearestPadDistance <= 48,
     `The nearest visible lily pad is outside the balanced detail radius: ${pondState.nearestPadDistance}`);
-  assert(pondState.initial.draws > 0 && pondState.initial.draws <= 3,
-    `Pond ecology exceeded its three-draw budget: ${JSON.stringify(pondState.initial)}`);
+  assert(pondState.initial.draws > 0 && pondState.initial.draws <= 2,
+    `Pond ecology exceeded its lily-and-mist draw budget: ${JSON.stringify(pondState.initial)}`);
   assert(pondState.initial.triangles > 0 && pondState.initial.triangles <= 15_000,
     `Pond ecology exceeded its balanced triangle budget: ${JSON.stringify(pondState.initial)}`);
   assert(pondState.anchoring.canonicalCount > 0);
@@ -1008,7 +1049,7 @@ try {
   assert.equal(pondState.lowQuality.mist, 0, 'Low quality still renders pond mist');
   assert.equal(pondState.lowQuality.flySwarms, 0, 'Low quality still renders animated pond flies');
   assert(pondState.lowQuality.draws <= 1, 'Low quality uses more than the single lily-pad draw');
-  assert(pondState.restoredClear.mist > 0 && pondState.restoredClear.flySwarms > 0,
+  assert(pondState.restoredClear.mist > 0 && pondState.restoredClear.flySwarms === 0,
     'Balanced pond ambience did not recover after leaving Low quality');
   assert.equal(pondState.heavyRain.mist, 0, 'Heavy rain did not hide low pond mist');
   assert.equal(pondState.heavyRain.flySwarms, 0, 'Heavy rain did not hide pond flies');
@@ -1140,152 +1181,15 @@ try {
     `seed 64 produced no litter under falling-leaf trees: ${JSON.stringify(groundLeafState)}`);
   assert.equal(groundLeafState.draws, 1);
 
-  await frame.waitForFunction(() => {
-    const stats = window.__worldloomBirds?.getStats?.();
-    return stats?.ready && !stats.failed && stats.templateRoots?.length === 2;
-  }, { timeout: 10_000 });
-  const birdState = await frame.evaluate(() => {
-    const environment = window.__worldloomEnvironment;
-    const birds = window.__worldloomBirds;
-    const focus = environment.atmosphere.position.clone();
-    environment.applyGraphicsSettings({
-      graphicsQuality: 'balanced',
-      weatherEffects: true,
-      reducedMotion: false,
-    });
-    const anchors = birds.debugSyncAnchors(focus);
-    const ash = birds.debugSpawn({ habitat: 'tree', breed: 'ash_sparrow' });
-    const azure = birds.debugSpawn({ habitat: 'pond', breed: 'pond_azurefin', airborne: true });
-    const beforeAnimation = [];
-    ash?.model?.traverse?.((node) => {
-      beforeAnimation.push([
-        node.name,
-        ...node.position.toArray(),
-        ...node.quaternion.toArray(),
-        ...node.scale.toArray(),
-      ]);
-    });
-    ash?.animator?.update?.(0.16, 0);
-    let animationDelta = 0;
-    let transformIndex = 0;
-    ash?.model?.traverse?.((node) => {
-      const before = beforeAnimation[transformIndex++] || [];
-      const after = [
-        node.name,
-        ...node.position.toArray(),
-        ...node.quaternion.toArray(),
-        ...node.scale.toArray(),
-      ];
-      for (let index = 1; index < after.length; index++) {
-        animationDelta = Math.max(animationDelta, Math.abs(Number(after[index]) - Number(before[index])));
-      }
-    });
-    const materials = [];
-    for (const bird of [ash, azure]) {
-      bird?.model?.traverse?.((node) => {
-        if (!node.isMesh) return;
-        const entries = Array.isArray(node.material) ? node.material : [node.material];
-        materials.push(...entries.filter(Boolean));
-      });
-    }
-    const partSetComplete = [ash, azure].every((bird) => bird && [
-      bird.parts.body,
-      bird.parts.head,
-      bird.parts.leftWing,
-      bird.parts.rightWing,
-      bird.parts.tail,
-      bird.parts.leftLeg,
-      bird.parts.rightLeg,
-    ].every(Boolean));
-    const clipNames = [...birds.templates.values()]
-      .flatMap((template) => template.clips.map((clip) => clip.name))
-      .sort();
-    const initial = birds.getStats();
-    const ashStart = ash ? { habitat: ash.anchor?.habitat, state: ash.state } : null;
-    const azureStart = azure ? { habitat: azure.route?.destination?.habitat, state: azure.state } : null;
-    const startledBefore = initial.startled;
-    if (ash) {
-      birds._anchorTimer = 60;
-      birds.update(1 / 60, ash.root.position.clone(), {
-        active: true,
-        submerged: false,
-        dayAmount: 1,
-        rainIntensity: 0,
-        skyExposure: 1,
-        playerForward: focus.clone().set(0, 0, -1),
-      });
-    }
-    const startled = birds.getStats();
-    environment.applyGraphicsSettings({
-      graphicsQuality: 'low',
-      weatherEffects: true,
-      reducedMotion: false,
-    });
-    const low = birds.getStats();
-    environment.applyGraphicsSettings({
-      graphicsQuality: 'balanced',
-      weatherEffects: true,
-      reducedMotion: false,
-    });
-    return {
-      ready: birds.ready,
-      failed: birds.failed,
-      error: birds.error ? String(birds.error.message || birds.error) : '',
-      groupAttached: birds.group?.parent === environment.scene,
-      anchors,
-      initial,
-      low,
-      clipNames,
-      partSetComplete,
-      animationDelta,
-      pixelAtlas: materials.length > 0 && materials.every((material) => (
-        material.map?.isTexture
-        && material.map.magFilter === 1003
-        && material.map.minFilter === 1004
-        && material.map.generateMipmaps === true
-        && material.alphaTest >= 0.35
-      )),
-      ashStart,
-      azureStart,
-      startledDelta: startled.startled - startledBefore,
-      startledAshState: ash?.state || '',
-      finiteTransforms: [ash, azure].filter(Boolean).every((bird) => {
-        let finite = true;
-        bird.root.traverse((node) => {
-          finite &&= [...node.position.toArray(), ...node.quaternion.toArray(), ...node.scale.toArray()].every(Number.isFinite);
-        });
-        return finite;
-      }),
-    };
-  });
-  assert.equal(birdState.ready, true, 'The production Blender bird pack did not finish loading');
-  assert.equal(birdState.failed, false, `The production bird pack failed: ${birdState.error}`);
-  assert.equal(birdState.groupAttached, true, 'Ambient birds are detached from the live scene');
-  assert(birdState.anchors.trees > 0, `seed 64 produced no valid bird tree perches: ${JSON.stringify(birdState)}`);
-  assert(birdState.anchors.ponds > 0, `seed 64 produced no valid dry pond-bank landing: ${JSON.stringify(birdState)}`);
-  assert.equal(birdState.initial.count, 2, 'The deterministic bird fixture could not render both breeds');
-  assert.equal(birdState.initial.breeds.ash_sparrow, 1);
-  assert.equal(birdState.initial.breeds.pond_azurefin, 1);
-  assert.equal(birdState.initial.residentPondAnchors, 1,
-    'Seed 64 no longer assigns birds to exactly half of its two nearby ponds');
-  assert.equal(birdState.ashStart?.habitat, 'tree', 'The Ash Sparrow did not begin on a real tree perch');
-  assert.equal(birdState.azureStart?.habitat, 'pond', 'The Pond Azurefin did not fly toward a real pond bank');
-  assert.equal(birdState.azureStart?.state, 'cruise', 'The airborne debug bird did not enter authored cruise flight');
-  assert.equal(birdState.partSetComplete, true, 'A live bird is missing an articulated body part');
-  assert.equal(birdState.pixelAtlas, true, 'Live birds lost their hard nearest-filtered GPT-derived atlas');
-  assert.equal(birdState.clipNames.length, 12, 'The live bird pack did not expose all twelve Blender clips');
-  for (const clip of ['Perch_Idle_Loop', 'Flight_Loop', 'Takeoff', 'Landing', 'Pond_Peck_Loop', 'Ground_Idle_Loop']) {
-    assert(birdState.clipNames.some((name) => name.endsWith(clip)), `Live birds are missing ${clip}`);
-  }
-  assert(birdState.animationDelta > 1e-5,
-    `The loaded bird animation did not move its articulated model (${birdState.animationDelta})`);
-  assert.equal(birdState.finiteTransforms, true, 'Bird animation produced a non-finite transform');
-  assert.equal(birdState.startledDelta, 1, 'Walking close did not startle exactly the perched bird');
-  assert.equal(birdState.startledAshState, 'takeoff', 'The startled tree bird did not immediately fly away');
-  assert(birdState.initial.draws <= 14 && birdState.initial.triangles <= 700,
-    `Balanced birds exceeded their render budget: ${JSON.stringify(birdState.initial)}`);
-  assert(birdState.low.count <= 1 && birdState.low.shadowBirds === 0,
-    `Low graphics did not enforce its bird budget: ${JSON.stringify(birdState.low)}`);
+  const wildlifeState = await frame.evaluate(() => ({
+    birdsPresent: Boolean(window.__worldloomBirds),
+    species: [...new Set((window.__worldloomCreatures?.creatures || []).map((creature) => creature.type))],
+    creatureSystemReady: Boolean(window.__worldloomCreatures),
+  }));
+  assert.equal(wildlifeState.birdsPresent, false, 'Removed ambient birds were loaded into the world');
+  assert.equal(wildlifeState.creatureSystemReady, true, 'The meadow-pig system is missing');
+  assert(wildlifeState.species.every((species) => species === 'pig'),
+    'Wildlife other than the custom meadow pig returned');
 
   const clearState = await frame.evaluate(() => {
     const environment = window.__worldloomEnvironment;
@@ -1529,7 +1433,7 @@ try {
       viewportWidth: innerWidth,
     };
   });
-  assert.equal(mobileInventory.columns, 6, 'Mobile inventory did not collapse to six columns');
+  assert.equal(mobileInventory.columns, 5, 'Narrow-phone inventory did not preserve readable slots in five columns');
   assert(mobileInventory.pageOverflow <= 1, 'Mobile game page overflows horizontally');
   assert(mobileInventory.panelOverflow <= 2, 'Mobile inventory panel overflows horizontally');
   assert(mobileInventory.hotbarLeft >= -1 && mobileInventory.hotbarRight <= mobileInventory.viewportWidth + 1,
@@ -1608,6 +1512,16 @@ try {
     document.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyE', bubbles: true }));
   });
   await inventoryPage.waitForFunction(() => !document.querySelector('#inventory-panel')?.classList.contains('hidden'));
+  // Pointer-up must preserve the click target so tap-to-move works on phones.
+  const firstStackLabel = await inventoryPage.$eval('#inventory-grid [data-index="0"]', (slot) => slot.getAttribute('aria-label'));
+  await inventoryPage.click('#inventory-grid [data-index="0"]');
+  await inventoryPage.click('#inventory-grid [data-index="20"]');
+  assert.equal(await inventoryPage.$eval('#inventory-grid [data-index="20"]', (slot) => slot.getAttribute('aria-label')), firstStackLabel,
+    'two taps did not move the selected stack');
+  await inventoryPage.click('#inventory-grid [data-index="20"]');
+  await inventoryPage.click('#inventory-grid [data-index="0"]');
+  assert.equal(await inventoryPage.$eval('#inventory-grid [data-index="0"]', (slot) => slot.getAttribute('aria-label')), firstStackLabel,
+    'tap-to-move did not restore the stack before drag checks');
   const dragSlot = async (from, to = null) => {
     const source = await inventoryPage.$(`#inventory-grid .inventory-slot[data-index="${from}"]`);
     const sourceBox = await source?.boundingBox();
@@ -1749,7 +1663,7 @@ try {
     pondState,
     hangingLeafState,
     groundLeafState,
-    birdState,
+    wildlifeState,
     clearState,
     stormState,
     mainMenuPresentation,
@@ -1766,6 +1680,18 @@ try {
     webglRecovery: 'standalone game exposed a return to the hub',
   }, null, 2));
 } catch (error) {
+  const failedPage = (await browser.pages()).at(-1);
+  if (failedPage && !failedPage.isClosed()) {
+    console.error('UI at failure:', await failedPage.evaluate(() => ({
+      url: location.href,
+      deathClass: document.querySelector('#death-screen')?.className,
+      deathStatus: document.querySelector('#death-status')?.textContent,
+      respawnDisabled: document.querySelector('#respawn-button')?.disabled,
+      pageVisible: document.visibilityState,
+      health: window.__worldloomPlayer?.health,
+    })).catch(() => 'page unavailable'));
+    if (screenshotPath) await failedPage.screenshot({path: screenshotPath.replace(/\.png$/, '-failure.png')}).catch(() => {});
+  }
   if (pageErrors.length) {
     console.error(`Browser errors captured before failure:\n${pageErrors.join('\n\n')}`);
   }

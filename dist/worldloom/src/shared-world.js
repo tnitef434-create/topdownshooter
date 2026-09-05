@@ -34,5 +34,5 @@ export function personalSave(snapshot) {
 }
 export function worldSave(world, userId) {
   const personal=world.players[userId];
-  return {schemaVersion:1,registryVersion:1,generatorVersion:world.generatorVersion,seed:world.seed,mode:world.mode,name:world.name,createdAt:world.createdAt,timeOfDay:world.timeOfDay??.31,world:packEdits(world.seed,world.blocks,world.fluids),...personal,droppedItems:[]};
+  return {schemaVersion:1,registryVersion:1,generatorVersion:world.generatorVersion,discoveryVersion:world.discoveryVersion||0,discoveryLoot:world.discoveryLoot||{},seed:world.seed,mode:world.mode,name:world.name,createdAt:world.createdAt,timeOfDay:world.timeOfDay??.31,world:packEdits(world.seed,world.blocks,world.fluids),...personal,droppedItems:[]};
 }

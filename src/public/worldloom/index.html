@@ -62,11 +62,15 @@
             <a class="hub-return" href="/" aria-label="Back to Unpaused"><img src="/hub/u-mark.svg" alt=""> All games</a>
             <span class="brand__block-mark" aria-hidden="true"><i></i></span>
             <span class="brand__eyebrow">Gather · Shape · Illuminate</span>
-            <h1 id="main-title" class="brand__name">Worldloom</h1>
+            <h1 id="main-title" class="brand__name"><span class="sr-only">Worldloom</span><img class="brand__wordmark" src="/hub/worldloom-logo.svg" alt="" width="580" height="232"></h1>
             <p class="brand__tagline">Vaster peaks. Deeper caves. Wilder horizons.</p>
           </header>
 
           <div class="menu-card surface-panel" aria-label="World selection">
+            <header class="menu-card__heading">
+              <p>A world of your own</p>
+              <h2>Your next chapter</h2>
+            </header>
             <div class="menu-actions">
               <button id="continue-button" class="button button--primary button--wide" type="button">
                 <span class="button__label">Continue</span>
@@ -74,18 +78,24 @@
               </button>
 
               <div class="new-world-form">
-                <label for="world-name">World name</label>
-                <div class="seed-field"><input id="world-name" type="text" maxlength="40" placeholder="My Worldloom" autocomplete="off"></div>
-                <label for="seed-input">World seed <span>optional</span></label>
-                <div class="seed-field">
-                  <input
-                    id="seed-input"
-                    type="text"
-                    maxlength="48"
-                    autocomplete="off"
-                    spellcheck="false"
-                    placeholder="Leave blank for a surprise"
-                  />
+                <div class="world-fields">
+                  <div class="world-field">
+                    <label for="world-name">World name</label>
+                    <div class="seed-field"><input id="world-name" type="text" maxlength="40" placeholder="My Worldloom" autocomplete="off"></div>
+                  </div>
+                  <div class="world-field">
+                    <label for="seed-input">World seed <span>optional</span></label>
+                    <div class="seed-field">
+                      <input
+                        id="seed-input"
+                        type="text"
+                        maxlength="48"
+                        autocomplete="off"
+                        spellcheck="false"
+                        placeholder="Leave blank for a surprise"
+                      />
+                    </div>
+                  </div>
                 </div>
 
                 <fieldset class="mode-picker">
@@ -106,6 +116,9 @@
                   </label>
                 </fieldset>
 
+                <button id="new-world-button" class="button button--accent button--wide" type="button">
+                  Weave a new world
+                </button>
                 <details class="world-invite"><summary aria-haspopup="dialog" aria-controls="hub-account">Invite player <span>optional · max 1</span></summary>
                   <div id="world-invite-fields" class="world-invite-fields">
                   <label for="invite-code">Friend code</label><div class="seed-field"><input id="invite-code" type="text" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" placeholder="0000" autocomplete="off"></div>
@@ -114,9 +127,6 @@
                 </details>
                 <p id="world-save-hint" class="world-save-hint"></p>
                 <button id="world-account-button" type="button" class="button button--quiet button--wide" aria-haspopup="dialog" aria-controls="hub-account">My worlds &amp; received invites</button>
-                <button id="new-world-button" class="button button--accent button--wide" type="button">
-                  Weave a new world
-                </button>
               </div>
 
               <div class="menu-actions__secondary">
@@ -184,38 +194,43 @@
           <div class="status-stack" aria-label="Player status">
             <div class="status-row status-row--health">
               <span class="status-icon" aria-hidden="true">◆</span>
-              <span class="status-track" title="Vitality" role="progressbar" aria-label="Vitality" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100">
+              <span class="status-track" title="Health" role="progressbar" aria-label="Health" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100">
                 <span id="health-fill" class="status-fill"></span>
               </span>
-              <span class="sr-only">Vitality</span>
+              <span class="status-label">Health</span>
+              <span id="health-value" class="status-value" aria-hidden="true">100</span>
             </div>
             <div class="status-row status-row--stamina">
               <span class="status-icon" aria-hidden="true">◇</span>
-              <span class="status-track" title="Vigor" role="progressbar" aria-label="Vigor" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100">
+              <span class="status-track" title="Stamina" role="progressbar" aria-label="Stamina" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100">
                 <span id="stamina-fill" class="status-fill"></span>
               </span>
-              <span class="sr-only">Vigor</span>
+              <span class="status-label">Stamina</span>
+              <span id="stamina-value" class="status-value" aria-hidden="true">100</span>
             </div>
             <div class="status-row status-row--nourishment">
               <span class="status-icon" aria-hidden="true">●</span>
-              <span class="status-track" title="Nourishment" role="progressbar" aria-label="Nourishment" aria-valuemin="0" aria-valuemax="100" aria-valuenow="90">
+              <span class="status-track" title="Food" role="progressbar" aria-label="Food" aria-valuemin="0" aria-valuemax="100" aria-valuenow="90">
                 <span id="nourishment-fill" class="status-fill" style="width: 90%"></span>
               </span>
-              <span class="sr-only">Nourishment</span>
+              <span class="status-label">Food</span>
+              <span id="nourishment-value" class="status-value" aria-hidden="true">90</span>
             </div>
             <div class="status-row status-row--wetness is-hidden">
               <span class="status-icon" aria-hidden="true">≈</span>
               <span class="status-track" title="Wetness" role="progressbar" aria-label="Wetness" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
                 <span id="wetness-fill" class="status-fill" style="width: 0%"></span>
               </span>
-              <span class="sr-only">Wetness</span>
+              <span class="status-label">Wetness</span>
+              <span id="wetness-value" class="status-value" aria-hidden="true">0</span>
             </div>
             <div class="status-row status-row--oxygen is-hidden">
               <span class="status-icon" aria-hidden="true">○</span>
               <span class="status-track" title="Breath" role="progressbar" aria-label="Breath" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100">
                 <span id="oxygen-fill" class="status-fill"></span>
               </span>
-              <span class="sr-only">Breath</span>
+              <span class="status-label">Breath</span>
+              <span id="oxygen-value" class="status-value" aria-hidden="true">100</span>
             </div>
           </div>
 
@@ -237,7 +252,7 @@
           <header class="panel-header">
             <div>
               <p class="panel-kicker">Craft · build · survive</p>
-              <h2 id="inventory-title">Inventory</h2>
+              <h2 id="inventory-title">Your pack</h2>
             </div>
             <button id="inventory-close" class="icon-button" type="button" aria-label="Close inventory">×</button>
           </header>
@@ -246,9 +261,13 @@
             <section class="inventory-section" aria-labelledby="pack-title">
               <div class="section-heading">
                 <h3 id="pack-title">Storage</h3>
-                <span>36 slots · bottom row is your hotbar</span>
+                <span>36 slots · numbered slots are your quickbar</span>
               </div>
               <div id="inventory-grid" class="inventory-grid" aria-label="Backpack slots"></div>
+              <div id="inventory-detail" class="inventory-detail" aria-live="polite">
+                <strong id="inventory-detail-name">Ready for the road</strong>
+                <p id="inventory-detail-copy">Point to an item or select it to see what it does.</p>
+              </div>
               <p class="inventory-tip">Select one slot, then another, to move items</p>
             </section>
 

@@ -190,7 +190,7 @@ export class Network {
 
   // Send current state to opponent at 60Hz
   sendState(currentTime) {
-    if (!this.socket) return;
+    if (!this.socket?.connected || this.engine.networkPaused) return;
 
     if (currentTime - this.lastSentTime >= this.sendInterval) {
       this.lastSentTime = currentTime;
@@ -217,15 +217,22 @@ export class Network {
       this.localPlayer.networkJustDashed = false;
       this.localPlayer.networkDroppedItem = null;
 
-      this.socket.emit('player-state', state);
+      const relay = state.justDashed || state.droppedItem ? this.socket : this.socket.volatile;
+      relay.emit('player-state', state);
     }
   }
 
   // Broadcast local shoots online
   sendShoot(shootData) {
-    if (this.socket) {
+    if (this.socket?.connected && !this.engine.networkPaused) {
       this.socket.emit('shoot', shootData);
     }
+  }
+
+  resetInterpolation() {
+    this.opponentStateBuffers.clear();
+    this.lastInterpolateTime = 0;
+    this.lastSentTime = 0;
   }
 
   // --- Entity Interpolation loop ---

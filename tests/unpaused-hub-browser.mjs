@@ -60,11 +60,20 @@ try{
   await page.waitForFunction(()=>document.querySelector('#loading-screen')?.classList.contains('hidden'),{timeout:60000});
   assert.equal(await page.$('iframe'),null);
   assert.equal(await page.$eval('#main-menu',m=>m.classList.contains('hidden')),false);
-  assert.match(await page.$eval('#title-button',b=>b.textContent),/return to all games/);
+  assert.match(await page.$eval('#title-button',b=>b.textContent),/Save.*(?:leave|return)/i);
   await page.waitForFunction(()=>document.querySelector('#menu-film').currentTime>.1,{timeout:30000});
   const drone=await page.$eval('#menu-film',v=>({width:v.videoWidth,height:v.videoHeight,muted:v.muted,loop:v.loop}));
   assert.deepEqual(drone,{width:3840,height:2160,muted:true,loop:true});
   await page.screenshot({path:'../../outputs/worldloom-menu-drone.png'});
+  await page.setViewport({width:3840,height:2160,deviceScaleFactor:1});
+  const menu4k=await page.evaluate(()=>{
+    const primary=document.querySelector('#new-world-button').getBoundingClientRect();
+    return {width:innerWidth,height:innerHeight,overflow:document.documentElement.scrollWidth>innerWidth,reachable:primary.top>=0&&primary.bottom<=innerHeight&&primary.left>=0&&primary.right<=innerWidth};
+  });
+  assert.equal(menu4k.overflow,false,'the menu must fit a real 4K viewport');
+  assert.equal(menu4k.reachable,true,'the new-world action remains visible at 4K');
+  await page.screenshot({path:'../../outputs/worldloom-menu-4k.png'});
+  await page.setViewport({width:1440,height:900,deviceScaleFactor:1});
   await page.evaluate(()=>{localStorage.setItem('worldloom.settings.v1',JSON.stringify({viewDistance:3,graphicsQuality:'high'}));});
   await page.reload();await page.waitForFunction(()=>document.querySelector('#loading-screen').classList.contains('hidden'));
   await page.evaluate(()=>{document.querySelector('#seed-input').value='41';document.querySelector('#new-world-button').click();});
@@ -85,24 +94,39 @@ try{
   const landing=await page.evaluate(()=>({health:window.__worldloomPlayer.health,y:window.__worldloomPlayer.position.y,impact:window.__worldloomPlayer.landingImpact}));
   assert.equal(landing.health,1,'a terminal-speed water landing must not damage the actual survival player');
   assert.ok(landing.y>=49&&landing.y<49.1);
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(()=>!document.querySelector('#pause-menu').classList.contains('hidden'));
   await page.evaluate(()=>{
+    window.playerBeforeSaveFailure=window.__worldloomPlayer;
     window.originalSetItem=Storage.prototype.setItem;
     Storage.prototype.setItem=function(k,v){if(k.startsWith('worldloom.save'))throw new DOMException('full','QuotaExceededError');return window.originalSetItem.call(this,k,v);};
-    document.querySelector('#title-button').click();
   });
-  await wait(250);assert.match(page.url(),/worldloom\//,'save failure must keep the world open');
-  assert.match(await page.$eval('#toast-layer',e=>e.textContent),/Save failed/);
+  const failedSaveStarted=Date.now();
+  await page.click('#title-button');
+  await page.waitForFunction(()=>/could not be saved|save failed/i.test(document.querySelector('#toast-layer').textContent)&&!document.querySelector('#title-button').disabled,{timeout:15000});
+  const failedSaveMs=Date.now()-failedSaveStarted;
+  assert.match(page.url(),/worldloom\//,'save failure must keep the world open');
+  assert.equal(await page.evaluate(()=>window.playerBeforeSaveFailure===window.__worldloomPlayer),true,'the failed save preserves the live world for a retry');
+  assert.equal(await page.$eval('#pause-menu',e=>e.classList.contains('hidden')),false,'the retry remains visible after a save failure');
+  assert.ok(failedSaveMs<5000,`save failure must respond promptly, took ${failedSaveMs}ms`);
   await page.evaluate(()=>{Storage.prototype.setItem=window.originalSetItem;});
-  await Promise.all([page.waitForNavigation({waitUntil:'domcontentloaded'}),page.evaluate(()=>document.querySelector('#title-button').click())]);
+  const saveLeaveStarted=Date.now();
+  await Promise.all([page.waitForNavigation({waitUntil:'domcontentloaded'}),page.click('#title-button')]);
+  const saveLeaveMs=Date.now()-saveLeaveStarted;
+  assert.ok(saveLeaveMs<5000,`Save & leave should navigate promptly, took ${saveLeaveMs}ms`);
   await page.waitForSelector('#enter-worldloom');
   const saved=await page.evaluate(()=>JSON.parse(localStorage.getItem('worldloom.save.v1')));
   assert.ok(saved?.player?.position,'Save and leave must persist the world before navigating');
+  assert.equal(saved.player.health,1,'the water landing and save retry preserve the saved health');
   await Promise.all([page.waitForNavigation({waitUntil:'domcontentloaded'}),page.click('#enter-worldloom')]);
   await page.waitForFunction(()=>document.querySelector('#loading-screen').classList.contains('hidden'));
   assert.equal(await page.$eval('#continue-button',b=>b.disabled),false);
   await page.click('#continue-button');
   await page.waitForFunction(()=>document.querySelector('#loading-screen').dataset.phase==='world');
   assert.equal(await page.$eval('#loading-screen .u-loading__mark',e=>getComputedStyle(e).display),'none','continuing a saved world must not replay the menu U');
+  await page.waitForFunction(()=>window.__worldloomPlayer&&!document.querySelector('#hud').classList.contains('hidden')&&document.querySelector('#loading-screen').classList.contains('hidden'),{timeout:180000});
+  assert.equal(await page.evaluate(()=>window.__worldloomPlayer.health),1,'the saved world can actually be continued');
+  await page.close();
 
   const reduced=await browser.newPage();
   await reduced.emulateMediaFeatures([{name:'prefers-reduced-motion',value:'reduce'}]);
@@ -138,5 +162,5 @@ try{
   await broken.waitForFunction(()=>document.querySelector('#menu-film').error!==null,{timeout:30000});
   assert.equal(await broken.$eval('.menu-scenery img',p=>p.naturalWidth>0),true);
   assert.deepEqual(errors,[]);
-  console.log(JSON.stringify({passed:true,video:initial.duration,desktop:layout,hover,mobile,drone,landing,saveReturn:true,autoplayWithReducedMotion:true,posterFallback:true}));
+  console.log(JSON.stringify({passed:true,video:initial.duration,desktop:layout,hover,mobile,drone,menu4k,landing,saveReturn:true,failedSaveMs,saveLeaveMs,continuedSave:true,autoplayWithReducedMotion:true,posterFallback:true}));
 }finally{await browser.close();}

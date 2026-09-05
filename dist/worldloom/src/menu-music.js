@@ -65,7 +65,7 @@ export class MenuMusic {
     this.lastTime = performance.now();
     const tick = now => {
       this.frame = 0;
-      const dt = Math.min(.1, (now - this.lastTime) / 1000);
+      const dt = Math.max(0, Math.min(.1, (now - this.lastTime) / 1000));
       this.lastTime = now;
       const target = this.shouldPlay() ? this.volume : 0;
       this.level += (target - this.level) * (1 - Math.exp(-dt * 5));

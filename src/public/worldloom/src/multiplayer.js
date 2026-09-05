@@ -72,6 +72,11 @@ export class SharedWorldClient {
     this.socket.on('pose',({id,pose})=>{if(this.ready)this.remotes.get(id)?.receive(pose);});
     this.socket.on('changes',change=>{if(!this.ready)this.events.push(change);else this.applyChanges(change);});
     this.socket.on('drop-removed',data=>{if(this.ready)this.onDropRemoved(data);});
+    this.discoveryEvents=[];
+    this.socket.on('discovery-looted',data=>{
+      if(this.ready&&this.world)this.world.discoveryLoot[data.key]=data.remaining;
+      else this.discoveryEvents.push(data);
+    });
     this.socket.on('ecology',data=>{this.ecology=data;if(this.ready&&!this.isLeader)this.onEcology(data);});
     this.socket.on('pig-attack',data=>{if(this.ready&&this.isLeader)this.onAttack(data);});
     this.online=()=>{if(!this.stopped&&!this.ready){clearTimeout(this.retryTimer);this.socket.connected?this.load():this.socket.connect();}};
@@ -79,13 +84,26 @@ export class SharedWorldClient {
     window.addEventListener('online',this.online);
     window.addEventListener('offline',this.offline);
     this.socket.connect();
-    this.timer=setInterval(()=>{if(this.ready&&!this.busy&&!this.picking)this.flush(false).catch(()=>{});},160);
-    this.heartbeat=setInterval(()=>{if(this.ready){this.dirtyPersonal=true;this.flush(false).catch(()=>{});}},4000);
+    this.timer=setInterval(()=>{if(this.ready&&!this.exiting&&!this.busy&&!this.picking)this.flush(false).catch(()=>{});},160);
+    this.heartbeat=setInterval(()=>{if(this.ready&&!this.exiting&&!this.picking){this.dirtyPersonal=true;this.flush(false).catch(()=>{});}},4000);
+    this.visibility=()=>{
+      if(this.stopped)return;
+      if(this.socket.connected)this.socket.emit('presence',{active:!document.hidden});
+      if(!document.hidden){
+        if(!this.ready)this.online();
+        else this.onStatus('');
+      }
+    };
+    document.addEventListener('visibilitychange',this.visibility);
+    this.socket.on('connect',this.visibility);
   }
   get isLeader(){return this.you?.id===this.leader;}
   freeze(message){
     if(this.stopped)return;
-    if(this.ready&&!this.frozenSave)this.frozenSave=structuredClone(this.getSnapshot());
+    // A lost pickup/loot acknowledgement may already have changed inventory on
+    // the server. Never replay the old client inventory over that transaction.
+    if(this.authoritativeInventoryPending)this.frozenSave=null;
+    else if(this.ready&&!this.frozenSave)this.frozenSave=structuredClone(this.getSnapshot());
     this.ready=false;this.onStatus(message);
   }
   retry(){
@@ -127,7 +145,7 @@ export class SharedWorldClient {
         }while(this.edits.length||this.dropAdds.length);
         this.frozenSave=null;
       }
-      this.events=[];
+      this.events=[];this.discoveryEvents=[];
       const snapshot=await this.request('snapshot',{});if(this.stopped)return;
       this.you=snapshot.you;this.leader=snapshot.leader;this.revision=snapshot.revision;
       this.edits=[];this.dropAdds=[];
@@ -139,7 +157,9 @@ export class SharedWorldClient {
       if(this.ecology)this.onEcology(this.ecology);
       for(const drop of Object.values(snapshot.drops||{}))this.onDrop(drop);
       for(const event of this.events)if(event.revision>snapshot.revision)this.applyChanges(event);
-      this.events=[];this.ready=true;this.onStatus('');this.dirtyPersonal=true;clearTimeout(this.retryTimer);
+      for(const event of this.discoveryEvents)if(event.revision>snapshot.revision&&this.world)this.world.discoveryLoot[event.key]=event.remaining;
+      this.discoveryEvents=[];
+      this.events=[];this.authoritativeInventoryPending=false;this.ready=true;this.onStatus('');this.dirtyPersonal=true;clearTimeout(this.retryTimer);
     }catch(error){if(!this.stopped)this.freeze('Game paused · waiting for the connection to recover…');}
     finally{this.loading=false;if(!this.ready&&!this.stopped)this.retry();}
   }
@@ -176,6 +196,9 @@ export class SharedWorldClient {
   }
   async flush(force=true){
     if(!this.ready)throw new Error('Wait for the world to reconnect before leaving.');
+    // Visibility, pause, autosave and leave can also request a save while a
+    // pickup is in flight. Its old inventory must never race the server claim.
+    if(this.authoritativeInventoryPending)throw new Error('Wait for your inventory to finish syncing.');
     if(this.busy){await this.busy;if(force)return this.flush(true);return;}
     if(!force&&!this.edits.length&&!this.dropAdds.length&&!this.dirtyPersonal)return;
     const save=this.getSnapshot();if(!save)return;
@@ -190,9 +213,26 @@ export class SharedWorldClient {
   }
   async pickup(drop){
     if(!this.ready||this.picking)return;this.picking=true;
-    try{await this.flush(true);const result=await this.request('pickup',{key:drop.networkId});this.onInventory(result.inventory);}
-    catch{/* Another player may have collected the item, or the pack is full. */}
+    try{await this.flush(true);this.authoritativeInventoryPending=true;const result=await this.request('pickup',{key:drop.networkId});this.onInventory(result.inventory);this.authoritativeInventoryPending=false;}
+    catch(error){if(error.retryable){this.freeze('Syncing your inventory after the connection interruption…');this.retry();}else this.authoritativeInventoryPending=false;}
     finally{this.picking=false;}
+  }
+  async claimLoot(cell){
+    if(!this.ready||this.picking)throw new Error('Wait for your world to finish syncing.');
+    this.picking=true;
+    try{
+      await this.flush(true);
+      this.authoritativeInventoryPending=true;
+      const result=await this.request('claim-loot',{x:cell.x,y:cell.y,z:cell.z});
+      if(result.ok)this.onInventory(result.inventory);
+      if(result.key&&this.world)this.world.discoveryLoot[result.key]=result.remaining;
+      this.authoritativeInventoryPending=false;
+      return result;
+    }catch(error){
+      if(error.retryable){this.freeze('Syncing your cache after the connection interruption…');this.retry();}
+      else this.authoritativeInventoryPending=false;
+      throw error;
+    }finally{this.picking=false;}
   }
   update(dt,player,motion={}){
     if(!this.ready||!player)return;
@@ -202,7 +242,7 @@ export class SharedWorldClient {
     this.socket.volatile.emit('pose',{position:player.position.toArray(),velocity:player.velocity.toArray(),yaw:player.yaw,pitch:player.pitch,grounded:player.grounded,swimming:player.inWater,headlamp:player.headlampOn,...motion});
   }
   sendEcology(data){if(this.ready&&this.isLeader)this.socket.volatile.emit('ecology',data);}
-  dispose(){this.stopped=true;this.ready=false;clearTimeout(this.retryTimer);clearInterval(this.timer);clearInterval(this.heartbeat);window.removeEventListener('storage',this.sessionChanged);window.removeEventListener('online',this.online);window.removeEventListener('offline',this.offline);this.socket.disconnect();for(const p of this.remotes.values())p.dispose();this.remotes.clear();}
+  dispose(){this.stopped=true;this.ready=false;clearTimeout(this.retryTimer);clearInterval(this.timer);clearInterval(this.heartbeat);document.removeEventListener('visibilitychange',this.visibility);window.removeEventListener('storage',this.sessionChanged);window.removeEventListener('online',this.online);window.removeEventListener('offline',this.offline);this.socket.disconnect();for(const p of this.remotes.values())p.dispose();this.remotes.clear();}
 }
 
 export async function createSavedWorld({name,seed,mode,friendCode,importSave}){

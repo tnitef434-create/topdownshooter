@@ -2949,7 +2949,9 @@ test('reconnection updates changed terrain and keeps untouched chunks intact', (
 
 test('critical spawn chunks regenerate their decorations before teleport validation', () => {
   const world = new World(64, null, null);
-  const spawn = world.findSpawn();
+  // This terrain-only candidate is intentionally inside a pine; findSpawn now
+  // rejects it after materializing its decorations.
+  const spawn = new THREE.Vector3(0.5, world.terrainHeight(0, 0) + 1.02, 0.5);
   const headY = Math.floor(spawn.y + 1.68);
   assert.equal(world.getBlock(spawn.x, headY, spawn.z), BLOCK.AIR, 'unloaded queries expose base terrain');
   world.ensurePositionGenerated(spawn.x, spawn.z);
@@ -2960,5 +2962,58 @@ test('critical spawn chunks regenerate their decorations before teleport validat
   assert.equal(world.getBlock(spawn.x, headY, spawn.z), BLOCK.AIR, 'the spawn chunk should be unloaded');
   world.ensurePositionGenerated(spawn.x, spawn.z);
   assert.equal(world.getBlock(spawn.x, headY, spawn.z), decoratedHead, 'regeneration must restore the same obstacle');
+  world.dispose();
+});
+
+test('seed 64 starts on nearby clear ground instead of inside or on top of its pine canopy', () => {
+  const world = new World(64, null, null);
+  const player = new PlayerController(new THREE.PerspectiveCamera(), world);
+  const oldCandidate = new THREE.Vector3(0.5, world.terrainHeight(0, 0) + 1.02, 0.5);
+  world.ensurePositionGenerated(0, 0);
+  assert.equal(world.getBlock(0, Math.floor(oldCandidate.y + PLAYER.eye), 0), BLOCK.PINE_NEEDLES,
+    'the regression must exercise the real seed-64 pine at the old camera origin');
+  assert.equal(world.isClearSpawnColumn(oldCandidate), false);
+  const spawn = world.findSpawn();
+  assert.ok(world.chunks.size <= 4, 'spawn validation must remain local instead of decorating a terrain-wide search');
+  assert.deepEqual(spawn.toArray(), [-1.5, 42.02, -1.5]);
+  assert.equal(spawn.y, world.terrainHeight(spawn.x, spawn.z) + 1.02, 'the selected spawn stays on terrain, not a treetop');
+  for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
+    world.ensurePositionGenerated(spawn.x + dx * 16, spawn.z + dz * 16);
+  }
+  assert.equal(world.isClearSpawnColumn(spawn), true);
+  assert.equal(player.isCollidingAt(spawn), false);
+  player.setPosition(spawn.x, spawn.y, spawn.z);
+  const hits = Array.from({ length: 12 }, (_, index) => {
+    const yaw = index / 12 * Math.PI * 2;
+    return raycastVoxels(player.getEyePosition(), new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw)), 6, world);
+  });
+  assert.ok(hits.every(hit => !hit || hit.distance >= 1.4), 'no initial look direction starts pressed into foliage');
+  assert.ok(hits.some(hit => !hit), 'the spawn has a clear view out into the landscape');
+  const canopySave = new THREE.Vector3(0.5, 47.002, 0.5);
+  assert.equal(world.isClearSpawnColumn(canopySave), false, 'a canopy is not eligible for a newly selected spawn');
+  assert.equal(player.isCollidingAt(canopySave), false, 'a physically valid saved treetop position remains valid for the unchanged Continue policy');
+  const replay = new World(64, null, null);
+  assert.deepEqual(replay.findSpawn().toArray(), spawn.toArray(), 'the improved spawn remains deterministic');
+  replay.dispose();
+  world.dispose();
+});
+
+test('spawn eligibility rejects leaf support and head-level foliage while preserving partial-height furniture', () => {
+  const world = new World(41, null, null);
+  const spawn = world.findSpawn();
+  assert.deepEqual(spawn.toArray(), [0.5, 38.02, 0.5], 'an already-clear starting seed keeps its original position');
+  const x = 40, y = 70, z = 40;
+  world.setBlock(x, y, z, BLOCK.BED);
+  for (let offset = 1; offset <= 3; offset++) world.setBlock(x, y + offset, z, BLOCK.AIR);
+  const bedTop = new THREE.Vector3(x + 0.5, y + 0.462, z + 0.5);
+  assert.equal(world.isClearSpawnColumn(bedTop), true, 'partial-height surfaces still work for nearby bed recovery');
+  for (const foliage of [BLOCK.ASH_LEAVES, BLOCK.PINE_NEEDLES]) {
+    world.setBlock(x, y + 2, z, foliage);
+    assert.equal(world.isClearSpawnColumn(bedTop), false, 'head-level foliage blocks newly selected spawns');
+    world.setBlock(x, y + 2, z, BLOCK.AIR);
+    world.setBlock(x, y, z, foliage);
+    assert.equal(world.isClearSpawnColumn(new THREE.Vector3(x + 0.5, y + 1.002, z + 0.5)), false, 'foliage cannot be a new spawn foundation');
+    world.setBlock(x, y, z, BLOCK.BED);
+  }
   world.dispose();
 });

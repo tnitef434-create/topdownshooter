@@ -1,4 +1,5 @@
 node_modules/
+/work/
 __pycache__/
 # The site is deployed directly from dist. Keep most generated output ignored,
 # but surface Worldloom runtime additions that tracked dist modules import.
@@ -82,6 +83,7 @@ worlds.json
 worlds.json.tmp
 !dist/account-client.js
 !dist/menu-entry.js
+!dist/loop-video.js
 !dist/account/
 !dist/account/**
 !dist/worldloom-entry.css
@@ -99,3 +101,8 @@ worlds.json.tmp
 !dist/worldloom/vendor/
 !dist/worldloom/vendor/socket.io.esm.min.js
 !dist/worldloom/vendor/socket.io-client.LICENSE
+!dist/worldloom/src/land-discoveries.js
+!dist/worldloom/src/discovery-assets.js
+!dist/worldloom/src/discovery-field.js
+!dist/worldloom/src/discovery-loot.js
+work/multiplayer-recovery-*/

@@ -12,13 +12,18 @@ export function mountAccountDialog() {
     <div class="account-body">
     <p id="account-message" class="account-message" role="status" aria-live="polite"></p>
     <div id="account-context" hidden></div>
+    <div id="account-google-option" hidden>
+      <div id="account-google" class="account-google"></div>
+      <p class="account-auth-divider">or use your email</p>
+    </div>
     <form class="hub-account-form">
-      <label hidden>Username<input name="username" autocomplete="username" minlength="3" maxlength="15" pattern="[A-Za-z0-9_]{3,15}" placeholder="Your name in both games" disabled><small class="account-hint">3–15 letters, numbers or underscores.</small></label>
       <label>Email<input name="email" type="email" autocomplete="email" required maxlength="254" placeholder="you@example.com"></label>
       <label>Password<input name="password" type="password" autocomplete="current-password" required minlength="8" maxlength="128" placeholder="At least 8 characters"></label>
       <label hidden>Confirm password<input name="confirm" type="password" autocomplete="new-password" minlength="8" maxlength="128" disabled></label>
       <button class="account-primary" type="submit">SIGN IN</button>
     </form>
+    <button id="account-forgot" class="account-text-button account-forgot" type="button">Forgot your password?</button>
+    <button id="account-edit-email" class="account-text-button" type="button" hidden>Use a different email</button>
     <button id="account-switch" class="account-text-button" type="button">New here? Create an account</button>
     <div id="account-profile" hidden>
       <div class="account-tabs" role="tablist" aria-label="Account sections">

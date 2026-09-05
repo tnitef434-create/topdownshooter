@@ -91,6 +91,8 @@ export class Engine {
       
       this.mode = config.mode; // 'online' | 'offline'
       this.socket = config.socket;
+      this.networkPaused = false;
+      this.networkPausedAt = 0;
       this.isRanked = !!config.isRanked;
       
       // Map dimensions
@@ -305,6 +307,7 @@ export class Engine {
       
       // Begin main animation loop
       this.active = true;
+      if (document.hidden) this.setNetworkPaused(true);
       this.loop();
 
       // Trigger local HUD loadouts
@@ -377,6 +380,7 @@ export class Engine {
 
     // Keyboard registers
     this.keydownHandler = (e) => {
+      if (this.networkPaused) return;
       // Disable key bindings if typing in chat
       const chatInput = document.getElementById('chat-input');
       if (chatInput && document.activeElement === chatInput) {
@@ -610,6 +614,7 @@ export class Engine {
     };
 
     this.mousedownHandler = (e) => {
+      if (this.networkPaused) return;
       this.mouse.buttons[e.button] = true;
 
       if (e.button === 0) { // left click
@@ -974,6 +979,37 @@ export class Engine {
   }
 
   // --- Round & Match Cycles ---
+  setNetworkPaused(paused, message = 'Reconnecting… Match paused') {
+    paused = Boolean(paused);
+    this.networkPauseMessage = message;
+    if (this.networkPaused === paused) return;
+    const now = performance.now();
+    this.networkPaused = paused;
+    this.keys = {};
+    if (this.mouse) { this.mouse.clicked = false; this.mouse.buttons = {}; }
+    if (paused) {
+      this.networkPausedAt = now;
+      this.sound?.stopAllAlarms?.();
+      return;
+    }
+    const elapsed = Math.max(0, now - this.networkPausedAt);
+    // Keep countdowns, zone onset, reloads, fuses and buffs at the exact point
+    // where the shared match paused instead of letting wall time consume them.
+    const shift = (object, keys) => {
+      for (const key of keys) if (Number.isFinite(object?.[key]) && object[key] > 0) object[key] += elapsed;
+    };
+    shift(this, ['roundStartTime', 'countdownStart', 'lastSprintTime', 'lastSnapshotTime']);
+    shift(this.zone, ['lastDamageTick']);
+    for (const player of this.players || []) {
+      shift(player, ['reloadStartTime', 'lastFiredTime', 'lastDashTime', 'lastTrailSpawnTime', 'adrenalineEndTime', 'overdriveEndTime']);
+      for (const trail of player.dashTrails || []) shift(trail, ['time']);
+      player.lastUpdateTime = now;
+    }
+    for (const grenade of this.grenades || []) shift(grenade, ['creationTime']);
+    this.lastUpdateTime = now;
+    this.network?.resetInterpolation?.();
+  }
+
   startRoundCycle() {
     this.gameState = 'countdown';
     this.countdownTimer = 3;
@@ -1149,51 +1185,35 @@ export class Engine {
     const hudStatus = document.getElementById('hud-status');
     if (hudStatus) hudStatus.innerText = 'ENGAGE TARGET';
     
-    // Start countdown timer ticking down
-    if (this.matchMode !== 'sabotage') {
-      this.matchTimerInterval = setInterval(() => {
-        if (this.gameState === 'playing') {
-          this.matchTime--;
-          if (this.matchTime <= 0) {
-            this.matchTime = 0;
-            this.endRound(null, 'TIME EXPIRED'); // draw
-          }
-          
-          // Update clock HUD
-          const mins = Math.floor(this.matchTime / 60).toString().padStart(2, '0');
-          const secs = (this.matchTime % 60).toString().padStart(2, '0');
-          const timerDisplay = document.getElementById('game-timer');
-          if (timerDisplay) timerDisplay.innerText = `${mins}:${secs}`;
-        }
-      }, 1000);
+    // Round and zone deadlines advance in the simulation, so an inactive tab
+    // or a recovering transport cannot expire a round in the background.
+    this.updateRoundClock(this.roundStartTime);
+  }
+
+  updateRoundClock(currentTime) {
+    if (this.networkPaused || this.gameState !== 'playing' || this.matchMode === 'sabotage') return;
+    const elapsed = Math.max(0, currentTime - this.roundStartTime);
+    this.matchTime = Math.max(0, Math.ceil(120 - elapsed / 1000));
+    const timerDisplay = document.getElementById('game-timer');
+    if (timerDisplay) timerDisplay.innerText = `${Math.floor(this.matchTime / 60).toString().padStart(2, '0')}:${(this.matchTime % 60).toString().padStart(2, '0')}`;
+    if (this.matchTime <= 0) { this.endRound(null, 'TIME EXPIRED'); return; }
+    if (elapsed >= 40000 && !this.zone.active) {
+      const halfMap = Math.max(this.mapWidth, this.mapHeight) / 2;
+      this.zone.active = true;
+      this.zone.currentRadius = halfMap * 1.05;
+      this.zone.targetRadius = halfMap * 0.12;
+      this.zone.shrinkSpeed = (this.zone.currentRadius - this.zone.targetRadius) / (60 * 60);
+      this.zone.lastDamageTick = currentTime;
+      this.zone.centerX = this.mapWidth / 2;
+      this.zone.centerY = this.mapHeight / 2;
     }
-
-    // ── Shrinking Zone: disabled in Sabotage mode ─────────────────────────
-    if (this.matchMode !== 'sabotage') {
-      if (this.zoneTimer) clearTimeout(this.zoneTimer);
-      this.zoneTimer = setTimeout(() => {
-        if (this.gameState !== 'playing') return;
-        const halfMap = Math.max(this.mapWidth, this.mapHeight) / 2;
-        this.zone.active       = true;
-        this.zone.currentRadius = halfMap * 1.05;
-        this.zone.targetRadius  = halfMap * 0.12;
-        this.zone.shrinkSpeed  = (this.zone.currentRadius - this.zone.targetRadius) / (60 * 60);
-        this.zone.lastDamageTick = performance.now();
-        this.zone.centerX = this.mapWidth  / 2;
-        this.zone.centerY = this.mapHeight / 2;
-
-        const ws = document.getElementById('hud-status');
-        if (ws) {
-          ws.innerText = '⚠ ZONE CLOSING IN!';
-          ws.style.color = '#ff3c3c';
-          setTimeout(() => {
-            if (this.gameState === 'playing' && ws) {
-              ws.innerText = 'ENGAGE TARGET';
-              ws.style.color = '';
-            }
-          }, 2500);
-        }
-      }, 40000);
+    const status = document.getElementById('hud-status');
+    if (status && elapsed >= 40000 && elapsed < 42500) {
+      status.innerText = '⚠ ZONE CLOSING IN!';
+      status.style.color = '#ff3c3c';
+    } else if (status && elapsed >= 42500 && status.innerText === '⚠ ZONE CLOSING IN!') {
+      status.innerText = 'ENGAGE TARGET';
+      status.style.color = '';
     }
   }
 
@@ -1455,6 +1475,8 @@ export class Engine {
 
   // Core Game State Update
   update(currentTime) {
+    if (this.networkPaused) { this.lastUpdateTime = currentTime; return; }
+    this.updateRoundClock(currentTime);
     if (!this.lastUpdateTime) {
       this.lastUpdateTime = currentTime;
     }

@@ -78,6 +78,7 @@ export class UI {
       nourishment: $('nourishment-fill'),
       wetness: $('wetness-fill'),
       oxygen: $('oxygen-fill'),
+      statusValues: Object.fromEntries(['health', 'stamina', 'nourishment', 'wetness', 'oxygen'].map((name) => [name, $(`${name}-value`)])),
       time: $('time-label'),
       timeText: $('time-text'),
       objective: $('objective-text'),
@@ -114,17 +115,15 @@ export class UI {
     this._toastTimer = null;
     this._loadingHideTimer = null;
     this._deathReadyTimer = null;
+    this._hudPercent = Object.create(null);
     this._bindStatic();
     this._bindDialogKeyboard();
   }
 
   _bindStatic() {
     const inventoryTip = document.querySelector('.inventory-tip');
-    if (inventoryTip) inventoryTip.textContent = 'Drag stacks to move them · drag beyond the window to drop them into the world';
+    if (inventoryTip) inventoryTip.textContent = 'Select a stack, then a slot to move it. Drag outside the pack or press Delete to drop it.';
     const titleButton = $('title-button');
-    if (titleButton) {
-      titleButton.textContent = 'Save & return to all games';
-    }
     $('new-world-button')?.addEventListener('click', () => {
       const seedValue = $('seed-input')?.value.trim() || `${Date.now()}`;
       const mode = document.querySelector('input[name="mode"]:checked')?.value || 'survival';
@@ -219,6 +218,8 @@ export class UI {
     if (this.elements.continueButton) {
       this.elements.continueButton.disabled = !available;
       this.elements.continueButton.title = available ? 'Continue your last world' : 'No saved world yet';
+      const hint = this.elements.continueButton.querySelector('.button__hint');
+      if (hint) hint.textContent = available ? 'Last world →' : 'No saved world yet';
     }
   }
 
@@ -461,9 +462,20 @@ export class UI {
       ? Number(document.activeElement?.dataset?.index)
       : null;
     root.replaceChildren();
-    this.inventory.slots.forEach((slot, index) => {
+    const slotOrder = this.inventory.slots.map((_, index) => index);
+    // Pack storage precedes the numbered quick slots while data indices stay stable.
+    slotOrder.sort((a, b) => Number(a < 9) - Number(b < 9) || a - b);
+    slotOrder.forEach((index) => {
+      const slot = this.inventory.slots[index];
       const element = button('', `inventory-slot${index === this.inventorySelection ? ' selected' : ''}`);
       element.dataset.index = `${index}`;
+      if (index < 9) {
+        element.dataset.hotbar = 'true';
+        const key = document.createElement('span');
+        key.className = 'slot-key';
+        key.textContent = `${index + 1}`;
+        element.append(key);
+      }
       element.style.touchAction = 'none';
       element.setAttribute('aria-pressed', index === this.inventorySelection ? 'true' : 'false');
       element.setAttribute('aria-grabbed', index === this.inventorySelection ? 'true' : 'false');
@@ -496,6 +508,8 @@ export class UI {
         this.renderHotbar();
       });
       element.addEventListener('pointerdown', (event) => this._beginInventoryPointer(event, index));
+      element.addEventListener('pointerenter', () => this._showInventoryDetail(index));
+      element.addEventListener('focus', () => this._showInventoryDetail(index));
       element.addEventListener('keydown', (event) => {
         if (!slot.id || !['Delete', 'Backspace'].includes(event.key)) return;
         event.preventDefault();
@@ -507,6 +521,16 @@ export class UI {
       root.append(element);
     });
     if (Number.isInteger(focusedIndex)) root.querySelector(`[data-index="${focusedIndex}"]`)?.focus();
+    this._showInventoryDetail(this.inventorySelection ?? focusedIndex);
+  }
+
+  _showInventoryDetail(index) {
+    const slot = Number.isInteger(index) ? this.inventory?.slots[index] : null;
+    const item = slot?.id && slot.count > 0 ? getItem(slot.id) : null;
+    const name = $('inventory-detail-name');
+    const copy = $('inventory-detail-copy');
+    if (name) name.textContent = item ? `${item.name}${slot.count > 1 ? ` ×${slot.count}` : ''}` : 'Ready for the road';
+    if (copy) copy.textContent = item ? (item.description || 'Keep this in your pack for the journey ahead.') : 'Point to an item or select it to see what it does.';
   }
 
   _beginInventoryPointer(event, index) {
@@ -593,6 +617,12 @@ export class UI {
   _finishInventoryPointer(event, cancelled) {
     const drag = this.inventoryPointer;
     if (!drag || event.pointerId !== drag.pointerId) return;
+    // A tap must reach the slot's click handler. Rebuilding the grid on every
+    // pointer-up detached its target and cleared the pending move selection.
+    if (!drag.dragging) {
+      this._cancelInventoryPointer();
+      return;
+    }
     if (drag.dragging) {
       event.preventDefault();
       this.suppressInventoryClickUntil = performance.now() + 350;
@@ -642,9 +672,10 @@ export class UI {
       ? document.activeElement?.dataset?.recipeId
       : null;
     root.replaceChildren();
-    for (const recipe of RECIPES) {
+    const recipes = RECIPES.map((recipe) => ({ recipe, availability: this.recipeAvailability?.(recipe) || { craftable: false, reason: 'Unavailable' } }))
+      .sort((a, b) => Number(b.availability.craftable) - Number(a.availability.craftable));
+    for (const { recipe, availability } of recipes) {
       if (query && !`${recipe.name} ${recipe.description}`.toLowerCase().includes(query)) continue;
-      const availability = this.recipeAvailability?.(recipe) || { craftable: false, reason: 'Unavailable' };
       const card = document.createElement('article');
       card.className = `recipe-card${availability.craftable ? ' craftable' : ''}`;
       const outputItem = getItem(recipe.output.id);
@@ -685,17 +716,30 @@ export class UI {
   }
 
   updateHUD({ health, stamina, nourishment = 1, wetness = 0, oxygen = 1, time, objective, target, inWater, debug }) {
-    const updateBar = (element, amount) => {
+    const updateBar = (element, amount, key) => {
       if (!element) return;
       const value = Math.round(Math.max(0, Math.min(1, Number(amount) || 0)) * 100);
+      if (this._hudPercent[key] === value) return;
+      this._hudPercent[key] = value;
       element.style.width = `${value}%`;
       element.parentElement?.setAttribute('aria-valuenow', `${value}`);
+      element.parentElement?.setAttribute('aria-valuetext', `${value} percent`);
+      const label = this.elements.statusValues?.[key];
+      if (label && label.textContent !== `${value}`) label.textContent = `${value}`;
+      element.closest('.status-row')?.classList.toggle('is-low', key !== 'wetness' && value <= (key === 'nourishment' ? 30 : 25));
     };
-    updateBar(this.elements.health, health);
-    updateBar(this.elements.stamina, stamina);
-    updateBar(this.elements.nourishment, nourishment);
-    updateBar(this.elements.wetness, wetness);
-    updateBar(this.elements.oxygen, oxygen);
+    updateBar(this.elements.health, health, 'health');
+    updateBar(this.elements.stamina, stamina, 'stamina');
+    updateBar(this.elements.nourishment, nourishment, 'nourishment');
+    updateBar(this.elements.wetness, wetness, 'wetness');
+    updateBar(this.elements.oxygen, oxygen, 'oxygen');
+    if (this.elements.nourishment) {
+      const foodStatus = nourishment <= 0.08 ? 'Starving: eat soon' : nourishment <= 0.3 ? 'Hungry: eat to sprint' : nourishment >= 0.8 ? 'Well fed: rest to recover health' : 'Food';
+      const foodTrack = this.elements.nourishment.parentElement;
+      if (foodTrack.title !== foodStatus) foodTrack.title = foodStatus;
+      const foodDescription = `${this._hudPercent.nourishment} percent. ${foodStatus}`;
+      if (foodTrack.getAttribute('aria-valuetext') !== foodDescription) foodTrack.setAttribute('aria-valuetext', foodDescription);
+    }
     this.elements.wetness?.closest('.status-row')?.classList.toggle('is-hidden', wetness < 0.025);
     this.elements.oxygen?.closest('.status-row')?.classList.toggle('is-hidden', oxygen > 0.995);
     if (this.elements.timeText) this.elements.timeText.textContent = time || '';
@@ -708,11 +752,14 @@ export class UI {
     }
   }
 
-  damageFlash(strength = 0.16) {
+  damageFlash(strength = 0.16, reducedMotion = false) {
     const element = this.elements.damage;
     if (!element) return;
     const amount = Math.max(0, Math.min(1, Number(strength) || 0));
-    element.style.setProperty('--damage-strength', `${Math.min(1, 0.38 + Math.sqrt(amount) * 0.62)}`);
+    if (amount <= 0) return;
+    const gentle = reducedMotion || document.body.classList.contains('user-reduced-motion') || globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    element.style.setProperty('--damage-strength', `${(gentle ? 0.3 : 0.5) + Math.sqrt(amount) * (gentle ? 0.16 : 0.28)}`);
+    element.classList.toggle('is-reduced-motion', Boolean(gentle));
     element.classList.remove('flash');
     void element.offsetWidth;
     element.classList.add('flash');
