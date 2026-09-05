@@ -16,6 +16,8 @@ import { enhanceWaterMaterial, WaterReflection } from './water-surface.js';
 import { sampleWaterView, underwaterOptics } from './water-view.js';
 import { WaterInteractionEffects } from './water-effects.js';
 import { WaterSceneCapture } from './water-capture.js';
+import { CavePlantField } from './cave-plants.js';
+import { Headlamp } from './headlamp.js';
 import { MushroomField } from './mushrooms.js';
 
 const LIGHT_BLOCKS = new Set([BLOCK.TORCH, BLOCK.LUMEN_CRYSTAL, BLOCK.KILN, BLOCK.FURNACE]);
@@ -1470,6 +1472,8 @@ export class Environment {
     this.redFlowers = new RedFlowerField(scene);
     this.meadowPlants = new MeadowPlantField(scene);
     this.mushrooms = new MushroomField(scene);
+    this.cavePlants = new CavePlantField(scene);
+    this.headlamp = new Headlamp(scene);
     this.sandWind = new SandWindField(scene);
     this.seaLife = new SeaLifeField(scene);
     this.waterReflection = new WaterReflection(scene,renderer);
@@ -1509,6 +1513,7 @@ export class Environment {
     this.redFlowers.setWorld(this.weatherWorld);
     this.meadowPlants.setWorld(this.weatherWorld);
     this.mushrooms.setWorld(this.weatherWorld);
+    this.cavePlants.setWorld(this.weatherWorld);
     this.sandWind.setWorld(this.weatherWorld);
     this.seaLife.setWorld(this.weatherWorld);
     this.waterReflection.setWorld(this.weatherWorld);
@@ -1623,11 +1628,15 @@ export class Environment {
     this.seaLife.setQuality(profile, settings.reducedMotion);
     this.waterReflection.setQuality(profile);
     this.waterCapture.setQuality(profile);
+    this.headlamp.setQuality(profile);
+    this.cavePlants.setQuality(profile,settings.reducedMotion);
     this.summitCrosses.setQuality(profile);
     this.graphicsUniforms.windStrength.value = settings.reducedMotion ? 0.22 : 1;
 
     if (this.renderer?.shadowMap) {
-      this.renderer.shadowMap.enabled = Boolean(profile.shadows);
+      // Low quality disables the sun/point shadows below, but the compact
+      // headlamp shadow must remain active to prevent light leaking through rock.
+      this.renderer.shadowMap.enabled = true;
       const shadowType = profile.softShadows && THREE.PCFSoftShadowMap != null
         ? THREE.PCFSoftShadowMap
         : THREE.PCFShadowMap;
@@ -2067,6 +2076,11 @@ export class Environment {
     const stormAmount = lightingState.stormAmount;
     this.skyColor.lerp(this._stormSky, stormAmount);
     this.fogColor.lerp(this._stormFog, stormAmount * 0.82);
+    const underground = this.weatherWorld && focus
+      ? THREE.MathUtils.smoothstep(this.weatherWorld.terrainHeight(focus.x,focus.z)-focus.y,3,13)
+        * (1-THREE.MathUtils.smoothstep(this.skyExposure,.03,.55)) : 0;
+    this.skyColor.lerp(new THREE.Color(0x182328),underground);
+    this.fogColor.lerp(new THREE.Color(0x243136),underground);
     this.scene.background = this.skyColor;
     this.scene.fog.color.copy(this.fogColor);
     const fogRange = atmosphericFogRange(viewDistance, {
@@ -2079,6 +2093,8 @@ export class Environment {
     this.fogClarity = fogRange.clarity;
     this.scene.fog.near = fogRange.near;
     this.scene.fog.far = fogRange.far;
+    this.scene.fog.near = THREE.MathUtils.lerp(this.scene.fog.near,9,underground);
+    this.scene.fog.far = THREE.MathUtils.lerp(this.scene.fog.far,43,underground);
 
     this.atmosphere.position.copy(focus);
     const skyUniforms = this.atmosphere.material.uniforms;
@@ -2095,20 +2111,26 @@ export class Environment {
     // by light and shadow instead of the previous flat ambient wash.
     const skyAccess = THREE.MathUtils.smoothstep(this.skyExposure, 0.005, 0.92);
     const daylight = daylightBalance(this.dayAmount, this.solarElevation, skyAccess);
+    // Eye-adapted indirect fill retains shape without changing the sky-occlusion
+    // probes. The headlamp remains the primary directional source underground.
+    const caveFill=underground*1.4;
     this.hemisphere.intensity = daylight.hemisphereIntensity
-      * (1 - this.overcastAmount * 0.3);
+      * (1 - this.overcastAmount * 0.3) + caveFill;
     this.hemisphere.color.copy(this._hemisphereNight)
       .lerp(this._hemisphereDay, this.dayAmount)
       .lerp(this._stormFog, this.overcastAmount * 0.22);
+    this.hemisphere.color.lerp(new THREE.Color(0x9aafb8),underground*.8);
     this.hemisphere.groundColor.copy(this._groundNight)
       .lerp(this._groundDay, this.dayAmount)
       .lerp(this._stormSky, this.overcastAmount * 0.16);
+    this.hemisphere.groundColor.lerp(new THREE.Color(0x657776),underground*.65);
     this.bounceLight.color.copy(this._bounceNight).lerp(this._bounceDay, this.dayAmount);
     this.bounceLight.intensity = outdoorBounceIntensity(
       this.dayAmount,
       this.skyExposure,
       this.overcastAmount,
     );
+    this.bounceLight.intensity += underground*.36;
     // In shadowed modes, direct sunlight is a property of the world rather than
     // the player's roof probe. Shadow maps and per-vertex cover lighting decide
     // which cave surfaces receive it, keeping a visible entrance bright. Low
@@ -2207,6 +2229,8 @@ export class Environment {
     this.redFlowers.update(dt, focus);
     this.meadowPlants.update(dt, focus);
     this.mushrooms.update(dt, focus);
+    this.cavePlants.update(dt, focus);
+    this.headlamp.update(context.cameraPosition,context.playerForward,context.active!==false&&context.headlampEnabled);
     this.sandWind.update(dt, focus, {...context, rainIntensity:this.rainIntensity, skyExposure:this.skyExposure, dayAmount:this.dayAmount});
     this.seaLife.update(dt, focus, context);
     this.waterEffects.update(dt,focus,{...context,dayAmount:this.dayAmount});

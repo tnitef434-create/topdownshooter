@@ -279,7 +279,7 @@ test('save round-trips an exact fractional player position and persistent loose 
   assert.deepEqual(loaded.droppedItems, snapshot.droppedItems);
 });
 
-test('fresh saves use generator v2 while supported explicit versions round-trip unchanged', () => {
+test('fresh saves use current generator while supported explicit versions round-trip unchanged', () => {
   const values = new Map();
   globalThis.localStorage = {
     getItem: (key) => values.get(key) ?? null,
@@ -1051,7 +1051,7 @@ test('surface decoration distribution preserves fixed-seed generated chunk bytes
     { seed: 91234, cx: 1, cz: 1, hash: '39bbfdc47611cee4501d656429a0f0ed4ff1422422243781e0622b1beecd814e' },
   ];
   for (const fixture of fixtures) {
-    const world = new World(fixture.seed, null, null);
+    const world = new World(fixture.seed, null, null, {generatorVersion:2});
     const chunk = world.ensurePositionGenerated(fixture.cx * 16, fixture.cz * 16);
     const hash = createHash('sha256').update(chunk.blocks).digest('hex');
     assert.equal(hash, fixture.hash,
@@ -1199,13 +1199,13 @@ function assertPondIsClosedAndAtomic(world, pond, label) {
 }
 
 test('unsafe cave and low-rim pond repros are rejected as whole deterministic candidates', () => {
-  const lowRim = new World(7, null, null, { generatorVersion: WORLD_GENERATOR_VERSION });
+  const lowRim = new World(7, null, null, { generatorVersion: 2 });
   assert.equal(lowRim._pondCandidateForCell(-1, 1), null,
     'seed 7 pond -1,1 previously exposed source water to low AIR at its perimeter');
-  const caveBed = new World(65, null, null, { generatorVersion: WORLD_GENERATOR_VERSION });
+  const caveBed = new World(65, null, null, { generatorVersion: 2 });
   assert.equal(caveBed._pondCandidateForCell(2, 1), null,
     'seed 65 pond 2,1 previously carved its intended bed through a cave entrance');
-  const fragmented = new World(143, null, null, { generatorVersion: WORLD_GENERATOR_VERSION });
+  const fragmented = new World(143, null, null, { generatorVersion: 2 });
   assert.equal(fragmented._pondCandidateForCell(-1, -1), null,
     'edge-noise islands must reject the whole feature instead of creating detached pools');
   lowRim.dispose();

@@ -1,3 +1,4 @@
+import { CaveField } from './cave-generation.js';
 import * as THREE from '../vendor/three.module.min.js';
 import { BLOCK, BLOCKS, isSolid, isTransparent, isLiquid } from './blocks.js';
 import {
@@ -459,15 +460,13 @@ export class World {
     const requestedGeneratorVersion = Number(
       options && typeof options === 'object' ? options.generatorVersion : options,
     );
-    // Version 1 is the exact pre-pond generator used by existing saves. All
-    // fresh and unspecified worlds use version 2; save validation prevents a
-    // future unsupported version from reaching this fallback.
-    this.generatorVersion = requestedGeneratorVersion === LEGACY_WORLD_GENERATOR_VERSION
-      ? LEGACY_WORLD_GENERATOR_VERSION
-      : WORLD_GENERATOR_VERSION;
-    this.pondsEnabled = this.generatorVersion >= WORLD_GENERATOR_VERSION;
-    this.summitCrossesEnabled = this.generatorVersion >= WORLD_GENERATOR_VERSION;
-    this.forestFloorEnabled = this.generatorVersion >= WORLD_GENERATOR_VERSION;
+    // Preserve both existing generators. Only fresh worlds receive version 3.
+    this.generatorVersion = [1,2,3].includes(requestedGeneratorVersion)
+      ? requestedGeneratorVersion : WORLD_GENERATOR_VERSION;
+    this.caveField = this.generatorVersion >= 3 ? new CaveField(this.seed) : null;
+    this.pondsEnabled = this.generatorVersion >= 2;
+    this.summitCrossesEnabled = this.generatorVersion >= 2;
+    this.forestFloorEnabled = this.generatorVersion >= 2;
     // Main enables this only after the matching Blender pack has loaded. A
     // cosmetic asset failure must never leave invisible physical obstacles.
     this.forestFloorCollisionEnabled = false;
@@ -704,6 +703,7 @@ export class World {
   }
 
   _caveTopologyAt(x, z, surface) {
+    if(this.caveField)return this.caveField.column(x,z,surface,(px,pz)=>this._macroTerrainAt(Math.floor(px),Math.floor(pz)).height);
     const cellX = floorDiv(x, CAVE_CELL_SIZE);
     const cellZ = floorDiv(z, CAVE_CELL_SIZE);
     const tunnels = [];
@@ -1200,6 +1200,7 @@ export class World {
   }
 
   _isCave(x, y, z, surface, info = this._columnInfo(x, z)) {
+    if(this.caveField)return this.caveField.isCave(x,y,z,surface,info);
     if (y <= 2 || y > surface) return false;
     const ceilingDepth = surface - y;
     const roughness = () => clampNoise(valueNoise3D(
@@ -1259,8 +1260,15 @@ export class World {
   _stoneOrOre(x, y, z) {
     const oreRoll = hashUnit(hash3D(x, y, z, this._noiseSeeds.ore));
     const veinNoise = clampNoise(valueNoise3D(x / 5, y / 5, z / 5, this._noiseSeeds.ore ^ 0x632be5ab));
+    if (this.caveField) {
+      // Larger contiguous mineral deposits, with rarer diamonds at depth.
+      const deposit=valueNoise3D(x/3.1,y/3.1,z/3.1,this._noiseSeeds.ore^0x2398);
+      if(y<17&&deposit>.89)return BLOCK.DIAMOND_ORE;
+      if(y<48&&deposit<.14)return BLOCK.IRON_ORE;
+      if(y<42&&deposit>.82)return BLOCK.COPPER_ORE;
+    }
     if (y < 18 && oreRoll < 0.0032 && veinNoise > 0.1) return LUMEN_CRYSTAL;
-    if (y < 42 && oreRoll < 0.0105 && veinNoise > -0.08) return IRON_ORE;
+    if (y < 42 && oreRoll < 0.0105 && veinNoise > -0.08) return BLOCK.COPPER_ORE;
     if (y < 66 && oreRoll > 0.976 && veinNoise > -0.2) return COAL_ORE;
     if (y < 10 && veinNoise < -0.4) return BASALT;
     return STONE;
@@ -1275,6 +1283,10 @@ export class World {
       return y <= SEA_LEVEL ? WATER : AIR;
     }
     if (this._isCave(x, y, z, surface, info)) {
+      if(this.caveField){
+        const liquid=this.caveField.liquid(y);
+        return liquid==='water'?WATER:liquid==='lava'?LAVA:AIR;
+      }
       // Deep chambers collect coherent pools rather than isolated liquid voxels.
       // Lava owns the lowest pockets; water appears higher in broad chambers and
       // fissures, leaving most connecting tunnels dry and navigable.
@@ -2563,13 +2575,20 @@ export class World {
       for (let x = 0; x < CHUNK_SIZE; x++) {
         const worldX = originX + x;
         const worldZ = originZ + z;
-        for (let y = 4; y < 34; y++) {
+        const caveCeiling=this.caveField?Math.min(WORLD_HEIGHT-3,this._columnInfo(worldX,worldZ).height-5):34;
+        for (let y = 4; y < caveCeiling; y++) {
+          if(this.caveField && chunk.blocks[localIndex(x,y,z)]===AIR
+            && isSolid(chunk.blocks[localIndex(x,y+1,z)])
+            && hash3D(worldX,y,worldZ,this._noiseSeeds.plants^871)<.026){
+            chunk.blocks[localIndex(x,y,z)]=BLOCK.CAVE_VINE;
+          }
           const floorId = chunk.blocks[localIndex(x, y, z)];
           const aboveIndex = localIndex(x, y + 1, z);
           if (!isSolid(floorId) || chunk.blocks[aboveIndex] !== AIR) continue;
           const roll = hashUnit(hash3D(worldX, y, worldZ, this._noiseSeeds.plants ^ 0x94d049bb));
-          if (roll < 0.996) continue;
-          chunk.blocks[aboveIndex] = CAVE_MUSHROOM;
+          if(this.caveField && y>12 && roll>.93 && roll<.982){
+            chunk.blocks[aboveIndex]=BLOCK.CAVE_FERN;
+          }else if(roll>=(this.caveField?.982:.996))chunk.blocks[aboveIndex]=CAVE_MUSHROOM;
         }
       }
     }
@@ -3168,6 +3187,8 @@ export class World {
     this.detailNormalMap?.dispose?.();
     this._columnCache.clear();
     this._caveNodeCache.clear();
+    this.caveField?.samples.clear();
+    this.caveField?.mouths.clear();
     this._pondCellCache.clear();
     this._forestFloorCache.clear();
     this._mountainSummitCache.clear();

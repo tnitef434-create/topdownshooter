@@ -156,7 +156,10 @@ const CinematicShader = {
       float clearDay = dayAmount * (1.0 - rainAmount) * (1.0 - caveAmount);
       float vibrance = (1.0 - smoothstep(0.05, 0.72, chroma)) * clearDay * 0.055;
       color = mix(vec3(luminance), color, mix(1.0, saturation + vibrance, strength));
-      color = (color - 0.18) * (1.0 + 0.078 * strength * (0.55 + clearDay * 0.45)) + 0.18;
+      // Outdoor contrast pivots around mid-grey. Applying that subtraction in
+      // low-light caves clipped indirect illumination to literal black.
+      float outdoorContrast = 1.0 - smoothstep(0.0, 0.15, caveAmount);
+      color = (color - 0.18) * (1.0 + 0.078 * strength * (0.55 + clearDay * 0.45) * outdoorContrast) + 0.18;
 
       float highlight = smoothstep(0.32, 1.15, luminance);
       float shadow = 1.0 - smoothstep(0.025, 0.34, luminance);
@@ -170,16 +173,14 @@ const CinematicShader = {
       color *= mix(vec3(1.0), warmLight, highlight * strength * clearDay);
       color *= mix(vec3(1.0), shadowBalance, shadow * strength * (0.3 + rainAmount * 0.7));
 
-      // Depth should remove unlit detail instead of applying a grey overlay.
-      // Bright torch/lava highlights survive, while low-luminance cave surfaces
-      // fall toward black as the player descends.
-      float caveVisibility = 0.2 + smoothstep(0.025, 0.3, luminance) * 0.8;
-      color *= mix(1.0, caveVisibility, caveAmount * 0.88);
+      // Preserve adapted shadow detail while keeping the lamp's focal light.
+      float caveVisibility = 0.78 + smoothstep(0.025, 0.3, luminance) * 0.22;
+      color *= mix(1.0, caveVisibility, caveAmount * 0.3);
 
       vec2 centeredUv = vUv * 2.0 - 1.0;
       centeredUv.x *= texelSize.y / max(texelSize.x, 0.000001);
       float edge = smoothstep(0.32, 1.45, dot(centeredUv, centeredUv));
-      float adaptiveVignette = vignette + caveAmount * 0.075 + (1.0 - dayAmount) * 0.025;
+      float adaptiveVignette = vignette + caveAmount * 0.025 + (1.0 - dayAmount) * 0.025;
       color *= 1.0 - edge * adaptiveVignette * strength;
 
       float noise = hash12(gl_FragCoord.xy + fract(time) * 173.37) - 0.5;

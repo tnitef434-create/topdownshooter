@@ -207,7 +207,8 @@ export function disposeItemModel(root) {
 }
 
 export class HeldItemView {
-  constructor(camera, atlas) {
+  constructor(camera, atlas, sceneDepth = null) {
+    this.sceneDepth = sceneDepth;
     this.camera = camera;
     this.atlas = atlas;
     this.root = new THREE.Group();
@@ -230,6 +231,51 @@ export class HeldItemView {
     this.restPosition = new THREE.Vector3(0.43, -0.43, -0.86);
     this.targetPosition = new THREE.Vector3();
     this.restRotation = new THREE.Euler(-0.1, -0.12, -0.08, 'XYZ');
+    this.prepareOverlay();
+  }
+
+  prepareOverlay() {
+    if(!this.sceneDepth)return;
+    this.root.traverse(node=>{
+      if(!node.isMesh)return;
+      node.layers.set(1);node.receiveShadow=false;
+      for(const mat of Array.isArray(node.material)?node.material:[node.material]){
+        if(mat.userData.heldOverlay)continue;
+        mat.userData.heldOverlay=true;mat.depthTest=true;mat.depthWrite=mat.opacity===1;
+        mat.transparent=mat.opacity<1;
+        mat.onBeforeCompile=shader=>{
+          for(const key of ['waterSceneDepth','waterSceneSize','waterSceneValid','waterProjectionInverse'])shader.uniforms[key]=this.sceneDepth[key];
+          shader.fragmentShader=`uniform sampler2D waterSceneDepth;
+            uniform vec2 waterSceneSize; uniform float waterSceneValid;
+            uniform mat4 waterProjectionInverse;
+`+shader.fragmentShader;
+          shader.fragmentShader=shader.fragmentShader.replace('#include <clipping_planes_fragment>',`#include <clipping_planes_fragment>
+            if(waterSceneValid>.5){
+              vec2 screenUV=gl_FragCoord.xy/waterSceneSize;
+              float terrainDepth=texture2D(waterSceneDepth,screenUV).r;
+              vec4 terrainView=waterProjectionInverse*vec4(screenUV*2.-1.,terrainDepth*2.-1.,1.);
+              if(vViewPosition.z > -terrainView.z/terrainView.w + .025)discard;
+            }`);
+        };
+        mat.customProgramCacheKey=()=> 'held-overlay-terrain-depth-v1';mat.needsUpdate=true;
+      }
+    });
+  }
+
+  render(renderer,scene) {
+    if(!this.sceneDepth||!this.root.visible)return;
+    const mask=this.camera.layers.mask,background=scene.background,fog=scene.fog;
+    const clear=renderer.autoClear,shadow=renderer.shadowMap.autoUpdate;
+    const lights=[];scene.traverse(o=>{if(o.isLight){lights.push([o,o.layers.mask]);o.layers.enable(1);}});
+    try{
+      this.camera.layers.set(1);scene.background=null;scene.fog=null;
+      renderer.autoClear=false;renderer.shadowMap.autoUpdate=false;
+      renderer.clearDepth();renderer.render(scene,this.camera);
+    }finally{
+      this.camera.layers.mask=mask;scene.background=background;scene.fog=fog;
+      renderer.autoClear=clear;renderer.shadowMap.autoUpdate=shadow;
+      for(const [light,layer] of lights)light.layers.mask=layer;
+    }
   }
 
   setItem(id) {
@@ -248,6 +294,7 @@ export class HeldItemView {
     // retain a proper first-person model.
     this.model = id && !block?.tiles ? makeToolModel(item, true) : null;
     if (this.model) this.root.add(this.model);
+    this.prepareOverlay();
     this.actionHand.visible = !this.model;
     this.itemArm.visible = Boolean(this.model && !this.model.userData.heldAssembly);
     this.root.visible = this.presentationVisible;

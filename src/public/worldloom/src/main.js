@@ -201,7 +201,8 @@ function initRenderer() {
   window.__worldloomEnvironment = environment;
   effects = new BlockEffects(scene);
   scene.add(camera);
-  heldItem = new HeldItemView(camera, atlas);
+  heldItem = new HeldItemView(camera, atlas, environment.graphicsUniforms);
+  window.__worldloomHeldItem = heldItem;
   graphicsPipeline = new GraphicsPipeline(renderer, scene, camera);
   window.__worldloomGraphics = graphicsPipeline;
   input = new InputController(canvas);
@@ -316,19 +317,16 @@ function bindInput() {
     } else if (code === 'KeyJ' && state === 'playing') {
       ui.toast(currentObjective(), 'normal', 3200);
     } else if (code === 'KeyF' && state === 'playing') {
-      if (mode === 'builder') {
-        player.flying = !player.flying;
-        if (!player.flying && player.isColliding()) settleSpawnOrWorld(player.position);
-        ui.toast(player.flying ? 'Flight enabled' : 'Flight disabled');
-        audio.ui('click');
-      } else {
-        const hit = player.raycast(4.25);
-        if (hit?.block?.id === BLOCK.BED) {
-          trySleepAtBed(hit);
-        } else if ([BLOCK.CAMP_BENCH, BLOCK.KILN, BLOCK.FURNACE, BLOCK.CHEST].includes(hit?.block?.id)) {
-          openInventory(hit.block);
-        }
-      }
+      event.preventDefault();
+      if(!event.repeat){player.headlampOn=!player.headlampOn;ui.toast(player.headlampOn?'Headlamp on':'Headlamp off');audio.ui('click');}
+    } else if (code === 'KeyG' && state === 'playing' && mode === 'builder') {
+      if(!event.repeat){player.flying=!player.flying;
+        if(!player.flying&&player.isColliding())settleSpawnOrWorld(player.position);
+        ui.toast(player.flying?'Flight enabled':'Flight disabled');}
+    } else if (code === 'KeyR' && state === 'playing') {
+      const hit=player.raycast(4.25);
+      if(hit?.block?.id===BLOCK.BED)trySleepAtBed(hit);
+      else if([BLOCK.CAMP_BENCH,BLOCK.KILN,BLOCK.FURNACE,BLOCK.CHEST].includes(hit?.block?.id))openInventory(hit.block);
     } else if (code === 'F3') {
       event.preventDefault();
       settings.showDebug = !settings.showDebug;
@@ -606,7 +604,7 @@ async function startWorld({ seed, mode: selectedMode, saveData = null }) {
   setState('playing');
   ui.showGame();
   ui.hideLoading();
-  ui.toast(mode === 'builder' ? 'Dreamweaver world ready · F toggles flight' : 'The wilds are awake · click the world to begin', 'success', 3600);
+  ui.toast(mode === 'builder' ? 'Dreamweaver world ready · G toggles flight · F headlamp' : 'The wilds are awake · click the world to begin', 'success', 3600);
   scheduleWorldWork();
   } catch (error) {
     console.error('Worldloom could not start this world.', error);
@@ -1783,7 +1781,7 @@ function updateHUD() {
     } else if (hit.block.id === BLOCK.BED) {
       target = `${block.name} · F sleep / bind respawn`;
     } else if ([BLOCK.CAMP_BENCH, BLOCK.KILN, BLOCK.FURNACE, BLOCK.CHEST].includes(hit.block.id)) {
-      target = `${block.name} · F interact`;
+      target = `${block.name} · R interact`;
     } else if (block?.unbreakable) {
       target = `${block.name} · unbreakable foundation`;
     } else {
@@ -1838,6 +1836,7 @@ function animate(now) {
     cameraPosition: camera?.position,
     playerVelocity: player?.velocity,
     playerForward: environmentViewDirection,
+    headlampEnabled: Boolean(player) && player.headlampOn !== false,
   });
   if (scene?.fog && world && player && !environment.waterView.submerged) {
     const clampedFog = clampFogToMeshedTerrain({
@@ -1887,9 +1886,11 @@ function animate(now) {
   // fully prepared world once when gameplay begins.
   if (state === 'loading') return;
   environment.waterReflection.update(dt,camera);
+  environment.waterCapture.requiresDepth=Boolean(heldItem?.presentationVisible);
   environment.waterCapture.update(camera);
   if (graphicsPipeline) graphicsPipeline.render(dt);
   else renderer.render(scene, camera);
+  heldItem?.render(renderer,scene);
 }
 
 function postToPortal(type, detail = {}) {

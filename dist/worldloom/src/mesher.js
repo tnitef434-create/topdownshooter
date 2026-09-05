@@ -253,7 +253,8 @@ function cornerLight(world, worldX, y, worldZ, face, corner, skyline) {
   const coverZ = worldZ + (normal[2] === 0 ? corner[2] * 0.999 : normal[2]);
   const coverY = skyline(coverX, coverZ);
   const coverDepth = Math.max(0, coverY - surfaceY);
-  const caveShade = coverDepthSkylight(coverDepth);
+  // Baked cover cannot turn the rock albedo black: local lamps must still light it.
+  const caveShade = 0.3 + 0.7 * coverDepthSkylight(coverDepth);
   const skyFacing = normal[1] > 0 ? 1.025 : normal[1] < 0 ? 0.92 : 1;
   return THREE.MathUtils.clamp(ambientOcclusion * caveShade * skyFacing, 0.045, 1.025);
 }
@@ -482,7 +483,7 @@ export class ChunkGeometryJob {
     const worldZ = this.originZ + z;
     const skyline = this.skylineState.sample;
 
-    if (definition?.shape === 'prop' || ['meadow-model','mushroom-model'].includes(definition?.renderMode)) {
+    if (definition?.shape === 'prop' || ['meadow-model','mushroom-model','fern-model'].includes(definition?.renderMode)) {
       // Rendered by a dedicated opaque Blender prop field, not atlas cutout quads.
       return;
     }

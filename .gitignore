@@ -59,3 +59,8 @@ users.json
 accounts.json
 accounts.json.tmp
 !.env.example
+
+!dist/worldloom/src/cave-generation.js
+!dist/worldloom/src/cave-assets.js
+!dist/worldloom/src/cave-plants.js
+!dist/worldloom/src/headlamp.js

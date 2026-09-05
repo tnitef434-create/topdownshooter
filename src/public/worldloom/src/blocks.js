@@ -37,6 +37,10 @@ export const BLOCK = Object.freeze({
   OVERGROWN_ASH_LOG: 31,
   OVERGROWN_PINE_LOG: 32,
   RED_FLOWER: 33,
+  IRON_ORE: 34,
+  DIAMOND_ORE: 35,
+  CAVE_FERN: 36,
+  CAVE_VINE: 37,
 });
 
 const TILE = Object.freeze({
@@ -83,6 +87,8 @@ const TILE = Object.freeze({
   OVERGROWN_ASH_LOG_SIDE: 40,
   OVERGROWN_PINE_LOG_SIDE: 41,
   RED_FLOWER: 42,
+  IRON_ORE: 43,
+  DIAMOND_ORE: 44,
 });
 
 const ATLAS_COLUMNS = 7;
@@ -377,7 +383,8 @@ export const BLOCKS = Object.freeze([
   }),
   defineBlock(BLOCK.FERN, {
     name: 'Feather Fern',
-    description: 'A layered woodland fern that bends with the breeze.',
+    description: 'A Blender-sculpted woodland fern with individually shaped leaves.',
+    renderMode: 'fern-model',
     hardness: 0.08,
     color: 0x4e9a55,
     tiles: { top: TILE.FERN, side: TILE.FERN, bottom: TILE.FERN },
@@ -590,6 +597,30 @@ export const BLOCKS = Object.freeze([
     alphaTest: 0.2,
     shape: 'prop',
   }),
+  defineBlock(BLOCK.IRON_ORE, {
+    name: 'Iron Ore', hardness: 3.2, color: 0xbda58b,
+    tiles: {top:TILE.IRON_ORE,side:TILE.IRON_ORE,bottom:TILE.IRON_ORE},
+    drop:BLOCK.IRON_ORE,tool:'pickaxe',opaque:true,transparent:false,
+    emissive:0,solid:true,liquid:false,
+  }),
+  defineBlock(BLOCK.DIAMOND_ORE, {
+    name: 'Diamond Ore', hardness: 4.5, color: 0x54d8df,
+    tiles: {top:TILE.DIAMOND_ORE,side:TILE.DIAMOND_ORE,bottom:TILE.DIAMOND_ORE},
+    drop:BLOCK.DIAMOND_ORE,tool:'pickaxe',opaque:true,transparent:false,
+    emissive:0,solid:true,liquid:false,
+  }),
+  defineBlock(BLOCK.CAVE_FERN, {
+    name:'Cave Fern', hardness:.08,color:0x709354,
+    tiles:{top:TILE.FERN,side:TILE.FERN,bottom:TILE.FERN},
+    drop:BLOCK.CAVE_FERN,tool:'hand',opaque:false,transparent:true,
+    emissive:0,solid:false,liquid:false,shape:'cross',renderMode:'fern-model',
+  }),
+  defineBlock(BLOCK.CAVE_VINE, {
+    name:'Hanging Cave Vine', hardness:.08,color:0x709354,
+    tiles:{top:TILE.FERN,side:TILE.FERN,bottom:TILE.FERN},
+    drop:BLOCK.CAVE_VINE,tool:'hand',opaque:false,transparent:true,
+    emissive:0,solid:false,liquid:false,shape:'cross',renderMode:'fern-model',
+  }),
 ]);
 
 export const HOTBAR_BLOCKS = Object.freeze([
@@ -763,26 +794,30 @@ function paintAtlas(context) {
     }
   });
 
-  paintTile(context, TILE.COALSTONE, (tile, random) => {
-    rect(tile, '#757a7b', 0, 0, 32, 32);
-    scatter(tile, random, ['#888e8f', '#646a6c'], 34, 1, 3);
-    scatter(tile, random, ['#24272a', '#333638', '#151719'], 25, 2, 5);
-  });
-
-  paintTile(context, TILE.COPPER_ORE, (tile, random) => {
-    rect(tile, '#7f8586', 0, 0, 32, 32);
-    scatter(tile, random, ['#969b9b', '#686f71'], 35, 1, 3);
-    scatter(tile, random, ['#bd7148', '#de8d55', '#7d9b78', '#62aa98'], 28, 2, 4);
-  });
-
-  paintTile(context, TILE.LUMEN_CRYSTAL, (tile, random) => {
-    rect(tile, '#174d51', 0, 0, 32, 32);
-    scatter(tile, random, ['#236b68', '#102f38', '#2d7772'], 32, 1, 3);
-    rect(tile, '#65ffe1', 14, 3, 4, 23);
-    rect(tile, '#b7fff3', 15, 5, 2, 15);
-    rect(tile, '#49cdbd', 7, 12, 5, 15);
-    rect(tile, '#91ffeb', 22, 8, 4, 18);
-    rect(tile, '#d7fff8', 23, 10, 1, 10);
+  for(const [tileId,palette] of [
+    [TILE.COALSTONE,['#303034','#1c1d22','#525158','#737177']],
+    [TILE.COPPER_ORE,['#714631','#ac6b43','#d69663','#efbb87']],
+    [TILE.IRON_ORE,['#706359','#aa9380','#c5ad95','#e3c9ac']],
+    [TILE.DIAMOND_ORE,['#206c79','#2caaa9','#5cded2','#b4fff0']],
+    [TILE.LUMEN_CRYSTAL,['#32676e','#439eac','#78d9dc','#c7f4ee']],
+  ])paintTile(context,tileId,(tile,random)=>{
+    rect(tile,'#787a78',0,0,32,32);
+    // A 16-pixel visual grid keeps the scale coherent with the voxel terrain.
+    for(let y=0;y<16;y++)for(let x=0;x<16;x++){
+      const shade=['#70736f','#7c7e7b','#858784','#91918b'][Math.floor(random()*4)];
+      rect(tile,shade,x*2,y*2,2,2);
+    }
+    const shapes=[[[0,1],[1,0],[1,1],[2,1],[1,2]],[[0,0],[1,0],[1,1],[2,1]],[[0,1],[1,1],[1,0],[2,0],[2,1]]];
+    for(const [gx,gy] of [[1,2],[7,1],[12,3],[4,7],[10,8],[1,12],[8,13]]){
+      const shape=shapes[Math.floor(random()*shapes.length)];
+      for(const [dx,dy] of shape){
+        const x=(gx+dx)*2,y=(gy+dy)*2;
+        rect(tile,palette[0],x,y,2,2);
+        rect(tile,palette[1],x,y,2,1);
+        if(random()>.3)rect(tile,palette[2],x,y,1,1);
+      }
+      const [dx,dy]=shape[1];rect(tile,palette[3],(gx+dx)*2,(gy+dy)*2,1,1);
+    }
   });
 
   paintTile(context, TILE.BASALT, (tile, random) => {

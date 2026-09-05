@@ -19,7 +19,7 @@ export class WaterSceneCapture {
     const renderer=this.renderer,world=this.world,u=this.uniforms;
     if(!renderer||!world){u.waterSceneValid.value=0;return;}
     const wet=[...world.chunks.values()].some(c=>c.waterMesh?.visible);
-    if(!wet){u.waterSceneValid.value=0;return;}
+    if(!wet&&!this.requiresDepth){u.waterSceneValid.value=0;return;}
     renderer.getDrawingBufferSize(this.size);
     const width=Math.max(1,Math.round(this.size.x*this.scale)),height=Math.max(1,Math.round(this.size.y*this.scale));
     if(!this.target){
@@ -29,7 +29,7 @@ export class WaterSceneCapture {
     if(this.target.width!==width||this.target.height!==height)this.target.setSize(width,height);
     this.hidden.length=0;
     this.scene.traverse(object=>{
-      if(object.visible&&(object.material===world.waterMaterial||object.userData?.skipWaterCapture||object.renderOrder>=900)){
+      if(object.visible&&((object.material&&object.material===world.waterMaterial)||object.userData?.skipWaterCapture||object.renderOrder>=900)){
         this.hidden.push(object);object.visible=false;
       }
     });

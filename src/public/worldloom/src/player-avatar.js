@@ -1,3 +1,4 @@
+import { createHeadlampModel } from './headlamp.js';
 import * as THREE from '../vendor/three.module.min.js';
 import { characterMesh, characterMaterial, disposeCharacter } from './character-rig.js';
 
@@ -102,6 +103,8 @@ export class PlayerAvatar {
       this.root.add(this[key]);
     }
     this.head = this.displayHead;
+    this.headlamp=createHeadlampModel();this.headlamp.layers.set(WORLD_AVATAR_LAYER);
+    this.headlamp.position.set(0,.13,.26);this.headlamp.scale.setScalar(1.25);this.head.add(this.headlamp);
     this.time = 0; this.gaitBlend = 0; this.actionBlend = 0; this.crouch = 0;
   }
   setSelfVisible(visible) {

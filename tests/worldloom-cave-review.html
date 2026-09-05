@@ -1,0 +1,41 @@
+<!doctype html><html><meta charset="utf-8"><title>Worldloom cave review</title>
+<style>body{margin:0;background:#132125;color:#e8ece9;font:13px system-ui}nav{height:44px;display:flex;align-items:center;gap:8px;padding:0 10px}button{padding:6px 10px;cursor:pointer}iframe{border:0;width:100vw;height:calc(100vh - 44px)}output{font-size:12px}</style>
+<nav><button id="start">Load cave world</button><button id="mouth">Entrance</button><button id="inside">Walk into cave</button><button id="deep">Deep chamber</button><button id="lamp">F · Headlamp</button><button id="fern">Fern close-up</button><button id="ores">Ore close-up</button><output id="status">Ready</output></nav>
+<iframe id="game" title="Isolated Worldloom cave test" src="/src/public/worldloom/index.html"></iframe>
+<script>
+const frame=document.querySelector('#game'),status=document.querySelector('#status');const w=()=>frame.contentWindow;
+const move=(x,y,z,yaw=0,pitch=-.12)=>{const p=w().__worldloomPlayer;if(!p)return;p.flying=true;p.yaw=yaw;p.pitch=pitch;p.setPosition(x,y,z);};
+function route(){const world=w().__worldloomWorld;return world.caveField.mouth(0,0,(x,z)=>world._macroTerrainAt(Math.floor(x),Math.floor(z)).height);}
+document.querySelector('#start').onclick=()=>{
+ w().localStorage.setItem('worldloom.settings.v1',JSON.stringify({viewDistance:3,graphicsQuality:'high',weatherEffects:false}));
+ frame.onload=()=>{frame.onload=null;const doc=w().document;const boot=setInterval(()=>{
+  if(!doc.querySelector('#loading-screen').classList.contains('hidden'))return;clearInterval(boot);
+  doc.querySelector('#seed-input').value='64';doc.querySelector('#new-world-button').click();status.textContent='Generating new caves…';
+  const ready=setInterval(()=>{if(!w().__worldloomPlayer||doc.querySelector('#hud').classList.contains('hidden')||!doc.querySelector('#loading-screen').classList.contains('hidden'))return;clearInterval(ready);document.querySelector('#mouth').click();window.caveReviewReady=true;},250);
+ },100);};w().location.reload();
+};
+document.querySelector('#mouth').onclick=()=>{const r=route(),p=r[0],q=r[4];move(p.x+(p.x-q.x)*1.6,p.y+4.3,p.z+(p.z-q.z)*1.6,Math.atan2(p.x-q.x,p.z-q.z),-.65);};
+document.querySelector('#inside').onclick=()=>{const r=route(),p=r[13],q=r[19];move(p.x,p.y-1,p.z,Math.atan2(p.x-q.x,p.z-q.z),-.1);};
+document.querySelector('#deep').onclick=()=>{
+ const world=w().__worldloomWorld;
+ let best=null;
+ for(let z=44;z<100;z+=2)for(let x=0;x<66;x+=2)for(let y=13;y<24;y++){
+  if(world.getBlock(x,y,z)!==0||world.getBlock(x,y+1,z)!==0||world.getBlock(x,y-1,z)===0)continue;
+  let score=0;for(let dz=-5;dz<=5;dz+=2)for(let dx=-5;dx<=5;dx+=2)if(world.getBlock(x+dx,y+1,z+dz)===0)score++;
+  if(!best||score>best.score)best={x,y,z,score};
+ }
+ if(best)move(best.x+.5,best.y+.1,best.z+.5,0,-.12);
+};
+document.querySelector('#lamp').onclick=()=>{for(const type of ['keydown','keyup'])w().document.dispatchEvent(new KeyboardEvent(type,{code:'KeyF',bubbles:true}));};
+document.querySelector('#fern').onclick=()=>{
+ const world=w().__worldloomWorld,p=w().__worldloomPlayer,x=50,z=42,y=world.terrainHeight(x,z)+1;
+ world.setBlock(x,y,z,20);move(x+.6,y+.25,z+1.4,0,-.8);
+};
+document.querySelector('#ores').onclick=()=>{
+ const world=w().__worldloomWorld,x=40,z=66;let y=0;
+ for(let dx=-2;dx<=6;dx++)for(let dz=-2;dz<=6;dz++)y=Math.max(y,world.terrainHeight(x+dx,z+dz));y+=4;
+ for(let dx=-2;dx<=6;dx++)for(let dz=-2;dz<=6;dz++)world.setBlock(x+dx,y-1,z+dz,3);
+ for(let i=0;i<4;i++)world.setBlock(x+i,y,z,[10,11,34,35][i]);move(x+1.9,y+.5,z+4,0,-.4);
+};
+setInterval(()=>{const e=w().__worldloomEnvironment,p=w().__worldloomPlayer;if(!p)return;status.textContent=`${p.position.x.toFixed(1)}, ${p.position.y.toFixed(1)}, ${p.position.z.toFixed(1)} · lamp ${e.headlamp.enabled?'on':'off'} · ${e.cavePlants.fields.map(f=>f.mesh.count).join('/')} plants · sky ${e.skyExposure.toFixed(2)}`;},500);
+</script></html>

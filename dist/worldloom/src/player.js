@@ -284,6 +284,7 @@ export class PlayerController {
     this.onDamage = null;
     this.onVoid = null;
     this.flying = false;
+    this.headlampOn = true;
     this._lastJumpTap = -Infinity;
     this._time = 0;
     this._wish = new THREE.Vector3();
@@ -702,6 +703,7 @@ export class PlayerController {
       health: this.health,
       stamina: this.stamina,
       flying: this.flying,
+      headlampOn: this.headlampOn,
     };
   }
 
@@ -720,6 +722,7 @@ export class PlayerController {
     this.health = Number.isFinite(state.health) ? THREE.MathUtils.clamp(state.health, 0, 1) : 1;
     this.stamina = Number.isFinite(state.stamina) ? THREE.MathUtils.clamp(state.stamina, 0, 1) : 1;
     this.flying = Boolean(state.flying);
+    this.headlampOn = state.headlampOn !== false;
     this.staminaRecoveryDelay = 0;
     this.wasGrounded = false;
     this.landingImpact = 0;

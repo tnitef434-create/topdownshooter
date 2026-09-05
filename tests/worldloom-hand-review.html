@@ -1,0 +1,30 @@
+<!doctype html><html><meta charset="utf-8"><title>Worldloom hand depth and headlamp review</title>
+<style>body{margin:0;background:#172028;color:white;font:13px system-ui}nav{position:absolute;top:8px;left:8px;display:flex;gap:6px;z-index:2}button{padding:8px}canvas{display:block}</style>
+<nav><button id="grass">Grass behind hand</button><button id="wall">Wall in front</button><button id="hand">Toggle hand</button><button id="ao">Toggle AO</button><button id="lamp">Toggle headlamp</button><button id="turn">Turn headlamp</button></nav>
+<script type="module">
+import * as THREE from '/src/public/worldloom/vendor/three.module.min.js';
+import {HeldItemView} from '/src/public/worldloom/src/viewmodel.js';
+import {WaterSceneCapture} from '/src/public/worldloom/src/water-capture.js';
+import {Headlamp} from '/src/public/worldloom/src/headlamp.js';
+import {GraphicsPipeline} from '/src/public/worldloom/src/graphics.js';
+import {GRAPHICS_PRESETS} from '/src/public/worldloom/src/save.js';
+const scene=new THREE.Scene();scene.background=new THREE.Color('#18232a');
+const camera=new THREE.PerspectiveCamera(60,1.5,.05,40);scene.add(camera);
+const renderer=new THREE.WebGLRenderer({antialias:false,preserveDrawingBuffer:true});renderer.setSize(900,600);renderer.setPixelRatio(1);renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;document.body.append(renderer.domElement);
+scene.add(new THREE.HemisphereLight(0xb5c4ca,0x6a7363,.6));
+function box(size,pos,color){const m=new THREE.Mesh(new THREE.BoxGeometry(...size),new THREE.MeshStandardMaterial({color,roughness:.9}));m.position.set(...pos);m.castShadow=true;m.receiveShadow=true;scene.add(m);return m;}
+box([12,8,.5],[0,0,-6],0x7b7b72);box([12,.5,12],[0,-1.65,-3],0x777568);
+const bars=new THREE.Group();scene.add(bars);bars.visible=false;
+for(let i=0;i<7;i++){const m=box([.027,.65,.025],[.3+i*.055,-.4,-1.2],0x4a7e2b);bars.add(m);}
+const wall=box([.8,1.2,.08],[.35,-.4,-.5],0x727773);wall.visible=false;
+const lamp=new Headlamp(scene),direction=new THREE.Vector3(0,0,-1);let lit=true,handVisible=true;
+const shared={},capture=new WaterSceneCapture(scene,renderer,shared);capture.setWorld({chunks:new Map()});capture.requiresDepth=true;
+const held=new HeldItemView(camera,null,shared);held.setItem(0);held.setVisible(true);
+const graphics=new GraphicsPipeline(renderer,scene,camera);graphics.applyProfile({...GRAPHICS_PRESETS.high,godRayStrength:0,bloomStrength:0});graphics.resize(900,600,1);
+function render(){camera.updateMatrixWorld();lamp.update(camera.position,direction,lit);held.setVisible(handVisible);capture.update(camera);graphics.render(1/60);held.render(renderer,scene);}
+document.querySelector('#grass').onclick=()=>{bars.visible=!bars.visible;render();};document.querySelector('#wall').onclick=()=>{wall.visible=!wall.visible;render();};
+document.querySelector('#hand').onclick=()=>{handVisible=!handVisible;render();};document.querySelector('#lamp').onclick=()=>{lit=!lit;render();};
+document.querySelector('#ao').onclick=()=>{graphics.gtaoPass.enabled=!graphics.gtaoPass.enabled;render();};
+document.querySelector('#turn').onclick=()=>{direction.set(.5,0,-1).normalize();render();};
+window.handReview={scene,camera,renderer,held,capture,graphics,bars,wall,lamp,render,setHand(v){handVisible=v;},setLight(v){lit=v;},direction};render();
+</script></html>
