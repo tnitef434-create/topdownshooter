@@ -5,6 +5,7 @@ export function initGameEntry() {
   if (!links.length || !overlay) return;
   let navigating = false;
   const reset = () => { navigating = false; overlay.hidden = true; };
+  window.addEventListener('pagehide', reset); // Cache the hub with its outgoing loader already cleared.
   window.addEventListener('pageshow', reset); // Back/forward cache restores the hub.
   links.forEach(link => link.addEventListener('click', (event) => {
     if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
