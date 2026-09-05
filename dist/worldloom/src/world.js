@@ -1722,11 +1722,7 @@ export class World {
     this.renderDistance = distance;
     this.detailDistance = detailDistance;
     this.streamDistance = streamDistance;
-    if (distance > detailDistance) {
-      this.distantTerrain?.request(px, pz, distance, detailDistance);
-    } else if (this.distantTerrain?.mesh || this.distantTerrain?.pending) {
-      this.distantTerrain.clear();
-    }
+    this.distantTerrain?.request(px, pz, distance, detailDistance);
 
     const directionSector = this.streamDirection.strength > 0.04
       ? ((Math.round(Math.atan2(this.streamDirection.z, this.streamDirection.x) / (Math.PI / 4)) % 8) + 8) % 8
@@ -3057,7 +3053,7 @@ export class World {
     return { version: 2, seed: this.seed, chunks, fluids };
   }
 
-  loadEdits(payload) {
+  loadEdits(payload, { onlyChanged = false } = {}) {
     if (typeof payload === 'string') {
       try {
         payload = JSON.parse(payload);
@@ -3065,6 +3061,8 @@ export class World {
         return false;
       }
     }
+    const previousEdits = onlyChanged ? new Map(this.edits) : null;
+    const previousFluids = onlyChanged ? new Map(this.fluidLevels) : null;
     this.edits.clear();
     // Cached chunks contain a materialized copy of the previous edit set.
     // Importing/replacing a save invalidates those copies atomically.
@@ -3116,9 +3114,22 @@ export class World {
       this.fluidLevels.set(voxelKey(x, y, z), level);
     }
 
-    // This also resets loaded chunks if imports happen while playing.
+    const changedFluidChunks = new Set();
+    if (onlyChanged) for (const key of new Set([...previousFluids.keys(), ...this.fluidLevels.keys()])) {
+      if (previousFluids.get(key) !== this.fluidLevels.get(key)) {
+        const {x,z}=parseVoxelKey(key);changedFluidChunks.add(chunkKey(floorDiv(x,CHUNK_SIZE),floorDiv(z,CHUNK_SIZE)));
+      }
+    }
+    // Reconnection preserves the scene and untouched chunk meshes. Only
+    // chunks whose authoritative edit/fluid state changed need regeneration.
     for (const chunk of this.chunks.values()) {
-      if (chunk.generated) this._generateChunk(chunk);
+      if (!chunk.generated) continue;
+      const before=previousEdits?.get(chunk.key), after=this.edits.get(chunk.key);
+      const unchanged=onlyChanged && (before?.size||0)===(after?.size||0)
+        && [...(before||[])].every(([index,id])=>after?.get(index)===id)
+        && !changedFluidChunks.has(chunk.key);
+      if (!unchanged) this._generateChunk(chunk);
+      else this._activateChunkFluids(chunk, after);
     }
     this.editRevision++;
     this._refreshStats();

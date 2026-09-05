@@ -52,3 +52,19 @@
 .account-dialog .world-invite-fields input:focus { border-color: #ff6339; outline: 2px solid #ff6339; outline-offset: 2px; }
 .account-dialog .world-invite-fields p { margin: 14px 0 18px; color: #c8b9af; font: 400 13px/1.6 Arial, sans-serif; }
 .account-dialog #account-context .account-primary { font-size: 13px; }
+
+/* Keep the frame and tab bar still while short/long sections change inside. */
+.account-dialog{position:fixed;inset:0;margin:auto;box-sizing:border-box;width:min(656px,calc(100vw - 32px));height:min(820px,calc(100svh - 32px));max-width:none;max-height:none;padding:34px 38px;overflow:hidden}
+.account-dialog[open]{display:flex;flex-direction:column;animation:account-enter 260ms cubic-bezier(.2,.75,.25,1)}
+.account-dialog *{box-sizing:border-box}
+.account-dialog>.account-brand,.account-dialog>h2,.account-dialog>#account-intro{flex-shrink:0}
+.account-body{min-height:0;flex:1;overflow-y:auto;scrollbar-gutter:stable;padding:0 6px 2px 0;margin-top:4px}
+#account-profile{display:flex;flex-direction:column;min-height:100%}
+.account-tabs{flex-shrink:0;position:sticky;top:0;z-index:1}
+.account-tabs button{transition:background-color 180ms ease,color 180ms ease}
+.account-panels{flex:1}
+#account-logout{flex-shrink:0;margin:24px auto 4px;padding:8px 18px}
+.account-dialog .account-primary{transition:background-color 180ms ease,transform 180ms ease}
+@keyframes account-enter{from{opacity:0;transform:translateY(12px) scale(.985)}to{opacity:1;transform:translateY(0) scale(1)}}
+@media(max-width:700px){.account-dialog{padding:26px 22px;height:calc(100svh - 24px);width:calc(100vw - 24px)}.account-body{padding-right:3px}}
+@media(prefers-reduced-motion:reduce){.account-dialog[open]{animation:none}.account-tabs button,.account-dialog .account-primary{transition:none}}

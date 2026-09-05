@@ -69,13 +69,24 @@ export function initHubAccount({trigger=document.querySelector('#open-account'),
     }
     render();
   }
-  function open({tab}={}) {
+  let closing=null;
+  function close() {
+    if(!dialog.open||closing)return;
+    if(matchMedia('(prefers-reduced-motion: reduce)').matches){dialog.close();return;}
+    const animation=dialog.animate([{opacity:1,transform:'translateY(0)'},{opacity:0,transform:'translateY(8px)'}],{duration:160,easing:'ease-in',fill:'forwards'});
+    closing=animation;
+    animation.finished.then(()=>{if(closing===animation){dialog.close();closing=null;animation.cancel();}}).catch(()=>{});
+  }
+  function open({tab,mode:requestedMode}={}) {
+    if(closing){closing.cancel();closing=null;}
+    if(!session.user&&['login','register'].includes(requestedMode))mode=requestedMode;
     if(tab)worlds.showTab(tab);
     render();notify();if(!dialog.open)dialog.showModal();restore();worlds.refresh(true);
   }
   trigger?.addEventListener('click',()=>open());
-  dialog.querySelector('#account-close').addEventListener('click',()=>dialog.close());
-  dialog.addEventListener('click',event=>{if(event.target===dialog){const r=dialog.getBoundingClientRect();if(event.clientX<r.left||event.clientX>r.right||event.clientY<r.top||event.clientY>r.bottom)dialog.close();}});
+  dialog.querySelector('#account-close').addEventListener('click',close);
+  dialog.addEventListener('cancel',event=>{event.preventDefault();close();});
+  dialog.addEventListener('click',event=>{if(event.target===dialog){const r=dialog.getBoundingClientRect();if(event.clientX<r.left||event.clientX>r.right||event.clientY<r.top||event.clientY>r.bottom)close();}});
   dialog.addEventListener('close',()=>{
     password.value='';confirm.value='';
     const url=new URL(location.href);url.searchParams.delete('account');url.searchParams.delete('return');history.replaceState(null,'',url);
@@ -119,5 +130,5 @@ export function initHubAccount({trigger=document.querySelector('#open-account'),
   });
   render();
   if(autoOpen&&params.has('account'))open();else restore();
-  return {open,close:()=>dialog.close(),dialog};
+  return {open,close,dialog};
 }

@@ -1,0 +1,52 @@
+import puppeteer from 'puppeteer';
+import assert from 'node:assert/strict';
+const base=process.env.HUB_TEST_URL||'http://127.0.0.1:4187/';
+if(!['localhost','127.0.0.1'].includes(new URL(base).hostname))throw new Error('Use a local preview.');
+const browser=await puppeteer.launch({executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true,args:['--no-sandbox']});
+const wait=ms=>new Promise(r=>setTimeout(r,ms));
+const user={id:'9cf624a3-5e77-4188-812a-8c82039a832d',email:'menu-check@example.invalid',displayName:'Player',emailVerified:true,credits:0,friendCode:null};
+try {
+  const page=await browser.newPage(), errors=[];
+  page.on('pageerror',e=>errors.push(e.message));
+  await page.setViewport({width:1440,height:1000});
+  await page.emulateMediaFeatures([{name:'prefers-reduced-motion',value:'no-preference'}]);
+  await page.evaluateOnNewDocument(user=>{localStorage.setItem('tacticstrike_account_session','isolated-ui-fixture');localStorage.setItem('tacticstrike_account_user',JSON.stringify(user));},user);
+  await page.setRequestInterception(true);
+  page.on('request',request=>{
+    const url=new URL(request.url());
+    if(url.pathname==='/api/auth/me'||url.pathname==='/api/worlds'){
+      request.respond({status:request.method()==='OPTIONS'?204:200,contentType:'application/json',headers:{'Access-Control-Allow-Origin':new URL(base).origin,'Access-Control-Allow-Headers':'Content-Type, Authorization','Access-Control-Allow-Methods':'GET, POST, OPTIONS'},body:request.method()==='OPTIONS'?'':JSON.stringify(url.pathname.endsWith('/me')?{user}:{worlds:[],invites:[],limit:10})});
+    }else request.continue();
+  });
+  await page.goto(base);
+  await page.waitForFunction(()=>[...document.querySelectorAll('.film')].length===2&&[...document.querySelectorAll('.film')].every(v=>!v.paused&&v.currentTime>.5));
+  assert.equal(await page.$eval('#tacticstrike-film',v=>v.videoWidth),1800);
+  await page.click('#open-account');await wait(320);
+  const rect=()=>page.$eval('#hub-account',e=>{const r=e.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height};});
+  const initial=await rect();
+  await page.screenshot({path:'../../outputs/account-stable-profile.png'});
+  await page.click('#tab-worlds');
+  assert.deepEqual(await rect(),initial,'tab content must not resize or recenter the frame');
+  assert.ok(await page.$eval('#world-library',e=>e.getAnimations().length>0),'tab content transitions inside the fixed frame');
+  await wait(270);await page.screenshot({path:'../../outputs/account-stable-worlds.png'});
+  await page.click('#tab-invites');await wait(260);assert.deepEqual(await rect(),initial);
+  await page.keyboard.press('Escape');await page.waitForFunction(()=>!document.querySelector('#hub-account').open);
+  await page.goto(new URL('/tacticstrike/?shop=credits',base).href);
+  await page.waitForFunction(()=>!document.querySelector('#startup-overlay'));
+  await page.waitForFunction(()=>document.querySelector('#credit-shop-modal').classList.contains('active'));
+  await page.click('#credit-shop-account-status');await page.waitForSelector('#hub-account[open]');await wait(320);
+  assert.match(new URL(page.url()).pathname,/^\/tacticstrike\/$/);
+  assert.equal(await page.$eval('#account-email',e=>e.textContent),user.email);
+  assert.deepEqual(await rect(),initial,'the shooter account must use the same centered frame');
+  await page.screenshot({path:'../../outputs/tacticstrike-account-in-place.png'});
+  await page.click('#account-return');await page.waitForFunction(()=>!document.querySelector('#hub-account').open);
+  assert.equal(await page.$eval('#credit-shop-modal',e=>e.classList.contains('active')),true);
+  assert.equal(new URL(page.url()).pathname,'/tacticstrike/');
+  await page.setViewport({width:390,height:844});await page.click('#credit-shop-account-status');await wait(320);
+  console.log('Mobile account bounds:',await rect());
+  await page.screenshot({path:'../../outputs/account-stable-mobile.png'});
+  assert.ok(await page.$eval('#hub-account',e=>{const r=e.getBoundingClientRect();return Math.abs(r.left-12)<1&&Math.abs(r.top-12)<1&&r.right<=innerWidth&&r.bottom<=innerHeight;}));
+  await page.screenshot({path:'../../outputs/account-stable-mobile.png'});
+  assert.deepEqual(errors,[]);
+  console.log(JSON.stringify({passed:true,bothFilms:true,fixedAccountFrame:true,tabMotion:true,shooterAccountInPlace:true,mobile:true}));
+}finally{await browser.close();}

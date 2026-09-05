@@ -34,6 +34,7 @@ import { cameraFarForViewDistance } from './streaming-config.js';
 import { saveAndReturn } from './portal.js';
 import { SharedWorldClient, createSavedWorld } from './multiplayer.js';
 import { readAccountSession } from '../../account-client.js';
+import { waitForMenuAnimation } from '../../menu-entry.js';
 
 const canvas = document.getElementById('game');
 const ui = new UI();
@@ -307,6 +308,7 @@ function bindInput() {
     }
   };
   input.onKeyDown = (code, event) => {
+    if(sharedWorld&&!sharedWorld.ready&&code!=='Escape')return;
     if (code === 'Escape') {
       if (state === 'inventory') {
         event.preventDefault();
@@ -353,7 +355,7 @@ function bindInput() {
       hasHeldPointer = true;
       initialClickHint = false;
       ui.hidePause();
-    } else if (hasHeldPointer && state === 'playing' && !transitioning) {
+    } else if (hasHeldPointer && state === 'playing' && !transitioning && (!sharedWorld||sharedWorld.ready)) {
       attackGesture = false;
       suppressMining = 0;
       resetMining();
@@ -1111,6 +1113,28 @@ function saveSnapshot() {
   };
 }
 
+async function resumeSharedWorld(snapshot) {
+  if (!world || snapshot.save.seed !== world.seed || snapshot.save.generatorVersion !== world.generatorVersion) {
+    throw new Error('The saved world version changed. Reopen it from your account.');
+  }
+  // Keep the same world, player, camera and visible frame throughout recovery.
+  world.loadEdits(snapshot.save.world, {onlyChanged:true});
+  if(snapshot.save.player)player.loadState(snapshot.save.player);
+  if(snapshot.save.inventory)inventory.load(snapshot.save.inventory);
+  flags={...(snapshot.save.flags||{})};
+  survival=new SurvivalSystem(snapshot.save.survival);
+  objectiveIndex=objectiveIndexFromSave(snapshot.save);
+  if(Array.isArray(snapshot.save.respawnPoint))spawnPoint.fromArray(snapshot.save.respawnPoint);
+  if(Number.isFinite(snapshot.save.timeOfDay))environment.time=snapshot.save.timeOfDay;
+  clearDroppedItems();refreshInventoryUI();checkObjectives(true);
+  input.clear();attackGesture=false;resetMining();
+  let slice=0;
+  while(world.stats.dirty>0){
+    world.rebuildDirty(1,12,{completeChunks:true});
+    if(++slice%2===0)await yieldLoadingWork();
+  }
+}
+
 function saveGame(showToast = false) {
   if(sharedWorld){
     sharedWorld.flush(true).then(()=>{if(showToast)ui.toast('World saved to your account','success');}).catch(error=>{if(showToast)ui.toast(error.message,'error',4500);});
@@ -1584,13 +1608,14 @@ function damagePlayer(amount, sourcePosition, combat = null) {
 }
 
 function scheduleWorldWork() {
+  if(sharedWorld&&!sharedWorld.ready)return;
   if (worldWorkScheduled || !world) return;
   const scheduledWorld = world;
   const token = worldWorkToken;
   worldWorkScheduled = true;
   const work = (deadline = null) => {
     worldWorkScheduled = false;
-    if (!world || world !== scheduledWorld || token !== worldWorkToken) return;
+    if (!world || world !== scheduledWorld || token !== worldWorkToken || (sharedWorld && !sharedWorld.ready)) return;
     const timedOut = Boolean(deadline?.didTimeout);
     const startedAt = performance.now();
     const inputPendingAtStart = navigator.scheduling?.isInputPending?.() === true;
@@ -1867,6 +1892,9 @@ function animate(now) {
   requestAnimationFrame(animate);
   const dt = Math.min(0.05, Math.max(0, (now - lastTime) / 1000));
   lastTime = now;
+  // Do not advance physics, daylight, particles, viewmodels or render targets
+  // during an outage. The last finished frame stays up while the client syncs.
+  if(sharedWorld&&!sharedWorld.ready&&world)return;
   frameCounter++;
   fpsTime += dt;
   if (fpsTime >= 0.5) {
@@ -1940,6 +1968,7 @@ function animate(now) {
   // repeatedly drawing a half-built 441-chunk scene behind it; publish the
   // fully prepared world once when gameplay begins.
   if (state === 'loading') return;
+  world?.distantTerrain?.updateWaterCoverage();
   environment.waterReflection.update(dt,camera);
   environment.waterCapture.requiresDepth=Boolean(heldItem?.presentationVisible);
   environment.waterCapture.update(camera);
@@ -1981,6 +2010,8 @@ async function boot() {
     await new Promise((resolve) => requestAnimationFrame(resolve));
     setState('menu');
     ui.showMain();
+    await waitForMenuAnimation(ui.elements.loading);
+    ui.elements.loadingText.textContent = 'Ready when you are.';
     ui.hideLoading();
     postToPortal('ready', { version: 2 });
     requestAnimationFrame(animate);
@@ -1990,9 +2021,14 @@ async function boot() {
     if(worldId){
       const status=document.getElementById('shared-world-status');
       sharedWorld=new SharedWorldClient(worldId,{scene,atlas,getSnapshot:saveSnapshot,
-        onStatus:message=>{status.textContent=message;status.hidden=!message;if(message)document.exitPointerLock?.();},
+        onStatus:message=>{
+          status.textContent=message;status.hidden=!message;
+          if(message&&world){input.clear();attackGesture=false;resetMining();audio.setPaused(true);}
+          if(!message){input.clear();audio.setPaused(!['playing','inventory'].includes(state));scheduleWorldWork();}
+        },
         onClosed:message=>{status.hidden=false;status.textContent=message;pauseGame();},
         onLoad:async snapshot=>{await startWorld({seed:snapshot.save.seed,mode:snapshot.save.mode,saveData:snapshot.save});if(!world)throw new Error('The world could not start.');},
+        onResume:resumeSharedWorld,
         onInventory:data=>{inventory.load(data);refreshInventoryUI();checkObjectives();},
         onDrop:drop=>{
           if(droppedItems.some(item=>item.networkId===drop.key))return;

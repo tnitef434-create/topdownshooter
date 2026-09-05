@@ -25,12 +25,14 @@ export function detailedStreamDistance(viewDistance) {
 }
 
 export function distantHorizonRadius(viewDistance) {
-  return (normalizeViewDistance(viewDistance) + DISTANT_HORIZON_BUFFER_CHUNKS)
-    * CHUNK_WORLD_SIZE;
+  // A complete low-cost surface horizon lets clear air stay clear, even when
+  // the selected quality keeps nearby cave/physics chunks conservative.
+  return Math.max(768, (normalizeViewDistance(viewDistance) + DISTANT_HORIZON_BUFFER_CHUNKS)
+    * CHUNK_WORLD_SIZE * 3);
 }
 
 export function cameraFarForViewDistance(viewDistance) {
-  // Keep the camera comfortably behind both the clear-air fog plane and the
-  // final horizon skirt. Lower settings retain the established 320m far plane.
-  return Math.max(320, distantHorizonRadius(viewDistance) + 32);
+  // Keep the far clip inside the fully drawn landscape, including drift to
+  // the next chunk boundary while the next horizon is prepared.
+  return distantHorizonRadius(viewDistance) - 64;
 }

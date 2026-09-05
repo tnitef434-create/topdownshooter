@@ -41,6 +41,7 @@ try {
   await page.type('#invite-code','0427');
   await page.screenshot({path:'../../outputs/worldloom-account-popup.png'});
   await page.click('#account-context .account-primary');
+  await page.waitForFunction(()=>!document.querySelector('#hub-account').open);
   assert.equal(await page.$eval('#hub-account',e=>e.open),false);
   assert.equal(await page.$eval('#invite-code',e=>e.value),'0427');
   assert.equal(await page.$eval('#world-name',e=>e.value),'Keep my meadow');
@@ -56,6 +57,7 @@ try {
   assert.equal(await page.evaluate(()=>document.activeElement.id),'world-account-button');
   await page.click('#world-account-button');
   await page.click('#world-library a[href="/worldloom/"]');
+  await page.waitForFunction(()=>!document.querySelector('#hub-account').open);
   assert.equal(page.url(),url);
   assert.equal(await page.$eval('#hub-account',e=>e.open),false);
   assert.equal(await page.evaluate(()=>document.activeElement.id),'world-name');

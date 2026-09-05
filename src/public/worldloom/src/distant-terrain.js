@@ -7,7 +7,7 @@ import {
 
 const CHUNK_SIZE = 16;
 const NEAR_SAMPLE_STEP = 4;
-const FAR_SAMPLE_STEP = 8;
+const FAR_SAMPLE_STEP = 16;
 const NEAR_BAND_RADIUS = 8 * CHUNK_SIZE;
 const CORE_HOLE_CHUNKS = 3;
 const SURFACE_OFFSET = 0.2;
@@ -153,6 +153,9 @@ function createJob(spec) {
     positions: new Float32Array(vertexCapacity * 3),
     normals: new Float32Array(vertexCapacity * 3),
     colors: new Float32Array(vertexCapacity * 3),
+    waterPositions: new Float32Array(vertexCapacity * 3),
+    waterData: new Float32Array(vertexCapacity * 3),
+    waterCursor: 0,
     vertexCursor: 0,
     sampledColumns: 0,
     startedAt: nowMilliseconds(),
@@ -194,6 +197,17 @@ function writeTriangle(job, a, b, c) {
   }
 }
 
+function writeWaterTriangle(job, points) {
+  const wet=points.filter(p=>Number.isFinite(p.waterLevel));
+  if(!wet.length)return;
+  const level=Math.max(...wet.map(p=>p.waterLevel));
+  for(const p of points){
+    const offset=job.waterCursor++*3, depth=Math.max(0,level-p.bedHeight);
+    job.waterPositions.set([p.x,level+.92,p.z],offset);
+    job.waterData.set([Math.max(.25,depth),0,Math.min(1,depth/3)],offset);
+  }
+}
+
 /**
  * Incremental low-poly terrain beyond the detailed voxel core.
  *
@@ -229,6 +243,10 @@ export class DistantTerrainHorizon {
       polygonOffsetFactor: 1,
       polygonOffsetUnits: 1,
     });
+    this.waterCoverage=new THREE.DataTexture(new Uint8Array(32*32),32,32,THREE.RedFormat);
+    this.waterCoverage.magFilter=this.waterCoverage.minFilter=THREE.NearestFilter;
+    this.waterCoverage.needsUpdate=true;
+    this.coverageOrigin=new THREE.Vector2();
 
     this._requested = null;
     this._pending = null;
@@ -359,6 +377,8 @@ export class DistantTerrainHorizon {
     this._pending = null;
     if (this._published?.mesh) this.group.remove(this._published.mesh);
     this._published?.geometry?.dispose?.();
+    this._published?.waterMesh?.removeFromParent();
+    this._published?.waterGeometry?.dispose();
     this._published = null;
   }
 
@@ -384,22 +404,19 @@ export class DistantTerrainHorizon {
       info = { biome };
     }
     const seaLevel = finiteNumber(this.world?.seaLevel, 32);
-    const pondLevel = Number(info?.pondWaterLevel);
+    // Null means dry land, not a water surface at elevation zero.
+    const pondLevel = info?.pondWaterLevel;
     const waterLevel = Number.isFinite(pondLevel)
       ? pondLevel
       : height < seaLevel
         ? seaLevel
         : null;
-    const color = waterLevel == null
-      ? columnColor(info, height, worldX, worldZ)
-      : {
-        r: WATER_COLOR.r * (0.94 + coordinateNoise(worldX, worldZ) * 0.05),
-        g: WATER_COLOR.g * (0.94 + coordinateNoise(worldX, worldZ) * 0.05),
-        b: WATER_COLOR.b * (0.96 + coordinateNoise(worldX, worldZ) * 0.035),
-      };
+    const color = columnColor(info, height, worldX, worldZ);
     const sample = {
       x: localX,
-      y: (waterLevel == null ? height + 1 : waterLevel + 0.84) - this.surfaceOffset,
+      y: height + 1 - this.surfaceOffset,
+      bedHeight: height,
+      waterLevel,
       z: localZ,
       r: color.r,
       g: color.g,
@@ -429,6 +446,8 @@ export class DistantTerrainHorizon {
       // Counter-clockwise in X/Z so even extremely steep facets face upward.
       writeTriangle(job, a, d, c);
       writeTriangle(job, a, c, b);
+      writeWaterTriangle(job,[a,d,c]);
+      writeWaterTriangle(job,[a,c,b]);
     }
 
     band.column++;
@@ -473,11 +492,41 @@ export class DistantTerrainHorizon {
     mesh.userData.requestKey = job.key;
 
     this.group.add(mesh);
+    const waterGeometry=new THREE.BufferGeometry();
+    waterGeometry.setAttribute('position',new THREE.BufferAttribute(job.waterPositions.slice(0,job.waterCursor*3),3));
+    waterGeometry.setAttribute('waterData',new THREE.BufferAttribute(job.waterData.slice(0,job.waterCursor*3),3));
+    const waterNormals=new Float32Array(job.waterCursor*3);
+    for(let i=1;i<waterNormals.length;i+=3)waterNormals[i]=1;
+    waterGeometry.setAttribute('normal',new THREE.BufferAttribute(waterNormals,3));
+    waterGeometry.computeBoundingSphere();
+    if(!this.waterMaterial){
+      this.waterMaterial=this.world?.waterMaterial?.clone()||new THREE.MeshStandardMaterial({color:WATER_COLOR});
+      this.waterMaterial.name='Distant moving water';
+      this.waterMaterial.onBeforeCompile=shader=>{
+        if(!this.world?.waterMaterial?.userData.worldloomEnhanced)return;
+        this.world?.waterMaterial?.onBeforeCompile(shader);
+        shader.uniforms.distantCoverage={value:this.waterCoverage};
+        shader.uniforms.distantCoverageOrigin={value:this.coverageOrigin};
+        shader.fragmentShader=shader.fragmentShader.replace('#include <common>',`#include <common>
+          uniform sampler2D distantCoverage;uniform vec2 distantCoverageOrigin;`)
+          .replace('#include <clipping_planes_fragment>',`#include <clipping_planes_fragment>
+            vec2 coverageCell=floor(vWaterPosition.xz/16.)-distantCoverageOrigin;
+            if(all(greaterThanEqual(coverageCell,vec2(0.)))&&all(lessThan(coverageCell,vec2(32.)))&&texture2D(distantCoverage,(coverageCell+.5)/32.).r>.5)discard;`);
+      };
+      this.waterMaterial.customProgramCacheKey=()=> 'worldloom-distant-water-v1';
+    }
+    const waterMesh=new THREE.Mesh(waterGeometry,this.waterMaterial);
+    waterMesh.name='Worldloom distant moving water';waterMesh.position.copy(mesh.position);
+    waterMesh.userData.skipWaterCapture=true;waterMesh.userData.skipWaterReflection=true;
+    waterMesh.renderOrder=2;
+    this.group.add(waterMesh);
+    this.updateWaterCoverage();
     const previous = this._published;
     this._published = {
       ...job,
       mesh,
       geometry,
+      waterMesh,waterGeometry,
       vertices: job.vertexCursor,
       triangles: job.vertexCursor / 3,
       cells: job.vertexCursor / 6,
@@ -486,9 +535,26 @@ export class DistantTerrainHorizon {
     if (previous?.mesh) {
       this.group.remove(previous.mesh);
       previous.geometry?.dispose?.();
+      previous.waterMesh?.removeFromParent();previous.waterGeometry?.dispose();
     }
     this._stats.publishedBuilds++;
     this._stats.lastBuildMilliseconds = Math.max(0, nowMilliseconds() - job.startedAt);
+  }
+
+  updateWaterCoverage(){
+    // Only the completed voxel surface owns nearby water. A small coverage
+    // texture prevents double blending while strips of chunks arrive or leave.
+    const chunks=[...(this.world?.chunks?.values()||[])];
+    if(!chunks.length)return;
+    const x=Math.min(...chunks.map(c=>c.cx)),z=Math.min(...chunks.map(c=>c.cz));
+    const next=new Uint8Array(32*32);
+    for(const c of chunks)if(c.generated&&c.opaqueMesh?.visible){
+      const dx=c.cx-x,dz=c.cz-z;if(dx<32&&dz<32)next[dx+dz*32]=255;
+    }
+    const data=this.waterCoverage.image.data;
+    if(this.coverageOrigin.x!==x||this.coverageOrigin.y!==z||next.some((v,i)=>v!==data[i])){
+      this.coverageOrigin.set(x,z);data.set(next);this.waterCoverage.needsUpdate=true;
+    }
   }
 
   /**
@@ -529,8 +595,10 @@ export class DistantTerrainHorizon {
     this._pending = null;
     if (this._published?.mesh) this.group.remove(this._published.mesh);
     this._published?.geometry?.dispose?.();
+    this._published?.waterMesh?.removeFromParent();this._published?.waterGeometry?.dispose();
     this._published = null;
     this.material?.dispose?.();
+    this.waterMaterial?.dispose();this.waterCoverage.dispose();
     this.group.removeFromParent?.();
     this.scene = null;
     this.world = null;

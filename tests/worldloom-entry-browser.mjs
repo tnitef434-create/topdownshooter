@@ -41,8 +41,12 @@ try {
   const after=await page.screenshot({path:'../../outputs/worldloom-loading-motion.png'});
   assert.notDeepEqual(before,after,'the U must visibly move while the game module is still loading');
   assert.equal(await page.$eval('#loading-screen',e=>getComputedStyle(e).backgroundColor),'rgb(9, 9, 9)');
+  const worldMotion=await page.$eval('.u-loading__runner',e=>({duration:getComputedStyle(e).animationDuration,path:getComputedStyle(e).offsetPath}));
+  assert.equal(await page.$eval('.loading-track',e=>getComputedStyle(e).display),'none');
+  await page.evaluate(()=>new MutationObserver(()=>{if(document.querySelector('#loading-screen').classList.contains('hidden'))window.menuRevealTime=performance.now();}).observe(document.querySelector('#loading-screen'),{attributes:true}));
   await module.continue();
   await page.waitForFunction(()=>document.querySelector('#loading-screen')?.classList.contains('hidden'),{timeout:90000});
+  assert.ok(await page.evaluate(()=>window.menuRevealTime>=4400),'the full U cycle is visible before revealing the menu');
   await page.screenshot({path:'../../outputs/worldloom-menu-readable.png'});
   await page.click('.world-invite summary');
   await page.waitForSelector('#hub-account[open] #invite-code',{visible:true});
@@ -74,7 +78,7 @@ try {
   await phone.goto(base,{waitUntil:'domcontentloaded'});
   await phone.waitForFunction(()=>document.querySelector('#worldloom-film').currentTime>.1,{timeout:30000});
   assert.deepEqual(await phone.$eval('#worldloom-film',v=>[v.videoWidth,v.videoHeight,v.muted,v.loop]),[900,1000,true,true]);
-  assert.ok(phoneVideos.length>0 && phoneVideos.every(url=>url.endsWith('worldloom-loop-mobile.mp4')),'phones only fetch the smaller gameplay encode');
+  assert.ok(phoneVideos.length>0 && phoneVideos.every(url=>url.endsWith('-loop-mobile.mp4')),'phones only fetch the smaller gameplay encodes');
   await phone.close();
 
   await page.emulateMediaFeatures([{name:'prefers-reduced-motion',value:'reduce'}]);
@@ -121,10 +125,13 @@ try {
   const shooterModule=await shooterHeld;
   assert.equal(shooterPaint,'TacticStrike');
   await shooter.waitForSelector('#startup-overlay .u-loading__runner');
+  assert.deepEqual(await shooter.$eval('.u-loading__runner',e=>({duration:getComputedStyle(e).animationDuration,path:getComputedStyle(e).offsetPath})),worldMotion,'both games use identical U movement');
+  await shooter.evaluate(()=>new MutationObserver(()=>{if(!document.querySelector('#startup-overlay'))window.menuRevealTime=performance.now();}).observe(document.body,{childList:true}));
   const shot=await shooter.screenshot({path:'../../outputs/tacticstrike-u-loading.png'});await pause(900);
   assert.notDeepEqual(await shooter.screenshot({path:'../../outputs/tacticstrike-u-loading-motion.png'}),shot,'TacticStrike animates the same U during download');
   await shooterModule.continue();
   await shooter.waitForFunction(()=>!document.querySelector('#startup-overlay'),{timeout:15000});
+  assert.ok(await shooter.evaluate(()=>window.menuRevealTime>=4400));
   assert.equal(await shooter.$eval('body',e=>e.classList.contains('is-starting')),false);
   await shooter.goBack({waitUntil:'domcontentloaded'});
   assert.equal(await shooter.$eval('#worldloom-transition',e=>e.hidden),true);

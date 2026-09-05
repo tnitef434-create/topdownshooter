@@ -17,6 +17,7 @@
 .u-loading.fade-out { opacity: 0; visibility: hidden; pointer-events: none; }
 .startup-overlay.u-loading { z-index: 120000; }
 .u-loading[data-phase="world"] .u-loading__mark { display: none; }
+.u-loading:not([data-phase="world"]) .loading-track { display: none; }
 .u-loading__content { width: min(360px, calc(100vw - 56px)); }
 .u-loading__mark { display: block; width: 142px; height: 142px; margin: 0 auto 30px; }
 .u-loading__title {
@@ -55,15 +56,15 @@
   offset-path: path('M28.5 11L27 20v3c0 6-4 9-9 9s-9-3-9-9V8');
   offset-anchor: 0px 0px;
   offset-rotate: 0deg;
-  animation: u-travel 3.4s cubic-bezier(.45,0,.2,1) infinite alternate;
+  animation: u-travel 2.2s cubic-bezier(.45,0,.2,1) infinite alternate;
 }
-.u-loading__trail { animation: u-trace 3.4s cubic-bezier(.45,0,.2,1) infinite alternate; }
+.u-loading__trail { animation: u-trace 2.2s cubic-bezier(.45,0,.2,1) infinite alternate; }
 .u-loading__rest { display: none; }
 @keyframes u-travel { from { offset-distance: 0%; } to { offset-distance: 100%; } }
 @keyframes u-trace { from { stroke-dashoffset: 18; } to { stroke-dashoffset: -98; } }
 /* The user explicitly wants this small loading indicator to keep moving.
    Override the game's global reduced-motion rules only for these two paths. */
 .u-loading .u-loading__runner, .u-loading .u-loading__trail {
-  animation-duration: 3.4s !important;
+  animation-duration: 2.2s !important;
   animation-iteration-count: infinite !important;
 }

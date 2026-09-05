@@ -1,5 +1,6 @@
 import { io } from 'socket.io-client';
 import { Engine } from './game/Engine.js';
+import { waitForMenuAnimation } from './public/menu-entry.js';
 import { ACCOUNT_SESSION_KEY, ACCOUNT_USER_CACHE_KEY, readAccountSession, removeAccountSession, getBackendUrl, accountRequest } from './account-session.js';
 
 // Safe localStorage wrapper to prevent crash if disabled in browser
@@ -29,7 +30,6 @@ const safeStorage = {
 };
 
 const ADMIN_SESSION_KEY = 'tacticstrike_admin_session';
-const startupBeganAt = performance.now();
 
 let accountSession = readAccountSession();
 let accountAuthPending = Boolean(accountSession.token);
@@ -59,14 +59,13 @@ setTimeout(() => {
 }, 6500);
 
 async function finishStartupSequence(accountRestore) {
-  const minimumDelay = Math.max(0, 1350 - (performance.now() - startupBeganAt));
   const authWait = accountSession.token && !accountSession.user
     ? Promise.race([Promise.resolve(accountRestore), wait(3600)])
     : Promise.resolve();
 
-  await Promise.all([wait(minimumDelay), authWait]);
+  await Promise.all([waitForMenuAnimation(document.getElementById('startup-overlay')), authWait]);
   const status = document.getElementById('startup-status');
-  if (status) status.textContent = accountSession.user ? 'OPERATIVE SESSION READY' : 'SYSTEMS ONLINE';
+  if (status) status.textContent = 'Ready when you are.';
   await wait(140);
   dismissStartupOverlay();
 }
@@ -3474,9 +3473,25 @@ function clearAccountSession() {
   updateAccountUI();
 }
 
-function openHubAccount(mode = 'login', destination = 'credits') {
-  const params = new URLSearchParams({account:mode === 'register' ? 'register' : 'login', return:destination === 'support' ? 'support' : 'credits'});
-  location.assign(`/?${params}`);
+let accountPanelPromise, accountReturnDestination = 'credits';
+async function openHubAccount(mode = 'login', destination = 'credits') {
+  accountReturnDestination = destination;
+  try {
+    accountPanelPromise ||= import('./public/account/dialog-controller.js').then(({initHubAccount})=>{
+      const panel=initHubAccount({autoOpen:false,onSessionChange:session=>{accountSession=session;accountAuthPending=false;updateAccountUI();}});
+      panel.dialog.querySelector('#account-return').addEventListener('click',event=>{
+        event.preventDefault();panel.close();
+        if(accountReturnDestination==='support')document.getElementById('btn-open-purchase-support')?.click();
+        else openCreditShopModal();
+      });
+      return panel;
+    }).catch(error=>{accountPanelPromise=null;throw error;});
+    const panel=await accountPanelPromise;
+    panel.open({tab:'profile',mode});
+  } catch {
+    const label=document.querySelector('#credit-shop-account-status span:last-child');
+    if(label)label.textContent='RETRY ACCOUNT';
+  }
 }
 
 function initAccountAuth() {

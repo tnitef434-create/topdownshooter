@@ -6,7 +6,7 @@ initHubMotion();
 initHubAccount();
 initGameEntry();
 
-const film = document.querySelector('#worldloom-film');
+for (const film of document.querySelectorAll('#worldloom-film, #tacticstrike-film')) {
 let loaded = false;
 let unavailable = false;
 
@@ -39,3 +39,4 @@ window.addEventListener('pageshow', syncPlayback);
 // Retry restricted autoplay on the first interaction; no playback UI is shown.
 window.addEventListener('pointerdown', syncPlayback, {once:true});
 syncPlayback();
+}

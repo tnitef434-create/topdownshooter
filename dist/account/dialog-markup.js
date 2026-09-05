@@ -9,6 +9,7 @@ export function mountAccountDialog() {
     <p class="account-brand"><img src="/hub/u-mark.svg" width="46" height="46" alt="Unpaused"></p>
     <h2 id="account-title">WELCOME BACK</h2>
     <p id="account-intro">Your games. Your friends. Your worlds.</p>
+    <div class="account-body">
     <p id="account-message" class="account-message" role="status" aria-live="polite"></p>
     <div id="account-context" hidden></div>
     <form class="hub-account-form">
@@ -24,6 +25,7 @@ export function mountAccountDialog() {
         <button id="tab-worlds" role="tab" type="button" data-account-tab="worlds" aria-controls="world-library" aria-selected="false">Worlds</button>
         <button id="tab-invites" role="tab" type="button" data-account-tab="invites" aria-controls="invitation-panel" aria-selected="false">Invites <span id="invite-tab-count"></span></button>
       </div>
+      <div class="account-panels">
       <div id="account-details" role="tabpanel" aria-labelledby="tab-profile">
       <p class="account-detail-label">EMAIL</p><p id="account-email" class="account-email"></p>
       <p id="account-verification-status" class="account-verification-status"></p>
@@ -50,7 +52,9 @@ export function mountAccountDialog() {
         <div id="received-invites" aria-live="polite"></div>
         </div>
       </section>
+      </div>
       <button id="account-logout" class="account-text-button" type="button">Sign out</button>
+    </div>
     </div>
   </dialog>`;
   const dialog = template.content.firstElementChild;

@@ -54,45 +54,94 @@ class RemotePlayer {
 }
 
 export class SharedWorldClient {
-  constructor(worldId,{scene,atlas,onLoad,onStatus,onClosed,getSnapshot,onInventory,onDrop,onDropRemoved,onEcology,onAttack}) {
-    Object.assign(this,{worldId,scene,atlas,onLoad,onStatus,onClosed,getSnapshot,onInventory,onDrop,onDropRemoved,onEcology,onAttack});
+  constructor(worldId,{scene,atlas,onLoad,onResume,onStatus,onClosed,getSnapshot,onInventory,onDrop,onDropRemoved,onEcology,onAttack}) {
+    Object.assign(this,{worldId,scene,atlas,onLoad,onResume,onStatus,onClosed,getSnapshot,onInventory,onDrop,onDropRemoved,onEcology,onAttack});
     this.ready=false;this.applying=false;this.edits=[];this.dropAdds=[];this.remotes=new Map();this.events=[];this.you=null;this.busy=null;this.pending=null;this.stopped=false;this.revision=0;
     const {token}=readAccountSession();
     this.sessionChanged=()=>{if(readAccountSession().token!==token){this.dispose();this.onClosed('Your account changed. Sign in again to reopen this world.');}};
     window.addEventListener('storage',this.sessionChanged);
     this.socket=io(`${getBackendUrl()}/worldloom`,{auth:{token,worldId},autoConnect:false,reconnection:true,reconnectionDelay:1000,reconnectionDelayMax:6000,timeout:60_000});
     this.socket.on('connect',()=>this.load());
-    this.socket.on('disconnect',()=>{this.ready=false;this.onStatus('Connection lost · reconnecting. Your saved world is safe.');});
-    this.socket.on('connect_error',error=>this.onStatus(error.message));
+    this.socket.on('disconnect',()=>{if(!this.stopped){this.freeze('Connection interrupted · game paused. Reconnecting…');this.retry();}});
+    this.socket.on('connect_error',error=>{
+      if(error.data?.permanent){this.dispose();this.onClosed(error.message);return;}
+      this.freeze('Connection interrupted · game paused. Reconnecting…');this.retry();
+    });
     this.socket.on('closed',data=>{this.dispose();this.onClosed(data.message);});
     this.socket.on('members',data=>{this.leader=data.leader;this.members=data.players;this.setMembers(data.players);});
-    this.socket.on('pose',({id,pose})=>this.remotes.get(id)?.receive(pose));
+    this.socket.on('pose',({id,pose})=>{if(this.ready)this.remotes.get(id)?.receive(pose);});
     this.socket.on('changes',change=>{if(!this.ready)this.events.push(change);else this.applyChanges(change);});
-    this.socket.on('drop-removed',data=>this.onDropRemoved(data));
-    this.socket.on('ecology',data=>{this.ecology=data;if(!this.isLeader)this.onEcology(data);});
-    this.socket.on('pig-attack',data=>{if(this.isLeader)this.onAttack(data);});
+    this.socket.on('drop-removed',data=>{if(this.ready)this.onDropRemoved(data);});
+    this.socket.on('ecology',data=>{this.ecology=data;if(this.ready&&!this.isLeader)this.onEcology(data);});
+    this.socket.on('pig-attack',data=>{if(this.ready&&this.isLeader)this.onAttack(data);});
+    this.online=()=>{if(!this.stopped&&!this.ready){clearTimeout(this.retryTimer);this.socket.connected?this.load():this.socket.connect();}};
+    this.offline=()=>{if(!this.stopped){this.freeze('Connection interrupted · game paused. Reconnecting…');this.socket.disconnect();this.retry();}};
+    window.addEventListener('online',this.online);
+    window.addEventListener('offline',this.offline);
     this.socket.connect();
     this.timer=setInterval(()=>{if(this.ready&&!this.busy&&!this.picking)this.flush(false).catch(()=>{});},160);
     this.heartbeat=setInterval(()=>{if(this.ready){this.dirtyPersonal=true;this.flush(false).catch(()=>{});}},4000);
   }
   get isLeader(){return this.you?.id===this.leader;}
-  request(event,payload){return new Promise((resolve,reject)=>this.socket.timeout(20000).emit(event,payload,(error,response)=>error?reject(new Error('Connection timed out.')):response?.error?reject(new Error(response.message)):resolve(response)));}
+  freeze(message){
+    if(this.stopped)return;
+    if(this.ready&&!this.frozenSave)this.frozenSave=structuredClone(this.getSnapshot());
+    this.ready=false;this.onStatus(message);
+  }
+  retry(){
+    clearTimeout(this.retryTimer);
+    if(this.stopped||navigator.onLine===false)return;
+    this.retryTimer=setTimeout(()=>{if(this.stopped||this.ready)return;if(this.socket.connected)this.load();else this.socket.connect();},2500);
+  }
+  request(event,payload){
+    return new Promise((resolve,reject)=>{
+      if(!this.socket.connected){reject(Object.assign(new Error('Connection interrupted.'),{retryable:true}));return;}
+      let done=false;
+      const finish=(error,response)=>{if(done)return;done=true;this.socket.off('disconnect',disconnected);error?reject(error):resolve(response);};
+      const disconnected=()=>finish(Object.assign(new Error('Connection interrupted.'),{retryable:true}));
+      this.socket.once('disconnect',disconnected);
+      this.socket.timeout(20000).emit(event,payload,(error,response)=>{
+        if(error)finish(Object.assign(new Error('Connection timed out.'),{retryable:true}));
+        else if(response?.error)finish(Object.assign(new Error(response.message),{status:response.status,retryable:!response.status||response.status>=500}));
+        else finish(null,response);
+      });
+    });
+  }
   async load(){
-    if(this.loading)return;this.loading=true;this.ready=false;this.onStatus('Opening your saved world…');
+    if(this.loading||this.stopped)return;this.loading=true;this.ready=false;this.onStatus(this.world?'Connection restored · syncing your world…':'Opening your saved world…');
     try{
-      if(this.pending){try{await this.request('commit',this.pending);}catch(error){this.onStatus(error.message);}this.pending=null;}
+      if(this.busy)await this.busy.catch(()=>{});
+      let conflict=false;
+      if(this.pending){
+        try{await this.request('commit',this.pending);}
+        catch(error){if(error.retryable)throw error;conflict=true;}
+        this.pending=null;
+      }
+      if(conflict){this.edits=[];this.dropAdds=[];this.frozenSave=null;}
+      if(this.frozenSave){
+        do {
+          this.pending=this.makePacket(this.frozenSave);
+          try{await this.request('commit',this.pending);}
+          catch(error){if(error.retryable)throw error;this.edits=[];this.dropAdds=[];}
+          this.pending=null;
+        }while(this.edits.length||this.dropAdds.length);
+        this.frozenSave=null;
+      }
+      this.events=[];
       const snapshot=await this.request('snapshot',{});if(this.stopped)return;
       this.you=snapshot.you;this.leader=snapshot.leader;this.revision=snapshot.revision;
-      this.edits=[];this.dropAdds=[];this.events=[];
-      await this.onLoad(snapshot);if(this.stopped||!this.socket.connected)return;
+      this.edits=[];this.dropAdds=[];
+      if(this.world&&this.onResume)await this.onResume(snapshot);
+      else await this.onLoad(snapshot);
+      if(this.stopped||!this.socket.connected)return;
       this.setMembers(this.members||snapshot.players);this.ecology=snapshot.ecosystem;
+      for(const p of snapshot.players){const remote=this.remotes.get(p.id);if(remote){remote.frames=[];if(p.pose)remote.receive(p.pose);}}
       if(this.ecology)this.onEcology(this.ecology);
       for(const drop of Object.values(snapshot.drops||{}))this.onDrop(drop);
-      this.ready=true;
       for(const event of this.events)if(event.revision>snapshot.revision)this.applyChanges(event);
-      this.events=[];this.onStatus('');this.dirtyPersonal=true;
-    }catch(error){this.onStatus(error.message);}
-    finally{this.loading=false;if(!this.ready&&!this.stopped&&this.socket.connected)setTimeout(()=>this.load(),3500);}
+      this.events=[];this.ready=true;this.onStatus('');this.dirtyPersonal=true;clearTimeout(this.retryTimer);
+    }catch(error){if(!this.stopped)this.freeze('Game paused · waiting for the connection to recover…');}
+    finally{this.loading=false;if(!this.ready&&!this.stopped)this.retry();}
   }
   attach(world){
     this.world=world;const set=world.setBlock.bind(world);
@@ -121,17 +170,19 @@ export class SharedWorldClient {
     finally{this.applying=false;}
   }
   addDrop(drop){this.dropAdds.push(drop);}
+  makePacket(save){
+    const {player,inventory,survival,flags,objectiveIndex,objectiveId,respawnPoint}=save;
+    return {id:crypto.randomUUID(),edits:this.edits.splice(0,512),dropAdds:this.dropAdds.splice(0,32),personal:{player,inventory,survival,flags,objectiveIndex,objectiveId,respawnPoint},timeOfDay:save.timeOfDay};
+  }
   async flush(force=true){
     if(!this.ready)throw new Error('Wait for the world to reconnect before leaving.');
     if(this.busy){await this.busy;if(force)return this.flush(true);return;}
     if(!force&&!this.edits.length&&!this.dropAdds.length&&!this.dirtyPersonal)return;
     const save=this.getSnapshot();if(!save)return;
-    const {player,inventory,survival,flags,objectiveIndex,objectiveId,respawnPoint}=save;
-    const packet={id:crypto.randomUUID(),edits:this.edits.splice(0,512),dropAdds:this.dropAdds.splice(0,32),personal:{player,inventory,survival,flags,objectiveIndex,objectiveId,respawnPoint},timeOfDay:save.timeOfDay};
+    const packet=this.makePacket(save);
     this.dirtyPersonal=false;this.pending=packet;
     this.busy=this.request('commit',packet).then(result=>{this.pending=null;return result;}).catch(error=>{
-      this.ready=false;this.onStatus(`${error.message} Restoring the saved world…`);
-      if(this.socket.connected)setTimeout(()=>this.load(),300);
+      this.freeze('Connection interrupted · game paused. Reconnecting…');this.retry();
       throw error;
     });
     try{await this.busy;}finally{this.busy=null;}
@@ -144,14 +195,14 @@ export class SharedWorldClient {
     finally{this.picking=false;}
   }
   update(dt,player,motion={}){
-    for(const remote of this.remotes.values())remote.update(dt);
     if(!this.ready||!player)return;
+    for(const remote of this.remotes.values())remote.update(dt);
     this.poseTime=(this.poseTime||0)+dt;
     if(this.poseTime<.05)return;this.poseTime=0;
     this.socket.volatile.emit('pose',{position:player.position.toArray(),velocity:player.velocity.toArray(),yaw:player.yaw,pitch:player.pitch,grounded:player.grounded,swimming:player.inWater,headlamp:player.headlampOn,...motion});
   }
   sendEcology(data){if(this.ready&&this.isLeader)this.socket.volatile.emit('ecology',data);}
-  dispose(){this.stopped=true;this.ready=false;clearInterval(this.timer);clearInterval(this.heartbeat);window.removeEventListener('storage',this.sessionChanged);this.socket.disconnect();for(const p of this.remotes.values())p.dispose();this.remotes.clear();}
+  dispose(){this.stopped=true;this.ready=false;clearTimeout(this.retryTimer);clearInterval(this.timer);clearInterval(this.heartbeat);window.removeEventListener('storage',this.sessionChanged);window.removeEventListener('online',this.online);window.removeEventListener('offline',this.offline);this.socket.disconnect();for(const p of this.remotes.values())p.dispose();this.remotes.clear();}
 }
 
 export async function createSavedWorld({name,seed,mode,friendCode,importSave}){

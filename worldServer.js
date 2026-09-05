@@ -7,7 +7,7 @@ import { WORLD_GENERATOR_VERSION, isSupportedWorldGeneratorVersion } from './src
 const uuid = value => typeof value==='string' && /^[0-9a-f-]{36}$/i.test(value);
 const brief = (w,id) => ({id:w.id,name:w.name,mode:w.mode,owner:w.ownerId===id,ownerName:w.ownerName,guestName:w.guestName||null,accepted:w.accepted,createdAt:w.createdAt,updatedAt:w.updatedAt});
 const publicPlayer = user => ({id:user.id,name:String(user.displayName||'Wayfarer').replace(/[\u0000-\u001f]/g,'').slice(0,24)});
-const replyError = error => ({error:true,message:error.status?error.message:'The world service could not save this change. Please reconnect.'});
+const replyError = error => ({error:true,status:error.status||503,message:error.status?error.message:'The world service could not save this change. Reconnecting…'});
 
 export function installWorldServer({app,io,store,accounts,authenticate,verified,hashToken,rateLimit}) {
   const namespace=io.of('/worldloom'), rooms=new Map();
@@ -53,15 +53,16 @@ export function installWorldServer({app,io,store,accounts,authenticate,verified,
 
   namespace.use(async(socket,next)=>{
     try {
-      if(!store.isReady||!accounts.isReady)throw new Error();
+      if(!store.isReady||!accounts.isReady)throw new Error('The world service is restarting. Reconnecting…');
       const token=socket.handshake.auth?.token,worldId=socket.handshake.auth?.worldId;
-      if(typeof token!=='string'||token.length>128||!uuid(worldId))throw new Error();
+      if(typeof token!=='string'||token.length>128||!uuid(worldId))throw Object.assign(new Error('Sign in to open this world.'),{permanent:true});
       const session=await accounts.findSession(hashToken(token));
       const user=isAccountSessionActive(session)?await accounts.findUserById(session.userId):null;
-      const world=user?.emailVerifiedAt?await store.get(worldId):null;
-      if(!world||world.deleted||!isWorldMember(world,user.id))throw new Error();
+      if(!user?.emailVerifiedAt)throw Object.assign(new Error('Your account session ended. Sign in to reopen this world.'),{permanent:true});
+      const world=await store.get(worldId);
+      if(!world||world.deleted||!isWorldMember(world,user.id))throw Object.assign(new Error('This world is no longer available to your account.'),{permanent:true});
       socket.data={user,worldId,sessionKey:hashToken(token),expiresAt:session.expiresAt};next();
-    }catch{next(new Error('Sign in with an invited, verified account to open this world.'));}
+    }catch(error){const response=new Error(error.permanent?error.message:'The world service is temporarily unavailable. Reconnecting…');response.data={permanent:Boolean(error.permanent)};next(response);}
   });
   function leader(room){return room.sockets.keys().next().value||null;}
   function announce(room){namespace.to(room.id).emit('members',{leader:leader(room),players:[...room.sockets.values()].map(s=>({...publicPlayer(s.data.user),pose:s.data.pose||null}))});}

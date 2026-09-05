@@ -4,6 +4,7 @@ export function initAccountWorlds({dialog,getSession,notify}) {
   const section=dialog.querySelector('#account-worlds'), list=dialog.querySelector('#world-list'), invites=dialog.querySelector('#received-invites');
   let activeToken=null,loading=false,confirmDelete=null;
   let tab=new URLSearchParams(location.search).get('account')||'profile';
+  let previousTab=null;
   function showTab(next){
     tab=['profile','worlds','invites'].includes(next)?next:'profile';
     const verified=getSession().user?.emailVerified;
@@ -13,6 +14,12 @@ export function initAccountWorlds({dialog,getSession,notify}) {
     dialog.querySelector('#world-library').hidden=visibleTab!=='worlds';
     dialog.querySelector('#invitation-panel').hidden=visibleTab!=='invites';
     dialog.querySelectorAll('[data-account-tab]').forEach(button=>{button.setAttribute('aria-selected',String(button.dataset.accountTab===visibleTab));button.tabIndex=button.dataset.accountTab===visibleTab?0:-1;button.disabled=!verified&&button.dataset.accountTab!=='profile';});
+    if(previousTab!==null&&previousTab!==visibleTab&&!matchMedia('(prefers-reduced-motion: reduce)').matches){
+      const panel=dialog.querySelector(visibleTab==='profile'?'#account-details':visibleTab==='worlds'?'#world-library':'#invitation-panel');
+      panel.getAnimations().forEach(animation=>animation.cancel());
+      panel.animate([{opacity:0,transform:'translateY(7px)'},{opacity:1,transform:'translateY(0)'}],{duration:230,easing:'cubic-bezier(.2,.7,.3,1)'});
+    }
+    previousTab=visibleTab;
   }
   dialog.querySelectorAll('[data-account-tab]').forEach(button=>{
     button.addEventListener('click',()=>{showTab(button.dataset.accountTab);refresh(true);});

@@ -33,14 +33,14 @@ try{
     return page;
   }
   const a=await pageFor(owner),b=await pageFor(friend);
-  await a.goto(base+'/worldloom/');await a.waitForSelector('#world-name',{visible:true});
+  await a.goto(base+'/worldloom/');await a.waitForFunction(()=>document.querySelector('#loading-screen').classList.contains('hidden'));await a.waitForSelector('#world-name',{visible:true});
   await a.type('#world-name','Our quiet valley');await a.type('#seed-input','2206');await a.click('label:has(input[value="builder"])');await a.click('.world-invite summary');
   await a.waitForSelector('#hub-account[open] #invite-code',{visible:true});
   await a.type('#invite-code',friend.user.friendCode);await a.click('#account-context .account-primary');
   await a.waitForFunction(()=>!document.querySelector('#hub-account').open);
   await a.click('#new-world-button');await a.waitForFunction(()=>new URLSearchParams(location.search).has('world'));
   const worldId=new URL(a.url()).searchParams.get('world');console.log('Created account world through the real menu.');
-  await b.goto(base+'/worldloom/');await b.waitForSelector('#world-account-button',{visible:true});await b.click('#world-account-button');
+  await b.goto(base+'/worldloom/');await b.waitForFunction(()=>document.querySelector('#loading-screen').classList.contains('hidden'));await b.waitForSelector('#world-account-button',{visible:true});await b.click('#world-account-button');
   await b.waitForFunction(()=>document.querySelector('#received-invites .saved-world'));await b.click('#tab-invites');
   assert.equal(new URL(b.url()).pathname,'/worldloom/','received invites open over Worldloom before joining');
   await b.screenshot({path:'../../outputs/unpaused-account-invites.png'});
@@ -51,7 +51,7 @@ try{
   const pos=await a.evaluate(()=>{const p=window.__worldloomPlayer;p.position.y+=5;return p.position.toArray();});
   await b.evaluate(position=>{const p=window.__worldloomPlayer;p.setPosition(position[0],position[1],position[2]-3);p.flying=true;p.yaw=Math.PI;p.velocity.set(0,0,0);},pos);
   await a.evaluate(()=>{const p=window.__worldloomPlayer;p.yaw=0;p.pitch=0;});
-  await wait(1300);
+  await Promise.all([a,b].map(p=>p.waitForFunction(()=>[...window.__worldloomShared.remotes.values()].some(r=>r.avatar.root.visible&&r.frames.length))));
   assert.equal(await a.evaluate(()=>window.__worldloomShared.remotes.size),1);
   assert.equal(await b.evaluate(()=>window.__worldloomShared.remotes.size),1);
   const avatar=await a.evaluate(()=>{const remote=[...window.__worldloomShared.remotes.values()][0];return {name:remote.avatar.root.name,visible:remote.avatar.root.visible,layer:remote.avatar.body.layers.mask,tag:remote.label.visible,x:remote.actor.position.x,y:remote.actor.position.y};});
@@ -64,12 +64,25 @@ try{
   await a.waitForFunction(([x,y,z])=>window.__worldloomWorld.getBlock(x+1,y,z)===7,{},cell);
   await Promise.all([a,b].map(p=>p.evaluate(()=>window.__worldloomShared.flush(true))));
   console.log('Terrain edits synchronized in both directions and saved.');
-  await a.evaluate(()=>window.__worldloomShared.socket.disconnect());await wait(200);
+  await a.evaluate(([x,y,z])=>{
+    window.beforeOutageWorld=window.__worldloomWorld;window.beforeOutagePlayer=window.__worldloomPlayer;
+    window.__worldloomWorld.setBlock(x+3,y,z,4);
+    window.__worldloomShared.flush(true).catch(()=>{});
+    window.__worldloomShared.socket.io.engine.close();
+  },cell);
+  await a.setOfflineMode(true);
+  await a.waitForFunction(()=>!window.__worldloomShared.ready);
+  const frozen=await a.evaluate(()=>({position:window.__worldloomPlayer.position.toArray(),time:window.__worldloomEnvironment.time}));
+  await a.keyboard.down('w');await wait(2200);await a.keyboard.up('w');
+  assert.deepEqual(await a.evaluate(()=>({position:window.__worldloomPlayer.position.toArray(),time:window.__worldloomEnvironment.time})),frozen,'physics and daylight freeze throughout an outage');
   await b.waitForFunction(()=>window.__worldloomShared.isLeader);
   await b.evaluate(([x,y,z])=>window.__worldloomWorld.setBlock(x+2,y,z,8),cell);await b.evaluate(()=>window.__worldloomShared.flush(true));
-  await a.evaluate(()=>window.__worldloomShared.socket.connect());await a.waitForFunction(()=>window.__worldloomShared.ready,{timeout:180_000});
+  await a.setOfflineMode(false);await a.waitForFunction(()=>window.__worldloomShared.ready,{timeout:180_000});
+  assert.ok(await a.evaluate(()=>window.beforeOutageWorld===window.__worldloomWorld&&window.beforeOutagePlayer===window.__worldloomPlayer),'reconnection preserves the current world and player objects');
+  assert.equal(await a.$eval('#loading-screen',e=>e.classList.contains('hidden')),true,'reconnection must not return to world loading');
   assert.equal(await a.evaluate(([x,y,z])=>window.__worldloomWorld.getBlock(x+2,y,z),cell),8);
-  console.log('Owner reconnected to the friend’s saved changes.');
+  await b.waitForFunction(([x,y,z])=>window.__worldloomWorld.getBlock(x+3,y,z)===4,{},cell);
+  console.log('Owner automatically resumed the same frozen scene; pending and friend edits were retained.');
   await Promise.all([a,b].map(p=>p.evaluate(()=>window.__worldloomShared.flush(true))));
   await a.goto(base+'/?account=worlds');await b.goto(base+'/?account=worlds');
   await a.waitForSelector('#world-list .saved-world');await b.waitForSelector('#world-list .saved-world');

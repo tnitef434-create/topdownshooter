@@ -81,6 +81,7 @@ accounts.json.tmp
 worlds.json
 worlds.json.tmp
 !dist/account-client.js
+!dist/menu-entry.js
 !dist/account/
 !dist/account/**
 !dist/worldloom-entry.css

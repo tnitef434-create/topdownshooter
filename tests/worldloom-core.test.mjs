@@ -144,12 +144,12 @@ test('view-distance configuration keeps the visual horizon broad and voxel detai
   assert.equal(detailedStreamDistance(MIN_VIEW_DISTANCE), MIN_VIEW_DISTANCE + DETAIL_SUPPORT_CHUNKS);
   assert.equal(detailedStreamDistance(MAX_VIEW_DISTANCE), MAX_DETAIL_DISTANCE + DETAIL_SUPPORT_CHUNKS);
 
-  const maximumHorizon = (MAX_VIEW_DISTANCE + DISTANT_HORIZON_BUFFER_CHUNKS) * CHUNK_WORLD_SIZE;
+  const maximumHorizon = (MAX_VIEW_DISTANCE + DISTANT_HORIZON_BUFFER_CHUNKS) * CHUNK_WORLD_SIZE * 3;
   assert.equal(distantHorizonRadius(MAX_VIEW_DISTANCE), maximumHorizon);
-  assert.equal(cameraFarForViewDistance(MIN_VIEW_DISTANCE), 320,
-    'low view distance should retain the established depth precision');
-  assert.equal(cameraFarForViewDistance(MAX_VIEW_DISTANCE), maximumHorizon + 32);
-  assert.ok(cameraFarForViewDistance(MAX_VIEW_DISTANCE) > distantHorizonRadius(MAX_VIEW_DISTANCE));
+  assert.ok(cameraFarForViewDistance(MIN_VIEW_DISTANCE) >= 700,
+    'even low detail must load a broad clear-air surface horizon');
+  assert.equal(cameraFarForViewDistance(MAX_VIEW_DISTANCE), maximumHorizon - 64);
+  assert.ok(cameraFarForViewDistance(MAX_VIEW_DISTANCE) < distantHorizonRadius(MAX_VIEW_DISTANCE));
 });
 
 test('saved view distance clamps to 2–20 while graphics presets remain valid defaults', () => {
@@ -1694,6 +1694,10 @@ test('distant terrain builds deterministically, incrementally, and swaps atomica
   assert.equal(first.mesh.receiveShadow, false);
   assert.equal(first.mesh.userData.distantTerrain, true);
   const firstStats = first.getStats();
+  assert.ok(first.mesh.geometry.getAttribute('position').array.filter((_,i)=>i%3===1).every(y=>y>15),'null pond levels must never flatten real terrain to sea level zero');
+  const water=first.group.children.find(m=>m.name==='Worldloom distant moving water');
+  assert.ok(water.geometry.getAttribute('position').count>0,'distant water has its own moving surface');
+  assert.ok(water.geometry.getAttribute('waterData').array.every(Number.isFinite));
   assert.equal(firstStats.outerRadius, distantHorizonRadius(MAX_VIEW_DISTANCE));
   assert.equal(firstStats.innerRadius, CHUNK_WORLD_SIZE * 3);
   assert.ok(firstStats.vertices > 0 && firstStats.vertices <= 210_000);
@@ -1772,9 +1776,7 @@ test('mature overgrown trees use ivy bark textures without protruding lower-trun
   world.dispose();
 });
 
-test('dry open daylight starts fog later without moving the opaque horizon', () => {
-  const legacyNear = 4 * 10 - 8;
-  const legacyFar = 4 * 16 + 34;
+test('dry open daylight has no distance fog inside the fully loaded camera view', () => {
   const clear = atmosphericFogRange(4, {
     rainIntensity: 0,
     overcastAmount: 0,
@@ -1782,12 +1784,11 @@ test('dry open daylight starts fog later without moving the opaque horizon', () 
     dayAmount: 1,
     submerged: false,
   });
-  assert.equal(clear.far, legacyFar, 'clear-air tuning must not expose terrain beyond the old horizon');
-  assert.equal(clear.near, 58, 'balanced clear fog should retain a measured forty-metre blend band');
-  const legacyOpacityAt64m = (64 - legacyNear) / (legacyFar - legacyNear);
-  const clearOpacityAt64m = (64 - clear.near) / (clear.far - clear.near);
-  assert.ok(clearOpacityAt64m <= legacyOpacityAt64m - 0.3,
-    `clear-air haze was not materially reduced (${legacyOpacityAt64m} -> ${clearOpacityAt64m})`);
+  const cameraFar=cameraFarForViewDistance(4);
+  assert.ok(clear.near>cameraFar);
+  const loaded=clampFogToMeshedTerrain({atmosphericNear:clear.near,atmosphericFar:clear.far,safeTerrainFar:distantHorizonRadius(4)-24,clarity:clear.clarity});
+  assert.ok(loaded.near>cameraFar,'the streaming guard must also leave the visible landscape fog-free');
+  assert.ok(loaded.far<distantHorizonRadius(4),'the final safety edge remains inside real rendered terrain');
 });
 
 test('storm, cave, night and underwater contexts preserve established fog density', () => {
@@ -2923,6 +2924,27 @@ test('empty-hand mining has a visible complete swing instead of a frozen half-cy
   for (let i=0;i<60;i++) held.update(1/60);
   assert.ok(Math.abs(held.root.rotation.x-held.restRotation.x)<.001, 'released stroke settles smoothly');
   held.dispose();
+});
+
+test('reconnection updates changed terrain and keeps untouched chunks intact', () => {
+  const world = new World(64, null, null);
+  world.ensurePositionGenerated(8,8);world.ensurePositionGenerated(40,8);
+  world.setBlock(8,90,8,BLOCK.STONE);
+  const saved=world.serializeEdits(), unchanged=world.chunks.get('2,0');
+  const generate=world._generateChunk.bind(world), regenerated=[];
+  world._generateChunk=chunk=>{regenerated.push(chunk.key);return generate(chunk);};
+  world.loadEdits(saved,{onlyChanged:true});
+  assert.deepEqual(regenerated,[],'identical snapshots must not regenerate the scene');
+  world.setBlock(9,90,8,BLOCK.STONE);
+  world.loadEdits(saved,{onlyChanged:true});
+  assert.deepEqual(regenerated,['0,0'],'only the changed chunk needs regeneration');
+  assert.equal(world.chunks.get('2,0'),unchanged);
+  assert.equal(world.getBlock(8,90,8),BLOCK.STONE);
+  assert.equal(world.getBlock(9,90,8),BLOCK.AIR,'a rejected local edit is rolled back');
+  world.setBlock(8,89,8,BLOCK.WATER,{fluidLevel:1});
+  world.loadEdits(world.serializeEdits(),{onlyChanged:true});
+  assert.ok(world.fluidQueue.length>0,'unchanged flowing water resumes after resynchronization');
+  world.dispose();
 });
 
 test('critical spawn chunks regenerate their decorations before teleport validation', () => {
