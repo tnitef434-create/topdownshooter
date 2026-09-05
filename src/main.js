@@ -1,6 +1,7 @@
 import { io } from 'socket.io-client';
 import { Engine } from './game/Engine.js';
 import { waitForMenuAnimation } from './public/menu-entry.js';
+import { initOperativeAccountHint } from './operative-account-hint.js';
 import { ACCOUNT_SESSION_KEY, ACCOUNT_USER_CACHE_KEY, readAccountSession, removeAccountSession, getBackendUrl, accountRequest } from './account-session.js';
 
 // Safe localStorage wrapper to prevent crash if disabled in browser
@@ -1734,6 +1735,7 @@ function getRandomWeapon() {
 
 // UI Event Handlers
 function setupUIListeners() {
+  initOperativeAccountHint();
   const btnDeployMain = document.getElementById('btn-deploy-main');
   const btnCloseDeploy = document.getElementById('btn-close-deploy');
   const deployModal = document.getElementById('deploy-modal');
@@ -2238,11 +2240,12 @@ function setupUIListeners() {
   // Keyboard binding for chat focus
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
-      e.preventDefault();
       if (inputs.chat && document.activeElement === inputs.chat) {
+        e.preventDefault();
         // Send message
         sendChatMessage();
       } else if (screens.game && screens.game.classList.contains('active')) {
+        e.preventDefault();
         // Focus chat input
         if (displays.chatDrawer && inputs.chat) {
           displays.chatDrawer.classList.add('active');
@@ -3411,8 +3414,8 @@ function updateAccountUI() {
   myName=nextName;
   const nameLabel=document.getElementById('operative-name');
   if(nameLabel)nameLabel.textContent=myName;
-  const accountButton=document.getElementById('operative-account');
-  if(accountButton)accountButton.textContent=user?.username?'MY ACCOUNT':'CHOOSE USERNAME IN ACCOUNT';
+  const accountHint=document.getElementById('operative-account-message');
+  if(accountHint)accountHint.textContent=user?.username?'Change your name in Account.':'Pick a name in Account.';
   if(socket?.connected && (changed||socket.accountToken!==accountSession.token)) {
     socket.accountToken=accountSession.token;
     socket.emit('account-session',{token:accountSession.token});

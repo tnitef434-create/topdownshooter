@@ -15,9 +15,9 @@
   <link rel="stylesheet" href="/worldloom-entry.css">
   <link rel="stylesheet" href="/account/dialog.css">
   <!-- Socket.io client (loaded dynamically via bundler or server, or we can just import from socket.io-client) -->
-  <script type="module" crossorigin src="/assets/tacticstrike-Chla58AF.js"></script>
+  <script type="module" crossorigin src="/assets/tacticstrike-DPZoiEBw.js"></script>
   <link rel="modulepreload" crossorigin href="/assets/account-client-D3X58vZL.js">
-  <link rel="stylesheet" crossorigin href="/assets/tacticstrike-DofaQDLP.css">
+  <link rel="stylesheet" crossorigin href="/assets/tacticstrike-iGlW3tai.css">
 </head>
 <body class="is-starting">
 
@@ -67,10 +67,22 @@
         </header>
 
         <!-- Operative Profile Card -->
-        <div class="card" style="padding: 18px 24px; display: flex; flex-direction: column; gap: 12px; border: 1px solid rgba(212, 175, 55, 0.15);">
+        <div class="card operative-profile">
           <span style="font-family: var(--font-title); font-size: 11px; letter-spacing: 1.5px; color: #d4af37; font-weight:700;">OPERATIVE PROFILE</span>
           <strong id="operative-name" style="font-size:22px">Guest</strong>
-          <button type="button" data-open-account id="operative-account" class="game-button" style="font-size:11px; padding:10px">CHOOSE USERNAME IN ACCOUNT</button>
+          <button type="button" id="operative-account" class="operative-account-mark" popovertarget="operative-account-hint" aria-label="About your account name" aria-expanded="false" aria-controls="operative-account-hint" aria-haspopup="dialog">
+            <svg viewBox="0 0 40 40" width="36" height="36" aria-hidden="true">
+              <path d="M9 8v15c0 6 4 9 9 9s9-3 9-9v-3" fill="none" stroke="#f4f6dc" stroke-width="3.4"/>
+              <path class="u-loading__trail" d="M27 20v3c0 6-4 9-9 9s-9-3-9-9V8" pathLength="100" fill="none" stroke="#ff6339" stroke-width="3.4" stroke-dasharray="22 140"/>
+              <path class="u-loading__runner" d="m-4.5-6 9 6-9 6z" fill="#ff6339"/>
+              <path class="operative-account-rest" d="m24 5 9 6-9 6z" fill="#ff6339"/>
+            </svg>
+          </button>
+          <div id="operative-account-hint" class="operative-account-hint" popover="auto" role="dialog" aria-label="Account name" aria-describedby="operative-account-message">
+            <button type="button" class="operative-account-close" aria-label="Close name hint">×</button>
+            <p id="operative-account-message">Pick a name in Account.</p>
+            <button type="button" class="operative-account-link" data-open-account>Open account <span aria-hidden="true">↗</span></button>
+          </div>
         </div>
 
         <!-- Operative Career Stats Card -->
