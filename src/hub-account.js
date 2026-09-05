@@ -1,4 +1,5 @@
 import { ACCOUNT_SESSION_KEY, ACCOUNT_USER_CACHE_KEY, readAccountSession, storeAccountSession, removeAccountSession, accountRequest } from './account-session.js';
+import { initAccountWorlds } from './account-worlds.js';
 
 export function initHubAccount() {
   const dialog=document.querySelector('#hub-account');
@@ -18,15 +19,16 @@ export function initHubAccount() {
   const destinations={credits:'/tacticstrike/?shop=credits',support:'/tacticstrike/?shop=support'};
   const returnTo=destinations[params.get('return')];
   let session=readAccountSession(), mode=verificationToken?'verify':params.get('account')==='register'?'register':'login', busy=false;
+  const worlds=initAccountWorlds({dialog,getSession:()=>session,notify});
 
   function notify(text='') { message.textContent=text; }
   function render() {
     const signedIn=Boolean(session.user)&&mode!=='verify';
     const verified=session.user?.emailVerified===true;
     trigger.textContent=signedIn?'MY ACCOUNT':'ACCOUNT';
-    title.textContent=signedIn?'YOUR ACCOUNT':mode==='verify'?'VERIFY YOUR EMAIL':mode==='register'?'JOIN UNPAUSED':'WELCOME BACK';
+    title.textContent=signedIn?'YOUR ACCOUNT':mode==='verify'?'VERIFY YOUR EMAIL':mode==='register'?'CREATE ACCOUNT':'WELCOME BACK';
     form.hidden=signedIn;profile.hidden=!signedIn;switcher.hidden=signedIn;
-    dialog.querySelector('#account-intro').textContent=mode==='verify'?'Choose a password to finish verifying your account.':mode==='register'?'Verify your email, then generate your permanent four-digit friend code.':returnTo?'Your Unpaused account connects to TacticStrike.':'One place for your Unpaused account.';
+    dialog.querySelector('#account-intro').textContent=mode==='verify'?'Choose a password to finish verifying your account.':mode==='register'?'Verify your email, then generate your permanent four-digit friend code.':returnTo?'Your account connects to TacticStrike.':'Your games. Your friends. Your worlds.';
     dialog.querySelector('#account-email').textContent=session.user?.email||'';
     dialog.querySelector('#account-credits').textContent=String(session.user?.credits||0);
     dialog.querySelector('#account-return').href=returnTo||'/tacticstrike/?shop=credits';
@@ -48,6 +50,7 @@ export function initHubAccount() {
     switcher.textContent=mode==='verify'?'Link expired? Request another by signing in':mode==='register'?'Already a member? Sign in':'New here? Create an account';
     for (const control of [form.elements.email,password,submit,switcher,logout]) control.disabled=busy;
     dialog.setAttribute('aria-busy',String(busy));
+    worlds.refresh();
   }
   async function restore() {
     const token=session.token;
@@ -64,7 +67,7 @@ export function initHubAccount() {
     }
     render();
   }
-  function open() {render();notify();dialog.showModal();restore();}
+  function open() {render();notify();dialog.showModal();restore();worlds.refresh(true);}
   trigger.addEventListener('click',open);
   dialog.querySelector('#account-close').addEventListener('click',()=>dialog.close());
   dialog.addEventListener('click',event=>{if(event.target===dialog){const r=dialog.getBoundingClientRect();if(event.clientX<r.left||event.clientX>r.right||event.clientY<r.top||event.clientY>r.bottom)dialog.close();}});

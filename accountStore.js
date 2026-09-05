@@ -246,6 +246,12 @@ export function createAccountStore({ databaseUrl = '', localFile, sqlClient = nu
     return localDatabase.users[id] || null;
   }
 
+  async function findUserByFriendCode(code) {
+    if (!/^\d{4}$/.test(code)) return null;
+    if (sql) return mapDatabaseUser((await sql`SELECT * FROM operative_accounts WHERE friend_code=${code} LIMIT 1`)[0]);
+    return Object.values(localDatabase.users).find(user => user.friendCode === code) || null;
+  }
+
   async function createUser(user) {
     if (sql) {
       try {
@@ -722,6 +728,7 @@ export function createAccountStore({ databaseUrl = '', localFile, sqlClient = nu
     initialize,
     findUserByEmail,
     findUserById,
+    findUserByFriendCode,
     createUser,
     createSession,
     findSession,

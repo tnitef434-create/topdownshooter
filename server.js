@@ -8,6 +8,8 @@ import crypto from 'crypto';
 import { promisify } from 'util';
 import { createAccountStore } from './accountStore.js';
 import { createAccountMailer } from './accountEmail.js';
+import { createWorldStore } from './worldStore.js';
+import { installWorldServer } from './worldServer.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -37,6 +39,10 @@ const accountStore = createAccountStore({
 });
 const requirePersistentAccountStore = process.env.RENDER === 'true' || process.env.NODE_ENV === 'production';
 const accountMailer = createAccountMailer();
+const worldStore = createWorldStore({
+  databaseUrl: process.env.DATABASE_URL || '',
+  localFile: process.env.LOCAL_WORLD_DATABASE_FILE || path.join(__dirname, 'worlds.json'),
+});
 
 function constantTimeTextEqual(left, right) {
   const leftBuffer = Buffer.from(String(left));
@@ -306,6 +312,7 @@ app.use((req, res, next) => {
   next();
 });
 app.use(express.json({ limit: '3mb' }));
+installWorldServer({app,io,store:worldStore,accounts:accountStore,authenticate:authenticateAccount,verified:requireVerifiedEmail,hashToken:hashSessionToken,rateLimit:authRateLimit});
 app.use('/api/auth', (req,res,next)=>{res.setHeader('Cache-Control','no-store');next();});
 
 app.get('/api/auth/status', (req, res) => {
@@ -1354,6 +1361,9 @@ function handleRoomLeave(socket, roomId) {
 }
 
 await accountStore.initialize();
+if (!requirePersistentAccountStore || worldStore.isPersistent) {
+  try { await worldStore.initialize(); } catch { console.error('Persistent Worldloom storage could not start.'); }
+}
 
 httpServer.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);

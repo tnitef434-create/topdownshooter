@@ -3492,9 +3492,9 @@ function updateAccountUI() {
   const status = document.getElementById('credit-shop-account-status');
   status?.classList.toggle('signed-in', Boolean(user));
   const label = status?.querySelector('span:last-child');
-  if (label) label.textContent = user ? user.emailVerified ? 'UNPAUSED ACCOUNT CONNECTED' : 'VERIFY EMAIL ON UNPAUSED' : accountAuthPending ? 'CONNECTING TO UNPAUSED…' : 'SIGN IN ON UNPAUSED';
+  if (label) label.textContent = user ? user.emailVerified ? 'ACCOUNT CONNECTED' : 'VERIFY YOUR EMAIL' : accountAuthPending ? 'CONNECTING…' : 'SIGN IN';
   document.querySelectorAll('#credit-shop-modal [data-buy-credit-pack]').forEach(button => {
-    if (button.firstChild) button.firstChild.textContent = user ? user.emailVerified ? 'CONTINUE TO CHECKOUT ' : 'VERIFY EMAIL TO CONTINUE ' : accountAuthPending ? 'CONNECTING TO UNPAUSED… ' : 'SIGN IN TO BUY ';
+    if (button.firstChild) button.firstChild.textContent = user ? user.emailVerified ? 'CONTINUE TO CHECKOUT ' : 'VERIFY EMAIL TO CONTINUE ' : accountAuthPending ? 'CONNECTING… ' : 'SIGN IN TO BUY ';
   });
 }
 

@@ -33,7 +33,8 @@ try{
   const hover=await page.evaluate(()=>({left:document.querySelector('#enter-worldloom').getBoundingClientRect().width,right:document.querySelector('#enter-tacticstrike').getBoundingClientRect().width}));
   assert.ok(hover.left>hover.right*1.5,'hover must expand the whole game panel');
   await page.screenshot({path:'../../outputs/unpaused-hub-hover.png'});
-  await page.hover('#enter-tacticstrike');await wait(850);
+  await page.hover('#enter-tacticstrike');
+  await page.waitForFunction(()=>document.querySelector('#enter-tacticstrike').clientWidth>document.querySelector('#enter-worldloom').clientWidth*1.5,{timeout:5000});
   assert.ok(await page.evaluate(()=>document.querySelector('#enter-tacticstrike').clientWidth>document.querySelector('#enter-worldloom').clientWidth*1.5));
   await page.mouse.move(-10,-10);
   await page.keyboard.press('Tab');
@@ -59,7 +60,7 @@ try{
   await page.waitForFunction(()=>document.querySelector('#loading-screen')?.classList.contains('hidden'),{timeout:60000});
   assert.equal(await page.$('iframe'),null);
   assert.equal(await page.$eval('#main-menu',m=>m.classList.contains('hidden')),false);
-  assert.match(await page.$eval('#title-button',b=>b.textContent),/return to Unpaused/);
+  assert.match(await page.$eval('#title-button',b=>b.textContent),/return to all games/);
   await page.waitForFunction(()=>document.querySelector('#menu-film').currentTime>.1,{timeout:30000});
   const drone=await page.$eval('#menu-film',v=>({width:v.videoWidth,height:v.videoHeight,muted:v.muted,loop:v.loop}));
   assert.deepEqual(drone,{width:3840,height:2160,muted:true,loop:true});

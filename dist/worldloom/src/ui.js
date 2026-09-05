@@ -123,7 +123,7 @@ export class UI {
     if (inventoryTip) inventoryTip.textContent = 'Drag stacks to move them · drag beyond the window to drop them into the world';
     const titleButton = $('title-button');
     if (titleButton) {
-      titleButton.textContent = 'Save & return to Unpaused';
+      titleButton.textContent = 'Save & return to all games';
     }
     $('new-world-button')?.addEventListener('click', () => {
       const seedValue = $('seed-input')?.value.trim() || `${Date.now()}`;

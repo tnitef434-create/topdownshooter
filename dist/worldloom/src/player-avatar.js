@@ -104,7 +104,7 @@ export class PlayerAvatar {
     }
     this.head = this.displayHead;
     this.headlamp=createHeadlampModel();this.headlamp.layers.set(WORLD_AVATAR_LAYER);
-    this.headlamp.position.set(0,.13,.26);this.headlamp.scale.setScalar(1.25);this.head.add(this.headlamp);
+    this.headlamp.position.set(0,.13,-.26);this.headlamp.rotation.y=Math.PI;this.headlamp.scale.setScalar(1.25);this.head.add(this.headlamp);
     this.time = 0; this.gaitBlend = 0; this.actionBlend = 0; this.crouch = 0;
   }
   setSelfVisible(visible) {
@@ -123,7 +123,7 @@ export class PlayerAvatar {
     this.actionBlend += ((options.action ? .65 : 0)-this.actionBlend)*blend;
     this.leftLeg.rotation.x = stride; this.rightLeg.rotation.x = -stride;
     this.leftArm.rotation.x = -stride*.8;
-    this.rightArm.rotation.x = stride*.8-this.actionBlend*scale;
+    this.rightArm.rotation.x = stride*.8+this.actionBlend*scale;
     this.crouch += ((motion.crouching ? -.16 : 0)-this.crouch)*blend;
     this.root.position.copy(player.position); this.root.position.y += this.crouch;
     this.root.rotation.y = player.yaw || 0;

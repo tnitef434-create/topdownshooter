@@ -77,3 +77,12 @@ accounts.json.tmp
 !dist/worldloom/src/menu-film.js
 !dist/worldloom/assets/menu/
 !dist/worldloom/assets/menu/**
+
+worlds.json
+worlds.json.tmp
+!dist/account-client.js
+!dist/worldloom/src/multiplayer.js
+!dist/worldloom/src/shared-world.js
+!dist/worldloom/vendor/
+!dist/worldloom/vendor/socket.io.esm.min.js
+!dist/worldloom/vendor/socket.io-client.LICENSE

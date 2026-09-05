@@ -1585,6 +1585,7 @@ export class World {
       this._markDirty(this.chunks.get(chunkKey(cx + boundaryX, cz + boundaryZ)));
     }
     this._scheduleFluidAround(x, y, z);
+    this.onFluidLevelChanged?.(x,y,z,boundedLevel);
     return true;
   }
 

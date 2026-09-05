@@ -31,6 +31,8 @@ import { SurvivalSystem } from './survival.js';
 import { clampFogToMeshedTerrain } from './fog.js';
 import { cameraFarForViewDistance } from './streaming-config.js';
 import { saveAndReturn } from './portal.js';
+import { SharedWorldClient, createSavedWorld } from './multiplayer.js';
+import { readAccountSession } from '../../account-client.js';
 
 const canvas = document.getElementById('game');
 const ui = new UI();
@@ -51,6 +53,9 @@ let survival = new SurvivalSystem();
 let creatures = null;
 let heldItem = null;
 let playerAvatar = null;
+let sharedWorld = null;
+let receivingDrop = null;
+let latestMotion = {};
 let graphicsPipeline = null;
 let state = 'boot';
 let mode = 'survival';
@@ -232,6 +237,7 @@ function bindInput() {
 
   input.onButtonDown = (button) => {
     if (state !== 'playing') return;
+    if (sharedWorld && (!sharedWorld.ready || sharedWorld.picking)) return;
     if (button === 0 && creatures && player) {
       const selectedId = inventory.selectedSlot().id;
       const profile = combatProfile(selectedId);
@@ -250,6 +256,11 @@ function bindInput() {
       player.spendStamina(profile.staminaCost, Math.max(0.5, profile.recovery * 0.8));
       heldItem?.use(0.86);
       audio.combatSwing(Math.min(1.6, 0.65 + profile.damage * 0.18));
+      if (sharedWorld && !sharedWorld.isLeader) {
+        sharedWorld.socket.emit('pig-attack',{origin:attackOrigin.toArray(),direction:attackDirection.toArray(),reach:profile.reach,damage:profile.damage,recovery:profile.recovery});
+        attackRecovery=profile.recovery;
+        return;
+      }
       const hit = creatures.attack(
         attackOrigin,
         attackDirection,
@@ -352,7 +363,18 @@ function bindInput() {
 }
 
 function bindUI() {
-  ui.onNewWorld = (seedText, selectedMode) => startWorld({ seed: seedFromText(seedText || `${Date.now()}`), mode: selectedMode });
+  ui.onNewWorld = async (seedText, selectedMode) => {
+    const seed=seedFromText(seedText||`${Date.now()}`), button=document.getElementById('new-world-button');
+    if(button.disabled)return;
+    const friendCode=document.getElementById('invite-code').value.trim();
+    if(!readAccountSession().token){
+      if(friendCode){ui.toast('Sign in through your account to invite a friend.','error',4000);return;}
+      return startWorld({seed,mode:selectedMode});
+    }
+    button.disabled=true;
+    try{const result=await createSavedWorld({name:document.getElementById('world-name').value.trim()||'My Worldloom',seed,mode:selectedMode,friendCode});location.assign(`/worldloom/?world=${result.world.id}`);}
+    catch(error){ui.toast(error.message,'error',5500);button.disabled=false;}
+  };
   ui.onContinue = () => {
     const data = saves.load();
     if (data) startWorld({ seed: data.seed, mode: data.mode || 'survival', saveData: data });
@@ -362,6 +384,7 @@ function bindUI() {
   ui.onSave = () => saveGame(true);
   ui.onTitle = () => leaveToTitle();
   ui.onInventoryMove = (from, to) => {
+    if(sharedWorld&&(!sharedWorld.ready||sharedWorld.picking))return;
     inventory.move(from, to);
     refreshInventoryUI();
   };
@@ -454,7 +477,7 @@ async function startWorld({ seed, mode: selectedMode, saveData = null }) {
   objectiveIndex = objectiveIndexFromSave(saveData);
   survival = new SurvivalSystem(saveData?.survival);
   inventory = new Inventory();
-  if (saveData) inventory.load(saveData.inventory);
+  if (saveData?.inventory) inventory.load(saveData.inventory);
   else if (mode === 'builder') {
     HOTBAR_BLOCKS.forEach((id, index) => { inventory.slots[index] = { id, count: 99 }; });
     inventory.slots[HOTBAR_BLOCKS.length] = { id: ITEM.COPPER_PICK, count: 1 };
@@ -605,6 +628,7 @@ async function startWorld({ seed, mode: selectedMode, saveData = null }) {
   ui.showGame();
   ui.hideLoading();
   ui.toast(mode === 'builder' ? 'Dreamweaver world ready · G toggles flight · F headlamp' : 'The wilds are awake · click the world to begin', 'success', 3600);
+  if(sharedWorld)sharedWorld.attach(world);
   scheduleWorldWork();
   } catch (error) {
     console.error('Worldloom could not start this world.', error);
@@ -823,6 +847,7 @@ function refreshInventoryUI() {
 }
 
 function dropInventoryStack(slotIndex) {
+  if(sharedWorld&&(!sharedWorld.ready||sharedWorld.picking))return;
   if (!inventory || !player || !world) return false;
   const before = inventory.serialize();
   const stack = inventory.take(slotIndex);
@@ -880,7 +905,7 @@ function spawnDroppedItem(stack, position = null, velocity = null, pickupDelay =
   const dropVelocity = velocity?.isVector3
     ? velocity.clone()
     : horizontalLook.multiplyScalar(1.95).add(new THREE.Vector3(0, 1.65 + Math.max(-0.3, look.y) * 0.55, 0));
-  const merge = pickupDelay < 1 && droppedItems.find((candidate) => candidate.id === id
+  const merge = !sharedWorld && pickupDelay < 1 && droppedItems.find((candidate) => candidate.id === id
     && candidate.count + count <= 99
     && candidate.root.position.distanceToSquared(dropPosition) <= 4);
   if (merge) {
@@ -904,7 +929,9 @@ function spawnDroppedItem(stack, position = null, velocity = null, pickupDelay =
   root.position.copy(dropPosition);
   root.add(model);
   scene.add(root);
-  droppedItems.push({ id, count, root, model, velocity: dropVelocity, age: 0, pickupDelay: Math.max(0.15, pickupDelay) });
+  const networkId=sharedWorld?(receivingDrop||crypto.randomUUID()):null;
+  droppedItems.push({ id, count, root, model, velocity: dropVelocity, age: 0, pickupDelay: Math.max(0.15, pickupDelay),networkId });
+  if(sharedWorld&&!receivingDrop)sharedWorld.addDrop({key:networkId,id,count,position:dropPosition.toArray(),velocity:dropVelocity.toArray()});
   return true;
 }
 
@@ -972,6 +999,10 @@ function updateDroppedItems(dt) {
     drop.model.position.y = Math.sin((drop.age + drop.id * 0.13) * 2.6) * 0.025;
 
     if (drop.age < drop.pickupDelay || position.distanceToSquared(player.position) > 3.4) continue;
+    if(sharedWorld){
+      if(!sharedWorld.picking&&inventory.canAdd(drop.id,1))sharedWorld.pickup(drop);
+      continue;
+    }
     const leftover = inventory.add(drop.id, drop.count);
     const collected = drop.count - leftover;
     if (collected <= 0) continue;
@@ -1045,8 +1076,13 @@ function resumeGame() {
   input.requestLock();
 }
 
-function leaveToTitle() {
+async function leaveToTitle() {
   if (!world) return;
+  if(sharedWorld){
+    try{await sharedWorld.flush(true);sharedWorld.dispose();location.assign('/?account=worlds');}
+    catch(error){ui.toast(error.message,'error',4500);}
+    return;
+  }
   saveAndReturn(() => saveGame(true));
 }
 
@@ -1072,6 +1108,11 @@ function saveSnapshot() {
 }
 
 function saveGame(showToast = false) {
+  if(sharedWorld){
+    sharedWorld.flush(true).then(()=>{if(showToast)ui.toast('World saved to your account','success');}).catch(error=>{if(showToast)ui.toast(error.message,'error',4500);});
+    saveTimer=0;
+    return sharedWorld.ready;
+  }
   const snapshot = saveSnapshot();
   if (!snapshot) return false;
   const success = saves.save(snapshot);
@@ -1155,6 +1196,7 @@ function projectRecipe(recipe) {
 }
 
 function craftRecipe(recipe) {
+  if(sharedWorld&&(!sharedWorld.ready||sharedWorld.picking))return;
   const availability = recipeAvailability(recipe);
   if (!availability.craftable) {
     ui.toast(availability.reason, 'error');
@@ -1379,6 +1421,7 @@ function placementProblem(blockId, x, y, z) {
 }
 
 function useSelectedItem() {
+  if(sharedWorld&&(!sharedWorld.ready||sharedWorld.picking))return;
   if (!inventory || !player || state !== 'playing') return;
   const slot = inventory.selectedSlot();
   const item = getItem(slot.id);
@@ -1655,7 +1698,8 @@ function updateGame(dt) {
     nearbyTreeLevel = measureNearbyTrees();
     nearHeat = hasNearbyHeatSource();
   }
-  const interactive = state === 'playing' && input.locked;
+  const interactive = state === 'playing' && input.locked && (!sharedWorld || (sharedWorld.ready && !sharedWorld.picking));
+  if(sharedWorld&&!sharedWorld.ready)return;
   const motion = player.update(
     dt,
     interactive ? input : passiveGameplayInput,
@@ -1697,7 +1741,9 @@ function updateGame(dt) {
     resetMining();
     effects.setTarget(null);
   }
-  creatures?.update(dt, player, environment.dayAmount);
+  latestMotion=motion;
+  if(!sharedWorld||sharedWorld.isLeader)creatures?.update(dt, player, environment.dayAmount);
+  else creatures?.updateNetwork?.(dt);
   if (state === 'dead') return;
   updateDroppedItems(dt);
 
@@ -1753,7 +1799,7 @@ function updateGame(dt) {
     environment.updateLocalLights(world, player.position);
   }
   const fluidBudget = { low: 10, balanced: 18, high: 28, ultra: 40 }[settings.graphicsQuality] || 18;
-  world.updateFluids(fluidBudget);
+  if(!sharedWorld||sharedWorld.isLeader)world.updateFluids(fluidBudget);
   scheduleWorldWork();
   effects.update(dt);
   heldItem?.setVisible(input.locked && state === 'playing');
@@ -1827,9 +1873,14 @@ function animate(now) {
 
   const focus = player?.position || new THREE.Vector3(0, 24, 0);
   if (camera) camera.getWorldDirection(environmentViewDirection);
-  if (state === 'playing' || state === 'inventory') updateGame(dt);
+  if (state === 'playing' || state === 'inventory' || (sharedWorld?.ready && state==='paused')) updateGame(dt);
   else if (state === 'menu') effects.update(dt);
-  const environmentDt = state === 'playing' || state === 'inventory' ? dt : state === 'menu' ? dt * 0.12 : 0;
+  const environmentDt = state === 'playing' || state === 'inventory' || sharedWorld?.ready ? dt : state === 'menu' ? dt * 0.12 : 0;
+  sharedWorld?.update(dt,player,{...latestMotion,action:Boolean(input?.buttons.has(0)||attackGesture),held:inventory?.selectedSlot().id||0});
+  if(sharedWorld?.isLeader&&creatures){
+    sharedWorld.ecologyTime=(sharedWorld.ecologyTime||0)+dt;
+    if(sharedWorld.ecologyTime>=.1){sharedWorld.ecologyTime=0;sharedWorld.sendEcology({pigs:creatures.networkState(),time:environment.time,drops:droppedItems.map(d=>({key:d.networkId,position:d.root.position.toArray(),velocity:d.velocity.toArray()}))});}
+  }
   environment.update(environmentDt, focus, settings.viewDistance, {
     active: state === 'playing' || state === 'inventory',
     submerged: Boolean(player?.headUnderwater),
@@ -1910,7 +1961,8 @@ document.addEventListener('visibilitychange', () => {
   if (document.hidden && world) saveGame(false);
   audio.setPaused(document.hidden || !['playing', 'inventory'].includes(state));
 });
-window.addEventListener('beforeunload', () => {
+window.addEventListener('beforeunload', (event) => {
+  if(sharedWorld&&(sharedWorld.busy||sharedWorld.pending||sharedWorld.edits.length||sharedWorld.dropAdds.length)){event.preventDefault();event.returnValue='';}
   if (world) saveGame(false);
 });
 
@@ -1928,6 +1980,30 @@ async function boot() {
     ui.hideLoading();
     postToPortal('ready', { version: 2 });
     requestAnimationFrame(animate);
+    const worldId=new URLSearchParams(location.search).get('world');
+    const localHint=document.getElementById('world-save-hint');
+    localHint.textContent=readAccountSession().token?'Saved to your account · up to 10 worlds · 2 players':'Guest world · saved on this browser. Sign in for account saves and invites.';
+    if(worldId){
+      const status=document.getElementById('shared-world-status');
+      sharedWorld=new SharedWorldClient(worldId,{scene,atlas,getSnapshot:saveSnapshot,
+        onStatus:message=>{status.textContent=message;status.hidden=!message;if(message)document.exitPointerLock?.();},
+        onClosed:message=>{status.hidden=false;status.textContent=message;pauseGame();},
+        onLoad:async snapshot=>{await startWorld({seed:snapshot.save.seed,mode:snapshot.save.mode,saveData:snapshot.save});if(!world)throw new Error('The world could not start.');},
+        onInventory:data=>{inventory.load(data);refreshInventoryUI();checkObjectives();},
+        onDrop:drop=>{
+          if(droppedItems.some(item=>item.networkId===drop.key))return;
+          receivingDrop=drop.key;
+          try{spawnDroppedItem(drop,new THREE.Vector3().fromArray(drop.position),new THREE.Vector3().fromArray(drop.velocity||[0,0,0]),.35);}finally{receivingDrop=null;}
+        },
+        onDropRemoved:({key,remaining})=>{const index=droppedItems.findIndex(d=>d.networkId===key);if(index>=0){if(remaining)droppedItems[index].count=remaining;else removeDroppedItem(index);}},
+        onEcology:data=>{
+          if(creatures&&data?.pigs)creatures.applyNetwork(data.pigs);if(Number.isFinite(data?.time))environment.time=data.time;
+          for(const incoming of data?.drops||[]){const drop=droppedItems.find(d=>d.networkId===incoming.key);if(drop&&Array.isArray(incoming.position)&&Array.isArray(incoming.velocity)){drop.root.position.lerp(new THREE.Vector3().fromArray(incoming.position),.55);drop.velocity.fromArray(incoming.velocity);}}
+        },
+        onAttack:data=>{const hit=creatures?.attack(new THREE.Vector3().fromArray(data.origin),new THREE.Vector3().fromArray(data.direction),data.reach,data.damage,data.recovery);if(hit?.defeated&&hit.meat&&mode!=='builder')spawnDroppedItem({id:ITEM.RAW_MEAT,count:hit.meat},hit.position.clone().add(new THREE.Vector3(0,.55,0)),new THREE.Vector3(0,2.2,0),.35);},
+      });
+      window.__worldloomShared=sharedWorld;
+    }
   } catch (error) {
     console.error('Worldloom boot failed safely.', error);
     ui.elements.loading?.classList.add('hidden');

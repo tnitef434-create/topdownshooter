@@ -78,7 +78,7 @@ try{
   assert.equal(await other.$('[id*="player-count"]'),null);
   await page.bringToFront();await page.click('#account-logout');
   await page.waitForFunction(()=>document.querySelector('#account-profile').hidden);
-  await other.waitForFunction(()=>document.querySelector('#credit-shop-account-status').textContent.includes('SIGN IN ON'));
+  await other.waitForFunction(()=>document.querySelector('#credit-shop-account-status').textContent.includes('SIGN IN'));
   await page.type('[name="email"]',email);await page.type('[name="password"]','wrong-password');
   await page.click('.hub-account-form [type="submit"]');
   await page.waitForFunction(()=>document.querySelector('#account-message').textContent.length>0&&!document.querySelector('.hub-account-form [type="submit"]').disabled);

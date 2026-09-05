@@ -261,6 +261,28 @@ export class CreatureSystem {
       this._intent(pig,player); this._move(pig,dt,player); this._animate(pig,dt);
     }
   }
+  networkState() {
+    return this.creatures.map(p=>({id:p.id,position:p.root.position.toArray(),heading:p.heading,health:p.health,dead:p.dead,state:p.state,speed:p.speed,gait:p.gait,gaitBlend:p.gaitBlend,grazeBlend:p.grazeBlend,chewTime:p.chewTime,flashTime:p.flashTime,hitTime:p.hitTime,deathTime:p.deathTime,stateTime:p.stateTime,stateDuration:p.stateDuration}));
+  }
+  applyNetwork(records) {
+    const ids=new Set(records.map(r=>r.id));
+    for(const p of [...this.creatures])if(!ids.has(p.id))this._removeCreature(p);
+    for(const record of records){
+      if(!Array.isArray(record.position)||!record.position.every(Number.isFinite))continue;
+      let pig=this.creatures.find(p=>p.id===record.id);
+      if(!pig){pig=this._makePig(...record.position,record.id*37);pig.id=record.id;}
+      this._nextId=Math.max(this._nextId,record.id+1);
+      const position=record.position;Object.assign(pig,record);pig.networkTarget=new THREE.Vector3().fromArray(position);pig.ground=position[1];
+    }
+  }
+  updateNetwork(dt) {
+    this._time+=dt;
+    for(const pig of this.creatures){
+      if(pig.networkTarget)pig.root.position.lerp(pig.networkTarget,1-Math.exp(-dt*16));
+      pig.root.rotation.y=pig.heading;pig.root.visible=this._hasVisibleTerrain(pig.root.position.x,pig.root.position.z);
+      this._animate(pig,dt);pig.root.rotation.z=pig.dead?smooth(pig.deathTime/.6)*Math.PI/2:0;
+    }
+  }
   _lineBlocked(origin,direction,distance) {
     for(let s=.15;s<distance;s+=.15) {
       const p=origin.clone().addScaledVector(direction,s),id=this.world?.getBlock?.(Math.floor(p.x),Math.floor(p.y),Math.floor(p.z));
