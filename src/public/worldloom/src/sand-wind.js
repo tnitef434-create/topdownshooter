@@ -2,6 +2,7 @@ import * as THREE from '../vendor/three.module.min.js';
 import { BLOCK } from './blocks.js';
 import { hasPlantGround } from './plant-visibility.js';
 import { createSandParticles } from './sand-dust.js';
+import { ANKLE_DUST } from './ankle-dust-data.js';
 
 const CAP = 1800;
 const REGION = 32;
@@ -73,9 +74,9 @@ export class SandWindField {
       if(distanceSq>36**2)continue;
       const y=sandSurface(this.world,x+.5,z+.5);if(y===null)continue;
       let sandy=0;for(const dx of [-3,0,3])for(const dz of [-3,0,3])if(sandSurface(this.world,x+dx+.5,z+dz+.5)!==null)sandy++;
-      if(sandy>=7)anchors.push({x:x+.5,z:z+.5,y,distanceSq});
+      if(sandy>=7 && hash(x,z,this.world.seed^617)<.28)anchors.push({x:x+.5,z:z+.5,y,distanceSq});
     }
-    this.anchors=anchors;
+    this.anchors=anchors.sort((a,b)=>a.distanceSq-b.distanceSq).slice(0,18);
   }
   update(dt,focus,context={}) {
     if(!this.world||!focus||!this.enabled||context.active===false)return;
@@ -89,23 +90,23 @@ export class SandWindField {
       for(let attempt=0;attempt<54&&this.anchors.length&&this.particles.length<this.limit;attempt++) {
         const serial=++this.serial;
         const anchor=this.anchors[Math.floor(hash(serial,3,seed)*this.anchors.length)];
-        const x=anchor.x+(hash(serial,5,seed)-.5)*5,z=anchor.z+(hash(serial,7,seed)-.5)*5;
+        const sampleIndex=Math.floor(hash(serial,5,seed)*ANKLE_DUST.length), sample=ANKLE_DUST[sampleIndex];
+        const x=anchor.x+sample[0],z=anchor.z+sample[1];
         const gust=sandGustAt(x,z,this.time,seed);if(gust.strength<.12)continue;
         const ground=sandSurface(this.world,x,z);if(ground===null)continue;
-        const soft=serial%3!==0,phase=hash(serial,11,seed)*Math.PI*2;
+        const soft=sampleIndex%3!==0,phase=sample[5];
         this.particles.push({x,z,y:ground,ground,angle:gust.angle,phase,soft,age:0,
-          life:4+hash(serial,13,seed)*5,height:.18+hash(serial,17,seed)*(soft?1.05:.55),
-          speed:(.9+hash(serial,19,seed)*1.3)*(this.reducedMotion?.45:1),
-          size:soft?1.1+hash(serial,23,seed)*1.1:.025+hash(serial,23,seed)*.050,
-          opacity:soft?.28:.52,strength:gust.strength,check:0,bx:Math.floor(x),bz:Math.floor(z)});
+          life:7+hash(serial,13,seed)*5,height:sample[2],
+          speed:sample[4]*(this.reducedMotion?.45:1),size:sample[3],
+          opacity:soft?.34:.56,strength:gust.strength,check:0,bx:Math.floor(x),bz:Math.floor(z)});
       }
     }
     this.particles=this.particles.filter(p=>{
       p.age+=dt;
-      const eddy=Math.sin(p.age*1.3+p.phase)*.24;
+      const eddy=Math.sin(p.age*.55+p.phase)*.018;
       p.x+=(Math.cos(p.angle)*p.speed-Math.sin(p.angle)*eddy)*dt;
       p.z+=(Math.sin(p.angle)*p.speed+Math.cos(p.angle)*eddy)*dt;
-      p.y=p.ground+p.height+Math.sin(p.age*.9+p.phase)*Math.min(.075,p.height*.4);
+      p.y=p.ground+p.height+Math.sin(p.age*.65+p.phase)*.005;
       p.check-=dt;
       const bx=Math.floor(p.x),bz=Math.floor(p.z);
       if(p.check<=0||bx!==p.bx||bz!==p.bz) {
@@ -117,7 +118,7 @@ export class SandWindField {
     const attributes=this.mesh.geometry.attributes;
     this.particles.forEach((p,i)=>{
       attributes.position.setXYZ(i,p.x,p.y,p.z);
-      attributes.dustSize.setX(i,p.size*(p.soft?1+p.age/p.life*.7:1));
+      attributes.dustSize.setX(i,p.size);
       attributes.dustAlpha.setX(i,p.opacity*smooth(p.age/.9)*smooth((p.life-p.age)/1.7)*p.strength*weather*(this.reducedMotion?.6:1));
     });
     this.mesh.material.uniforms.dustColor.value.set(0xe6ca98).multiplyScalar(.14+.86*Math.max(0,Math.min(1,context.dayAmount??1)));

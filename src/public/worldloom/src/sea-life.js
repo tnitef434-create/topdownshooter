@@ -35,7 +35,10 @@ export function seagrassBed(world, x, z) {
 export function fishHasWater(world, position, radius = .23) {
   if (!world || !hasPlantGround(world, position.x, position.z)) return false;
   for (const [dx, dy, dz] of [[0,0,0], [radius,0,0], [-radius,0,0], [0,.13,0], [0,-.13,0], [0,0,radius], [0,0,-radius]]) {
-    if (world.getBlock(Math.floor(position.x + dx), Math.floor(position.y + dy), Math.floor(position.z + dz)) !== BLOCK.WATER) return false;
+    const x=Math.floor(position.x+dx), y=Math.floor(position.y+dy), z=Math.floor(position.z+dz);
+    if (world.getBlock(x,y,z) !== BLOCK.WATER) return false;
+    const surface=world.getFluidSurfaceY?.(x,y,z);
+    if(surface!=null && position.y+dy>surface-.025) return false;
   }
   return true;
 }
@@ -87,6 +90,7 @@ export class SeaLifeField {
   constructor(scene) {
     this.world = null; this.time = 0; this.scanTimer = 0;
     this.plants = []; this.fish = []; this.patchLimit = 18; this.fishLimit = 30;
+    this.pondHomes = [];
     this.reducedMotion = false; this.bites = 0;
     this.uniforms = { time: { value: 0 } };
     this.dummy = new THREE.Object3D();
@@ -140,7 +144,7 @@ export class SeaLifeField {
   setWorld(world) {
     if (this.world === world) return;
     this.world = world; this.time = 0; this.scanTimer = 0; this.bites = 0;
-    this.plants = []; this.fish = [];
+    this.plants = []; this.fish = []; this.pondHomes = [];
     for (const mesh of [this.plantMesh,...this.fishMeshes]) { mesh.count = 0; mesh.visible = false; }
   }
 
@@ -181,9 +185,34 @@ export class SeaLifeField {
       }
     }
     this.plants = plants.slice(0,MAX_PLANTS);
-    const homes = new Map(this.plants.map(p => [p.key,p]));
-    this.fish = this.fish.filter(f => homes.has(f.home.key) && fishHasWater(this.world,f.position)).slice(0,this.fishLimit);
+    // Ponds have their own open-water homes. They need no seagrass and never
+    // enter the leaf-feeding state used by the ocean habitat.
+    this.pondHomes=[];
+    for(const pond of this.world.getPondsNear?.(focus.x,focus.z,30)||[]) {
+      if(Math.hypot(pond.centerX-focus.x,pond.centerZ-focus.z)>30)continue;
+      for(let i=0;i<3;i++) {
+        const angle=i*TAU/3+(pond.phase||0);
+        const x=pond.centerX+Math.cos(angle)*Math.min(1.6,pond.radiusX*.25);
+        const z=pond.centerZ+Math.sin(angle)*Math.min(1.6,pond.radiusZ*.25);
+        const y=pond.waterY+.38;
+        if(!fishHasWater(this.world,{x,y,z}))continue;
+        this.pondHomes.push({x,y,z,key:`pond:${pond.id}:${i}`,patch:`pond:${pond.id}`,habitat:'pond',
+          surface:this.world.getFluidSurfaceY?.(Math.floor(x),pond.waterY,Math.floor(z))??pond.waterY+.9,
+          species:i,phase:angle});
+      }
+    }
+    const homes = new Map([...this.plants,...this.pondHomes].map(p => [p.key,p]));
+    const residents=this.fish.filter(f => homes.has(f.home.key) && fishHasWater(this.world,f.position));
+    this.fish=[...residents.filter(f=>f.home.habitat==='pond'),
+      ...residents.filter(f=>f.home.habitat!=='pond').slice(0,Math.max(0,this.fishLimit-this.pondHomes.length))].slice(0,this.fishLimit);
     for (const fish of this.fish) fish.home = homes.get(fish.home.key);
+    for(const home of this.pondHomes) {
+      if(this.fish.length>=this.fishLimit||this.fish.some(f=>f.home.key===home.key))continue;
+      const position=new THREE.Vector3(home.x,home.y,home.z),phase=home.phase;
+      this.fish.push({home,position,velocity:new THREE.Vector3(),target:position.clone(),species:home.species,
+        scale:.85,yaw:phase,pitch:0,phase,identityPhase:phase,speed:0,state:'roam',timer:2,age:0,
+        cycle:0,feedAge:0,bites:0,damageable:false});
+    }
     for (const patch of patches.slice(0,this.patchLimit)) {
       const patchPlants = this.plants.filter(p => p.patch === patch.key);
       if (patchPlants.length < 5) continue;
@@ -206,7 +235,7 @@ export class SeaLifeField {
     for (let attempt = 0; attempt < 8; attempt++) {
       const angle = phase + attempt * .8, radius = 1 + (attempt % 3) * .45;
       this.candidate.set(fish.home.x + Math.cos(angle) * radius,
-        fish.home.y + .8 + .35 * Math.sin(phase * 1.7),fish.home.z + Math.sin(angle) * radius);
+        fish.home.habitat==='pond' ? fish.home.y + .16*Math.sin(phase*1.7) : fish.home.y + .8 + .35 * Math.sin(phase * 1.7),fish.home.z + Math.sin(angle) * radius);
       if (fishHasWater(this.world,this.candidate)) { fish.target.copy(this.candidate); return; }
     }
     fish.target.copy(fish.position);
@@ -215,11 +244,12 @@ export class SeaLifeField {
   _updateFish(fish, dt, focus) {
     fish.age += dt; fish.timer -= dt;
     if (fish.timer <= 0) {
-      if (fish.state === 'feed') { fish.state = 'roam'; fish.timer = 6 + fish.species; this._chooseTarget(fish); }
+      if (fish.home.habitat==='pond') { fish.state='roam';fish.timer=4+fish.species;this._chooseTarget(fish); }
+      else if (fish.state === 'feed') { fish.state = 'roam'; fish.timer = 6 + fish.species; this._chooseTarget(fish); }
       else if (fish.state === 'approach') { fish.state = 'roam'; fish.timer = 3; this._chooseTarget(fish); }
       else { fish.state = 'approach'; fish.timer = 12; }
     }
-    const tip = seagrassTip(fish.home, this.candidate);
+    const tip = fish.home.habitat==='pond' ? null : seagrassTip(fish.home, this.candidate);
     if (fish.state === 'approach' || fish.state === 'feed') {
       const approach = fish.identityPhase + fish.species * 1.2;
       // The nose, rather than the body centre, meets the moving leaf tip.
@@ -344,6 +374,7 @@ export class SeaLifeField {
 
   getStats() {
     return { plants:this.plants.length, fish:this.fish.length, species:SPECIES.map((name,i) => ({name,count:this.fish.filter(f => f.species === i).length})),
+      pondFish:this.fish.filter(f=>f.home.habitat==='pond').length,
       feeding:this.fish.filter(f => f.state === 'feed').length, bites:this.bites, draws:[this.plantMesh,...this.fishMeshes].filter(m => m.visible).length, damageable:false };
   }
   dispose() {

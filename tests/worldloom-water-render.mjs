@@ -23,7 +23,20 @@ try {
  await page.evaluate(()=>{const p=window.__worldloomPlayer;p.pitch=-.12;p.setPosition(36,29.2,0);});
  await page.waitForFunction(()=>window.__worldloomWorld.waterMaterial.userData.waterReflection.valid.value===0,{timeout:15000});
  await page.screenshot({path:'../../outputs/worldloom-underwater.png'});
- const final=await page.evaluate(()=>({cameraVisible:window.__worldloomPlayer.camera.visible,waterVisible:[...window.__worldloomWorld.chunks.values()].some(c=>c.waterMesh?.visible)}));
- assert.equal(final.cameraVisible,true);assert.equal(final.waterVisible,true);assert.equal(errors.length,0,errors.join('\n'));
- console.log(JSON.stringify({passed:true,...initial,...final},null,2));
+ const final=await page.evaluate(()=>{const e=window.__worldloomEnvironment;return {cameraVisible:window.__worldloomPlayer.camera.visible,waterVisible:[...window.__worldloomWorld.chunks.values()].some(c=>c.waterMesh?.visible),submerged:e.waterView.submerged,depth:e.waterView.depth,fogFar:e.scene.fog.far,skyVisible:e.atmosphere.visible};});
+ assert.equal(final.cameraVisible,true);assert.equal(final.waterVisible,true);assert.equal(final.submerged,true);assert.ok(final.fogFar<24);assert.equal(final.skyVisible,false);
+ await page.evaluate(()=>{const p=window.__worldloomPlayer;p.pitch=-.9;p.setPosition(36,33.1,0);});
+ await page.waitForFunction(()=>!window.__worldloomEnvironment.waterView.submerged&&window.__worldloomEnvironment.atmosphere.visible);
+ const entries=await page.evaluate(()=>window.__worldloomEnvironment.waterEffects.entries);
+ await page.evaluate(()=>window.__worldloomPlayer.setPosition(36,32.65,0));
+ await page.waitForFunction(n=>{const f=window.__worldloomEnvironment.waterEffects;return f.entries>n&&f.rings.some(r=>r.age>.18);},{timeout:15000},entries);
+ const splash=await page.evaluate(()=>window.__worldloomEnvironment.waterEffects.getStats());
+ assert.ok(splash.droplets>0&&splash.ripples>0);await page.screenshot({path:'../../outputs/worldloom-water-splash.png'});
+ const pond=await page.evaluate(()=>{const w=window.__worldloomWorld,p=w.getPondsNear(0,0,450)[0];if(!p)return null;const player=window.__worldloomPlayer;player.pitch=-.6;player.setPosition(p.centerX,p.waterY+2.3,p.centerZ+4);return p;});
+ assert.ok(pond,'seed 41 contains a pond for integration coverage');
+ await page.waitForFunction(()=>window.__worldloomSeaLife.getStats().pondFish>=3,{timeout:60000});
+ const pondLife=await page.evaluate(()=>window.__worldloomSeaLife.getStats());
+ assert.equal(pondLife.plants,0);await page.screenshot({path:'../../outputs/worldloom-pond-fish.png'});
+ assert.equal(errors.length,0,errors.join('\n'));
+ console.log(JSON.stringify({passed:true,...initial,...final,splash,pondLife},null,2));
 }finally{await browser.close();}

@@ -1,0 +1,29 @@
+<!doctype html><html><meta charset="utf-8"><title>Worldloom water review</title>
+<style>body{margin:0;background:#102934;color:#fff;font:14px system-ui}nav{height:48px;display:flex;gap:8px;align-items:center;padding:0 12px}button{padding:7px 12px;cursor:pointer}iframe{border:0;width:100vw;height:calc(100vh - 48px)}output{font-size:12px}</style>
+<nav><button id="start">Load test ocean</button><button id="above">Above water</button><button id="under">Underwater</button><button id="pond">Pond fish</button><button id="splash">Entry splash</button><output id="status">Ready</output></nav>
+<iframe id="game" src="/src/public/worldloom/index.html" title="Worldloom test world"></iframe>
+<script>
+const frame=document.getElementById('game'),status=document.getElementById('status');
+const w=()=>frame.contentWindow;
+const move=(x,y,z,pitch=-.25)=>{const p=w().__worldloomPlayer;if(!p)return;p.flying=true;p.pitch=pitch;p.yaw=0;p.setPosition(x,y,z);};
+document.getElementById('start').onclick=()=>{
+ w().localStorage.setItem('worldloom.settings.v1',JSON.stringify({viewDistance:3,graphicsQuality:'high',weatherEffects:true}));
+ frame.onload=()=>{frame.onload=null;const doc=w().document;doc.querySelector('#seed-input').value='41';doc.querySelector('#new-world-button').click();status.textContent='Loading ocean…';
+ const timer=setInterval(()=>{if(w().__worldloomPlayer&&!doc.querySelector('#hud').classList.contains('hidden')){clearInterval(timer);move(36,34,0);status.textContent='Ocean ready';}},300);};
+ frame.contentWindow.location.reload();
+};
+document.getElementById('above').onclick=()=>move(36,34,0,-.42);
+document.getElementById('under').onclick=()=>move(36,29.2,0,-.12);
+document.getElementById('pond').onclick=()=>{
+ const world=w().__worldloomWorld;if(!world)return;
+ const ponds=world.getPondsNear(0,0,450),p=ponds[0];if(!p){status.textContent='No pond found';return;}
+ move(p.centerX,p.waterY+2.3,p.centerZ+4,-.55);status.textContent='Streaming pond…';
+};
+document.getElementById('splash').onclick=()=>{
+ const e=w().__worldloomEnvironment,p=w().__worldloomPlayer;if(!e||!p)return;
+ const world=w().__worldloomWorld,x=p.position.x,z=p.position.z-2,y=Math.floor(p.position.y);
+ for(let by=y+4;by>=y-8;by--){const surface=world.getFluidSurfaceY(x,by,z);if(surface!==null){e.waterEffects.splash({x,z},surface,3.5);break;}}
+};
+setInterval(()=>{const e=w().__worldloomEnvironment;if(!w().__worldloomPlayer||!e)return;
+status.textContent=`${e.waterView.submerged?'Underwater':'Air'} · ${e.waterView.depth.toFixed(1)} m depth · ${e.seaLife.getStats().pondFish} pond fish · ${e.waterEffects.getStats().ripples} ripples`;},500);
+</script></html>

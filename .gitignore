@@ -21,6 +21,9 @@ dist/worldloom/src/*
 !dist/worldloom/src/sea-life.js
 !dist/worldloom/src/sea-life-meshes.js
 !dist/worldloom/src/water-surface.js
+!dist/worldloom/src/water-view.js
+!dist/worldloom/src/water-effects.js
+!dist/worldloom/src/ankle-dust-data.js
 !dist/worldloom/src/portal.js
 !dist/worldloom/src/forest-floor.js
 !dist/worldloom/assets/

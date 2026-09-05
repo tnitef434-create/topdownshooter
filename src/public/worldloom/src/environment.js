@@ -13,6 +13,8 @@ import { SeaLifeField } from './sea-life.js';
 import { SummitCrossField } from './summit-crosses.js';
 import { atmosphericFogRange } from './fog.js';
 import { enhanceWaterMaterial, WaterReflection } from './water-surface.js';
+import { sampleWaterView, underwaterOptics } from './water-view.js';
+import { WaterInteractionEffects } from './water-effects.js';
 
 const LIGHT_BLOCKS = new Set([BLOCK.TORCH, BLOCK.LUMEN_CRYSTAL, BLOCK.KILN, BLOCK.FURNACE]);
 const FOLIAGE_BLOCKS = new Set([BLOCK.ASH_LEAVES, BLOCK.PINE_NEEDLES]);
@@ -1468,6 +1470,11 @@ export class Environment {
     this.sandWind = new SandWindField(scene);
     this.seaLife = new SeaLifeField(scene);
     this.waterReflection = new WaterReflection(scene,renderer);
+    this.waterEffects = new WaterInteractionEffects(scene);
+    this.waterView = {submerged:false,depth:0};
+    this.underwaterColor = new THREE.Color();
+    this.waterLightFilter = new THREE.Color();
+    this.moonBaseColor = this.moonLight.color.clone();
     // Combat creatures remain pigs; sea life is a protected decorative habitat.
     this.summitCrosses = new SummitCrossField(scene);
     this.localLights = Array.from({ length: 8 }, (_, index) => {
@@ -1500,6 +1507,7 @@ export class Environment {
     this.sandWind.setWorld(this.weatherWorld);
     this.seaLife.setWorld(this.weatherWorld);
     this.waterReflection.setWorld(this.weatherWorld);
+    this.waterEffects.setWorld(this.weatherWorld);
     this.summitCrosses.setWorld(this.weatherWorld);
     if (worldChanged) this._resetWeatherCycle(Boolean(this.weatherWorld));
   }
@@ -2027,6 +2035,7 @@ export class Environment {
   }
 
   update(dt, focus, viewDistance = 4, context = {}) {
+    this.waterView = sampleWaterView(this.weatherWorld,context.cameraPosition);
     this.graphicsUniforms.time.value += dt;
     this.time = (this.time + dt / this.cycleSeconds) % 1;
     this._updateCloudField(dt, focus);
@@ -2051,7 +2060,7 @@ export class Environment {
     const stormAmount = lightingState.stormAmount;
     this.skyColor.lerp(this._stormSky, stormAmount);
     this.fogColor.lerp(this._stormFog, stormAmount * 0.82);
-    this.scene.background.copy(this.skyColor);
+    this.scene.background = this.skyColor;
     this.scene.fog.color.copy(this.fogColor);
     const fogRange = atmosphericFogRange(viewDistance, {
       rainIntensity: this.rainIntensity,
@@ -2107,6 +2116,7 @@ export class Environment {
     sunlightColorForElevation(this.solarElevation, this._sunColor);
     this.sunLight.color.copy(this._sunColor);
     this.moonLight.intensity = Math.pow(1 - this.dayAmount, 1.55) * 0.24 * moonAccess;
+    this.moonLight.color.copy(this.moonBaseColor);
     if ('environmentIntensity' in this.scene) {
       this.scene.environmentIntensity = daylight.environmentIntensity
         * (1 - this.overcastAmount * 0.46);
@@ -2118,7 +2128,7 @@ export class Environment {
       const eyeAdaptation = 1 + THREE.MathUtils.smoothstep(1 - this.skyExposure, 0.45, 1) * 0.12;
       const targetExposure = baseExposure
         * (0.99 + (1 - this.dayAmount) * 0.1 - this.overcastAmount * 0.07)
-        * eyeAdaptation;
+        * (this.waterView.submerged ? underwaterOptics(this.waterView.depth,this.dayAmount).exposure : eyeAdaptation);
       this.renderer.toneMappingExposure += (targetExposure - this.renderer.toneMappingExposure) * (1 - Math.exp(-dt / 1.8));
     }
 
@@ -2191,7 +2201,28 @@ export class Environment {
     this.meadowPlants.update(dt, focus);
     this.sandWind.update(dt, focus, {...context, rainIntensity:this.rainIntensity, skyExposure:this.skyExposure, dayAmount:this.dayAmount});
     this.seaLife.update(dt, focus, context);
+    this.waterEffects.update(dt,focus,{...context,dayAmount:this.dayAmount});
     this.summitCrosses.update(dt, focus, viewDistance);
+
+    // Apply water absorption after daylight has been calculated. The ordinary
+    // air values are rebuilt every frame, so leaving water restores them fully.
+    const submerged=this.waterView.submerged;
+    for(const object of [this.atmosphere,this.sun,this.moon,this.stars,this.clouds]) object.visible=!submerged;
+    if(submerged) {
+      const optics=underwaterOptics(this.waterView.depth,this.dayAmount);
+      this.underwaterColor.set(0x126574).multiplyScalar(optics.fogBrightness);
+      this.scene.background=this.underwaterColor;
+      this.scene.fog.color.copy(this.underwaterColor);
+      this.scene.fog.near=optics.near;this.scene.fog.far=optics.far;this.fogClarity=0;
+      this.waterLightFilter.setRGB(optics.red,optics.green,optics.blue);
+      for(const light of [this.sunLight,this.moonLight,this.hemisphere,this.bounceLight]) {
+        light.color.multiply(this.waterLightFilter);
+        light.intensity*=light===this.sunLight||light===this.moonLight?optics.direct:optics.ambient;
+      }
+      this.hemisphere.groundColor.multiply(this.waterLightFilter);
+      this.scene.environmentIntensity*=optics.ambient;
+      this.graphicsUniforms.sunVisibility.value=0;
+    }
 
     const lightningEvent = this.lightning.update(
       dt,

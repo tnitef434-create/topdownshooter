@@ -100,3 +100,30 @@ test('seagrass roots remain fixed while current and fish wakes flex the tips and
   field.setWorld(null);assert.equal(field.plantMesh.count,0);assert.ok(field.fishMeshes.every(m=>m.count===0));
   field.dispose();
 });
+
+test('plant-free inland ponds host all three protected fish and remain collision safe',()=>{
+  let drained=false;
+  const world={seed:41,seaLevel:5,terrainHeight:()=>19,hasVisibleTerrainAt:()=>true,
+    getPondsNear:()=>[{id:'test',centerX:0,centerZ:0,radiusX:5,radiusZ:5,waterY:21,phase:.4}],
+    getBlock:(x,y,z)=>x*x+z*z<25&&!drained&&y>19&&y<=21?BLOCK.WATER:y<=21?BLOCK.LOAM:BLOCK.AIR,
+    getFluidSurfaceY:()=>21.92};
+  const field=new SeaLifeField(new THREE.Scene());field.setWorld(world);
+  const focus=new THREE.Vector3(0,25,0);field.update(1/60,focus);
+  assert.equal(field.plants.length,0);assert.equal(field.getStats().pondFish,3);
+  assert.equal(new Set(field.fish.map(f=>f.species)).size,3);
+  let travelled=0;
+  for(let i=0;i<600;i++) {
+    const before=field.fish[0].position.clone();field.update(1/30,focus);
+    travelled+=before.distanceTo(field.fish[0].position);
+    for(const fish of field.fish){assert.ok(fishHasWater(world,fish.position));assert.equal(fish.state,'roam');assert.equal(fish.damageable,false);}
+  }
+  assert.ok(travelled>3);assert.equal(field.bites,0);assert.equal(field.plants.length,0);
+  drained=true;field.scanTimer=0;field.update(.1,focus);assert.equal(field.fish.length,0);field.dispose();
+});
+
+test('a full ocean fish budget leaves room for a newly visible pond school',()=>{
+  const {world,field,focus}=fixture();assert.equal(field.fish.length,4);
+  world.getPondsNear=()=>[{id:'near-shore',centerX:10,centerZ:0,radiusX:4,radiusZ:4,waterY:3,phase:0}];
+  field.scanTimer=0;field.update(1/60,focus);
+  assert.equal(field.getStats().pondFish,3);assert.equal(field.fish.length,4);field.dispose();
+});

@@ -1835,10 +1835,11 @@ function animate(now) {
   environment.update(environmentDt, focus, settings.viewDistance, {
     active: state === 'playing' || state === 'inventory',
     submerged: Boolean(player?.headUnderwater),
+    cameraPosition: camera?.position,
     playerVelocity: player?.velocity,
     playerForward: environmentViewDirection,
   });
-  if (scene?.fog && world && player) {
+  if (scene?.fog && world && player && !environment.waterView.submerged) {
     const clampedFog = clampFogToMeshedTerrain({
       atmosphericNear: scene.fog.near,
       atmosphericFar: scene.fog.far,
@@ -1872,7 +1873,7 @@ function animate(now) {
     rainAmount: weather.intensity,
     caveAmount: cavePostProcessAmount(visualCaveDepth, environment.skyExposure),
     skyExposure: environment.skyExposure,
-    sunVisibility: environment.sun?.material?.opacity || 0,
+    sunVisibility: environment.waterView.submerged ? 0 : environment.sun?.material?.opacity || 0,
     sunElevation: environment.solarElevation,
     sunWorldPosition: environment.sun?.position || null,
   });

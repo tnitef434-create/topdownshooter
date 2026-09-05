@@ -75,6 +75,9 @@ test('sand field stays within its draw budget, fades in, shelters from rain and 
   assert.ok(field.mesh.geometry.attributes.dustAlpha.array.some(v=>v>0&&v<=1));
   assert.equal(field.mesh.material.depthWrite,false);
   assert.ok(field.particles.every(p=>sandSurface(world,p.x,p.z)===p.ground));
+  assert.ok(field.particles.every(p=>p.y-p.ground+p.size*.5<=.25),'entire feathered dust stays below ankle height');
+  assert.ok(field.particles.every(p=>p.y-p.ground-p.size*.5>=0),'dust stays above the sand');
+  assert.ok(field.particles.every(p=>p.speed<=.27),'soft drift, not fast gusts');
   field.update(.05,focus,{rainIntensity:1});assert.equal(field.mesh.visible,false);
   field.setWorld(null);assert.equal(field.mesh.geometry.drawRange.count,0);assert.equal(field.anchors.length,0);
   field.dispose();

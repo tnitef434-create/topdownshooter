@@ -30,4 +30,8 @@ const pipeline=new GraphicsPipeline(renderer,scene,camera);pipeline.applyProfile
 pipeline.render(1/60);
 window.natureResult={water:results,sand:sand.getStats(),ao:pipeline.aoEnabled,triangles:renderer.info.render.triangles};
 window.sandRender=(seconds)=>{for(let t=0;t<seconds;t+=.05)sand.update(.05,new THREE.Vector3(0,1,0),{dayAmount:1});pipeline.render(1/60);return sand.getStats();};
+const controls=document.createElement('nav');controls.style.cssText='position:absolute;left:12px;top:12px;display:flex;gap:8px';document.body.append(controls);
+for(const [label,action] of [['Advance 1 second',()=>window.sandRender(1)],['Eye height',()=>{camera.position.set(2,2.65,8);camera.lookAt(0,1,-3);pipeline.render(1/60);}],['Inspect ground',()=>{camera.position.set(2,1.45,4);camera.lookAt(0,1.1,-2);pipeline.render(1/60);}]]) {
+const b=document.createElement('button');b.textContent=label;b.onclick=action;controls.append(b);
+}
 </script></html>
