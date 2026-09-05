@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { isAccountSessionActive } from './accountStore.js';
 import { isWorldMember, worldError } from './worldStore.js';
 import { validVector, validCell, cellKey, personalSave, unpackEdits, worldSave } from './src/public/worldloom/src/shared-world.js';
 import { WORLD_GENERATOR_VERSION, isSupportedWorldGeneratorVersion } from './src/public/worldloom/src/generator-version.js';
@@ -56,7 +57,7 @@ export function installWorldServer({app,io,store,accounts,authenticate,verified,
       const token=socket.handshake.auth?.token,worldId=socket.handshake.auth?.worldId;
       if(typeof token!=='string'||token.length>128||!uuid(worldId))throw new Error();
       const session=await accounts.findSession(hashToken(token));
-      const user=session&&session.expiresAt>Date.now()?await accounts.findUserById(session.userId):null;
+      const user=isAccountSessionActive(session)?await accounts.findUserById(session.userId):null;
       const world=user?.emailVerifiedAt?await store.get(worldId):null;
       if(!world||world.deleted||!isWorldMember(world,user.id))throw new Error();
       socket.data={user,worldId,sessionKey:hashToken(token),expiresAt:session.expiresAt};next();
@@ -150,7 +151,7 @@ export function installWorldServer({app,io,store,accounts,authenticate,verified,
   });
   const sessionCheck=setInterval(async()=>{
     for(const room of rooms.values())for(const socket of room.sockets.values()){
-      try{const session=await accounts.findSession(socket.data.sessionKey);if(!session||session.expiresAt<=Date.now())socket.disconnect(true);}catch{socket.disconnect(true);}
+      try{const session=await accounts.findSession(socket.data.sessionKey);if(!isAccountSessionActive(session))socket.disconnect(true);}catch{socket.disconnect(true);}
     }
   },60_000);sessionCheck.unref();
   return {close(){clearInterval(sessionCheck);namespace.disconnectSockets(true);},rooms};

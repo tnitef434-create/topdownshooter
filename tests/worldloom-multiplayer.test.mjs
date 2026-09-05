@@ -25,7 +25,7 @@ async function fixture(postgres=false){
   for(let i=0;i<3;i++){
     const id=randomUUID();await accounts.createUser({id,email:`${id}@example.invalid`,displayName:['Owner','Friend','Stranger'][i],password:{algorithm:'scrypt',salt:'salt',hash:'hash'},credits:0,purchasedWeapons:[],createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()});
     const token=hash(id);await accounts.reserveEmailVerification(id,token,Date.now()+100_000);await accounts.consumeEmailVerification(token,{algorithm:'scrypt',salt:'salt',hash:'hash'});
-    const user=await accounts.generateFriendCode(id);users.push(user);await accounts.createSession(hash(`session-${id}`),id,Date.now()+100_000);
+    const user=await accounts.generateFriendCode(id);users.push(user);await accounts.createSession(hash(`session-${id}`),id);
   }
   const options={sqlClient,localFile:join(dir,'worlds.json')};const store=createWorldStore(options);await store.initialize();
   return {dir,db,accounts,users,store,options,async close(){if(db)await db.close();await rm(dir,{recursive:true,force:true});}};

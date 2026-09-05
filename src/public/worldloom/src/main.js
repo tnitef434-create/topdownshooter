@@ -9,6 +9,7 @@ import {
 } from './world.js';
 import { InputController, PlayerController, fallDamageForImpact } from './player.js';
 import { AudioSystem } from './audio.js';
+import { MenuMusic } from './menu-music.js';
 import { Environment, BlockEffects } from './environment.js';
 import { SaveStore, Inventory, DEFAULT_SETTINGS, GRAPHICS_PRESETS } from './save.js';
 import {
@@ -38,6 +39,7 @@ const canvas = document.getElementById('game');
 const ui = new UI();
 const saves = new SaveStore();
 const audio = new AudioSystem();
+const menuMusic = new MenuMusic();
 
 let renderer;
 let scene;
@@ -150,6 +152,7 @@ function setState(next) {
   if (next !== 'playing') input.clear();
   heldItem?.setVisible(next === 'playing' && Boolean(input?.locked));
   audio.setPaused(!['playing', 'inventory'].includes(next));
+  menuMusic.setActive(next === 'menu');
 }
 
 function initRenderer() {
@@ -409,6 +412,7 @@ function applySettings(next) {
   camera.far = cameraFarForViewDistance(next.viewDistance);
   camera.updateProjectionMatrix();
   audio.setSettings(next);
+  menuMusic.setSettings(next);
   environment?.applyGraphicsSettings(next);
   graphicsPipeline?.applyProfile(GRAPHICS_PRESETS[next.graphicsQuality] || GRAPHICS_PRESETS.balanced);
   document.documentElement.classList.toggle('user-reduced-motion', Boolean(next.reducedMotion));

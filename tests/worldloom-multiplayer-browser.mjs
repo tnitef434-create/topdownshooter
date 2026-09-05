@@ -34,10 +34,15 @@ try{
   }
   const a=await pageFor(owner),b=await pageFor(friend);
   await a.goto(base+'/worldloom/');await a.waitForSelector('#world-name',{visible:true});
-  await a.type('#world-name','Our quiet valley');await a.type('#seed-input','2206');await a.click('label:has(input[value="builder"])');await a.click('.world-invite summary');await a.type('#invite-code',friend.user.friendCode);
+  await a.type('#world-name','Our quiet valley');await a.type('#seed-input','2206');await a.click('label:has(input[value="builder"])');await a.click('.world-invite summary');
+  await a.waitForSelector('#hub-account[open] #invite-code',{visible:true});
+  await a.type('#invite-code',friend.user.friendCode);await a.click('#account-context .account-primary');
+  await a.waitForFunction(()=>!document.querySelector('#hub-account').open);
   await a.click('#new-world-button');await a.waitForFunction(()=>new URLSearchParams(location.search).has('world'));
   const worldId=new URL(a.url()).searchParams.get('world');console.log('Created account world through the real menu.');
-  await b.goto(base+'/?account=worlds');await b.waitForFunction(()=>document.querySelector('#received-invites .saved-world'));await b.click('#tab-invites');
+  await b.goto(base+'/worldloom/');await b.waitForSelector('#world-account-button',{visible:true});await b.click('#world-account-button');
+  await b.waitForFunction(()=>document.querySelector('#received-invites .saved-world'));await b.click('#tab-invites');
+  assert.equal(new URL(b.url()).pathname,'/worldloom/','received invites open over Worldloom before joining');
   await b.screenshot({path:'../../outputs/unpaused-account-invites.png'});
   await b.click('#received-invites .world-play');await b.waitForFunction(()=>new URLSearchParams(location.search).has('world'));
   await Promise.all([a,b].map(p=>p.waitForFunction(()=>window.__worldloomShared?.ready&&window.__worldloomPlayer,{timeout:180_000})));

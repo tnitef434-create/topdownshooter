@@ -1,0 +1,42 @@
+import puppeteer from 'puppeteer';
+import assert from 'node:assert/strict';
+
+const base=process.env.HUB_TEST_URL||'http://127.0.0.1:4187/';
+if(!['localhost','127.0.0.1'].includes(new URL(base).hostname))throw new Error('Use a local preview for music QA.');
+const browser=await puppeteer.launch({executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true,args:['--no-sandbox','--enable-webgl','--enable-unsafe-swiftshader']});
+try {
+  const page=await browser.newPage(), errors=[], tracks=[];
+  await page.setViewport({width:1440,height:1000});
+  page.on('pageerror',e=>errors.push(e.message));
+  page.on('request',r=>{if(r.url().includes('/assets/music/'))tracks.push(r.url());});
+  await page.goto(base);
+  assert.equal(tracks.length,0,'hub does not download the Worldloom theme');
+  await page.click('#enter-worldloom');
+  await page.waitForFunction(()=>document.querySelector('#loading-screen')?.classList.contains('hidden'),{timeout:90000});
+  await page.click('#world-name');
+  await page.waitForFunction(()=>{const a=document.querySelector('#menu-theme');return !a.paused&&a.currentTime>1.5&&a.volume>.03;},{timeout:20000});
+  assert.equal(await page.$eval('#menu-theme',a=>a.loop),true);
+  assert.ok(await page.$eval('#menu-theme',a=>a.duration>119&&a.duration<121));
+  assert.ok(tracks.some(url=>url.endsWith('/overworld-greenery.mp3')));
+  assert.ok(!tracks.some(url=>url.includes('flowstate')),'gameplay soundtrack stays out of the main menu');
+  await page.$eval('#menu-theme',a=>{a.currentTime=a.duration-.3;});
+  await page.waitForFunction(()=>{const a=document.querySelector('#menu-theme');return a.currentTime>1&&a.currentTime<5&&a.volume>.03;},{timeout:8000});
+  await page.click('#settings-button');
+  await page.click('#music-enabled');
+  await page.waitForFunction(()=>document.querySelector('#menu-theme').paused);
+  await page.click('#music-enabled');
+  await page.waitForFunction(()=>!document.querySelector('#menu-theme').paused);
+  await page.$eval('#music-volume',a=>{a.value='.6';a.dispatchEvent(new Event('input',{bubbles:true}));});
+  await page.waitForFunction(()=>document.querySelector('#menu-theme').volume>.2);
+  await page.click('#settings-close');
+  await page.click('#world-account-button');
+  await page.waitForSelector('#hub-account[open]');
+  assert.equal(await page.$eval('#menu-theme',a=>a.paused),false,'account popup retains the main-menu theme');
+  await page.click('#account-close');
+  await page.click('#new-world-button');
+  await page.waitForFunction(()=>document.querySelector('#main-menu').classList.contains('hidden'));
+  await page.waitForFunction(()=>document.querySelector('#menu-theme').paused,{timeout:30000});
+  assert.equal(await page.$eval('#menu-theme',a=>a.volume),0,'theme fades fully out when the world starts');
+  assert.deepEqual(errors,[]);
+  console.log(JSON.stringify({passed:true,originalTrack:true,loop:true,settings:true,accountPopup:true,worldEntryFade:true}));
+} finally { await browser.close(); }

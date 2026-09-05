@@ -1,18 +1,22 @@
 import puppeteer from 'puppeteer';
 import assert from 'node:assert/strict';
-import {readFile} from 'node:fs/promises';
+import {readFile,mkdtemp,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import {randomUUID} from 'node:crypto';
 
 const base=process.env.HUB_TEST_URL||'http://127.0.0.1:4186/';
 if(!['localhost','127.0.0.1'].includes(new URL(base).hostname))throw new Error('Account QA must use an isolated local service.');
-const browser=await puppeteer.launch({executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true,args:['--no-sandbox']});
+const profileDir=await mkdtemp(join(tmpdir(),'unpaused-browser-account-'));
+const launch=()=>puppeteer.launch({executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',userDataDir:profileDir,headless:true,args:['--no-sandbox']});
+let browser=await launch();
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
 const email=`unpaused-${randomUUID()}@example.invalid`,password=`QA-${randomUUID()}`;
 const errors=[];
 const outbox=process.env.TEST_EMAIL_OUTBOX;
 if(!outbox)throw new Error('Set TEST_EMAIL_OUTBOX to the isolated backend test outbox.');
 try{
-  const page=await browser.newPage();
+  let page=await browser.newPage();
   page.on('pageerror',e=>errors.push(e.message));
   await page.setViewport({width:1440,height:900});
   await page.emulateMediaFeatures([{name:'prefers-reduced-motion',value:'no-preference'}]);
@@ -69,6 +73,24 @@ try{
   assert.equal(await page.$eval('[name="password"]',e=>e.value),'');
   await page.reload();await page.click('#open-account');
   await page.waitForFunction(()=>!document.querySelector('#account-profile').hidden);
+  const savedToken=await page.evaluate(()=>localStorage.getItem('tacticstrike_account_session'));
+  await browser.close();browser=await launch();page=await browser.newPage();
+  page.on('pageerror',e=>errors.push(e.message));
+  await page.setViewport({width:1440,height:900});
+  await page.goto(base);await page.click('#open-account');
+  await page.waitForFunction(()=>!document.querySelector('#account-profile').hidden);
+  assert.equal(await page.evaluate(()=>localStorage.getItem('tacticstrike_account_session')),savedToken,'same login survives a full browser restart');
+  assert.equal(await page.$eval('#account-email',e=>e.textContent),email);
+  await page.setRequestInterception(true);
+  const failRestore=request=>new URL(request.url()).pathname==='/api/auth/me'?request.abort('failed'):request.continue();
+  page.on('request',failRestore);
+  await page.reload();await page.click('#open-account');
+  await page.waitForFunction(()=>document.querySelector('#account-message').textContent.length>0);
+  assert.equal(await page.evaluate(()=>localStorage.getItem('tacticstrike_account_session')),savedToken,'a connection failure never deletes the login');
+  assert.equal(await page.$eval('#account-profile',e=>e.hidden),false);
+  page.off('request',failRestore);await page.setRequestInterception(false);
+  await page.reload();await page.click('#open-account');
+  await page.waitForFunction(()=>!document.querySelector('#account-profile').hidden);
   const other=await browser.newPage();
   await other.goto(new URL('/tacticstrike/?shop=credits',base).href);
   await other.waitForFunction(()=>document.querySelector('#credit-shop-modal').classList.contains('active'),{timeout:20000});
@@ -111,4 +133,4 @@ try{
 
   assert.deepEqual(errors,[]);
   console.log(JSON.stringify({passed:true,registration:true,emailVerification:true,friendCode:true,passwordMismatch:true,wrongPassword:true,duplicateAccount:true,sessionRestore:true,crossTabLoginLogout:true,shooterEmailHidden:true,accountReturn:true,expiredSession:true,smoothHover:true,stableVideo:true,numberlessOnlineLabels:true}));
-}finally{await browser.close();}
+}finally{await browser.close();await rm(profileDir,{recursive:true,force:true});}

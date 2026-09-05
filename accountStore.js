@@ -3,6 +3,12 @@ import path from 'path';
 import { randomInt } from 'node:crypto';
 import { neon } from '@neondatabase/serverless';
 
+// Null is an explicitly persistent session; missing/malformed expiry is invalid.
+export function isAccountSessionActive(session, now = Date.now()) {
+  return Boolean(session && (session.expiresAt === null ||
+    (Number.isFinite(session.expiresAt) && session.expiresAt > now)));
+}
+
 function createEmptyLocalDatabase() {
   return {
     version: 4,
@@ -113,6 +119,15 @@ export function createAccountStore({ databaseUrl = '', localFile, sqlClient = nu
     try {
       if (!sql) {
         localDatabase = loadLocalDatabase();
+        let migrated = false;
+        const now = Date.now();
+        for (const session of Object.values(localDatabase.sessions)) {
+          if (Number.isFinite(session?.expiresAt) && session.expiresAt > now) {
+            session.expiresAt = null;
+            migrated = true;
+          }
+        }
+        if (migrated) saveLocalDatabase();
         ready = true;
         console.warn('DATABASE_URL is not set. Accounts are using local development storage.');
         return;
@@ -141,6 +156,10 @@ export function createAccountStore({ databaseUrl = '', localFile, sqlClient = nu
         )
       `;
       await sql`ALTER TABLE operative_accounts ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ`;
+      // Preserve the old expiry column during rolling deployments so an older
+      // server cannot mistake an upgraded session for an expired one and delete it.
+      await sql`ALTER TABLE operative_sessions ADD COLUMN IF NOT EXISTS persistent BOOLEAN NOT NULL DEFAULT FALSE`;
+      await sql`UPDATE operative_sessions SET persistent = TRUE WHERE persistent = FALSE AND expires_at > NOW()`;
       await sql`ALTER TABLE operative_accounts ADD COLUMN IF NOT EXISTS friend_code TEXT CHECK (friend_code ~ '^[0-9]{4}$')`;
       await sql`CREATE UNIQUE INDEX IF NOT EXISTS operative_accounts_friend_code_idx ON operative_accounts(friend_code)`;
       await sql`
@@ -295,11 +314,13 @@ export function createAccountStore({ databaseUrl = '', localFile, sqlClient = nu
     return user;
   }
 
-  async function createSession(tokenHash, userId, expiresAt) {
+  async function createSession(tokenHash, userId, expiresAt = null) {
     if (sql) {
+      const persistent = expiresAt === null;
+      const legacyExpiry = persistent ? Date.now() + 30 * 86400000 : expiresAt;
       await sql`
-        INSERT INTO operative_sessions (token_hash, user_id, expires_at)
-        VALUES (${tokenHash}, ${userId}, ${new Date(expiresAt).toISOString()})
+        INSERT INTO operative_sessions (token_hash, user_id, expires_at, persistent)
+        VALUES (${tokenHash}, ${userId}, ${new Date(legacyExpiry).toISOString()}, ${persistent})
       `;
       return;
     }
@@ -407,7 +428,7 @@ export function createAccountStore({ databaseUrl = '', localFile, sqlClient = nu
   async function findSession(tokenHash) {
     if (sql) {
       const rows = await sql`
-        SELECT token_hash, user_id, expires_at
+        SELECT token_hash, user_id, expires_at, persistent
         FROM operative_sessions
         WHERE token_hash = ${tokenHash}
         LIMIT 1
@@ -417,7 +438,7 @@ export function createAccountStore({ databaseUrl = '', localFile, sqlClient = nu
       return {
         tokenHash: row.token_hash,
         userId: row.user_id,
-        expiresAt: new Date(row.expires_at).getTime()
+        expiresAt: row.persistent ? null : new Date(row.expires_at).getTime()
       };
     }
     return localDatabase.sessions[tokenHash] || null;

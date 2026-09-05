@@ -81,8 +81,14 @@ accounts.json.tmp
 worlds.json
 worlds.json.tmp
 !dist/account-client.js
+!dist/account/
+!dist/account/**
 !dist/worldloom-entry.css
 !dist/worldloom/src/multiplayer.js
+!dist/worldloom/src/account-menu.js
+!dist/worldloom/src/menu-music.js
+!dist/worldloom/assets/music/
+!dist/worldloom/assets/music/overworld-greenery.mp3
 !dist/worldloom/src/shared-world.js
 !dist/worldloom/vendor/
 !dist/worldloom/vendor/socket.io.esm.min.js

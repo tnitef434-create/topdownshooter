@@ -66,3 +66,6 @@ Use the original U mark on a #090909 loading screen. Its orange triangle follows
 The hub gameplay is captured natively at 1800 × 2000, 30 fps; phones and Save-Data use 900 × 1000. Encode directly from frames, with a seamless three-scene loop, H.264 faststart, and no intermediate lossy pass. The separate main-menu panorama remains native 4K.
 
 Keep the grey beveled Worldloom menu, moss actions, and ochre new-world action. The invitation well uses explicit light text on charcoal. Labels are at least 12px, descriptions 13px, controls 14px, inputs 15px (16px on phones). Reduce heading shadows and letter compression. Use one menu scroll area rather than a nested clipped form; all actions remain reachable on narrow screens.
+
+
+Worldloom account overlay: the Invite player control and My worlds & received invites open the shared U-only black/orange account dialog in the same Worldloom document. No hub page or iframe is loaded. The invitation context edits the draft friend code; sending remains part of creating the world. Close/Escape returns to the menu with world name, seed, journey and friend code intact. The account library's Create a world action closes this overlay and focuses the existing world-name field. Shared account markup, styles and controller live under public/account and are reused by the hub.

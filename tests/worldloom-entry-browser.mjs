@@ -45,9 +45,11 @@ try {
   await page.waitForFunction(()=>document.querySelector('#loading-screen')?.classList.contains('hidden'),{timeout:90000});
   await page.screenshot({path:'../../outputs/worldloom-menu-readable.png'});
   await page.click('.world-invite summary');
+  await page.waitForSelector('#hub-account[open] #invite-code',{visible:true});
   await page.type('#invite-code','1234');
   assert.equal(await page.$eval('#invite-code',e=>e.value),'1234');
   await page.screenshot({path:'../../outputs/worldloom-menu-invite.png'});
+  await page.click('#account-close');
   await page.goBack({waitUntil:'domcontentloaded'});
   await page.waitForSelector('#enter-worldloom');
   assert.equal(await page.$eval('#worldloom-transition',e=>e.hidden),true,'Back must restore a usable hub');
@@ -57,8 +59,10 @@ try {
     await page.goto(new URL('worldloom/',base).href,{waitUntil:'domcontentloaded'});
     await page.waitForFunction(()=>document.querySelector('#loading-screen').classList.contains('hidden'),{timeout:90000});
     await page.click('.world-invite summary');
+    await page.waitForSelector('#hub-account[open] #invite-code',{visible:true});
     const bounds=await page.evaluate(()=>({width:innerWidth,scroll:document.querySelector('#main-menu').scrollWidth,input:document.querySelector('#invite-code').getBoundingClientRect().right}));
     assert.ok(bounds.scroll<=bounds.width && bounds.input<=bounds.width,'menu and open invite must fit narrow screens');
+    await page.click('#account-close');
     await page.$eval('#new-world-button',e=>e.scrollIntoView({block:'center'}));
     assert.equal(await page.$eval('#new-world-button',e=>{const r=e.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight;}),true,'primary action remains reachable');
     await page.screenshot({path:`../../outputs/worldloom-menu-${width}.png`});

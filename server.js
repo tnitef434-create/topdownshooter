@@ -6,7 +6,7 @@ import { fileURLToPath } from 'url';
 import fs from 'fs';
 import crypto from 'crypto';
 import { promisify } from 'util';
-import { createAccountStore } from './accountStore.js';
+import { createAccountStore, isAccountSessionActive } from './accountStore.js';
 import { createAccountMailer } from './accountEmail.js';
 import { createWorldStore } from './worldStore.js';
 import { installWorldServer } from './worldServer.js';
@@ -15,7 +15,6 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const scryptAsync = promisify(crypto.scrypt);
 
-const SESSION_LIFETIME_MS = 1000 * 60 * 60 * 24 * 30;
 const ADMIN_SESSION_LIFETIME_MS = 1000 * 60 * 60 * 8;
 const MAX_PROOF_BYTES = 1_500_000;
 const ADMIN_USERNAME = String(process.env.ADMIN_USERNAME || '').trim();
@@ -149,9 +148,8 @@ function publicAccount(user) {
 
 async function createSession(userId) {
   const token = crypto.randomBytes(32).toString('base64url');
-  const expiresAt = Date.now() + SESSION_LIFETIME_MS;
-  await accountStore.createSession(hashSessionToken(token), userId, expiresAt);
-  return { token, expiresAt };
+  await accountStore.createSession(hashSessionToken(token), userId);
+  return { token, expiresAt: null };
 }
 
 function ensureAccountStoreAvailable(res) {
@@ -194,7 +192,7 @@ async function authenticateAccount(req, res, next) {
     const session = sessionKey ? await accountStore.findSession(sessionKey) : null;
     const user = session ? await accountStore.findUserById(session.userId) : null;
 
-    if (!session || !user || session.expiresAt <= Date.now()) {
+    if (!isAccountSessionActive(session) || !user) {
       if (sessionKey && session) await accountStore.deleteSession(sessionKey);
       res.status(401).json({ error: 'SIGN_IN_REQUIRED', message: 'Sign in to continue.' });
       return;
@@ -321,6 +319,7 @@ app.get('/api/auth/status', (req, res) => {
     available: accountStore.isReady && (!requirePersistentAccountStore || persistent),
     persistent,
     storage: persistent ? 'postgresql' : 'local-development',
+    persistentSessions: true,
     emailVerification:accountMailer.configured
   });
 });
