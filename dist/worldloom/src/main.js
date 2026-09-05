@@ -10,6 +10,7 @@ import {
 import { InputController, PlayerController, fallDamageForImpact } from './player.js';
 import { AudioSystem } from './audio.js';
 import { MenuMusic } from './menu-music.js';
+import { LoadingScene } from './loading-scene.js';
 import { Environment, BlockEffects } from './environment.js';
 import { SaveStore, Inventory, DEFAULT_SETTINGS, GRAPHICS_PRESETS } from './save.js';
 import {
@@ -41,6 +42,7 @@ const ui = new UI();
 const saves = new SaveStore();
 const audio = new AudioSystem();
 const menuMusic = new MenuMusic();
+const loadingScene = new LoadingScene();
 
 let renderer;
 let scene;
@@ -154,6 +156,7 @@ function setState(next) {
   heldItem?.setVisible(next === 'playing' && Boolean(input?.locked));
   audio.setPaused(!['playing', 'inventory'].includes(next));
   menuMusic.setActive(next === 'menu');
+  loadingScene.setActive(next === 'loading');
 }
 
 function initRenderer() {
@@ -415,6 +418,7 @@ function applySettings(next) {
   camera.updateProjectionMatrix();
   audio.setSettings(next);
   menuMusic.setSettings(next);
+  loadingScene.setSettings(next);
   environment?.applyGraphicsSettings(next);
   graphicsPipeline?.applyProfile(GRAPHICS_PRESETS[next.graphicsQuality] || GRAPHICS_PRESETS.balanced);
   document.documentElement.classList.toggle('user-reduced-motion', Boolean(next.reducedMotion));
@@ -445,7 +449,7 @@ async function startWorld({ seed, mode: selectedMode, saveData = null }) {
   ui.elements.pause?.classList.add('hidden');
   ui.elements.hud?.classList.add('hidden');
   await audio.unlock();
-
+  await loadingScene.ready();
   creatures?.dispose();
   creatures = null;
   window.__worldloomCreatures = null;

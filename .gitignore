@@ -88,6 +88,11 @@ worlds.json.tmp
 !dist/worldloom/src/multiplayer.js
 !dist/worldloom/src/account-menu.js
 !dist/worldloom/src/menu-music.js
+!dist/worldloom/src/loading-scene.js
+!dist/worldloom/assets/loading/
+!dist/worldloom/assets/loading/**
+!dist/worldloom/assets/audio/
+!dist/worldloom/assets/audio/birds-near-trees.mp3
 !dist/worldloom/assets/music/
 !dist/worldloom/assets/music/overworld-greenery.mp3
 !dist/worldloom/src/shared-world.js

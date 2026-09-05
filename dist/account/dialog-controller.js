@@ -10,6 +10,10 @@ export function initHubAccount({trigger=document.querySelector('#open-account'),
   const message=dialog.querySelector('#account-message');
   const profile=dialog.querySelector('#account-profile');
   const password=form.elements.password, confirm=form.elements.confirm;
+  const username=form.elements.username;
+  const usernameForm=dialog.querySelector('#account-username-form');
+  const profileUsername=usernameForm.elements.username;
+  let renderedUsername=null;
   const switcher=dialog.querySelector('#account-switch');
   const submit=form.querySelector('[type="submit"]');
   const logout=dialog.querySelector('#account-logout');
@@ -26,6 +30,11 @@ export function initHubAccount({trigger=document.querySelector('#open-account'),
   function render() {
     const signedIn=Boolean(session.user)&&mode!=='verify';
     const verified=session.user?.emailVerified===true;
+    username.closest('label').hidden=mode!=='register';username.required=mode==='register';username.disabled=mode!=='register'||busy;
+    usernameForm.hidden=!verified;
+    if(renderedUsername!==session.user?.username){profileUsername.value=session.user?.username||'';renderedUsername=session.user?.username;}
+    profileUsername.disabled=busy;usernameForm.querySelector('button').disabled=busy;
+    usernameForm.querySelector('button').textContent=session.user?.username?'SAVE USERNAME':'CREATE USERNAME';
     if(trigger)trigger.textContent=signedIn?'MY ACCOUNT':'ACCOUNT';
     title.textContent=signedIn?'YOUR ACCOUNT':mode==='verify'?'VERIFY YOUR EMAIL':mode==='register'?'CREATE ACCOUNT':'WELCOME BACK';
     form.hidden=signedIn;profile.hidden=!signedIn;switcher.hidden=signedIn;
@@ -97,14 +106,25 @@ export function initHubAccount({trigger=document.querySelector('#open-account'),
     if((mode==='register'||mode==='verify')&&password.value!==confirm.value){notify('Passwords do not match.');confirm.focus();return;}
     busy=true;notify();render();
     try {
-      const result=await accountRequest(`/api/auth/${mode==='verify'?'verify-email':mode}`,{method:'POST',body:JSON.stringify({email:form.elements.email.value.trim(),password:password.value,...(mode==='verify'?{token:verificationToken}:{})})});
+      const result=await accountRequest(`/api/auth/${mode==='verify'?'verify-email':mode}`,{method:'POST',body:JSON.stringify({email:form.elements.email.value.trim(),password:password.value,...(mode==='register'?{username:username.value.trim()}:{}),...(mode==='verify'?{token:verificationToken}:{})})});
       if(result.verificationRequired){notify(result.message);password.value='';confirm.value='';mode='login';return;}
       try {storeAccountSession(result);} catch {throw new Error('Allow site storage in your browser to stay signed in.');}
       session={token:result.token,user:result.user};form.reset();
       if(mode==='verify'){const clean=new URL(location.href);clean.searchParams.delete('account');history.replaceState(null,'',clean);}
       notify(mode==='verify'?'Email verified. Your account is ready. Generate your friend code below.':'You’re signed in.');mode='login';verificationToken=null;
     } catch(error){notify(error.message);}
-    finally{busy=false;render();if(session.user?.emailVerified)(session.user.friendCode?dialog.querySelector('#account-return'):generate).focus();}
+    finally{busy=false;render();if(session.user?.emailVerified)(!session.user.username?profileUsername:session.user.friendCode?dialog.querySelector('#account-return'):generate).focus();}
+  });
+  usernameForm.addEventListener('submit',async event=>{
+    event.preventDefault();if(busy)return;
+    const value=profileUsername.value.trim(), token=session.token;
+    busy=true;notify();render();
+    try {
+      const result=await accountRequest('/api/auth/username',{method:'POST',token,body:JSON.stringify({username:value})});
+      if(session.token!==token)return;
+      session.user=result.user;storeAccountSession(session);notify('Username saved. Both games will use this name.');
+    } catch(error){notify(error.message);}
+    finally{busy=false;render();}
   });
   logout.addEventListener('click',async()=>{
     if(busy)return;busy=true;render();

@@ -13,6 +13,7 @@ export function mountAccountDialog() {
     <p id="account-message" class="account-message" role="status" aria-live="polite"></p>
     <div id="account-context" hidden></div>
     <form class="hub-account-form">
+      <label hidden>Username<input name="username" autocomplete="username" minlength="3" maxlength="15" pattern="[A-Za-z0-9_]{3,15}" placeholder="Your name in both games" disabled><small class="account-hint">3–15 letters, numbers or underscores.</small></label>
       <label>Email<input name="email" type="email" autocomplete="email" required maxlength="254" placeholder="you@example.com"></label>
       <label>Password<input name="password" type="password" autocomplete="current-password" required minlength="8" maxlength="128" placeholder="At least 8 characters"></label>
       <label hidden>Confirm password<input name="confirm" type="password" autocomplete="new-password" minlength="8" maxlength="128" disabled></label>
@@ -27,6 +28,11 @@ export function mountAccountDialog() {
       </div>
       <div class="account-panels">
       <div id="account-details" role="tabpanel" aria-labelledby="tab-profile">
+      <form id="account-username-form" class="hub-account-form account-username-form">
+        <label>Your username<input name="username" id="account-username" autocomplete="username" required minlength="3" maxlength="15" pattern="[A-Za-z0-9_]{3,15}" placeholder="Choose your player name" aria-describedby="account-username-hint"></label>
+        <p id="account-username-hint" class="account-hint">Your public name in both games. 3–15 letters, numbers or underscores.</p>
+        <button class="account-primary" type="submit">SAVE USERNAME</button>
+      </form>
       <p class="account-detail-label">EMAIL</p><p id="account-email" class="account-email"></p>
       <p id="account-verification-status" class="account-verification-status"></p>
       <button id="account-resend" class="account-primary" type="button" hidden>SEND VERIFICATION EMAIL</button>

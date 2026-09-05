@@ -112,7 +112,6 @@ const btns = {
 };
 
 const inputs = {
-  name: document.getElementById('player-name-input'),
   roomCode: document.getElementById('room-code-input'),
   chat: document.getElementById('chat-input'),
   qpMapSelect: document.getElementById('qp-map-select'),
@@ -1231,7 +1230,8 @@ function connectSocket() {
 
   const serverUrl = getBackendUrl();
 
-  socket = io(serverUrl);
+  socket = io(serverUrl,{auth:callback=>callback({accountToken:accountSession.token})});
+  socket.on('account-name',({name})=>{myName=name;const label=document.getElementById('operative-name');if(label)label.textContent=name;checkSaraMode(false);});
   window.AppSocket = socket;
 
   socket.on('connect_error', () => {
@@ -1281,13 +1281,7 @@ function connectSocket() {
     const mergedPurchased = Array.from(new Set([...localPurchased, ...(data.purchasedWeapons || [])]));
     safeStorage.setItem('tacticstrike_purchased_weapons', JSON.stringify(mergedPurchased));
     
-    if (data.name && data.name !== 'Operative') {
-      myName = data.name;
-      safeStorage.setItem('tacticstrike_player_name', myName);
-      if (inputs.name) {
-        inputs.name.value = myName;
-      }
-    }
+    // A device backup never overrides the username on the shared account.
     
     updateMenuRankUI();
     renderCareerStats();
@@ -1771,26 +1765,9 @@ function setupUIListeners() {
     });
   }
 
-  // Set operative name change
-  if (inputs.name) {
-    inputs.name.addEventListener('change', () => {
-      myName = inputs.name.value.trim() || 'Operative';
-      safeStorage.setItem('tacticstrike_player_name', myName);
-      checkSaraMode();
-      if (socket && socket.connected) {
-        socket.emit('change-name', { name: myName });
-      }
-    });
-    inputs.name.addEventListener('input', () => {
-      checkSaraMode();
-    });
-  }
-
   // Practice Bot
   if (btns.practiceBot) {
     btns.practiceBot.addEventListener('click', () => {
-      if (inputs.name) myName = inputs.name.value.trim() || 'Operative';
-      safeStorage.setItem('tacticstrike_player_name', myName);
       startOfflineMode();
     });
   }
@@ -1798,8 +1775,6 @@ function setupUIListeners() {
   // Sabotage Among Us Mode
   if (btns.btnAmongUs) {
     btns.btnAmongUs.addEventListener('click', () => {
-      if (inputs.name) myName = inputs.name.value.trim() || 'Operative';
-      safeStorage.setItem('tacticstrike_player_name', myName);
       
       const deployModal = document.getElementById('deploy-modal');
       if (deployModal) deployModal.classList.remove('active');
@@ -1848,9 +1823,6 @@ function setupUIListeners() {
     btns.createRoom.addEventListener('click', () => {
       const deployModal = document.getElementById('deploy-modal');
       if (deployModal) deployModal.classList.remove('active');
-
-      if (inputs.name) myName = inputs.name.value.trim() || 'Operative';
-      safeStorage.setItem('tacticstrike_player_name', myName);
       connectSocket();
       if (socket) {
         socket.emit('create-room', { playerName: myName, mode: myMode, color: myColor, mapId: selectedMapId, weapon: myWeapon, renderStyle: qpRenderStyle });
@@ -1869,8 +1841,6 @@ function setupUIListeners() {
         alert('Please enter a valid 5-character room code.');
         return;
       }
-      if (inputs.name) myName = inputs.name.value.trim() || 'Operative';
-      safeStorage.setItem('tacticstrike_player_name', myName);
       connectSocket();
       if (socket) {
         socket.emit('join-room', { roomId: code, playerName: myName, color: myColor, weapon: myWeapon });
@@ -1896,9 +1866,6 @@ function setupUIListeners() {
 
     const deployModal = document.getElementById('deploy-modal');
     if (deployModal) deployModal.classList.remove('active');
-
-    if (inputs.name) myName = inputs.name.value.trim() || 'Operative';
-    safeStorage.setItem('tacticstrike_player_name', myName);
     connectSocket();
     if (socket) {
       // Get current RP from localStorage
@@ -2783,18 +2750,7 @@ document.addEventListener('DOMContentLoaded', () => {
   setupUIListeners();
   initTipSystem();
 
-  // Load or generate operative codename
-  const savedName = safeStorage.getItem('tacticstrike_player_name');
-  if (savedName) {
-    myName = savedName;
-  } else {
-    const names = ['Viper', 'Ghost', 'Specter', 'Rex', 'Apex', 'Phantom', 'Onyx', 'Nova'];
-    myName = `${names[Math.floor(Math.random() * names.length)]}_${Math.floor(Math.random() * 900 + 100)}`;
-    safeStorage.setItem('tacticstrike_player_name', myName);
-  }
-  if (inputs.name) {
-    inputs.name.value = myName;
-  }
+  updateAccountUI();
   checkSaraMode(false);
 
   connectSocket();
@@ -3450,6 +3406,17 @@ function initAdminDashboard() {
 
 function updateAccountUI() {
   const user = accountSession.user;
+  const nextName=user?.emailVerified && user?.username ? user.username : 'Guest';
+  const changed=myName!==nextName;
+  myName=nextName;
+  const nameLabel=document.getElementById('operative-name');
+  if(nameLabel)nameLabel.textContent=myName;
+  const accountButton=document.getElementById('operative-account');
+  if(accountButton)accountButton.textContent=user?.username?'MY ACCOUNT':'CHOOSE USERNAME IN ACCOUNT';
+  if(socket?.connected && (changed||socket.accountToken!==accountSession.token)) {
+    socket.accountToken=accountSession.token;
+    socket.emit('account-session',{token:accountSession.token});
+  }
   if (user) {
     syncGrantedCredits(user);
     const cached = JSON.stringify(user);
@@ -3827,9 +3794,9 @@ function showSaraToast(message) {
 }
 
 function checkSaraMode(showPopup = true) {
-  const current = inputs.name ? inputs.name.value : myName;
+  const current = myName;
   const active = isSaraName(current);
-  if (inputs.name) inputs.name.classList.toggle('name-sara-effect', active);
+  document.getElementById('operative-name')?.classList.toggle('name-sara-effect', active);
   const hudName = document.getElementById('hud-self-name');
   if (hudName) hudName.classList.toggle('name-sara-effect', active);
   if (active && !saraModeActive && showPopup) {

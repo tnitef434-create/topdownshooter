@@ -1,12 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { isAccountSessionActive } from './accountStore.js';
+import { accountPlayerName } from './accountUsername.js';
 import { isWorldMember, worldError } from './worldStore.js';
 import { validVector, validCell, cellKey, personalSave, unpackEdits, worldSave } from './src/public/worldloom/src/shared-world.js';
 import { WORLD_GENERATOR_VERSION, isSupportedWorldGeneratorVersion } from './src/public/worldloom/src/generator-version.js';
 
 const uuid = value => typeof value==='string' && /^[0-9a-f-]{36}$/i.test(value);
 const brief = (w,id) => ({id:w.id,name:w.name,mode:w.mode,owner:w.ownerId===id,ownerName:w.ownerName,guestName:w.guestName||null,accepted:w.accepted,createdAt:w.createdAt,updatedAt:w.updatedAt});
-const publicPlayer = user => ({id:user.id,name:String(user.displayName||'Wayfarer').replace(/[\u0000-\u001f]/g,'').slice(0,24)});
+const publicPlayer = user => ({id:user.id,name:accountPlayerName(user)});
 const replyError = error => ({error:true,status:error.status||503,message:error.status?error.message:'The world service could not save this change. Reconnecting…'});
 
 export function installWorldServer({app,io,store,accounts,authenticate,verified,hashToken,rateLimit}) {

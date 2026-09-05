@@ -193,7 +193,7 @@ export class UI {
     clearTimeout(this._loadingHideTimer);
     this._loadingHideTimer = null;
     // Only the initial menu boot uses the U. Every world load defaults to the
-    // plain progress screen, including Continue, shared worlds and retries.
+    // forest film and progress, including Continue, shared worlds and retries.
     if (this.elements.loading) {
       this.elements.loading.dataset.phase = menu ? 'menu' : 'world';
       this.elements.loading.setAttribute('aria-label', menu ? 'Opening Worldloom menu' : 'Loading world');

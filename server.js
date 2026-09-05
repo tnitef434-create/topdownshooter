@@ -8,6 +8,8 @@ import crypto from 'crypto';
 import { promisify } from 'util';
 import { createAccountStore, isAccountSessionActive } from './accountStore.js';
 import { createAccountMailer } from './accountEmail.js';
+import { normalizeUsername, accountPlayerName } from './accountUsername.js';
+import { installShooterAccountIdentity } from './shooterAccountIdentity.js';
 import { createWorldStore } from './worldStore.js';
 import { installWorldServer } from './worldServer.js';
 
@@ -137,7 +139,8 @@ function publicAccount(user) {
   return {
     id: user.id,
     email: user.email,
-    displayName: user.displayName,
+    displayName: accountPlayerName(user),
+    username: user.username || null,
     emailVerified: Boolean(user.emailVerifiedAt),
     friendCode: user.friendCode || null,
     credits: user.credits || 0,
@@ -320,6 +323,7 @@ app.get('/api/auth/status', (req, res) => {
     persistent,
     storage: persistent ? 'postgresql' : 'local-development',
     persistentSessions: true,
+    accountUsernames: true,
     emailVerification:accountMailer.configured
   });
 });
@@ -347,11 +351,14 @@ app.post('/api/auth/register', requireAccountStore, authRateLimit, async (req, r
 
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
-    const displayName = email.split('@')[0].replace(/[^a-zA-Z0-9_]/g, '').slice(0, 15) || 'Operative';
+    // Older cached clients may omit this; those accounts choose it in Account.
+    const username = req.body?.username == null ? null : normalizeUsername(req.body.username);
+    const displayName = username || 'Guest';
     const user = await accountStore.createUser({
       id,
       email,
       displayName,
+      username,
       password: await createPasswordRecord(password),
       credits: 0,
       purchasedWeapons: [],
@@ -361,6 +368,7 @@ app.post('/api/auth/register', requireAccountStore, authRateLimit, async (req, r
     await sendAccountVerification(user);
     res.status(202).json({verificationRequired:true,message:verificationMessage});
   } catch (error) {
+    if (['INVALID_USERNAME','USERNAME_TAKEN'].includes(error?.code)) return res.status(error.code==='USERNAME_TAKEN'?409:400).json({error:error.code,message:error.message});
     if (error?.code === 'DUPLICATE_EMAIL') {
       res.status(202).json({verificationRequired:true,message:verificationMessage});
       return;
@@ -396,6 +404,17 @@ app.post('/api/auth/login', requireAccountStore, authRateLimit, async (req, res)
 
 app.get('/api/auth/me', authenticateAccount, (req, res) => {
   res.json({ user: publicAccount(req.account) });
+});
+
+app.post('/api/auth/username', authenticateAccount, requireVerifiedEmail, authRateLimit, async(req,res)=>{
+  try {
+    const user=await accountStore.setUsername(req.account.id,req.body?.username);
+    if(!user)return res.status(401).json({error:'INVALID_SESSION',message:'Please sign in again.'});
+    res.json({user:publicAccount(user)});
+  } catch(error) {
+    if(['INVALID_USERNAME','USERNAME_TAKEN'].includes(error?.code))return res.status(error.code==='USERNAME_TAKEN'?409:400).json({error:error.code,message:error.message});
+    res.status(503).json({error:'USERNAME_UNAVAILABLE',message:'Your username could not be saved. Please try again.'});
+  }
 });
 
 app.post('/api/auth/verify-email', requireAccountStore, authRateLimit, async (req,res)=>{
@@ -781,9 +800,16 @@ function generateRoomId() {
   return id;
 }
 
+installShooterAccountIdentity(io,{accounts:accountStore,hashToken:hashSessionToken});
 io.on('connection', (socket) => {
   console.log(`User connected: ${socket.id}`);
   let currentRoomId = null;
+  socket.on('account-session',()=>{
+    const name=socket.data.accountName;
+    socket.emit('account-name',{name});
+    const room=rooms.get(currentRoomId), player=room?.players.find(p=>p.id===socket.id);
+    if(player){player.name=name;io.to(currentRoomId).emit('players-update',{players:room.players});}
+  });
   broadcastPlayerCounts();
 
   // 0. Authentication Events

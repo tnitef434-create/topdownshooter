@@ -33,6 +33,10 @@
       </section>
 
       <section id="loading-screen" class="screen loading-screen u-loading" data-phase="menu" aria-live="polite" aria-label="Opening Worldloom menu">
+        <div class="loading-forest" aria-hidden="true">
+          <video id="loading-film" muted loop playsinline preload="none" poster="assets/loading/forest-leaves-poster.jpg" data-src="assets/loading/forest-leaves-4k.mp4" data-small-src="assets/loading/forest-leaves-1080.mp4" tabindex="-1" disablepictureinpicture></video>
+        </div>
+        <audio id="loading-birds" src="assets/audio/birds-near-trees.mp3" loop preload="none"></audio>
         <div class="u-loading__content">
           <svg class="u-loading__mark" viewBox="0 0 40 40" width="142" height="142" aria-hidden="true">
             <path d="M9 8v15c0 6 4 9 9 9s9-3 9-9v-3" fill="none" stroke="#f4f6dc" stroke-opacity=".65" stroke-width="3.4"/>

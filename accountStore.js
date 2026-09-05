@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { randomInt } from 'node:crypto';
 import { neon } from '@neondatabase/serverless';
+import { normalizeUsername, usernameTakenError } from './accountUsername.js';
 
 // Null is an explicitly persistent session; missing/malformed expiry is invalid.
 export function isAccountSessionActive(session, now = Date.now()) {
@@ -26,7 +27,8 @@ function mapDatabaseUser(row) {
   return {
     id: row.id,
     email: row.email,
-    displayName: row.display_name,
+    displayName: row.username || row.display_name,
+    username: row.username || null,
     password: {
       algorithm: row.password_algorithm,
       salt: row.password_salt,
@@ -147,6 +149,8 @@ export function createAccountStore({ databaseUrl = '', localFile, sqlClient = nu
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
       `;
+      await sql`ALTER TABLE operative_accounts ADD COLUMN IF NOT EXISTS username TEXT CHECK (username ~ '^[A-Za-z0-9_]{3,15}$')`;
+      await sql`CREATE UNIQUE INDEX IF NOT EXISTS operative_username_unique ON operative_accounts (LOWER(username)) WHERE username IS NOT NULL`;
       await sql`
         CREATE TABLE IF NOT EXISTS operative_sessions (
           token_hash TEXT PRIMARY KEY,
@@ -272,6 +276,7 @@ export function createAccountStore({ databaseUrl = '', localFile, sqlClient = nu
   }
 
   async function createUser(user) {
+    user = {...user, username: user.username == null ? null : normalizeUsername(user.username)};
     if (sql) {
       try {
         const rows = await sql`
@@ -279,6 +284,7 @@ export function createAccountStore({ databaseUrl = '', localFile, sqlClient = nu
             id,
             email,
             display_name,
+            username,
             password_algorithm,
             password_salt,
             password_hash,
@@ -290,6 +296,7 @@ export function createAccountStore({ databaseUrl = '', localFile, sqlClient = nu
             ${user.id},
             ${user.email},
             ${user.displayName},
+            ${user.username},
             ${user.password.algorithm},
             ${user.password.salt},
             ${user.password.hash},
@@ -302,12 +309,16 @@ export function createAccountStore({ databaseUrl = '', localFile, sqlClient = nu
         `;
         return mapDatabaseUser(rows[0]);
       } catch (error) {
-        if (error?.code === '23505') throw duplicateEmailError();
+        if (error?.code === '23505') {
+          if (error.constraint === 'operative_username_unique') throw usernameTakenError();
+          throw duplicateEmailError();
+        }
         throw error;
       }
     }
 
     if (localDatabase.emailIndex[user.email]) throw duplicateEmailError();
+    if (user.username && Object.values(localDatabase.users).some(other=>other.username?.toLowerCase()===user.username.toLowerCase())) throw usernameTakenError();
     localDatabase.users[user.id] = user;
     localDatabase.emailIndex[user.email] = user.id;
     saveLocalDatabase();
@@ -385,6 +396,25 @@ export function createAccountStore({ databaseUrl = '', localFile, sqlClient = nu
     user.emailVerifiedAt ||= new Date(now).toISOString();
     user.password = password;
     user.updatedAt = new Date(now).toISOString();
+    saveLocalDatabase();
+    return user;
+  }
+
+  async function setUsername(id, value) {
+    const username=normalizeUsername(value);
+    if(sql) {
+      try {
+        const rows=await sql`UPDATE operative_accounts SET username=${username}, display_name=${username}, updated_at=NOW() WHERE id=${id} RETURNING *`;
+        return mapDatabaseUser(rows[0]);
+      } catch(error) {
+        if(error?.code==='23505')throw usernameTakenError();
+        throw error;
+      }
+    }
+    const user=localDatabase.users[id];
+    if(!user)return null;
+    if(Object.values(localDatabase.users).some(other=>other.id!==id&&other.username?.toLowerCase()===username.toLowerCase()))throw usernameTakenError();
+    user.username=username;user.displayName=username;user.updatedAt=new Date().toISOString();
     saveLocalDatabase();
     return user;
   }
@@ -751,6 +781,7 @@ export function createAccountStore({ databaseUrl = '', localFile, sqlClient = nu
     findUserById,
     findUserByFriendCode,
     createUser,
+    setUsername,
     createSession,
     findSession,
     deleteSession,

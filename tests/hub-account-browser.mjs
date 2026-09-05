@@ -12,6 +12,7 @@ const launch=()=>puppeteer.launch({executablePath:'C:/Program Files/Google/Chrom
 let browser=await launch();
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
 const email=`unpaused-${randomUUID()}@example.invalid`,password=`QA-${randomUUID()}`;
+const username=`QA_${randomUUID().slice(0,8)}`,renamed=`New_${randomUUID().slice(0,8)}`;
 const errors=[];
 const outbox=process.env.TEST_EMAIL_OUTBOX;
 if(!outbox)throw new Error('Set TEST_EMAIL_OUTBOX to the isolated backend test outbox.');
@@ -22,14 +23,14 @@ try{
   await page.emulateMediaFeatures([{name:'prefers-reduced-motion',value:'no-preference'}]);
   await page.goto(base);
   await page.waitForSelector('.games.motion-ready');
-  assert.deepEqual(await page.$$eval('.game-activity',els=>els.map(e=>e.textContent)),['Players online','Players online']);
+  assert.equal(await page.$$eval('.game-activity',els=>els.length),0);
   await page.mouse.move(-10,-10);await wait(1100);
   const videoWidth=await page.$eval('.game-media',e=>e.getBoundingClientRect().width);
   const start=await page.$eval('#enter-worldloom',e=>e.getBoundingClientRect().width);
   await page.hover('#enter-worldloom');
   await wait(100);
   const intermediate=await page.$eval('#enter-worldloom',e=>e.getBoundingClientRect().width);
-  assert.ok(intermediate>start+1&&intermediate<1440*.60,'expansion must move gradually, not snap');
+  assert.ok(intermediate>start+1&&intermediate<1440*.60,`expansion must move gradually, not snap: ${start} -> ${intermediate}`);
   await wait(1000);
   assert.ok(await page.$eval('#enter-worldloom',e=>Math.abs(e.getBoundingClientRect().width-innerWidth*.62)<1));
   assert.equal(await page.$eval('.game-media',e=>e.getBoundingClientRect().width),videoWidth,'video dimensions remain stable as the divider moves');
@@ -44,6 +45,7 @@ try{
   await page.click('#open-account');
   await page.waitForSelector('#hub-account[open]');
   await page.click('#account-switch');
+  await page.type('.hub-account-form [name="username"]',username);
   await page.type('[name="email"]',email);await page.type('[name="password"]',password);await page.type('[name="confirm"]','incorrect-password');
   await page.click('.hub-account-form [type="submit"]');
   await page.waitForFunction(()=>document.querySelector('#account-message').textContent.includes('do not match'));
@@ -61,6 +63,10 @@ try{
   await page.click('.hub-account-form [type="submit"]');
   await page.waitForFunction(()=>!document.querySelector('#account-profile').hidden,{timeout:20000});
   assert.equal(await page.$eval('#account-verification-status',e=>e.textContent),'Email verified');
+  assert.equal(await page.$eval('#account-username',e=>e.value),username);
+  await page.$eval('#account-username',(e,v)=>e.value=v,renamed);
+  await page.click('#account-username-form [type="submit"]');
+  await page.waitForFunction(()=>document.querySelector('#account-message').textContent.includes('Username saved'));
   await page.click('#account-generate-code');
   await page.waitForFunction(()=>!document.querySelector('#account-friend-code').hidden);
   const friendCode=await page.$eval('#account-friend-code',e=>e.textContent);
@@ -97,6 +103,8 @@ try{
   await other.waitForFunction(()=>document.querySelector('#credit-shop-account-status').textContent.includes('CONNECTED'));
   assert.equal(await other.evaluate(email=>document.body.textContent.includes(email),email),false,'the shooter never renders account email');
   assert.equal(await other.$('#account-modal'),null);
+  assert.equal(await other.$('#player-name-input'),null,'codename creation is removed from the shooter');
+  await other.waitForFunction(name=>document.querySelector('#operative-name').textContent===name,{},renamed);
   assert.equal(await other.$('[id*="player-count"]'),null);
   await page.bringToFront();await page.click('#account-logout');
   await page.waitForFunction(()=>document.querySelector('#account-profile').hidden);
@@ -114,6 +122,7 @@ try{
   await page.$eval('[name="email"]',(e,v)=>e.value=v,email);
   await page.$eval('[name="password"]',(e,v)=>e.value=v,password);
   await page.$eval('[name="confirm"]',(e,v)=>e.value=v,password);
+  await page.$eval('.hub-account-form [name="username"]',(e,v)=>e.value=v,renamed);
   await page.click('.hub-account-form [type="submit"]');
   await page.waitForFunction(()=>document.querySelector('#account-message').textContent.includes('Check your inbox'));
   await page.click('#account-close');
@@ -132,5 +141,5 @@ try{
   await page.keyboard.press('Escape');assert.equal(await page.$eval('#hub-account',e=>e.open),false);
 
   assert.deepEqual(errors,[]);
-  console.log(JSON.stringify({passed:true,registration:true,emailVerification:true,friendCode:true,passwordMismatch:true,wrongPassword:true,duplicateAccount:true,sessionRestore:true,crossTabLoginLogout:true,shooterEmailHidden:true,accountReturn:true,expiredSession:true,smoothHover:true,stableVideo:true,numberlessOnlineLabels:true}));
-}finally{await browser.close();await rm(profileDir,{recursive:true,force:true});}
+  console.log(JSON.stringify({passed:true,registration:true,emailVerification:true,friendCode:true,passwordMismatch:true,wrongPassword:true,duplicateAccount:true,sessionRestore:true,crossTabLoginLogout:true,shooterEmailHidden:true,accountReturn:true,expiredSession:true,smoothHover:true,stableVideo:true,playerCountsRemoved:true,usernameCreation:true,usernameRename:true,shooterUsesAccountName:true}));
+}catch(error){for(const page of await browser.pages())console.log('Account failure',await page.evaluate(()=>({url:location.href,message:document.querySelector('#account-message')?.textContent,invalid:[...document.querySelectorAll('input:invalid')].map(e=>({name:e.name,value:e.type==='password'?'redacted':e.value,reason:e.validationMessage}))})));console.log(errors);throw error;}finally{await browser.close();await rm(profileDir,{recursive:true,force:true});}

@@ -15,7 +15,7 @@
   <link rel="stylesheet" href="/worldloom-entry.css">
   <link rel="stylesheet" href="/account/dialog.css">
   <!-- Socket.io client (loaded dynamically via bundler or server, or we can just import from socket.io-client) -->
-  <script type="module" crossorigin src="/assets/tacticstrike-Dgt-KBvW.js"></script>
+  <script type="module" crossorigin src="/assets/tacticstrike-Chla58AF.js"></script>
   <link rel="modulepreload" crossorigin href="/assets/account-client-D3X58vZL.js">
   <link rel="stylesheet" crossorigin href="/assets/tacticstrike-DofaQDLP.css">
 </head>
@@ -68,8 +68,9 @@
 
         <!-- Operative Profile Card -->
         <div class="card" style="padding: 18px 24px; display: flex; flex-direction: column; gap: 12px; border: 1px solid rgba(212, 175, 55, 0.15);">
-          <label for="player-name-input" style="font-family: var(--font-title); font-size: 11px; letter-spacing: 1.5px; color: #d4af37; font-weight:700;">OPERATIVE PROFILE</label>
-          <input type="text" id="player-name-input" class="game-input" placeholder="Enter your codename..." maxlength="15" aria-label="Player Codename" style="width: 100%;">
+          <span style="font-family: var(--font-title); font-size: 11px; letter-spacing: 1.5px; color: #d4af37; font-weight:700;">OPERATIVE PROFILE</span>
+          <strong id="operative-name" style="font-size:22px">Guest</strong>
+          <button type="button" data-open-account id="operative-account" class="game-button" style="font-size:11px; padding:10px">CHOOSE USERNAME IN ACCOUNT</button>
         </div>
 
         <!-- Operative Career Stats Card -->

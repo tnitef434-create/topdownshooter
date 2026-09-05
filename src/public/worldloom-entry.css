@@ -1,4 +1,4 @@
-/* Shared menu-entry branding. World generation has a plain progress screen. */
+/* Shared menu-entry branding. World generation uses the separate forest film. */
 .u-loading {
   position: fixed;
   inset: 0;
@@ -68,3 +68,12 @@
   animation-duration: 2.2s !important;
   animation-iteration-count: infinite !important;
 }
+
+.loading-forest { display:none; }
+.u-loading[data-phase="world"] .loading-forest { display:block;position:absolute;inset:0;overflow:hidden;background:#132318; }
+.loading-forest video { width:100%;height:100%;object-fit:cover;object-position:center; }
+.loading-forest::after { content:"";position:absolute;inset:0;background:linear-gradient(180deg,#0000 35%,#07110c55 65%,#020805e8); }
+.u-loading[data-phase="world"] .u-loading__content { position:absolute;bottom:clamp(36px,7vh,88px);left:24px;right:24px;width:auto;z-index:1;max-width:none; }
+.u-loading[data-phase="world"] .u-loading__title { color:#f4f6dc;font-size:clamp(24px,3vw,38px);text-shadow:0 2px 16px #0009; }
+.u-loading[data-phase="world"] .loading-track { width:min(300px,65vw);background:#d9e6d52e;margin-top:22px; }
+.u-loading[data-phase="world"] #loading-text { color:#e1e9df;max-width:440px;text-shadow:0 1px 5px #000; }
