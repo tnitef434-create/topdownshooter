@@ -6,16 +6,6 @@ initHubMotion();
 initHubAccount();
 initGameEntry();
 
-// Returning to the hub can paint its frame before image decoding finishes.
-// Keep the divider transparent until both backgrounds can paint behind it.
-Promise.all([...document.querySelectorAll('.poster')].map(async poster => {
-  if (!poster.complete) await new Promise(resolve => {
-    poster.addEventListener('load', resolve, {once:true});
-    poster.addEventListener('error', resolve, {once:true});
-  });
-  try { await poster.decode(); } catch { /* Keep the background fallback usable. */ }
-})).then(() => document.documentElement.classList.add('hub-media-ready'));
-
 for (const film of document.querySelectorAll('#worldloom-film, #tacticstrike-film')) {
 let loaded = false;
 let unavailable = false;

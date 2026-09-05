@@ -26,9 +26,9 @@ try{
   await page.screenshot({path:'../../outputs/unpaused-hub-desktop.png'});
   const layout=await page.evaluate(()=>{
     const a=document.querySelector('#enter-worldloom').getBoundingClientRect(),b=document.querySelector('#enter-tacticstrike').getBoundingClientRect();
-    return {left:a.width,right:b.width,split:a.right===b.left,line:getComputedStyle(document.querySelector('#enter-worldloom')).borderRightWidth};
+    return {left:a.width,right:b.width,split:a.right===b.left,line:getComputedStyle(document.querySelector('.game-divider')).width};
   });
-  assert.ok(layout.split&&Math.abs(layout.left-layout.right)<1&&layout.line==='1px');
+  assert.ok(layout.split&&Math.abs(layout.left-layout.right)<1&&layout.line==='2px');
   await page.hover('#enter-worldloom');await wait(850);
   const hover=await page.evaluate(()=>({left:document.querySelector('#enter-worldloom').getBoundingClientRect().width,right:document.querySelector('#enter-tacticstrike').getBoundingClientRect().width}));
   assert.ok(hover.left>hover.right*1.5,'hover must expand the whole game panel');
