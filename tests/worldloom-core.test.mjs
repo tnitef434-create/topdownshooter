@@ -2840,6 +2840,45 @@ test('ordinary jumps and short drops are safe while long falls scale with impact
   assert.equal(fallDamageForImpact(100), 0.86, 'damage remains capped so one landing callback is stable');
 });
 
+test('water catches terminal-speed falls before a shallow floor at every supported frame rate', () => {
+  for (const dt of [1 / 144, 1 / 60, 0.05]) {
+    for (const depth of [0.12, 0.92, 3.92]) {
+      const world = {
+        getBlock: (x, y) => y < 0 ? BLOCK.STONE : y < Math.ceil(depth) ? BLOCK.WATER : BLOCK.AIR,
+        getFluidSurfaceY: (x, y) => y >= 0 && y < Math.ceil(depth) ? Math.min(y + 1, depth) : null,
+      };
+      const player = new PlayerController(new THREE.PerspectiveCamera(), world);
+      player.setPosition(0.5, 6, 0.5);
+      player.velocity.y = -38;
+      let damage = 0, splashes = 0;
+      player.onLand = (impact) => { damage += fallDamageForImpact(impact); };
+      player.onSplash = () => { splashes++; };
+      const input = { consumeLook: () => ({ x: 0, y: 0 }), isDown: () => false };
+      for (let frame = 0; frame < Math.ceil(8 / dt); frame++) player.update(dt, input);
+      assert.equal(damage, 0, `water depth ${depth}, dt ${dt} must cancel falling damage`);
+      assert.equal(splashes, 1, 'entry emits one splash, including when feet cross the whole layer in a frame');
+      assert.ok(player.position.y >= 0, 'water entry must not tunnel through the bed');
+      assert.ok(player.velocity.y >= -2.4, 'the player must actually slow down, not merely ignore damage');
+    }
+  }
+});
+
+test('water protection ends when leaving water and does not protect an adjacent dry landing', () => {
+  const world = { getBlock: (x, y) => y < 0 ? BLOCK.STONE : x < 1 && y < 2 ? BLOCK.WATER : BLOCK.AIR };
+  const player = new PlayerController(new THREE.PerspectiveCamera(), world);
+  const input = { consumeLook: () => ({ x: 0, y: 0 }), isDown: () => false };
+  player.setPosition(0.5, 1, 0.5);
+  player.update(0.05, input);
+  assert.equal(player.inWater, true);
+  player.setPosition(2.5, 4, 0.5);
+  player.velocity.y = -38;
+  let damage = 0;
+  player.onLand = (impact) => { damage += fallDamageForImpact(impact); };
+  for (let frame = 0; frame < 10; frame++) player.update(0.05, input);
+  assert.equal(player.inWater, false);
+  assert.ok(damage > 0.5, 'a later high fall onto dry ground still causes normal damage');
+});
+
 test('attack stamina spending has a recovery pause and cannot overdraw', () => {
   const camera = new THREE.PerspectiveCamera(75, 1, 0.05, 100);
   const world = { getBlock: () => BLOCK.AIR };

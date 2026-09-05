@@ -1,5 +1,9 @@
 # Worldloom block-built interface system
 
+## Nite hub — new independent homepage, September 2026
+
+Nite is the shared game hub. The homepage fills the viewport with two game panels and a single white center divider. Each panel expands to roughly 62% on hover or keyboard focus. Use large original vector game wordmarks: beveled block lettering for Worldloom and slanted, angular lettering for TacticStrike. Both have solid PLAY NOW controls, with cream/moss on Worldloom and orange on TacticStrike. Keep the NITE brand compact at top-left. Remove decorative rules, genre captions, marketing paragraphs and circular arrows. Full-panel semantic links lead to /worldloom/ and /tacticstrike/. Worldloom's muted looping background is real first-person gameplay with the normal hand and walking movement; TacticStrike uses a captured match. Backgrounds must remain visible. Mobile stacks two equal-height panels with a white horizontal divider and 44px minimum play targets. Autoplay the muted video on entry as explicitly requested, including when Windows reduces motion. No playback control is shown; the user requested continuous playback. Disable UI transitions for reduced motion and show the poster if video fails. Worldloom main menu has separate native 4K drone footage with an HD encode for phones; it pauses when gameplay begins. The hub never boots either game engine in the background. The older rules below describe Worldloom's separate in-game UI only.
+
 ## Product and jobs
 
 Worldloom is an original first-person voxel survival/building game launched inside TacticStrike. Players create or continue a world, gather and craft, track objectives/time, pause/save safely, and change performance settings. The interface must feel authored for the world: tactile, legible, fast, and game-like—not a generic web dashboard.

@@ -3304,3 +3304,13 @@ kbd {
   .settings-window .toggle > span,
   .settings-window .toggle > span::after { transition: none; }
 }
+
+.brand--hero .hub-return { display:inline-block; align-self:flex-start; margin-bottom:12px; padding:10px 0; color:#f6f4ec; font:600 11px Arial,sans-serif; letter-spacing:1px; text-decoration:none; text-shadow:0 1px 3px #000; }
+.brand--hero .hub-return:hover,.brand--hero .hub-return:focus-visible { text-decoration:underline; text-underline-offset:5px; }
+
+/* The menu panorama is captured from the real world at native 4K. */
+.menu-scenery--film { position:fixed; inset:0; opacity:1; background:#244132; }
+.menu-scenery--film::before,.menu-scenery--film::after { display:none; }
+.menu-scenery--film img,.menu-scenery--film video { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+.menu-scenery--film video { opacity:0; transition:opacity .5s ease; }
+.menu-scenery--film video.is-playing { opacity:1; }

@@ -8,7 +8,7 @@
       content="Worldloom — an original voxel-fantasy world to gather, shape, and illuminate."
     />
     <meta name="theme-color" content="#07130f" />
-    <title>Worldloom</title>
+    <title>Worldloom — Nite</title>
     <link rel="icon" href="favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="styles.css" />
   </head>
@@ -27,6 +27,7 @@
           Worldloom needs WebGL 2 and hardware acceleration. Try updating your browser or
           enabling graphics acceleration, then reload the page.
         </p>
+        <a id="unsupported-return" class="button button--primary" href="/">Return to Nite</a>
       </section>
 
       <section id="loading-screen" class="screen loading-screen" aria-live="polite">
@@ -49,13 +50,13 @@
       </section>
 
       <section id="main-menu" class="screen menu-screen hidden" aria-labelledby="main-title">
-        <div class="menu-scenery" aria-hidden="true">
-          <span class="sun-disc"></span>
-          <span class="ridge ridge--far"></span>
-          <span class="ridge ridge--near"></span>
+        <div class="menu-scenery menu-scenery--film" aria-hidden="true">
+          <img src="assets/menu/worldloom-drone-poster.jpg" alt="" width="3840" height="2160" fetchpriority="high">
+          <video id="menu-film" autoplay muted loop playsinline preload="none" poster="assets/menu/worldloom-drone-poster.jpg" data-src="assets/menu/worldloom-drone-4k.mp4" data-small-src="assets/menu/worldloom-drone-1080.mp4" tabindex="-1" disablepictureinpicture></video>
         </div>
         <div class="menu-layout">
           <header class="brand brand--hero">
+            <a class="hub-return" href="/">&#8592; Nite / All games</a>
             <span class="brand__block-mark" aria-hidden="true"><i></i></span>
             <span class="brand__eyebrow">Gather · Shape · Illuminate</span>
             <h1 id="main-title" class="brand__name">Worldloom</h1>
@@ -411,6 +412,7 @@
       <div id="water-overlay" aria-hidden="true"></div>
       <pre id="debug-panel" class="hidden" aria-label="Debug information"></pre>
     </main>
+    <script type="module" src="src/menu-film.js"></script>
     <script type="module" src="src/main.js"></script>
   </body>
 </html>

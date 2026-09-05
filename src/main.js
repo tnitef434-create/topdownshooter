@@ -1817,129 +1817,6 @@ function setupUIListeners() {
   const btnDeployMain = document.getElementById('btn-deploy-main');
   const btnCloseDeploy = document.getElementById('btn-close-deploy');
   const deployModal = document.getElementById('deploy-modal');
-  const btnPlayWorldloom = document.getElementById('btn-play-worldloom');
-  const btnCloseWorldloom = document.getElementById('btn-close-worldloom');
-  const btnLeaveWorldloomUnsaved = document.getElementById('btn-leave-worldloom-unsaved');
-  const btnRetryWorldloom = document.getElementById('btn-retry-worldloom');
-  const btnReturnWorldloom = document.getElementById('btn-return-worldloom');
-  const worldloomSiteScreen = document.getElementById('worldloom-site-screen');
-  const worldloomFrame = document.getElementById('worldloom-frame');
-  const worldloomFrameLoading = document.getElementById('worldloom-frame-loading');
-  const worldloomFrameActions = worldloomFrameLoading?.querySelector('.worldloom-frame-actions');
-  const worldloomPortalStatus = document.getElementById('worldloom-portal-status');
-  const worldloomLoadingCopy = worldloomFrameLoading?.querySelector('small')?.textContent || '';
-  let worldloomReady = false;
-  let worldloomFailed = false;
-  let worldloomLoadTimer = null;
-  let worldloomSaveSequence = 0;
-  let worldloomClosing = false;
-  const WORLDLOOM_SAVE_TIMEOUT_MS = 2500;
-  const pendingWorldloomSaves = new Map();
-  const worldloomBackground = worldloomSiteScreen?.parentElement
-    ? [...worldloomSiteScreen.parentElement.children].filter((element) => element !== worldloomSiteScreen)
-    : [];
-  const worldloomInertSnapshot = new Map();
-
-  const setWorldloomBackgroundInert = (inert) => {
-    worldloomBackground.forEach((element) => {
-      if (inert) {
-        worldloomInertSnapshot.set(element, element.hasAttribute('inert'));
-        element.setAttribute('inert', '');
-      } else if (worldloomInertSnapshot.get(element)) {
-        element.setAttribute('inert', '');
-      } else {
-        element.removeAttribute('inert');
-      }
-    });
-    if (!inert) worldloomInertSnapshot.clear();
-  };
-
-  const resetWorldloomWarnings = () => {
-    if (worldloomPortalStatus) {
-      worldloomPortalStatus.hidden = true;
-      worldloomPortalStatus.textContent = '';
-    }
-    if (btnLeaveWorldloomUnsaved) btnLeaveWorldloomUnsaved.hidden = true;
-    if (worldloomFrameActions) worldloomFrameActions.hidden = true;
-    worldloomFrameLoading?.classList.remove('has-error');
-  };
-
-  const showWorldloomRecovery = (message, failed = true) => {
-    worldloomFailed = failed;
-    clearTimeout(worldloomLoadTimer);
-    worldloomLoadTimer = null;
-    worldloomFrameLoading?.classList.remove('is-hidden');
-    worldloomFrameLoading?.classList.toggle('has-error', failed);
-    worldloomFrameLoading?.setAttribute('aria-busy', 'false');
-    const copy = worldloomFrameLoading?.querySelector('small');
-    if (copy) copy.textContent = message;
-    if (worldloomFrameActions) worldloomFrameActions.hidden = false;
-  };
-
-  const beginWorldloomLoad = (forceReload = false) => {
-    worldloomReady = false;
-    worldloomFailed = false;
-    resetWorldloomWarnings();
-    worldloomFrameLoading?.classList.remove('is-hidden');
-    worldloomFrameLoading?.setAttribute('aria-busy', 'true');
-    const loadingCopy = worldloomFrameLoading?.querySelector('small');
-    if (loadingCopy) loadingCopy.textContent = worldloomLoadingCopy;
-    clearTimeout(worldloomLoadTimer);
-    worldloomLoadTimer = setTimeout(() => {
-      if (!worldloomReady && !worldloomFailed) {
-        showWorldloomRecovery('Worldloom is taking longer than expected. You can keep waiting, retry, or return.', false);
-      }
-    }, 9000);
-    if (!worldloomFrame) return;
-    const source = new URL(btnPlayWorldloom?.dataset.worldloomPath || './worldloom/index.html', window.location.href);
-    source.searchParams.set('portal', '1');
-    if (forceReload) worldloomFrame.removeAttribute('src');
-    if (!worldloomFrame.getAttribute('src')) {
-      worldloomFrame.setAttribute('src', source.href);
-    }
-  };
-
-  const requestWorldloomSave = () => {
-    if (!worldloomReady || !worldloomFrame?.contentWindow) return Promise.resolve(null);
-    const requestId = `worldloom-save-${Date.now()}-${++worldloomSaveSequence}`;
-    return new Promise((resolve) => {
-      const timeout = setTimeout(() => {
-        pendingWorldloomSaves.delete(requestId);
-        resolve(false);
-      }, WORLDLOOM_SAVE_TIMEOUT_MS);
-      pendingWorldloomSaves.set(requestId, (saved) => {
-        clearTimeout(timeout);
-        pendingWorldloomSaves.delete(requestId);
-        resolve(Boolean(saved));
-      });
-      worldloomFrame.contentWindow.postMessage(
-        { source: 'tacticstrike', type: 'request-save', requestId },
-        window.location.origin,
-      );
-    });
-  };
-
-  window.addEventListener('message', (event) => {
-    if (event.origin !== window.location.origin || event.source !== worldloomFrame?.contentWindow) return;
-    const message = event.data;
-    if (message?.source !== 'worldloom') return;
-    if (message.type === 'ready') {
-      worldloomReady = true;
-      worldloomFailed = false;
-      clearTimeout(worldloomLoadTimer);
-      worldloomLoadTimer = null;
-      resetWorldloomWarnings();
-      worldloomFrameLoading?.setAttribute('aria-busy', 'false');
-      worldloomFrameLoading?.classList.add('is-hidden');
-    } else if (message.type === 'save-ack') {
-      pendingWorldloomSaves.get(message.requestId)?.(message.saved);
-    } else if (message.type === 'request-close') {
-      btnCloseWorldloom?.click();
-    } else if (message.type === 'error' && worldloomFrameLoading) {
-      showWorldloomRecovery(message.message || 'Worldloom could not start safely. Retry or return to TacticStrike.');
-    }
-  });
-  
   if (btnDeployMain && deployModal) {
     btnDeployMain.addEventListener('click', () => {
       deployModal.classList.add('active');
@@ -1967,102 +1844,6 @@ function setupUIListeners() {
       }
     });
   }
-
-  if (btnPlayWorldloom) {
-    btnPlayWorldloom.addEventListener('click', () => {
-      playMenuClick();
-      window.stopAllMusic();
-      if (deployModal) deployModal.classList.remove('active');
-      if (worldloomSiteScreen) {
-        worldloomSiteScreen.classList.add('active');
-        worldloomSiteScreen.setAttribute('aria-hidden', 'false');
-      }
-      document.body.classList.add('is-worldloom-open');
-      setWorldloomBackgroundInert(true);
-      beginWorldloomLoad(false);
-      btnCloseWorldloom?.focus();
-    });
-  }
-
-  const btnWorldloomMain = document.getElementById('btn-worldloom-main');
-  if (btnWorldloomMain) {
-    btnWorldloomMain.addEventListener('click', () => {
-      playMenuClick();
-      window.stopAllMusic();
-      if (worldloomSiteScreen) {
-        worldloomSiteScreen.classList.add('active');
-        worldloomSiteScreen.setAttribute('aria-hidden', 'false');
-      }
-      document.body.classList.add('is-worldloom-open');
-      setWorldloomBackgroundInert(true);
-      beginWorldloomLoad(false);
-      btnCloseWorldloom?.focus();
-    });
-  }
-
-  if (worldloomFrame) {
-    worldloomFrame.addEventListener('load', () => {
-      // A generic iframe load (including about:blank) is not proof that the
-      // game initialized. The loader closes only after the child ready message.
-      if (worldloomFrame.getAttribute('src') && !worldloomReady && !worldloomFailed) {
-        worldloomFrameLoading?.setAttribute('aria-busy', 'true');
-      }
-    });
-  }
-
-  const finishWorldloomClose = () => {
-    clearTimeout(worldloomLoadTimer);
-    worldloomLoadTimer = null;
-    worldloomReady = false;
-    worldloomFailed = false;
-    if (worldloomFrame) worldloomFrame.removeAttribute('src');
-    if (worldloomSiteScreen) {
-      worldloomSiteScreen.classList.remove('active');
-      worldloomSiteScreen.setAttribute('aria-hidden', 'true');
-    }
-    document.body.classList.remove('is-worldloom-open');
-    setWorldloomBackgroundInert(false);
-    resetWorldloomWarnings();
-    worldloomFrameLoading?.classList.remove('is-hidden');
-    worldloomFrameLoading?.setAttribute('aria-busy', 'false');
-    if (deployModal) deployModal.classList.remove('active');
-    showScreen('menu');
-    if (!isMusicMuted) {
-      playMenuMusic();
-    }
-    btnDeployMain?.focus();
-    if (btnCloseWorldloom) btnCloseWorldloom.disabled = false;
-    worldloomClosing = false;
-  };
-
-  if (btnCloseWorldloom) {
-    btnCloseWorldloom.addEventListener('click', async () => {
-      if (worldloomClosing) return;
-      worldloomClosing = true;
-      btnCloseWorldloom.disabled = true;
-      playMenuClick();
-      if (document.pointerLockElement) document.exitPointerLock();
-      const saved = await requestWorldloomSave();
-      if (worldloomReady && saved === false) {
-        if (worldloomPortalStatus) {
-          worldloomPortalStatus.textContent = 'SAVE FAILED — WORLD KEPT OPEN';
-          worldloomPortalStatus.hidden = false;
-        }
-        if (btnLeaveWorldloomUnsaved) btnLeaveWorldloomUnsaved.hidden = false;
-        btnCloseWorldloom.disabled = false;
-        worldloomClosing = false;
-        return;
-      }
-      finishWorldloomClose();
-    });
-  }
-
-  btnLeaveWorldloomUnsaved?.addEventListener('click', () => {
-    if (!worldloomSiteScreen?.classList.contains('active')) return;
-    finishWorldloomClose();
-  });
-  btnRetryWorldloom?.addEventListener('click', () => beginWorldloomLoad(true));
-  btnReturnWorldloom?.addEventListener('click', () => btnCloseWorldloom?.click());
 
   // Set operative name change
   if (inputs.name) {
@@ -2528,7 +2309,7 @@ function setupUIListeners() {
     });
   }
 
-  // Warn before closing/refreshing during any active match (Worldloom excluded)
+  // Warn before closing/refreshing during any active match
   window.addEventListener('beforeunload', (e) => {
     if (gameEngine && gameEngine.active && gameEngine.gameState !== 'match-over') {
       e.preventDefault();
@@ -4186,14 +3967,12 @@ function updatePlayerCountsUI(data) {
   const realVal = document.getElementById('ranked-real-player-count');
   const compVal = document.getElementById('ranked-comp-player-count');
   const sabVal = document.getElementById('sabotage-player-count');
-  const wlVal = document.getElementById('worldloom-player-count');
 
   if (totalVal && data && data.total !== undefined) totalVal.innerText = data.total;
   if (qpVal && data && data.quickplay !== undefined) qpVal.innerText = data.quickplay;
   if (realVal && data && data.ranked_realistic !== undefined) realVal.innerText = data.ranked_realistic;
   if (compVal && data && data.ranked_competitive !== undefined) compVal.innerText = data.ranked_competitive;
   if (sabVal && data && data.sabotage !== undefined) sabVal.innerText = data.sabotage;
-  if (wlVal && data && data.worldloom !== undefined) wlVal.innerText = data.worldloom;
 }
 
 const BOT_USERNAME_POOL = [

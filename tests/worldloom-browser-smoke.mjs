@@ -35,85 +35,11 @@ try {
   });
 
   await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
-  await page.waitForSelector('#btn-deploy-main', { timeout: 15_000 });
-  await page.evaluate(() => document.querySelector('#btn-deploy-main')?.click());
-  await page.waitForFunction(() => document.querySelector('#deploy-modal')?.classList.contains('active'));
-  const deployPresentation = await page.evaluate(() => {
-    const card = document.querySelector('.modal-card.deploy-card');
-    const operation = document.querySelector('.worldloom-operation');
-    const badge = operation?.querySelector('.worldloom-operation-badge');
-    if (!card || !operation || !badge) return null;
-
-    const rules = [];
-    const collectRules = (ruleList) => {
-      for (const rule of ruleList || []) {
-        if (rule.selectorText?.includes('.modal-card.deploy-card::-webkit-scrollbar-thumb')) {
-          rules.push(rule.cssText);
-        }
-        if (rule.cssRules) collectRules(rule.cssRules);
-      }
-    };
-    for (const sheet of document.styleSheets) {
-      try {
-        collectRules(sheet.cssRules);
-      } catch {
-        // All application styles are same-origin, but ignore an injected sheet
-        // if the browser declines access to it.
-      }
-    }
-
-    const style = getComputedStyle(card);
-    return {
-      overflowY: style.overflowY,
-      scrollbarColor: style.scrollbarColor,
-      scrollbarGutter: style.scrollbarGutter,
-      scrollable: card.scrollHeight > card.clientHeight,
-      thumbRule: rules.join('\n'),
-      badge: badge.textContent?.trim() || '',
-      updateCopy: operation.textContent?.replace(/\s+/g, ' ').trim() || '',
-    };
-  });
-  assert(deployPresentation, 'Enter Battlefield deploy presentation is missing');
-  assert.match(deployPresentation.overflowY, /auto|scroll/, 'Deploy panel is not a scroll container');
-  assert.equal(deployPresentation.scrollable, true, 'Deploy panel does not expose its overflow through the custom scrollbar');
-  assert.match(deployPresentation.scrollbarColor, /212\D+175\D+55/, 'Deploy panel scrollbar is not TacticStrike gold');
-  assert.match(deployPresentation.scrollbarGutter, /stable/, 'Deploy panel scrollbar has no stable gutter');
-  assert.match(deployPresentation.thumbRule, /(?:#d4af37|rgb\(212\s*,\s*175\s*,\s*55\))/i,
-    'Deploy panel is missing its custom gold WebKit scrollbar thumb');
-  assert.match(deployPresentation.badge, /MAJOR UPDATE LIVE/i, 'Enter Battlefield does not badge the Worldloom update');
-  assert.match(deployPresentation.updateCopy, /rebuilt block interface/i, 'Enter Battlefield is missing the Worldloom interface update copy');
-  assert.match(deployPresentation.updateCopy, /faster terrain streaming/i, 'Enter Battlefield is missing the Worldloom performance update copy');
-  await page.evaluate(() => document.querySelector('#btn-play-worldloom')?.click());
-  await page.waitForFunction(() => document.body.classList.contains('is-worldloom-open'));
-
-  await page.waitForFunction(() => {
-    const loader = document.querySelector('#worldloom-frame-loading');
-    return loader?.getAttribute('aria-busy') === 'false' && loader?.classList.contains('is-hidden');
-  }, { timeout: 30_000 });
-
-  const portalFramePresentation = await page.evaluate(() => {
-    const toolbar = document.querySelector('.worldloom-site-toolbar');
-    const frame = document.querySelector('#worldloom-frame');
-    const screen = document.querySelector('#worldloom-site-screen');
-    const frameBounds = frame?.getBoundingClientRect();
-    return {
-      toolbarDisplay: toolbar ? getComputedStyle(toolbar).display : null,
-      frameTop: frameBounds?.top ?? null,
-      frameBottom: frameBounds?.bottom ?? null,
-      viewportHeight: innerHeight,
-      screenRows: screen ? getComputedStyle(screen).gridTemplateRows : '',
-    };
-  });
-  assert.equal(portalFramePresentation.toolbarDisplay, 'none',
-    'The obsolete TacticStrike/Worldloom portal bar is still visible');
-  assert(Math.abs(portalFramePresentation.frameTop) <= 1,
-    `Worldloom still leaves a top-bar gap at ${portalFramePresentation.frameTop}px`);
-  assert(Math.abs(portalFramePresentation.frameBottom - portalFramePresentation.viewportHeight) <= 1,
-    'Worldloom iframe does not fill the viewport after removing the portal bar');
-
-  const frameHandle = await page.$('#worldloom-frame');
-  const frame = await frameHandle?.contentFrame();
-  assert(frame, 'Worldloom iframe did not become available');
+  await page.waitForSelector('#enter-worldloom');
+  await Promise.all([page.waitForNavigation({waitUntil:'domcontentloaded'}), page.click('#enter-worldloom')]);
+  const frame = page;
+  assert.match(page.url(), /worldloom\//, 'The hub must open Worldloom directly');
+  assert.equal(await page.$('iframe'), null, 'Worldloom must be independent of the shooter');
   await frame.waitForFunction(() => !document.querySelector('#main-menu')?.classList.contains('hidden'));
   const mainMenuPresentation = await frame.evaluate(() => {
     const menu = document.querySelector('.menu-card.surface-panel');
@@ -611,7 +537,7 @@ try {
   assert(Number(gameState.nourishment) >= 75 && Number(gameState.nourishment) <= 90,
     `Nourishment left its expected live-test range: ${gameState.nourishment}`);
   assert.notEqual(gameState.objective.trim(), '');
-  assert.match(gameState.portalReturnLabel, /return to TacticStrike/i,
+  assert.match(gameState.portalReturnLabel, /return to Nite/i,
     'The pause menu has no replacement route back after removing the portal bar');
   assert.equal(gameState.renderer, true);
   assert.equal(gameState.environment, true);
@@ -1617,43 +1543,22 @@ try {
       return window.__worldloomOriginalSetItem.call(this, key, value);
     };
   });
-  await page.evaluate(() => document.querySelector('#btn-close-worldloom')?.click());
-  await page.waitForFunction(() => {
-    const leave = document.querySelector('#btn-leave-worldloom-unsaved');
-    return document.body.classList.contains('is-worldloom-open') && leave && !leave.hidden;
-  }, { timeout: 4_000 });
-  assert.match(await page.$eval('#worldloom-portal-status', (element) => element.textContent), /SAVE FAILED/);
+  await page.evaluate(() => document.querySelector('#title-button')?.click());
+  await delay(300);
+  assert.match(page.url(), /worldloom\//, 'A failed save must keep the game open');
+  assert.ok(await frame.evaluate(() => Boolean(window.__worldloomWorld)), 'The world remains available after a save failure');
   await frame.evaluate(() => {
     Storage.prototype.setItem = window.__worldloomOriginalSetItem;
     delete window.__worldloomOriginalSetItem;
   });
-  const closeStarted = Date.now();
-  await page.evaluate(() => document.querySelector('#btn-close-worldloom')?.click());
-  await page.waitForFunction(() => !document.body.classList.contains('is-worldloom-open'), {
-    timeout: 3_000,
-  });
-  const closeDuration = Date.now() - closeStarted;
-  const closedState = await page.evaluate(() => ({
-    src: document.querySelector('#worldloom-frame')?.getAttribute('src'),
-    focus: document.activeElement?.id,
-    backgroundInert: [...document.querySelector('#app').children]
-      .filter((element) => element.id !== 'worldloom-site-screen')
-      .some((element) => element.hasAttribute('inert')),
-  }));
-  assert.equal(closedState.src, null);
-  assert.equal(closedState.focus, 'btn-deploy-main');
-  assert.equal(closedState.backgroundInert, false);
-  console.log(`portal close handshake: ${closeDuration}ms`);
-  assert(closeDuration < 2_500, 'Portal save acknowledgement timed out during close');
-
-  await page.evaluate(() => document.querySelector('#btn-play-worldloom')?.click());
-  await page.waitForFunction(() => document.querySelector('#worldloom-frame-loading')?.getAttribute('aria-busy') === 'false'
-    && document.querySelector('#worldloom-frame-loading')?.classList.contains('is-hidden'), {
-    timeout: 30_000,
-  });
-  const reopenedHandle = await page.$('#worldloom-frame');
-  const reopenedFrame = await reopenedHandle?.contentFrame();
-  assert(reopenedFrame, 'Worldloom iframe did not reopen');
+  await Promise.all([
+    page.waitForNavigation({waitUntil:'domcontentloaded'}),
+    page.evaluate(() => document.querySelector('#title-button')?.click()),
+  ]);
+  await page.waitForSelector('#enter-worldloom');
+  assert.equal(new URL(page.url()).pathname, '/', 'Save and leave returns to the game hub');
+  await Promise.all([page.waitForNavigation({waitUntil:'domcontentloaded'}),page.click('#enter-worldloom')]);
+  const reopenedFrame = page;
   await reopenedFrame.waitForFunction(() => !document.querySelector('#main-menu')?.classList.contains('hidden'));
   assert.equal(await reopenedFrame.$eval('#continue-button', (button) => button.disabled), false);
   const exactResumeTarget = await reopenedFrame.evaluate(() => {
@@ -1679,9 +1584,9 @@ try {
 
   // Pointer-lock release normally opens the pause menu. Directly invoke its
   // authored exit action here because headless Chrome does not hold pointer
-  // lock, then verify the child-to-parent save-and-close handshake.
+  // lock, then verify the save-and-return route to the hub.
   await reopenedFrame.evaluate(() => document.querySelector('#title-button')?.click());
-  await page.waitForFunction(() => !document.body.classList.contains('is-worldloom-open'), { timeout: 3_000 });
+  await page.waitForSelector('#enter-worldloom', { timeout: 15_000 });
 
   const inventoryPage = await browser.newPage();
   inventoryPage.on('pageerror', (error) => pageErrors.push(`inventory-drag: ${error.stack || error.message}`));
@@ -1829,25 +1734,10 @@ try {
       return original.call(this, type, ...args);
     };
   });
-  await failurePage.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
-  await failurePage.waitForSelector('#btn-deploy-main');
-  await failurePage.evaluate(() => document.querySelector('#btn-deploy-main')?.click());
-  await failurePage.evaluate(() => document.querySelector('#btn-play-worldloom')?.click());
-  await failurePage.waitForFunction(() => {
-    const loader = document.querySelector('#worldloom-frame-loading');
-    const actions = loader?.querySelector('.worldloom-frame-actions');
-    return loader?.classList.contains('has-error')
-      && loader.getAttribute('aria-busy') === 'false'
-      && actions && !actions.hidden;
-  }, { timeout: 30_000 });
-  await failurePage.evaluate(() => document.querySelector('#btn-return-worldloom')?.click());
-  await delay(250);
-  const failureReturnState = await failurePage.evaluate(() => ({
-    open: document.body.classList.contains('is-worldloom-open'),
-    closeDisabled: document.querySelector('#btn-close-worldloom')?.disabled,
-    returnHidden: document.querySelector('#btn-return-worldloom')?.closest('.worldloom-frame-actions')?.hidden,
-  }));
-  assert.equal(failureReturnState.open, false, `WebGL recovery return failed: ${JSON.stringify(failureReturnState)}`);
+  await failurePage.goto(new URL('worldloom/index.html',baseUrl).href, {waitUntil:'domcontentloaded'});
+  await failurePage.waitForFunction(() => !document.querySelector('#unsupported')?.classList.contains('hidden'));
+  await Promise.all([failurePage.waitForNavigation({waitUntil:'domcontentloaded'}),failurePage.click('#unsupported-return')]);
+  await failurePage.waitForSelector('#enter-worldloom');
   await failurePage.close();
 
   assert.deepEqual(shaderErrors, [], `WebGL shader/program errors:\n${shaderErrors.join('\n\n')}`);
@@ -1862,8 +1752,6 @@ try {
     birdState,
     clearState,
     stormState,
-    deployPresentation,
-    portalFramePresentation,
     mainMenuPresentation,
     settingsPresentation,
     maximumViewSettings,
@@ -1872,11 +1760,10 @@ try {
     hudPresentation,
     mobileInventory,
     maximumWorldLoadMilliseconds,
-    closeDuration,
     resilience: 'audio and storage failures recovered',
     inventoryDrag: 'multiple block stacks move between slots and persist as visible loose world items',
     exactResume: 'safe fractional X/Z position restored without snapping',
-    webglRecovery: 'portal exposed retry and return actions',
+    webglRecovery: 'standalone game exposed a return to the hub',
   }, null, 2));
 } catch (error) {
   if (pageErrors.length) {

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import puppeteer from 'puppeteer';
 
-const baseUrl = process.argv[2] || process.env.TACTICSTRIKE_TEST_URL || 'http://127.0.0.1:4178/';
+const baseUrl = process.argv[2] || process.env.TACTICSTRIKE_TEST_URL || 'http://127.0.0.1:4178/tacticstrike/';
 const executablePath = process.env.CHROME_PATH
   || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -47,12 +47,9 @@ try {
       const modeInput = document.querySelector(`.match-mode-input[value="${selectedMode}"]`);
       modeInput.checked = true;
       modeInput.dispatchEvent(new Event('change', { bubbles: true }));
-      const mapSelect = document.querySelector('#qp-map-select');
-      if (![...mapSelect.options].some((option) => option.value === selectedMap)) {
-        mapSelect.add(new Option(selectedMap.toUpperCase(), selectedMap));
-      }
-      mapSelect.value = selectedMap;
-      mapSelect.dispatchEvent(new Event('change', { bubbles: true }));
+      // The mission selector uses map buttons, and the isolated profile has
+      // already stored this scenario's map before the application starts.
+      document.querySelector(`#qp-map-select [data-map="${selectedMap}"]`)?.click();
       document.querySelector('#btn-deploy-main').click();
     }, { selectedMap: mapId, selectedMode: mode });
     await page.waitForFunction(() => document.querySelector('#deploy-modal')?.classList.contains('active'));

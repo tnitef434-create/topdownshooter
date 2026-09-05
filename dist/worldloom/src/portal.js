@@ -1,5 +1,5 @@
-// A containing window can be a browser preview. Only the TacticStrike launcher
-// opts into the portal protocol; direct launches navigate back to the site.
+// Standalone games return to the Nite hub after a successful save. Keep the
+// opt-in message protocol compatible with existing embedding integrations.
 export function saveAndReturn(save, host = window) {
   if (!save()) return false;
   const portal = new URLSearchParams(host.location.search).get('portal') === '1';

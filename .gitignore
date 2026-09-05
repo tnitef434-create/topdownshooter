@@ -64,3 +64,16 @@ accounts.json.tmp
 !dist/worldloom/src/cave-assets.js
 !dist/worldloom/src/cave-plants.js
 !dist/worldloom/src/headlamp.js
+
+# Both games and their shared hub are deployed from the multi-page build.
+!dist/tacticstrike/
+!dist/tacticstrike/index.html
+!dist/hub/
+!dist/hub/**
+!dist/favicon.svg
+!dist/assets/
+!dist/assets/**
+.superdesign/tmp/
+!dist/worldloom/src/menu-film.js
+!dist/worldloom/assets/menu/
+!dist/worldloom/assets/menu/**

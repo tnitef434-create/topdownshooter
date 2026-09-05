@@ -1,5 +1,5 @@
 import * as THREE from '../vendor/three.module.min.js';
-import { BLOCKS, isSolid, isLiquid, blockShapeHeight } from './blocks.js';
+import { BLOCK, BLOCKS, isSolid, isLiquid, blockShapeHeight } from './blocks.js';
 
 export const PLAYER = Object.freeze({
   width: 0.62,
@@ -395,7 +395,7 @@ export class PlayerController {
     }
 
     const wasInWater = this.inWater;
-    this.inWater = this._sampleLiquid();
+    this.inWater = this._sampleLiquid() || this._waterContactSurface() !== null;
     this.headUnderwater = this._sampleHeadLiquid();
     if (!wasInWater && this.inWater) this.onSplash?.();
 
@@ -446,6 +446,13 @@ export class PlayerController {
       }
     }
 
+    // Collision substeps can enter water during this frame. Publish that
+    // contact immediately so splash effects and underwater state don't lag.
+    const enteredDuringMove = !this.inWater;
+    this.inWater = this._sampleLiquid() || this._waterContactSurface() !== null;
+    this.headUnderwater = this._sampleHeadLiquid();
+    if (enteredDuringMove && this.inWater) this.onSplash?.();
+
     if (!this.wasGrounded && this.grounded) {
       this.landingKick = Math.min(0.11, this.landingImpact * 0.007);
       this.onLand?.(this.landingImpact);
@@ -479,18 +486,27 @@ export class PlayerController {
   _moveWithCollisions(dt) {
     const maxComponent = Math.max(Math.abs(this.velocity.x * dt), Math.abs(this.velocity.y * dt), Math.abs(this.velocity.z * dt));
     const steps = Math.max(1, Math.ceil(maxComponent / 0.22));
-    const sx = this.velocity.x * dt / steps;
-    const sy = this.velocity.y * dt / steps;
-    const sz = this.velocity.z * dt / steps;
+    const stepDt = dt / steps;
     this.landingImpact = 0;
     this._stepSupportAvailable = this.grounded || this.wasGrounded || this.coyote > 0;
     this.grounded = false;
     this._activeExtraColliders = this._queryExtraColliders(this.position);
     try {
       for (let i = 0; i < steps; i++) {
-        this._moveAxis('x', sx);
-        this._moveAxis('z', sz);
-        this._moveAxis('y', sy);
+        this._moveAxis('x', this.velocity.x * stepDt);
+        this._moveAxis('z', this.velocity.z * stepDt);
+        const surface = this.velocity.y < 0
+          ? this._waterContactSurface(this.position.y + this.velocity.y * stepDt)
+          : null;
+        if (surface !== null) {
+          // Sweep the feet through the actual fluid surface, including thin
+          // flowing water. Cancel the falling momentum before floor collision,
+          // then use the new swimming velocity for every remaining substep.
+          if (this.position.y > surface) this._moveAxis('y', surface - this.position.y);
+          this.velocity.y = Math.max(-2.4, this.velocity.y);
+          this.landingImpact = 0;
+        }
+        this._moveAxis('y', this.velocity.y * stepDt);
       }
     } finally {
       this._activeExtraColliders = null;
@@ -603,6 +619,23 @@ export class PlayerController {
     const colliders = extraColliders || this._activeExtraColliders || this._queryExtraColliders(position);
     if (colliders.some((collider) => intersectsPlayerCollider(a, collider))) return true;
     return false;
+  }
+
+  _waterContactSurface(nextY = this.position.y) {
+    const a = this.feetAABB;
+    const low = Math.min(this.position.y, nextY);
+    const high = Math.max(this.position.y, nextY) + 0.06;
+    let contact = null;
+    for (let y = Math.floor(high); y >= Math.floor(low); y--) {
+      for (let z = Math.floor(a.minZ + EPSILON); z <= Math.floor(a.maxZ - EPSILON); z++) {
+        for (let x = Math.floor(a.minX + EPSILON); x <= Math.floor(a.maxX - EPSILON); x++) {
+          if (this.world.getBlock(x, y, z) !== BLOCK.WATER) continue;
+          const surface = this.world.getFluidSurfaceY?.(x, y, z) ?? y + 0.92;
+          if (low < surface && high > y) contact = Math.max(contact ?? -Infinity, surface);
+        }
+      }
+    }
+    return contact;
   }
 
   _sampleLiquid() {

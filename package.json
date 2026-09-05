@@ -1,21 +1,22 @@
 {
-  "name": "1v1-topdown-shooter",
+  "name": "nite-games",
   "version": "2.0.0",
-  "description": "Realistic 1v1 online top-down shooter",
+  "description": "Nite game hub — Worldloom and TacticStrike",
   "main": "server.js",
   "type": "module",
   "scripts": {
     "start": "node server.js",
     "dev:server": "node server.js dev",
-    "dev:client": "vite src",
-    "build": "vite build src --outDir ../dist --emptyOutDir",
-    "preview": "vite preview src",
+    "dev:client": "vite src --config vite.config.js",
+    "build": "vite build src --config vite.config.js --outDir ../dist --emptyOutDir",
+    "preview": "vite preview src --config vite.config.js --outDir ../dist",
     "test": "node --test --test-isolation=none tests/worldloom-core.test.mjs tests/worldloom-assets.test.mjs tests/bot-tactics.test.mjs tests/tacticstrike-bot-navigation.test.mjs tests/worldloom-characters.test.mjs tests/worldloom-nature-regressions.test.mjs tests/worldloom-sea-life.test.mjs tests/worldloom-water.test.mjs tests/worldloom-water-interaction.test.mjs tests/worldloom-caves.test.mjs",
     "test:worldloom": "node --test --test-isolation=none tests/worldloom-core.test.mjs tests/worldloom-assets.test.mjs tests/worldloom-characters.test.mjs tests/worldloom-nature-regressions.test.mjs tests/worldloom-sea-life.test.mjs tests/worldloom-water.test.mjs tests/worldloom-water-interaction.test.mjs tests/worldloom-caves.test.mjs",
     "test:bots": "node --test --test-isolation=none tests/bot-tactics.test.mjs tests/tacticstrike-bot-navigation.test.mjs",
     "test:bot-navigation": "node --test --test-isolation=none tests/tacticstrike-bot-navigation.test.mjs",
     "test:bots:browser": "node tests/tacticstrike-bot-browser-smoke.mjs",
-    "test:browser": "node tests/worldloom-browser-smoke.mjs"
+    "test:browser": "node tests/worldloom-browser-smoke.mjs",
+    "test:hub": "node tests/nite-hub-browser.mjs"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",

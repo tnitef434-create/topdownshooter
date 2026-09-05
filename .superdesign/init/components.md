@@ -1,3 +1,7 @@
+# Nite hub update — September 2026
+
+The new independent homepage is `src/index.html`, styled by `src/hub.css` and controlled by `src/hub.js`. The games now live at `/worldloom/` and `/tacticstrike/`; the latter is `src/tacticstrike/index.html` with the existing `src/main.js` and `src/style.css`. No Worldloom iframe or promotion remains inside the shooter. The hub uses a white 50/50 split, full game footage, a compact NITE wordmark and original N favicon. Nite is the shared hub identity. The existing game interface details below are historical context. No shared layout components are required for this new target.
+
 # Shared UI components
 
 This repository uses framework-free semantic HTML and vanilla JavaScript rather than React/Vue component files. The reusable primitives are the static classes in `src/public/worldloom/index.html`, behavior in `src/public/worldloom/src/ui.js`, and visual rules in `src/public/worldloom/styles.css`.
