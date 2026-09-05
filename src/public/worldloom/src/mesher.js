@@ -280,6 +280,24 @@ function faceIsVisible(block, neighbor) {
   return !isSolid(neighbor) || isTransparent(neighbor);
 }
 
+export function waterCornerOptics(world, vx, y, vz, cache = null) {
+  const key = `${vx},${y},${vz}`;
+  if (cache?.has(key)) return cache.get(key);
+  let depth = 0, wet = 0, bank = 0;
+  for (const x of [vx-1,vx]) for (const z of [vz-1,vz]) {
+    const block = world.getBlock(x,y,z);
+    if (isLiquid(block)) {
+      wet++;
+      let bottom = y;
+      while (bottom > Math.max(0,y-24) && isLiquid(world.getBlock(x,bottom-1,z))) bottom--;
+      depth += y - bottom + .92;
+    } else if (isSolid(block)) bank++;
+  }
+  const data = [wet ? depth/wet : .1,bank/4,wet/4 * (1-bank/4)];
+  cache?.set(key,data);
+  return data;
+}
+
 function fluidCellHeight(world, x, y, z) {
   if (!isLiquid(world.getBlock(x, y, z))) return null;
   if (isLiquid(world.getBlock(x, y + 1, z))) return 1;
@@ -305,16 +323,17 @@ function fluidCornerHeights(world, x, y, z, face) {
 }
 
 class GeometryWriter {
-  constructor() {
+  constructor(water = false) {
     this.positions = [];
     this.normals = [];
     this.uvs = [];
     this.colors = [];
     this.indices = [];
     this.faces = 0;
+    this.waterData = water ? [] : null;
   }
 
-  addFace(x, y, z, face, uv, color, waterHeights = null, cornerLights = null) {
+  addFace(x, y, z, face, uv, color, waterHeights = null, cornerLights = null, waterData = null) {
     const offset = this.positions.length / 3;
     for (let cornerIndex = 0; cornerIndex < 4; cornerIndex++) {
       const corner = face.corners[cornerIndex];
@@ -323,6 +342,7 @@ class GeometryWriter {
       this.positions.push(x + corner[0], y + cornerY, z + corner[2]);
       this.normals.push(face.normal[0], face.normal[1], face.normal[2]);
       this.colors.push(color.r * light, color.g * light, color.b * light);
+      if (this.waterData) this.waterData.push(...(waterData?.[cornerIndex] || [1,0,0]));
     }
     this.uvs.push(
       uv[0], uv[1],
@@ -382,6 +402,7 @@ class GeometryWriter {
     geometry.setAttribute('normal', new THREE.Float32BufferAttribute(this.normals, 3));
     geometry.setAttribute('uv', new THREE.Float32BufferAttribute(this.uvs, 2));
     geometry.setAttribute('color', new THREE.Float32BufferAttribute(this.colors, 3));
+    if (this.waterData) geometry.setAttribute('waterData', new THREE.Float32BufferAttribute(this.waterData, 3));
     geometry.setIndex(this.indices);
     geometry.computeBoundingBox();
     geometry.computeBoundingSphere();
@@ -408,7 +429,7 @@ export class ChunkGeometryJob {
     this.writers = {
       opaque: new GeometryWriter(),
       glass: new GeometryWriter(),
-      water: new GeometryWriter(),
+      water: new GeometryWriter(true),
       glow: new GeometryWriter(),
     };
     this.originX = chunk.cx * this.size;
@@ -426,6 +447,7 @@ export class ChunkGeometryJob {
     this.geometry = { opaque: null, glass: null, water: null, glow: null };
     this.complete = false;
     this.result = null;
+    this.waterCornerCache = new Map();
   }
 
   _writeVoxel(index) {
@@ -497,7 +519,11 @@ export class ChunkGeometryJob {
       const waterHeights = isLiquid(block) && !isLiquid(this.world.getBlock(worldX, y + 1, worldZ))
         ? fluidCornerHeights(this.world, worldX, y, worldZ, face)
         : null;
-      writer.addFace(x, y, z, face, uv, color, waterHeights, cornerLights);
+      const waterData = isLiquid(block) ? face.corners.map(corner => {
+        const data = waterCornerOptics(this.world,worldX+corner[0],y,worldZ+corner[2],this.waterCornerCache);
+        return [data[0],data[1],waterHeights && corner[1]===1 ? data[2] : 0];
+      }) : null;
+      writer.addFace(x, y, z, face, uv, color, waterHeights, cornerLights, waterData);
       if (definition?.emissive && !isLiquid(block)) {
         this.writers.glow.addFace(x, y, z, face, uv, glowColorFor(definition), false);
       }

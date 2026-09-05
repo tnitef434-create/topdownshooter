@@ -8,6 +8,31 @@ import { OutputPass } from '../vendor/OutputPass.js';
 import { FXAAShader } from '../vendor/FXAAShader.js';
 import { VolumetricSunPass } from './volumetric-sun-pass.js';
 
+export function contributesToAmbientOcclusion(object) {
+  if (!object.isMesh || object.renderOrder >= 900 || object.userData?.skipAmbientOcclusion) return false;
+  const materials = Array.isArray(object.material) ? object.material : [object.material];
+  return materials.some(material => material && material.depthWrite !== false && !material.transparent);
+}
+
+// The stock normal/depth override treats every mesh as solid, including
+// transparent dust cards and water. Keep those out of the AO geometry pass.
+export class WorldloomGTAOPass extends GTAOPass {
+  _overrideVisibility() {
+    this._worldloomHidden = [];
+    this.scene.traverse(object => {
+      if (object.visible && (object.isMesh || object.isPoints || object.isLine || object.isLine2)
+        && !contributesToAmbientOcclusion(object)) {
+        object.visible = false;
+        this._worldloomHidden.push(object);
+      }
+    });
+  }
+  _restoreVisibility() {
+    for (const object of this._worldloomHidden || []) object.visible = true;
+    this._worldloomHidden = [];
+  }
+}
+
 export const CAVE_LIGHTING_DEPTH_BLOCKS = 28;
 
 export function caveLightingDepth(surfaceHeight, playerY) {
@@ -216,7 +241,7 @@ export class GraphicsPipeline {
 
   _ensureGtao() {
     if (this.gtaoPass) return;
-    this.gtaoPass = new GTAOPass(this.scene, this.camera, 512, 288);
+    this.gtaoPass = new WorldloomGTAOPass(this.scene, this.camera, 512, 288);
     this.gtaoPass.output = GTAOPass.OUTPUT.Default;
   }
 

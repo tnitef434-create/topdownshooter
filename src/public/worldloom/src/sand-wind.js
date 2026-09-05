@@ -1,10 +1,9 @@
 import * as THREE from '../vendor/three.module.min.js';
 import { BLOCK } from './blocks.js';
-import { SAND_DRIFT_MESH } from './sand-drift-mesh.js';
 import { hasPlantGround } from './plant-visibility.js';
-import { createSandDust } from './sand-dust.js';
+import { createSandParticles } from './sand-dust.js';
 
-const CAP = 72;
+const CAP = 1800;
 const REGION = 32;
 const smooth = (x) => { x=Math.max(0,Math.min(1,x));return x*x*(3-2*x); };
 function hash(x,z,seed) {
@@ -54,103 +53,77 @@ export function sandRibbonFits(world,p) {
 export class SandWindField {
   constructor(scene) {
     this.world=null;this.time=0;this.scanTimer=0;this.emitTimer=0;this.serial=0;
-    this.anchors=[];this.particles=[];this.limit=48;this.enabled=true;this.reducedMotion=false;
-    this.uniforms={time:{value:0}};this.dummy=new THREE.Object3D();
-    const geometry=new THREE.BufferGeometry();
-    for(const [name,size] of [['position',3],['normal',3],['uv',2]])geometry.setAttribute(name,new THREE.Float32BufferAttribute(SAND_DRIFT_MESH[name],size));
-    geometry.setAttribute('driftOpacity',new THREE.InstancedBufferAttribute(new Float32Array(CAP),1).setUsage(THREE.DynamicDrawUsage));
-    geometry.setAttribute('driftSeed',new THREE.InstancedBufferAttribute(new Float32Array(CAP),1).setUsage(THREE.DynamicDrawUsage));
-    const material=new THREE.MeshBasicMaterial({color:0xd7bd8a,transparent:true,opacity:.3,depthWrite:false,side:THREE.DoubleSide,fog:true});
-    material.onBeforeCompile=shader=>{
-      shader.uniforms.sandTime=this.uniforms.time;
-      shader.vertexShader='attribute float driftOpacity; attribute float driftSeed; varying float sandAlpha; varying float sandSeed; varying vec2 sandUv;\n'+shader.vertexShader;
-      shader.vertexShader=shader.vertexShader.replace('#include <begin_vertex>','#include <begin_vertex>\nsandAlpha=driftOpacity; sandSeed=driftSeed; sandUv=uv;');
-      shader.fragmentShader=`uniform float sandTime; varying float sandAlpha; varying float sandSeed; varying vec2 sandUv;
-        float sandHash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
-        float sandNoise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(sandHash(i),sandHash(i+vec2(1.,0.)),f.x),mix(sandHash(i+vec2(0.,1.)),sandHash(i+1.),f.x),f.y);}
-        `+shader.fragmentShader;
-      shader.fragmentShader=shader.fragmentShader.replace('#include <color_fragment>',`#include <color_fragment>
-        vec2 flow=vec2(sandUv.x*7.-sandTime*.55+sandSeed*47.,sandUv.y*5.);
-        float cloud=sandNoise(flow+vec2(0.,sin(flow.x*.7)*.5));
-        float grain=sandNoise(sandUv*vec2(180.,55.)-vec2(sandTime*7.,0.));
-        float edge=pow(max(0.,sin(sandUv.x*3.141593)),1.5)*pow(max(0.,sin(sandUv.y*3.141593)),2.);
-        diffuseColor.a*=sandAlpha*edge*smoothstep(.25,.72,cloud)*mix(.45,1.,grain);
-        if(diffuseColor.a<.001) discard;
-      `);
-    };
-    material.customProgramCacheKey=()=> 'blender-sand-drift-v1';
-    this.mesh=new THREE.InstancedMesh(geometry,material,CAP);
-    this.mesh.name='Intermittent Blender windblown sand';this.mesh.userData.authoredIn='Blender';
-    this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);this.mesh.frustumCulled=false;
-    this.mesh.renderOrder=4;this.mesh.count=0;this.mesh.visible=false;scene?.add(this.mesh);
-    this.dust = createSandDust(CAP * 3,this.uniforms.time,scene);
+    this.anchors=[];this.particles=[];this.limit=1200;this.enabled=true;this.reducedMotion=false;
+    this.mesh=createSandParticles(CAP,scene);
   }
   setWorld(world) {
     if(this.world===world)return;
     this.world=world;this.anchors=[];this.particles=[];this.time=0;this.scanTimer=0;this.emitTimer=0;
-    this.mesh.count=0;this.mesh.visible=false;this.dust.count=0;this.dust.visible=false;
+    this.mesh.geometry.setDrawRange(0,0);this.mesh.visible=false;
   }
   setQuality(profile={},reducedMotion=false,enabled=true) {
-    this.limit=Math.round(24+48*Math.max(0,Math.min(1,profile.atmosphereDetail??.7)));
+    this.limit=Math.round(450+1350*Math.max(0,Math.min(1,profile.atmosphereDetail??.7)));
     this.reducedMotion=Boolean(reducedMotion);this.enabled=enabled!==false;
-    if(!this.enabled){this.particles=[];this.mesh.count=0;this.mesh.visible=false;this.dust.count=0;this.dust.visible=false;}
+    if(!this.enabled){this.particles=[];this.mesh.geometry.setDrawRange(0,0);this.mesh.visible=false;}
   }
   _scan(focus) {
-    const anchors=[],seed=this.world?.seed||0;
-    for(let z=Math.floor(focus.z/4)*4-40;z<=focus.z+40;z+=4)for(let x=Math.floor(focus.x/4)*4-40;x<=focus.x+40;x+=4) {
+    const anchors=[];
+    for(let z=Math.floor(focus.z/4)*4-36;z<=focus.z+36;z+=4)for(let x=Math.floor(focus.x/4)*4-36;x<=focus.x+36;x+=4) {
       const distanceSq=(x-focus.x)**2+(z-focus.z)**2;
-      if(distanceSq>40**2)continue;
+      if(distanceSq>36**2)continue;
       const y=sandSurface(this.world,x+.5,z+.5);if(y===null)continue;
-      // Require a broad sand neighbourhood, so tiny isolated sand blocks never puff.
-      let sandy=0;for(const dx of [-4,0,4])for(const dz of [-4,0,4])if(sandSurface(this.world,x+dx+.5,z+dz+.5)!==null)sandy++;
-      if(sandy<7)continue;
-      anchors.push({x:x+.5+hash(x,z,seed)*1.4,z:z+.5+hash(x,z,seed^171)*1.4,y,distanceSq});
+      let sandy=0;for(const dx of [-3,0,3])for(const dz of [-3,0,3])if(sandSurface(this.world,x+dx+.5,z+dz+.5)!==null)sandy++;
+      if(sandy>=7)anchors.push({x:x+.5,z:z+.5,y,distanceSq});
     }
-    this.anchors=anchors.sort((a,b)=>a.distanceSq-b.distanceSq);
+    this.anchors=anchors;
   }
   update(dt,focus,context={}) {
     if(!this.world||!focus||!this.enabled||context.active===false)return;
-    dt=Math.max(0,Math.min(.1,Number(dt)||0));this.time+=dt;this.uniforms.time.value=this.time;
+    dt=Math.max(0,Math.min(.1,Number(dt)||0));this.time+=dt;
     this.scanTimer-=dt;if(this.scanTimer<=0){this._scan(focus);this.scanTimer=2.5;}
     const weather=Math.max(0,1-(context.rainIntensity||0)*4)*Math.max(0,Math.min(1,context.skyExposure??1));
     this.emitTimer-=dt;
     if(this.emitTimer<=0&&weather>.15) {
-      this.emitTimer=.22;
-      for(let attempt=0;attempt<8&&this.anchors.length&&this.particles.length<this.limit;attempt++) {
-        const serial=++this.serial,seed=this.world.seed||0;
-        const a=this.anchors[Math.floor(hash(serial,3,seed)*this.anchors.length)];
-        const gust=sandGustAt(a.x,a.z,this.time,seed);if(gust.strength<.1)continue;
-        const p={...a,angle:gust.angle,length:3.5+hash(serial,5,seed)*2.8,width:1.8+hash(serial,7,seed)*.8,
-          age:0,life:5+hash(serial,11,seed)*4,speed:(.4+hash(serial,13,seed)*.45)*(this.reducedMotion?.45:1),seed:hash(serial,17,seed),strength:gust.strength};
-        if(sandRibbonFits(this.world,p))this.particles.push(p);
+      this.emitTimer=.065;
+      const seed=this.world.seed||0;
+      for(let attempt=0;attempt<54&&this.anchors.length&&this.particles.length<this.limit;attempt++) {
+        const serial=++this.serial;
+        const anchor=this.anchors[Math.floor(hash(serial,3,seed)*this.anchors.length)];
+        const x=anchor.x+(hash(serial,5,seed)-.5)*5,z=anchor.z+(hash(serial,7,seed)-.5)*5;
+        const gust=sandGustAt(x,z,this.time,seed);if(gust.strength<.12)continue;
+        const ground=sandSurface(this.world,x,z);if(ground===null)continue;
+        const soft=serial%3!==0,phase=hash(serial,11,seed)*Math.PI*2;
+        this.particles.push({x,z,y:ground,ground,angle:gust.angle,phase,soft,age:0,
+          life:4+hash(serial,13,seed)*5,height:.18+hash(serial,17,seed)*(soft?1.05:.55),
+          speed:(.9+hash(serial,19,seed)*1.3)*(this.reducedMotion?.45:1),
+          size:soft?1.1+hash(serial,23,seed)*1.1:.025+hash(serial,23,seed)*.050,
+          opacity:soft?.28:.52,strength:gust.strength,check:0,bx:Math.floor(x),bz:Math.floor(z)});
       }
     }
     this.particles=this.particles.filter(p=>{
-      p.age+=dt;p.x+=Math.cos(p.angle)*p.speed*dt;p.z+=Math.sin(p.angle)*p.speed*dt;
-      return p.age<p.life&&(p.x-focus.x)**2+(p.z-focus.z)**2<48**2&&sandRibbonFits(this.world,p);
-    }).slice(0,this.limit);
-    const alpha=this.mesh.geometry.attributes.driftOpacity,seeds=this.mesh.geometry.attributes.driftSeed;
-    const dustAlpha=this.dust.geometry.attributes.dustAlpha,dustSeed=this.dust.geometry.attributes.dustSeed;
-    this.particles.forEach((p,i)=>{
-      this.dummy.position.set(p.x,p.y+.025+Math.sin(p.age/p.life*Math.PI)*.04,p.z);
-      this.dummy.rotation.set(0,-p.angle,0);this.dummy.scale.set(p.length,1,p.width);this.dummy.updateMatrix();this.mesh.setMatrixAt(i,this.dummy.matrix);
-      alpha.setX(i,smooth(p.age/1.4)*smooth((p.life-p.age)/2)*p.strength*weather*(this.reducedMotion?.5:1));seeds.setX(i,p.seed);
-      for(let puff=0;puff<3;puff++) {
-        const index=i*3+puff,along=(puff-1)*p.length*.23;
-        const lift=.32+.15*Math.sin(p.age*.65+puff*1.7+p.seed*8);
-        this.dummy.position.set(p.x+Math.cos(p.angle)*along,p.y+lift,p.z+Math.sin(p.angle)*along);
-        this.dummy.rotation.set(0,0,0);this.dummy.scale.set(1.3+p.seed*.6,.65+p.seed*.45,1);this.dummy.updateMatrix();
-        this.dust.setMatrixAt(index,this.dummy.matrix);
-        dustAlpha.setX(index,alpha.getX(i)*(.68+.22*Math.sin(p.age*.8+puff)**2));dustSeed.setX(index,p.seed+puff*.317);
+      p.age+=dt;
+      const eddy=Math.sin(p.age*1.3+p.phase)*.24;
+      p.x+=(Math.cos(p.angle)*p.speed-Math.sin(p.angle)*eddy)*dt;
+      p.z+=(Math.sin(p.angle)*p.speed+Math.cos(p.angle)*eddy)*dt;
+      p.y=p.ground+p.height+Math.sin(p.age*.9+p.phase)*Math.min(.075,p.height*.4);
+      p.check-=dt;
+      const bx=Math.floor(p.x),bz=Math.floor(p.z);
+      if(p.check<=0||bx!==p.bx||bz!==p.bz) {
+        const ground=sandSurface(this.world,p.x,p.z);p.check=.25;p.bx=bx;p.bz=bz;
+        if(ground===null||Math.abs(ground-p.ground)>.1)return false;
       }
+      return p.age<p.life&&(p.x-focus.x)**2+(p.z-focus.z)**2<42**2;
+    }).slice(0,this.limit);
+    const attributes=this.mesh.geometry.attributes;
+    this.particles.forEach((p,i)=>{
+      attributes.position.setXYZ(i,p.x,p.y,p.z);
+      attributes.dustSize.setX(i,p.size*(p.soft?1+p.age/p.life*.7:1));
+      attributes.dustAlpha.setX(i,p.opacity*smooth(p.age/.9)*smooth((p.life-p.age)/1.7)*p.strength*weather*(this.reducedMotion?.6:1));
     });
-    this.mesh.material.color.set(0xd7bd8a).multiplyScalar(.14+.86*Math.max(0,Math.min(1,context.dayAmount??1)));
-    this.mesh.count=this.particles.length;this.mesh.visible=this.mesh.count>0&&weather>.01;
-    this.dust.material.color.set(0xe5c58e).multiplyScalar(.14+.86*Math.max(0,Math.min(1,context.dayAmount??1)));
-    this.dust.count=this.particles.length*3;this.dust.visible=this.mesh.visible;
-    this.dust.instanceMatrix.needsUpdate=true;dustAlpha.needsUpdate=true;dustSeed.needsUpdate=true;
-    this.mesh.instanceMatrix.needsUpdate=true;alpha.needsUpdate=true;seeds.needsUpdate=true;
+    this.mesh.material.uniforms.dustColor.value.set(0xe6ca98).multiplyScalar(.14+.86*Math.max(0,Math.min(1,context.dayAmount??1)));
+    this.mesh.geometry.setDrawRange(0,this.particles.length);this.mesh.visible=this.particles.length>0&&weather>.01;
+    for(const attribute of Object.values(attributes))attribute.needsUpdate=true;
   }
-  getStats(){return {anchors:this.anchors.length,drifts:this.mesh.count,dustPlumes:this.dust.count,draws:Number(this.mesh.visible)+Number(this.dust.visible),time:this.time,enabled:this.enabled};}
-  dispose(){for(const mesh of [this.mesh,this.dust]){mesh.removeFromParent();mesh.geometry.dispose();mesh.material.dispose();}this.world=null;this.particles=[];this.anchors=[];}
+  getStats(){return {anchors:this.anchors.length,dustParticles:this.particles.length,grains:this.particles.filter(p=>!p.soft).length,draws:Number(this.mesh.visible),time:this.time,enabled:this.enabled};}
+  dispose(){this.mesh.removeFromParent();this.mesh.geometry.dispose();this.mesh.material.dispose();this.world=null;this.particles=[];this.anchors=[];}
 }

@@ -69,12 +69,13 @@ test('sand field stays within its draw budget, fades in, shelters from rain and 
   field.setWorld(world);field.setQuality({atmosphereDetail:0});
   let peak=0;for(let t=0;t<200;t++)if(sandGustAt(0,0,t,41).strength>.8){peak=t;break;}
   field.time=peak;for(let i=0;i<80;i++)field.update(.05,focus,{dayAmount:1});
-  assert.ok(field.particles.length>0);assert.ok(field.particles.length<=24);assert.equal(field.getStats().draws,2);
-  assert.equal(field.getStats().dustPlumes,field.particles.length*3);
-  assert.ok(field.mesh.geometry.attributes.driftOpacity.array.some(v=>v>0&&v<=1));
+  assert.ok(field.particles.length>0);assert.ok(field.particles.length<=450);assert.equal(field.getStats().draws,1);
+  assert.equal(field.mesh.isPoints,true,'dust must have no solid ribbon/card mesh');
+  assert.ok(field.getStats().grains>0);
+  assert.ok(field.mesh.geometry.attributes.dustAlpha.array.some(v=>v>0&&v<=1));
   assert.equal(field.mesh.material.depthWrite,false);
-  assert.ok(field.particles.every(p=>sandRibbonFits(world,p)));
+  assert.ok(field.particles.every(p=>sandSurface(world,p.x,p.z)===p.ground));
   field.update(.05,focus,{rainIntensity:1});assert.equal(field.mesh.visible,false);
-  field.setWorld(null);assert.equal(field.mesh.count,0);assert.equal(field.anchors.length,0);
+  field.setWorld(null);assert.equal(field.mesh.geometry.drawRange.count,0);assert.equal(field.anchors.length,0);
   field.dispose();
 });

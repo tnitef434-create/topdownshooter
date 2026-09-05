@@ -12,6 +12,7 @@ import { SandWindField } from './sand-wind.js';
 import { SeaLifeField } from './sea-life.js';
 import { SummitCrossField } from './summit-crosses.js';
 import { atmosphericFogRange } from './fog.js';
+import { enhanceWaterMaterial, WaterReflection } from './water-surface.js';
 
 const LIGHT_BLOCKS = new Set([BLOCK.TORCH, BLOCK.LUMEN_CRYSTAL, BLOCK.KILN, BLOCK.FURNACE]);
 const FOLIAGE_BLOCKS = new Set([BLOCK.ASH_LEAVES, BLOCK.PINE_NEEDLES]);
@@ -553,67 +554,6 @@ function enhanceTerrainMaterial(material, sharedUniforms) {
     material.userData.worldloomShader = shader;
   };
   material.customProgramCacheKey = () => 'worldloom-terrain-wind-v4';
-  material.needsUpdate = true;
-}
-
-function enhanceWaterMaterial(material, sharedUniforms) {
-  if (!material || material.userData.worldloomEnhanced) return;
-  material.userData.worldloomEnhanced = true;
-  material.dithering = true;
-  material.opacity = 0.72;
-  material.onBeforeCompile = (shader) => {
-    shader.uniforms.worldloomTime = sharedUniforms.time;
-    shader.uniforms.worldloomDayAmount = sharedUniforms.dayAmount;
-    shader.uniforms.worldloomSunDirection = sharedUniforms.sunDirection;
-    shader.uniforms.worldloomSunColor = sharedUniforms.sunColor;
-    shader.uniforms.worldloomSunVisibility = sharedUniforms.sunVisibility;
-    injectWorldPosition(shader, `
-      float worldloomWaveMask = step(0.55, objectNormal.y);
-      float worldloomWave = sin((position.x + modelMatrix[3].x) * 0.73 + worldloomTime * 1.45)
-        + sin((position.z + modelMatrix[3].z) * 0.91 - worldloomTime * 1.13);
-      transformed.y += worldloomWave * 0.018 * worldloomWaveMask;
-    `);
-    shader.fragmentShader = shader.fragmentShader.replace(
-      '#include <common>',
-      `#include <common>
-        uniform vec3 worldloomSunDirection;
-        uniform vec3 worldloomSunColor;
-        uniform float worldloomSunVisibility;
-      `,
-    );
-    shader.fragmentShader = shader.fragmentShader.replace(
-      '#include <map_fragment>',
-      `#include <map_fragment>
-        float waterBands = sin(vWorldloomPosition.x * 1.1 + worldloomTime * 1.6)
-          * sin(vWorldloomPosition.z * 0.83 - worldloomTime * 1.15);
-        float waterGlint = pow(max(0.0, waterBands), 9.0);
-        vec3 deepWater = vec3(0.055, 0.24, 0.40);
-        vec3 daylightWater = vec3(0.22, 0.62, 0.78);
-        vec3 waterTint = mix(deepWater, daylightWater, 0.32 + worldloomDayAmount * 0.50);
-        diffuseColor.rgb = mix(diffuseColor.rgb * waterTint, diffuseColor.rgb, 0.38);
-        diffuseColor.rgb += vec3(0.22, 0.48, 0.54) * waterGlint * (0.22 + worldloomDayAmount * 0.32);
-      `,
-    );
-    shader.fragmentShader = shader.fragmentShader.replace(
-      '#include <normal_fragment_begin>',
-      `#include <normal_fragment_begin>
-        float worldloomFresnel = pow(1.0 - abs(dot(normalize(normal), normalize(vViewPosition))), 3.0);
-        diffuseColor.rgb += vec3(0.16, 0.34, 0.42) * worldloomFresnel * (0.35 + worldloomDayAmount * 0.30);
-      `,
-    );
-    shader.fragmentShader = shader.fragmentShader.replace(
-      '#include <lights_fragment_end>',
-      `#include <lights_fragment_end>
-        vec3 worldloomSunView = normalize((viewMatrix * vec4(worldloomSunDirection, 0.0)).xyz);
-        vec3 worldloomHalfVector = normalize(worldloomSunView + geometryViewDir);
-        float worldloomSunGlint = pow(max(dot(normalize(normal), worldloomHalfVector), 0.0), 112.0);
-        reflectedLight.directSpecular += worldloomSunColor * worldloomSunGlint
-          * worldloomSunVisibility * (0.42 + worldloomDayAmount * 0.78);
-      `,
-    );
-    material.userData.worldloomShader = shader;
-  };
-  material.customProgramCacheKey = () => 'worldloom-animated-water-v3-sun-glint';
   material.needsUpdate = true;
 }
 
@@ -1429,6 +1369,8 @@ export class Environment {
       sunDirection: { value: new THREE.Vector3(0, 1, 0) },
       sunColor: { value: new THREE.Color('#fff1c4') },
       sunVisibility: { value: 1 },
+      waterSky: { value: this.skyColor },
+      waterHorizon: { value: this.fogColor },
     };
 
     scene.background = this.skyColor;
@@ -1525,6 +1467,7 @@ export class Environment {
     this.meadowPlants = new MeadowPlantField(scene);
     this.sandWind = new SandWindField(scene);
     this.seaLife = new SeaLifeField(scene);
+    this.waterReflection = new WaterReflection(scene,renderer);
     // Combat creatures remain pigs; sea life is a protected decorative habitat.
     this.summitCrosses = new SummitCrossField(scene);
     this.localLights = Array.from({ length: 8 }, (_, index) => {
@@ -1556,6 +1499,7 @@ export class Environment {
     this.meadowPlants.setWorld(this.weatherWorld);
     this.sandWind.setWorld(this.weatherWorld);
     this.seaLife.setWorld(this.weatherWorld);
+    this.waterReflection.setWorld(this.weatherWorld);
     this.summitCrosses.setWorld(this.weatherWorld);
     if (worldChanged) this._resetWeatherCycle(Boolean(this.weatherWorld));
   }
@@ -1663,6 +1607,7 @@ export class Environment {
     this.meadowPlants.setQuality(profile, settings.reducedMotion);
     this.sandWind.setQuality(profile, settings.reducedMotion, this.weatherEnabled);
     this.seaLife.setQuality(profile, settings.reducedMotion);
+    this.waterReflection.setQuality(profile);
     this.summitCrosses.setQuality(profile);
     this.graphicsUniforms.windStrength.value = settings.reducedMotion ? 0.22 : 1;
 

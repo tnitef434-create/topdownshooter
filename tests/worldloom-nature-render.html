@@ -4,6 +4,8 @@ import { HeldItemView } from '/src/public/worldloom/src/viewmodel.js';
 import { ITEM } from '/src/public/worldloom/src/data.js';
 import { BLOCK } from '/src/public/worldloom/src/blocks.js';
 import { SandWindField,sandGustAt } from '/src/public/worldloom/src/sand-wind.js';
+import { GraphicsPipeline } from '/src/public/worldloom/src/graphics.js';
+import { GRAPHICS_PRESETS } from '/src/public/worldloom/src/save.js';
 const renderer=new THREE.WebGLRenderer({antialias:false,preserveDrawingBuffer:true});renderer.setSize(1000,700);document.body.append(renderer.domElement);
 const scene=new THREE.Scene(),camera=new THREE.PerspectiveCamera(75,1000/700,.03,100);scene.add(camera,new THREE.AmbientLight(0xffffff,2));scene.background=new THREE.Color(0);
 const held=new HeldItemView(camera,null);held.setVisible(true);
@@ -24,7 +26,8 @@ const world={seed:41,hasVisibleTerrainAt:()=>true,terrainHeight:()=>0,getBlock:(
 const sand=new SandWindField(scene);sand.setWorld(world);sand.setQuality({atmosphereDetail:1});
 let peak=0;for(let t=0;t<200;t++)if(sandGustAt(0,0,t,41).strength>.9){peak=t;break;}
 sand.time=peak;for(let i=0;i<80;i++)sand.update(.05,new THREE.Vector3(0,1,0),{dayAmount:1});
-renderer.render(scene,camera);
-window.natureResult={water:results,sand:sand.getStats(),triangles:renderer.info.render.triangles};
-window.sandRender=(seconds)=>{for(let t=0;t<seconds;t+=.05)sand.update(.05,new THREE.Vector3(0,1,0),{dayAmount:1});renderer.render(scene,camera);return sand.getStats();};
+const pipeline=new GraphicsPipeline(renderer,scene,camera);pipeline.applyProfile({...GRAPHICS_PRESETS.high,godRayStrength:0,bloomStrength:0});pipeline.resize(1000,700,1);
+pipeline.render(1/60);
+window.natureResult={water:results,sand:sand.getStats(),ao:pipeline.aoEnabled,triangles:renderer.info.render.triangles};
+window.sandRender=(seconds)=>{for(let t=0;t<seconds;t+=.05)sand.update(.05,new THREE.Vector3(0,1,0),{dayAmount:1});pipeline.render(1/60);return sand.getStats();};
 </script></html>
