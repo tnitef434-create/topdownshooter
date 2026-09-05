@@ -1,5 +1,6 @@
 import { io } from 'socket.io-client';
 import { Engine } from './game/Engine.js';
+import { ACCOUNT_SESSION_KEY, ACCOUNT_USER_CACHE_KEY, readAccountSession, removeAccountSession, getBackendUrl, accountRequest } from './account-session.js';
 
 // Safe localStorage wrapper to prevent crash if disabled in browser
 const safeStorage = {
@@ -27,26 +28,10 @@ const safeStorage = {
   }
 };
 
-const ACCOUNT_SESSION_KEY = 'tacticstrike_account_session';
-const ACCOUNT_USER_CACHE_KEY = 'tacticstrike_account_user';
 const ADMIN_SESSION_KEY = 'tacticstrike_admin_session';
 const startupBeganAt = performance.now();
 
-function readCachedAccountUser() {
-  try {
-    const cached = JSON.parse(safeStorage.getItem(ACCOUNT_USER_CACHE_KEY) || 'null');
-    return cached && typeof cached.email === 'string' ? cached : null;
-  } catch (error) {
-    safeStorage.removeItem(ACCOUNT_USER_CACHE_KEY);
-    return null;
-  }
-}
-
-let accountSession = {
-  token: safeStorage.getItem(ACCOUNT_SESSION_KEY),
-  user: readCachedAccountUser()
-};
-if (!accountSession.token) accountSession.user = null;
+let accountSession = readAccountSession();
 let accountAuthPending = Boolean(accountSession.token);
 let adminSessionToken = safeStorage.getItem(ADMIN_SESSION_KEY);
 let selectedAdminCaseId = null;
@@ -116,27 +101,8 @@ async function finishStartupSequence(accountRestore) {
   dismissStartupOverlay();
 }
 
-function getBackendUrl() {
-  if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-    return window.location.port === '3000' ? window.location.origin : 'http://localhost:3000';
-  }
-  return window.location.hostname.endsWith('onrender.com')
-    ? window.location.origin
-    : 'https://topdownshooter.onrender.com';
-}
-
-async function accountApi(path, options = {}) {
-  const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
-  if (accountSession.token) headers.Authorization = `Bearer ${accountSession.token}`;
-  const response = await fetch(`${getBackendUrl()}${path}`, { ...options, headers });
-  const body = response.status === 204 ? null : await response.json().catch(() => null);
-  if (!response.ok) {
-    const error = new Error(body?.message || 'The account server could not complete this request.');
-    error.code = body?.error;
-    error.status = response.status;
-    throw error;
-  }
-  return body;
+function accountApi(path, options = {}) {
+  return accountRequest(path, { ...options, token: accountSession.token });
 }
 
 async function adminApi(path, options = {}) {
@@ -1302,15 +1268,6 @@ function connectSocket() {
   socket.on('connect_error', () => {
     // Fail silently or fallback for auto-login without annoying alerts
     console.warn('Failed to connect to multiplayer server.');
-    refreshPlayerCountsViaHttp();
-  });
-
-  socket.on('disconnect', () => {
-    refreshPlayerCountsViaHttp();
-  });
-
-  socket.on('player-counts', (data) => {
-    updatePlayerCountsUI(data);
   });
 
   socket.on('connect', () => {
@@ -2875,15 +2832,6 @@ document.addEventListener('DOMContentLoaded', () => {
   connectSocket();
   showScreen('menu');
 
-  // Keep the menu player counts alive even when the socket is disconnected
-  refreshPlayerCountsViaHttp();
-  setInterval(() => {
-    const activeScreen = document.querySelector('.screen.active');
-    if ((!socket || !socket.connected) && activeScreen && activeScreen.id === 'menu-screen') {
-      refreshPlayerCountsViaHttp();
-    }
-  }, 15000);
-
   // Load career stats and rank
   renderCareerStats();
   updateMenuRankUI();
@@ -2907,7 +2855,12 @@ document.addEventListener('DOMContentLoaded', () => {
   updateWeaponStatsUI(myWeapon);
   updateMatchConfigurationSummary();
 
-  finishStartupSequence(accountRestore);
+  finishStartupSequence(accountRestore).then(() => {
+    const url = new URL(location.href), shop = url.searchParams.get('shop');
+    if (shop === 'credits') openCreditShopModal('menu');
+    if (shop === 'support') document.getElementById('btn-open-purchase-support')?.click();
+    if (shop === 'credits' || shop === 'support') {url.searchParams.delete('shop');history.replaceState(null, '', url);}
+  });
 
 });
 
@@ -2973,9 +2926,6 @@ function initCreditShop() {
   document.addEventListener('click', (event) => {
     const trigger = event.target.closest('[data-open-credit-shop]');
     if (!trigger) return;
-    if (trigger.closest('#account-modal')) {
-      document.getElementById('account-modal')?.classList.remove('active');
-    }
     openCreditShopModal(trigger.closest('#shop-modal') ? 'item-shop' : 'menu');
   });
 
@@ -3022,7 +2972,7 @@ function openCreditShopModal(source = 'menu') {
 
 async function startCreditCheckout(packageId) {
   if (!accountSession.user || !accountSession.token) {
-    openAccountModal('login', 'Sign in or create an account before purchasing credits.');
+    openHubAccount();
     return;
   }
 
@@ -3045,7 +2995,7 @@ async function startCreditCheckout(packageId) {
     resetCreditCheckoutButtons();
     if (error.status === 401) {
       clearAccountSession();
-      openAccountModal('login', 'Your session expired. Sign in again to continue.');
+      openHubAccount();
       return;
     }
     showNotification(error.message, 6000);
@@ -3159,7 +3109,7 @@ async function loadPurchaseSupportCases() {
     if (error.status === 401) {
       clearAccountSession();
       document.getElementById('purchase-support-modal')?.classList.remove('active');
-      openAccountModal('login', 'Your session expired. Sign in again to view purchase support.');
+      openHubAccount('login', 'support');
       return;
     }
     container.innerHTML = '<div class="support-empty-state">Purchase chats could not be loaded. Try refreshing.</div>';
@@ -3234,7 +3184,7 @@ function initPurchaseSupport() {
 
   openButton.addEventListener('click', () => {
     if (!accountSession.user || !accountSession.token) {
-      openAccountModal('login', 'Sign in before submitting purchase proof.');
+      openHubAccount('login', 'support');
       return;
     }
     modal.classList.add('active');
@@ -3529,197 +3479,65 @@ function initAdminDashboard() {
   });
 }
 
-function setAccountMessage(message = '', type = '') {
-  const element = document.getElementById('account-message');
-  if (!element) return;
-  element.textContent = message;
-  element.className = `account-message${type ? ` ${type}` : ''}`;
-}
-
-function setAccountTab(mode = 'login') {
-  const loginTab = document.getElementById('account-tab-login');
-  const registerTab = document.getElementById('account-tab-register');
-  const loginForm = document.getElementById('account-login-form');
-  const registerForm = document.getElementById('account-register-form');
-  const isLogin = mode === 'login';
-  loginTab?.classList.toggle('active', isLogin);
-  registerTab?.classList.toggle('active', !isLogin);
-  loginTab?.setAttribute('aria-selected', String(isLogin));
-  registerTab?.setAttribute('aria-selected', String(!isLogin));
-  if (loginForm) loginForm.hidden = !isLogin;
-  if (registerForm) registerForm.hidden = isLogin;
-}
-
 function updateAccountUI() {
   const user = accountSession.user;
   if (user) {
     syncGrantedCredits(user);
-    if (accountSession.token) safeStorage.setItem(ACCOUNT_USER_CACHE_KEY, JSON.stringify(user));
-  }
-  const accountNav = document.getElementById('btn-open-account');
-  const accountStatus = document.getElementById('credit-shop-account-status');
-  const profileEmail = document.getElementById('account-profile-email');
-  const profileCredits = document.getElementById('account-profile-credits');
-  const authView = document.getElementById('account-auth-view');
-  const profileView = document.getElementById('account-profile-view');
-  const checkoutButtons = document.querySelectorAll('#credit-shop-modal [data-buy-credit-pack]');
-
-  if (accountNav) {
-    accountNav.textContent = user
-      ? `ACCOUNT · ${user.displayName || user.email.split('@')[0]}`
-      : accountAuthPending ? 'ACCOUNT' : 'SIGN IN';
-    accountNav.classList.toggle('signed-in', Boolean(user));
-  }
-  if (accountStatus) {
-    accountStatus.classList.toggle('signed-in', Boolean(user));
-    const label = accountStatus.querySelector('span:last-child');
-    if (label) {
-      label.textContent = user
-        ? `SIGNED IN · ${user.email}`
-        : accountAuthPending ? 'RESTORING ACCOUNT…' : 'SIGN IN TO PURCHASE';
+    const cached = JSON.stringify(user);
+    if (accountSession.token && safeStorage.getItem(ACCOUNT_USER_CACHE_KEY) !== cached) {
+      safeStorage.setItem(ACCOUNT_USER_CACHE_KEY, cached);
     }
   }
-  if (profileEmail) profileEmail.textContent = user?.email || '';
-  if (profileCredits) profileCredits.textContent = String(user?.credits || 0);
-  if (authView) authView.hidden = Boolean(user);
-  if (profileView) profileView.hidden = !user;
-  checkoutButtons.forEach(button => {
-    if (button.firstChild) {
-      button.firstChild.textContent = user
-        ? 'CONTINUE TO CHECKOUT '
-        : accountAuthPending ? 'RESTORING ACCOUNT… ' : 'SIGN IN TO BUY ';
-    }
+  const status = document.getElementById('credit-shop-account-status');
+  status?.classList.toggle('signed-in', Boolean(user));
+  const label = status?.querySelector('span:last-child');
+  if (label) label.textContent = user ? 'UNPAUSED ACCOUNT CONNECTED' : accountAuthPending ? 'CONNECTING TO UNPAUSED…' : 'SIGN IN ON UNPAUSED';
+  document.querySelectorAll('#credit-shop-modal [data-buy-credit-pack]').forEach(button => {
+    if (button.firstChild) button.firstChild.textContent = user ? 'CONTINUE TO CHECKOUT ' : accountAuthPending ? 'CONNECTING TO UNPAUSED… ' : 'SIGN IN TO BUY ';
   });
-}
-
-function saveAccountSession(result) {
-  accountSession = { token: result.token, user: result.user };
-  accountAuthPending = false;
-  safeStorage.setItem(ACCOUNT_SESSION_KEY, result.token);
-  safeStorage.setItem(ACCOUNT_USER_CACHE_KEY, JSON.stringify(result.user));
-  updateAccountUI();
 }
 
 function clearAccountSession() {
   accountSession = { token: null, user: null };
   accountAuthPending = false;
-  safeStorage.removeItem(ACCOUNT_SESSION_KEY);
-  safeStorage.removeItem(ACCOUNT_USER_CACHE_KEY);
+  removeAccountSession();
   updateAccountUI();
 }
 
-function openAccountModal(mode = 'login', message = '') {
-  setAccountTab(mode);
-  setAccountMessage(message, message ? 'info' : '');
-  updateAccountUI();
-  document.getElementById('account-modal')?.classList.add('active');
-  playCreditShopSound('open');
+function openHubAccount(mode = 'login', destination = 'credits') {
+  const params = new URLSearchParams({account:mode === 'register' ? 'register' : 'login', return:destination === 'support' ? 'support' : 'credits'});
+  location.assign(`/?${params}`);
 }
 
 function initAccountAuth() {
-  const accountModal = document.getElementById('account-modal');
-  const closeButton = document.getElementById('btn-close-account');
-  const loginForm = document.getElementById('account-login-form');
-  const registerForm = document.getElementById('account-register-form');
-  if (!accountModal || !closeButton || !loginForm || !registerForm) return Promise.resolve();
-
-  document.addEventListener('click', (event) => {
-    if (event.target.closest('[data-open-account], #btn-open-account')) openAccountModal('login');
+  document.addEventListener('click', event => {
+    if (event.target.closest('[data-open-account]')) { event.preventDefault(); openHubAccount(); }
   });
-  closeButton.addEventListener('click', () => {
-    accountModal.classList.remove('active');
-    playCreditShopSound('close');
-  });
-  document.getElementById('account-tab-login')?.addEventListener('click', () => {
-    setAccountTab('login');
-    setAccountMessage();
-  });
-  document.getElementById('account-tab-register')?.addEventListener('click', () => {
-    setAccountTab('register');
-    setAccountMessage();
-  });
-
-  loginForm.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    const submit = loginForm.querySelector('button[type="submit"]');
-    submit.disabled = true;
-    setAccountMessage('Authenticating…', 'info');
+  async function restore() {
+    const token = accountSession.token;
+    accountAuthPending = Boolean(token);
+    updateAccountUI();
+    if (!token) return;
     try {
-      const result = await accountApi('/api/auth/login', {
-        method: 'POST',
-        body: JSON.stringify({
-          email: document.getElementById('account-login-email').value,
-          password: document.getElementById('account-login-password').value
-        })
-      });
-      saveAccountSession(result);
-      showNotification('Welcome back, operative.', 4000);
-    } catch (error) {
-      setAccountMessage(error.message, 'error');
+      const result = await accountRequest('/api/auth/me', {token});
+      if (accountSession.token !== token) return;
+      accountSession.user = result.user;
+    } catch(error) {
+      if (accountSession.token !== token) return;
+      if (error.status === 401) clearAccountSession();
     } finally {
-      submit.disabled = false;
+      if (accountSession.token === token) { accountAuthPending = false; updateAccountUI(); }
     }
-  });
-
-  registerForm.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    const password = document.getElementById('account-register-password').value;
-    const confirmation = document.getElementById('account-register-confirm').value;
-    if (password !== confirmation) {
-      setAccountMessage('Passcodes do not match.', 'error');
-      return;
-    }
-    const submit = registerForm.querySelector('button[type="submit"]');
-    submit.disabled = true;
-    setAccountMessage('Creating secure operative profile…', 'info');
-    try {
-      const result = await accountApi('/api/auth/register', {
-        method: 'POST',
-        body: JSON.stringify({
-          email: document.getElementById('account-register-email').value,
-          password
-        })
-      });
-      saveAccountSession(result);
-      showNotification('Operative account created.', 4500);
-    } catch (error) {
-      setAccountMessage(error.message, 'error');
-    } finally {
-      submit.disabled = false;
-    }
-  });
-
-  document.getElementById('btn-account-logout')?.addEventListener('click', async () => {
-    try { await accountApi('/api/auth/logout', { method: 'POST' }); } catch (error) {}
-    clearAccountSession();
-    setAccountTab('login');
-    setAccountMessage('Signed out successfully.', 'success');
-  });
-
-  updateAccountUI();
-  if (accountSession.token) {
-    const accountRestore = accountApi('/api/auth/me')
-      .then(result => {
-        accountSession.user = result.user;
-        safeStorage.setItem(ACCOUNT_USER_CACHE_KEY, JSON.stringify(result.user));
-        updateAccountUI();
-      })
-      .catch(error => {
-        if (error.status === 401) {
-          clearAccountSession();
-          return;
-        }
-        console.warn('Account session validation was delayed:', error);
-      })
-      .finally(() => {
-        accountAuthPending = false;
-        updateAccountUI();
-      });
-    return accountRestore;
   }
-  accountAuthPending = false;
-  updateAccountUI();
-  return Promise.resolve();
+  window.addEventListener('storage', event => {
+    if (event.key === null || [ACCOUNT_SESSION_KEY, ACCOUNT_USER_CACHE_KEY].includes(event.key)) {
+      const oldToken = accountSession.token;
+      accountSession = readAccountSession();
+      if (oldToken !== accountSession.token) restore();
+      else updateAccountUI();
+    }
+  });
+  return restore();
 }
 
 function initItemShop() {
@@ -3948,31 +3766,6 @@ function showInSiteDialog({ title, message, confirmText = 'CONFIRM', cancelText 
     appRoot.appendChild(overlay);
     requestAnimationFrame(() => overlay.classList.add('active'));
   });
-}
-
-async function refreshPlayerCountsViaHttp() {
-  try {
-    const response = await fetch(`${getBackendUrl()}/api/player-counts`);
-    if (!response.ok) return;
-    const data = await response.json();
-    updatePlayerCountsUI(data);
-  } catch (e) {
-    // Server unreachable — keep last known counts
-  }
-}
-
-function updatePlayerCountsUI(data) {
-  const totalVal = document.getElementById('total-player-count-value');
-  const qpVal = document.getElementById('qp-player-count');
-  const realVal = document.getElementById('ranked-real-player-count');
-  const compVal = document.getElementById('ranked-comp-player-count');
-  const sabVal = document.getElementById('sabotage-player-count');
-
-  if (totalVal && data && data.total !== undefined) totalVal.innerText = data.total;
-  if (qpVal && data && data.quickplay !== undefined) qpVal.innerText = data.quickplay;
-  if (realVal && data && data.ranked_realistic !== undefined) realVal.innerText = data.ranked_realistic;
-  if (compVal && data && data.ranked_competitive !== undefined) compVal.innerText = data.ranked_competitive;
-  if (sabVal && data && data.sabotage !== undefined) sabVal.innerText = data.sabotage;
 }
 
 const BOT_USERNAME_POOL = [

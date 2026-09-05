@@ -4,26 +4,28 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#111514">
-  <meta name="description" content="Welcome to Nite. Get lost in Worldloom or jump into TacticStrike. Two original games, one place to play.">
-  <meta property="og:title" content="Nite — Find your next game">
-  <meta property="og:description" content="Wander a little. Or go all in. Play Worldloom and TacticStrike on Nite.">
+  <meta name="description" content="Welcome to Unpaused. Get lost in Worldloom or jump into TacticStrike. Two original games, one place to play.">
+  <meta property="og:title" content="Unpaused — Find your next game">
+  <meta property="og:description" content="Wander a little. Or go all in. Play Worldloom and TacticStrike on Unpaused.">
   <meta property="og:type" content="website">
-  <meta property="og:image" content="https://tacticstrike.nl/hub/nite-social.jpg">
-  <title>Nite — Find your next game</title>
+  <meta property="og:site_name" content="Unpaused">
+  <meta property="og:image" content="https://tacticstrike.nl/hub/unpaused-social.png">
+  <title>Unpaused — Find your next game</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/hub/apple-touch-icon.png">
   <link rel="preload" as="image" href="/hub/worldloom-poster.jpg" fetchpriority="high">
-  <script type="module" crossorigin src="/assets/hub-BOaxYS-N.js"></script>
-  <link rel="modulepreload" crossorigin href="/assets/modulepreload-polyfill-B5Qt9EMX.js">
-  <link rel="stylesheet" crossorigin href="/assets/hub-Qy42oO0n.css">
+  <script type="module" crossorigin src="/assets/hub-aSKjHQ5j.js"></script>
+  <link rel="modulepreload" crossorigin href="/assets/account-session-D3X58vZL.js">
+  <link rel="stylesheet" crossorigin href="/assets/hub-eTyGtIyj.css">
 </head>
 <body>
   <header class="masthead">
-    <h1 class="brand" aria-label="Nite">
-      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><path d="M5 27V5l22 22V5"/></svg>
-      <span>NITE</span>
+    <h1 class="brand" aria-label="Unpaused">
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><path d="M5 5v15c0 6 4 9 9 9s9-3 9-9v-3"/><path d="m20 2 9 6-9 6z" fill="#ff6339" stroke="none"/></svg>
+      <span>UNPAUSED</span>
     </h1>
   </header>
+  <button id="open-account" class="account-trigger" type="button" aria-haspopup="dialog">ACCOUNT</button>
 
   <main class="games" aria-label="Choose your game">
     <a id="enter-worldloom" class="game game--worldloom" href="/worldloom/" aria-labelledby="worldloom-title worldloom-action">
@@ -37,6 +39,7 @@
         <h2 id="worldloom-title"><span class="sr-only">Worldloom</span><img class="game-logo" src="/hub/worldloom-logo.svg" alt="" width="580" height="232"></h2>
         <span class="enter"><span id="worldloom-action">PLAY NOW</span><span class="arrow" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 12h15m-6-6 6 6-6 6"/></svg></span></span>
       </div>
+      <span class="game-activity">Players online</span>
     </a>
 
     <a id="enter-tacticstrike" class="game game--tacticstrike" href="/tacticstrike/" aria-labelledby="tacticstrike-title tacticstrike-action">
@@ -47,8 +50,28 @@
         <h2 id="tacticstrike-title"><span class="sr-only">TacticStrike</span><img class="game-logo" src="/hub/tacticstrike-logo.svg" alt="" width="580" height="232"></h2>
         <span class="enter"><span id="tacticstrike-action">PLAY NOW</span><span class="arrow" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 12h15m-6-6 6 6-6 6"/></svg></span></span>
       </div>
+      <span class="game-activity">Players online</span>
     </a>
   </main>
-
+  <dialog id="hub-account" class="account-dialog" aria-labelledby="account-title" aria-describedby="account-intro">
+    <button id="account-close" class="account-close" type="button" aria-label="Close account">×</button>
+    <p class="account-brand">UNPAUSED</p>
+    <h2 id="account-title">WELCOME BACK</h2>
+    <p id="account-intro">One place for your Unpaused account.</p>
+    <p id="account-message" class="account-message" role="status" aria-live="polite"></p>
+    <form class="hub-account-form">
+      <label>Email<input name="email" type="email" autocomplete="email" required maxlength="254" placeholder="you@example.com"></label>
+      <label>Password<input name="password" type="password" autocomplete="current-password" required minlength="8" maxlength="128" placeholder="At least 8 characters"></label>
+      <label hidden>Confirm password<input name="confirm" type="password" autocomplete="new-password" minlength="8" maxlength="128" disabled></label>
+      <button class="account-primary" type="submit">SIGN IN</button>
+    </form>
+    <button id="account-switch" class="account-text-button" type="button">New here? Create an account</button>
+    <div id="account-profile" hidden>
+      <p class="account-detail-label">EMAIL</p><p id="account-email" class="account-email"></p>
+      <div class="account-balance"><span>TacticStrike credits</span><strong id="account-credits">0</strong></div>
+      <a id="account-return" class="account-primary" href="/tacticstrike/?shop=credits">TACTICSTRIKE CREDIT SHOP</a>
+      <button id="account-logout" class="account-text-button" type="button">Sign out</button>
+    </div>
+  </dialog>
 </body>
 </html>

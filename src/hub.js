@@ -1,3 +1,9 @@
+import { initHubMotion } from './hub-motion.js';
+import { initHubAccount } from './hub-account.js';
+
+initHubMotion();
+initHubAccount();
+
 const film = document.querySelector('#worldloom-film');
 let loaded = false;
 let unavailable = false;

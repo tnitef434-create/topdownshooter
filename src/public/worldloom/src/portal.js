@@ -1,4 +1,4 @@
-// Standalone games return to the Nite hub after a successful save. Keep the
+// Standalone games return to the Unpaused hub after a successful save. Keep the
 // opt-in message protocol compatible with existing embedding integrations.
 export function saveAndReturn(save, host = window) {
   if (!save()) return false;

@@ -537,7 +537,7 @@ try {
   assert(Number(gameState.nourishment) >= 75 && Number(gameState.nourishment) <= 90,
     `Nourishment left its expected live-test range: ${gameState.nourishment}`);
   assert.notEqual(gameState.objective.trim(), '');
-  assert.match(gameState.portalReturnLabel, /return to Nite/i,
+  assert.match(gameState.portalReturnLabel, /return to Unpaused/i,
     'The pause menu has no replacement route back after removing the portal bar');
   assert.equal(gameState.renderer, true);
   assert.equal(gameState.environment, true);
