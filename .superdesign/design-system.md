@@ -61,7 +61,7 @@ September 5 account and shared worlds update: visible hub branding is the custom
 
 ## Worldloom entry and legibility — September 5, 2026
 
-Use the original U mark on a #090909 loading screen. Its orange triangle follows the U from the right down around the base and up the left, then retraces its path. Inline SVG and CSS motion start before the game module downloads; reduced motion shows the still brand mark. The hub paints the same screen on normal link activation and clears it on history restoration. Game loading keeps its real progress and completion signal. Visible branding uses the U, with Worldloom as the destination label.
+Use the original U mark on a #090909 loading screen. Its orange triangle follows the U from the right down around the base and up the left, then retraces its path. Inline SVG and CSS motion start before the game module downloads; the small loading indicator keeps moving even with reduced-motion settings, as explicitly requested. The hub paints the same screen on normal link activation and clears it on history restoration. The animated U is limited to entering the Worldloom or TacticStrike main menu. Creating, continuing or joining a Worldloom world uses a plain progress screen with no U. Visible branding uses the U, with Worldloom as the destination label.
 
 The hub gameplay is captured natively at 1800 × 2000, 30 fps; phones and Save-Data use 900 × 1000. Encode directly from frames, with a seamless three-scene loop, H.264 faststart, and no intermediate lossy pass. The separate main-menu panorama remains native 4K.
 

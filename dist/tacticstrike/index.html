@@ -12,15 +12,25 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=Orbitron:wght@500;700;900&display=swap" rel="stylesheet">
   <!-- Style sheet -->
+  <link rel="stylesheet" href="/worldloom-entry.css">
   <!-- Socket.io client (loaded dynamically via bundler or server, or we can just import from socket.io-client) -->
-  <script type="module" crossorigin src="/assets/tacticstrike-D6XzNLeO.js"></script>
+  <script type="module" crossorigin src="/assets/tacticstrike-CS39OD31.js"></script>
   <link rel="modulepreload" crossorigin href="/assets/account-client-D3X58vZL.js">
-  <link rel="stylesheet" crossorigin href="/assets/tacticstrike-kzr43iBY.css">
+  <link rel="stylesheet" crossorigin href="/assets/tacticstrike-DofaQDLP.css">
 </head>
 <body class="is-starting">
 
-  <div id="startup-overlay" class="startup-overlay" role="status" aria-live="polite" aria-label="TacticStrike is starting">
-    <div class="startup-progress" aria-hidden="true"><span></span></div>
+  <div id="startup-overlay" class="startup-overlay u-loading" role="status" aria-live="polite" aria-label="Opening TacticStrike menu">
+    <div class="u-loading__content">
+      <svg class="u-loading__mark" viewBox="0 0 40 40" width="142" height="142" aria-hidden="true">
+            <path d="M9 8v15c0 6 4 9 9 9s9-3 9-9v-3" fill="none" stroke="#f4f6dc" stroke-opacity=".65" stroke-width="3.4"/>
+            <path class="u-loading__trail" d="M27 20v3c0 6-4 9-9 9s-9-3-9-9V8" pathLength="100" fill="none" stroke="#ff6339" stroke-width="3.4" stroke-dasharray="22 140"/>
+            <path class="u-loading__runner" d="m-4.5-6 9 6-9 6z" fill="#ff6339"/>
+            <path class="u-loading__rest" d="m24 5 9 6-9 6z" fill="#ff6339"/>
+          </svg>
+      <p class="u-loading__title">TacticStrike</p>
+      <p id="startup-status" class="u-loading__message">Opening the menu.</p>
+    </div>
   </div>
 
   <div id="app">

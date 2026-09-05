@@ -44,43 +44,13 @@ function dismissStartupOverlay({ immediate = false } = {}) {
   const overlay = document.getElementById('startup-overlay');
   document.body.classList.remove('is-starting');
   if (!overlay) return;
-  stopStartupProgress();
   overlay.setAttribute('aria-hidden', 'true');
   if (immediate) {
     overlay.remove();
     return;
   }
-  setStartupProgress(100);
-  setTimeout(() => overlay.classList.add('is-exiting'), 280);
-  setTimeout(() => overlay.remove(), 280 + 650);
-}
-
-let startupProgressValue = 0;
-let startupProgressTimer = null;
-
-function setStartupProgress(pct) {
-  startupProgressValue = Math.max(0, Math.min(100, pct));
-  const bar = document.querySelector('#startup-overlay .startup-progress span');
-  if (bar) bar.style.width = startupProgressValue + '%';
-}
-
-function stopStartupProgress() {
-  if (startupProgressTimer) {
-    clearInterval(startupProgressTimer);
-    startupProgressTimer = null;
-  }
-}
-
-function startStartupProgress() {
-  stopStartupProgress();
-  setStartupProgress(5);
-  startupProgressTimer = setInterval(() => {
-    if (startupProgressValue >= 92) {
-      stopStartupProgress();
-      return;
-    }
-    setStartupProgress(startupProgressValue + 5 + Math.random() * 9);
-  }, 210);
+  overlay.classList.add('fade-out');
+  setTimeout(() => overlay.remove(), 450);
 }
 
 // Never leave the interface covered if an unrelated startup task fails.
@@ -2771,7 +2741,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const startupStatus = document.getElementById('startup-status');
   if (startupStatus && accountSession.token) startupStatus.textContent = 'RESTORING OPERATIVE SESSION';
 
-  startStartupProgress();
 
   // Forfeit/crash detection
   const activeMatch = localStorage.getItem('tacticstrike_active_match');

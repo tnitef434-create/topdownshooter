@@ -1,10 +1,10 @@
 import { initHubMotion } from './hub-motion.js';
 import { initHubAccount } from './hub-account.js';
-import { initWorldloomEntry } from './hub-entry.js';
+import { initGameEntry } from './hub-entry.js';
 
 initHubMotion();
 initHubAccount();
-initWorldloomEntry();
+initGameEntry();
 
 const film = document.querySelector('#worldloom-film');
 let loaded = false;

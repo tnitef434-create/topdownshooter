@@ -68,6 +68,8 @@ try{
   await page.evaluate(()=>{localStorage.setItem('worldloom.settings.v1',JSON.stringify({viewDistance:3,graphicsQuality:'high'}));});
   await page.reload();await page.waitForFunction(()=>document.querySelector('#loading-screen').classList.contains('hidden'));
   await page.evaluate(()=>{document.querySelector('#seed-input').value='41';document.querySelector('#new-world-button').click();});
+  await page.waitForFunction(()=>document.querySelector('#loading-screen').dataset.phase==='world');
+  assert.equal(await page.$eval('#loading-screen .u-loading__mark',e=>getComputedStyle(e).display),'none','new worlds must use plain progress without the menu U');
   await page.waitForFunction(()=>window.__worldloomPlayer&&!document.querySelector('#hud').classList.contains('hidden')&&document.querySelector('#loading-screen').classList.contains('hidden'),{timeout:180000});
   assert.equal(await page.$eval('#menu-film',v=>v.paused),true,'the menu film must stop decoding when gameplay starts');
   // Exercise real game damage callbacks, collision and save/return, not only a mocked player.
@@ -98,6 +100,9 @@ try{
   await Promise.all([page.waitForNavigation({waitUntil:'domcontentloaded'}),page.click('#enter-worldloom')]);
   await page.waitForFunction(()=>document.querySelector('#loading-screen').classList.contains('hidden'));
   assert.equal(await page.$eval('#continue-button',b=>b.disabled),false);
+  await page.click('#continue-button');
+  await page.waitForFunction(()=>document.querySelector('#loading-screen').dataset.phase==='world');
+  assert.equal(await page.$eval('#loading-screen .u-loading__mark',e=>getComputedStyle(e).display),'none','continuing a saved world must not replay the menu U');
 
   const reduced=await browser.newPage();
   await reduced.emulateMediaFeatures([{name:'prefers-reduced-motion',value:'reduce'}]);

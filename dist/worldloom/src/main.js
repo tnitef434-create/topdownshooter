@@ -153,7 +153,7 @@ function setState(next) {
 }
 
 function initRenderer() {
-  ui.setLoading(0.06, 'Kindling the renderer…');
+  ui.setMenuLoading(0.06, 'Preparing the menu…');
   try {
     renderer = new THREE.WebGLRenderer({
       canvas,
@@ -1973,7 +1973,7 @@ async function boot() {
       return;
     }
     bindUI();
-    ui.setLoading(0.72, 'Tuning the wind and water…');
+    ui.setMenuLoading(0.72, 'Opening Worldloom…');
     await new Promise((resolve) => requestAnimationFrame(resolve));
     setState('menu');
     ui.showMain();

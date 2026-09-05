@@ -185,9 +185,21 @@ export class UI {
     }, true);
   }
 
-  setLoading(progress, message) {
+  setMenuLoading(progress, message) {
+    this.setLoading(progress, message, { menu: true });
+  }
+
+  setLoading(progress, message, { menu = false } = {}) {
     clearTimeout(this._loadingHideTimer);
     this._loadingHideTimer = null;
+    // Only the initial menu boot uses the U. Every world load defaults to the
+    // plain progress screen, including Continue, shared worlds and retries.
+    if (this.elements.loading) {
+      this.elements.loading.dataset.phase = menu ? 'menu' : 'world';
+      this.elements.loading.setAttribute('aria-label', menu ? 'Opening Worldloom menu' : 'Loading world');
+      const title = this.elements.loading.querySelector('.u-loading__title');
+      if (title) title.textContent = menu ? 'Worldloom' : 'Loading your world';
+    }
     this.elements.loading?.classList.remove('hidden', 'fade-out');
     if (this.elements.loadingBar) this.elements.loadingBar.style.width = `${Math.max(0, Math.min(1, progress)) * 100}%`;
     this.elements.loading?.querySelector('[role="progressbar"]')?.setAttribute('aria-valuenow', `${Math.round(Math.max(0, Math.min(1, progress)) * 100)}`);

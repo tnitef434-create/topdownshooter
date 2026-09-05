@@ -55,49 +55,6 @@ body.is-starting #app {
   opacity: 0;
 }
 
-/* Minimal startup loader: a single progress bar. */
-.startup-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 120000;
-  display: grid;
-  place-items: center;
-  overflow: hidden;
-  background: #050609;
-  opacity: 1;
-  visibility: visible;
-  transition: opacity 0.5s ease, visibility 0.5s;
-}
-
-.startup-overlay.is-exiting {
-  opacity: 0;
-  visibility: hidden;
-  pointer-events: none;
-}
-
-.startup-progress {
-  width: min(240px, calc(100vw - 96px));
-  height: 3px;
-  overflow: hidden;
-  background: rgba(255, 255, 255, 0.08);
-  border-radius: 2px;
-}
-
-.startup-progress span {
-  display: block;
-  width: 0;
-  height: 100%;
-  background: #d4af37;
-  transition: width 0.22s ease;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .startup-progress span {
-    transition: none;
-    width: 100%;
-  }
-}
-
 /* Gritty Background Effects */
 .bg-effects {
   position: absolute;

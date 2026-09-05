@@ -82,9 +82,49 @@ try {
   const pending=await reducedGate;
   await page.waitForFunction(()=>document.querySelector('.u-loading__runner'));
   const reducedBefore=await page.screenshot();await pause(800);
-  assert.deepEqual(await page.screenshot(),reducedBefore,'reduced motion keeps a still U');
+  assert.notDeepEqual(await page.screenshot(),reducedBefore,'the requested loading U keeps moving with OS reduced motion enabled');
+  await page.evaluate(()=>document.documentElement.classList.add('user-reduced-motion'));
+  const settingsBefore=await page.screenshot();await pause(800);
+  assert.notDeepEqual(await page.screenshot(),settingsBefore,'the in-game motion setting cannot freeze the menu U');
   await pending.continue();
   await reducedNavigation;
+  await page.waitForFunction(()=>document.querySelector('#loading-screen').classList.contains('hidden'));
+
+  // Both hub links must paint the same loader, and the shooter must animate
+  // before its bundled module arrives (including reduced-motion settings).
+  const shooter=await browser.newPage();
+  await shooter.setViewport({width:1440,height:900});
+  await shooter.emulateMediaFeatures([{name:'prefers-reduced-motion',value:'reduce'}]);
+  await shooter.setRequestInterception(true);
+  let releaseShooter;
+  const shooterHeld=new Promise(resolve=>{releaseShooter=resolve;});
+  let blockShooter=true;
+  shooter.on('request',request=>{
+    const path=new URL(request.url()).pathname;
+    if(blockShooter && (path==='/main.js'||/^\/assets\/tacticstrike-.*\.js$/.test(path))) {
+      blockShooter=false;releaseShooter(request);return;
+    }
+    request.continue();
+  });
+  await shooter.goto(base,{waitUntil:'domcontentloaded'});
+  let shooterPaint='';
+  await shooter.exposeFunction('reportShooterPaint',name=>{shooterPaint=name;});
+  await shooter.evaluate(()=>{
+    const overlay=document.querySelector('#worldloom-transition');
+    new MutationObserver(()=>{if(!overlay.hidden)window.reportShooterPaint(overlay.querySelector('.u-loading__title').textContent);}).observe(overlay,{attributes:true,attributeFilter:['hidden']});
+  });
+  await shooter.click('#enter-tacticstrike');
+  const shooterModule=await shooterHeld;
+  assert.equal(shooterPaint,'TacticStrike');
+  await shooter.waitForSelector('#startup-overlay .u-loading__runner');
+  const shot=await shooter.screenshot({path:'../../outputs/tacticstrike-u-loading.png'});await pause(900);
+  assert.notDeepEqual(await shooter.screenshot({path:'../../outputs/tacticstrike-u-loading-motion.png'}),shot,'TacticStrike animates the same U during download');
+  await shooterModule.continue();
+  await shooter.waitForFunction(()=>!document.querySelector('#startup-overlay'),{timeout:15000});
+  assert.equal(await shooter.$eval('body',e=>e.classList.contains('is-starting')),false);
+  await shooter.goBack({waitUntil:'domcontentloaded'});
+  assert.equal(await shooter.$eval('#worldloom-transition',e=>e.hidden),true);
+  await shooter.close();
   assert.deepEqual(errors,[]);
-  console.log(JSON.stringify({passed:true,navigationBeforeLoad:true,animatedU:true,reducedMotion:true,backNavigation:true,inviteAndMobile:true,mobileVideo:[900,1000]}));
+  console.log(JSON.stringify({passed:true,navigationBeforeLoad:true,bothGameMenus:true,animatedWithReducedMotion:true,backNavigation:true,inviteAndMobile:true,mobileVideo:[900,1000]}));
 } finally { await browser.close(); }
