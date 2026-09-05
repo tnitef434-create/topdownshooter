@@ -1,15 +1,21 @@
 <!doctype html><html><meta charset="utf-8"><title>Worldloom water review</title>
 <style>body{margin:0;background:#102934;color:#fff;font:14px system-ui}nav{height:48px;display:flex;gap:8px;align-items:center;padding:0 12px}button{padding:7px 12px;cursor:pointer}iframe{border:0;width:100vw;height:calc(100vh - 48px)}output{font-size:12px}</style>
 <nav><button id="start">Load test ocean</button><button id="above">Above water</button><button id="under">Underwater</button><button id="pond">Pond fish</button><button id="splash">Entry splash</button><output id="status">Ready</output></nav>
+<nav><button id="fog">Toggle terrain fog</button><button id="mirror">Toggle reflection</button><button id="capture">Toggle refraction capture</button></nav>
 <iframe id="game" src="/src/public/worldloom/index.html" title="Worldloom test world"></iframe>
 <script>
 const frame=document.getElementById('game'),status=document.getElementById('status');
 const w=()=>frame.contentWindow;
+document.getElementById('fog').onclick=()=>{const m=w().__worldloomWorld?.opaqueMaterial;if(m){m.fog=!m.fog;m.needsUpdate=true;}};
+document.getElementById('mirror').onclick=()=>{const r=w().__worldloomEnvironment?.waterReflection;if(!r)return;r.enabled=!r.enabled;};
+document.getElementById('capture').onclick=()=>{const c=w().__worldloomEnvironment?.waterCapture;if(!c)return;if(c._update){c.update=c._update;delete c._update;}else{c._update=c.update;c.update=()=>{c.uniforms.waterSceneValid.value=0;};}};
 const move=(x,y,z,pitch=-.25)=>{const p=w().__worldloomPlayer;if(!p)return;p.flying=true;p.pitch=pitch;p.yaw=0;p.setPosition(x,y,z);};
 document.getElementById('start').onclick=()=>{
  w().localStorage.setItem('worldloom.settings.v1',JSON.stringify({viewDistance:3,graphicsQuality:'high',weatherEffects:true}));
- frame.onload=()=>{frame.onload=null;const doc=w().document;doc.querySelector('#seed-input').value='41';doc.querySelector('#new-world-button').click();status.textContent='Loading ocean…';
- const timer=setInterval(()=>{if(w().__worldloomPlayer&&!doc.querySelector('#hud').classList.contains('hidden')){clearInterval(timer);move(36,34,0);status.textContent='Ocean ready';}},300);};
+ frame.onload=()=>{frame.onload=null;const doc=w().document;
+ const ready=setInterval(()=>{if(!doc.querySelector('#loading-screen').classList.contains('hidden'))return;clearInterval(ready);doc.querySelector('#seed-input').value='41';doc.querySelector('#new-world-button').click();status.textContent='Loading ocean…';
+ const timer=setInterval(()=>{if(w().__worldloomPlayer&&!doc.querySelector('#hud').classList.contains('hidden')){clearInterval(timer);move(36,34,0);status.textContent='Ocean ready';}},300);
+ },100);};
  frame.contentWindow.location.reload();
 };
 document.getElementById('above').onclick=()=>move(36,34,0,-.42);
@@ -25,5 +31,6 @@ document.getElementById('splash').onclick=()=>{
  for(let by=y+4;by>=y-8;by--){const surface=world.getFluidSurfaceY(x,by,z);if(surface!==null){e.waterEffects.splash({x,z},surface,3.5);break;}}
 };
 setInterval(()=>{const e=w().__worldloomEnvironment;if(!w().__worldloomPlayer||!e)return;
-status.textContent=`${e.waterView.submerged?'Underwater':'Air'} · ${e.waterView.depth.toFixed(1)} m depth · ${e.seaLife.getStats().pondFish} pond fish · ${e.waterEffects.getStats().ripples} ripples · fog ${e.scene.fog.near.toFixed(0)}–${e.scene.fog.far.toFixed(0)} m · terrain ${w().__worldloomWorld.getSafeTerrainDistance(w().__worldloomPlayer.position).toFixed(0)} m`;},500);
+const renderer=w().__worldloomGraphics.renderer,props=renderer.properties.get(w().__worldloomWorld.opaqueMaterial),program=props.currentProgram,gl=renderer.getContext(),fog=program?.getUniforms().map.fogFar;
+status.textContent=`${e.waterView.submerged?'Underwater':'Air'} · ${e.waterView.depth.toFixed(1)} m depth · ${e.seaLife.getStats().pondFish} pond fish · ${e.waterEffects.getStats().ripples} ripples · fog ${e.scene.fog.near.toFixed(0)}–${e.scene.fog.far.toFixed(0)} m · GPU far ${fog?gl.getUniform(program.program,fog.addr):'off'} · terrain ${w().__worldloomWorld.getSafeTerrainDistance(w().__worldloomPlayer.position).toFixed(0)} m`;},500);
 </script></html>

@@ -5,7 +5,8 @@ try {
  const page=await browser.newPage();await page.setViewport({width:1200,height:800});const errors=[];
  page.on('pageerror',e=>{errors.push(String(e));console.error(String(e));});page.on('console',m=>{if(m.type()==='error'&&/shader|WebGL|THREE/i.test(m.text()))errors.push(m.text());});
  await page.evaluateOnNewDocument(()=>localStorage.setItem('worldloom.settings.v1',JSON.stringify({viewDistance:3,graphicsQuality:'high',weatherEffects:true})));
- await page.goto('http://127.0.0.1:4178/worldloom/index.html');await page.waitForSelector('#new-world-button');
+ await page.goto(process.env.WORLDLOOM_TEST_URL||'http://127.0.0.1:4178/worldloom/index.html');await page.waitForSelector('#new-world-button');
+ await page.waitForFunction(()=>document.querySelector('#loading-screen').classList.contains('hidden'));
  await page.evaluate(()=>{document.querySelector('#seed-input').value='41';document.querySelector('#new-world-button').click();});
  await page.waitForFunction(()=>window.__worldloomPlayer&&!document.querySelector('#hud').classList.contains('hidden'),{timeout:120000});
  await page.evaluate(()=>{
@@ -13,6 +14,8 @@ try {
  });
  await page.waitForFunction(()=>window.__worldloomEnvironment.waterReflection.renders>0,{timeout:45000});
  await page.waitForFunction(()=>window.__worldloomEnvironment.scene.fog.far>30,{timeout:60000});
+ const terrainFog=await page.evaluate(()=>{const w=window.__worldloomWorld,e=window.__worldloomEnvironment,r=window.__worldloomGraphics.renderer,s=r.properties.get(w.opaqueMaterial),p=s.currentProgram,gl=r.getContext();return {near:e.scene.fog.near,far:e.scene.fog.far,gpuNear:gl.getUniform(p.program,p.getUniforms().map.fogNear.addr),gpuFar:gl.getUniform(p.program,p.getUniforms().map.fogFar.addr)};});
+ assert.ok(Math.abs(terrainFog.gpuNear-terrainFog.near)<.01&&Math.abs(terrainFog.gpuFar-terrainFog.far)<.01);
  const initial=await page.evaluate(()=>{
    const e=window.__worldloomEnvironment,w=window.__worldloomWorld;
    return {reflection:e.waterReflection.renders,valid:w.waterMaterial.userData.waterReflection.valid.value,waterChunks:[...w.chunks.values()].filter(c=>c.waterMesh?.visible).length,ao:window.__worldloomGraphics.aoEnabled};
