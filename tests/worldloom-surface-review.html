@@ -1,0 +1,56 @@
+<!doctype html><html><meta charset="utf-8"><title>Worldloom surface review</title>
+<style>body{margin:0;background:#12242c;font:14px system-ui}nav{position:absolute;top:12px;left:12px;display:flex;gap:8px;z-index:2}button{padding:9px 12px;cursor:pointer}canvas{display:block}output{color:white;padding:9px}</style>
+<nav><button id="splash">Splash water</button><button id="advance">Advance 0.25 seconds</button><button id="bank">Pond bank</button><button id="overhead">Look down</button><button id="mushrooms">Mushrooms</button><button id="mist">Toggle fog</button><output id="status">Loading</output></nav>
+<script type="module">
+import * as THREE from '/src/public/worldloom/vendor/three.module.min.js';
+import { BLOCK,createTextureAtlas } from '/src/public/worldloom/src/blocks.js';
+import { buildChunkGeometry } from '/src/public/worldloom/src/mesher.js';
+import { enhanceWaterMaterial,WaterReflection } from '/src/public/worldloom/src/water-surface.js';
+import { WaterSceneCapture } from '/src/public/worldloom/src/water-capture.js';
+import { WaterInteractionEffects } from '/src/public/worldloom/src/water-effects.js';
+import { createPondMist } from '/src/public/worldloom/src/pond-mist.js';
+import { MushroomField } from '/src/public/worldloom/src/mushrooms.js';
+import { GraphicsPipeline } from '/src/public/worldloom/src/graphics.js';
+import { GRAPHICS_PRESETS } from '/src/public/worldloom/src/save.js';
+const width=1100,height=740,scene=new THREE.Scene();scene.background=new THREE.Color('#aac1c7');scene.fog=new THREE.Fog('#aac1c7',25,70);
+const camera=new THREE.PerspectiveCamera(58,width/height,.05,90);camera.position.set(6,4.1,9);camera.lookAt(0,2.9,-1);
+const renderer=new THREE.WebGLRenderer({antialias:true,preserveDrawingBuffer:true});renderer.setSize(width,height);renderer.setPixelRatio(1);renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.shadowMap.enabled=true;document.body.append(renderer.domElement);
+const hemi=new THREE.HemisphereLight(0xc6dcdf,0x55563e,1);scene.add(hemi);
+const sun=new THREE.DirectionalLight(0xffe2ab,2.4);sun.position.set(-5,8,-8);sun.castShadow=true;sun.shadow.camera.left=-15;sun.shadow.camera.right=15;sun.shadow.camera.top=15;sun.shadow.camera.bottom=-15;sun.shadow.mapSize.set(1024,1024);scene.add(sun);
+const shared={time:{value:12},dayAmount:{value:1},windStrength:{value:1},sunDirection:{value:sun.position.clone().normalize()},sunColor:{value:sun.color},sunVisibility:{value:1},waterSky:{value:scene.background},waterHorizon:{value:scene.fog.color}};
+const waterMaterial=new THREE.MeshStandardMaterial({side:THREE.DoubleSide});
+const effects=new WaterInteractionEffects(scene,shared),capture=new WaterSceneCapture(scene,renderer,shared);enhanceWaterMaterial(waterMaterial,shared);
+const read=(x,y,z)=>{
+ const pond=x*x/42+z*z/34<1;
+ if((x===7&&z===1||x===7&&z===2)&&y===3)return BLOCK.GLOW_MUSHROOM;
+ if(y<=0)return BLOCK.SAND;
+ if(pond&&y<=2)return BLOCK.WATER;
+ if(!pond&&y<=2)return BLOCK.TURF;
+ return BLOCK.AIR;
+};
+const world={seed:41,chunkSize:16,worldHeight:8,seaLevel:2,chunks:new Map(),getBlock:read,getFluidLevel:()=>0,
+  terrainHeight:(x,z)=>x*x/42+z*z/34<1?0:2,hasVisibleTerrainAt:()=>true,
+  getFluidSurfaceY:(x,y,z)=>read(Math.floor(x),Math.floor(y),Math.floor(z))===BLOCK.WATER?Math.min(y+1,2.92):null};
+const atlas=createTextureAtlas();const terrainMaterial=new THREE.MeshStandardMaterial({map:atlas.texture,vertexColors:true,roughness:.93});
+for(let cz=-1;cz<=0;cz++)for(let cx=-1;cx<=0;cx++){
+ const blocks=new Uint8Array(16*16*8);for(let y=0;y<8;y++)for(let z=0;z<16;z++)for(let x=0;x<16;x++)blocks[x+z*16+y*256]=read(cx*16+x,y,cz*16+z);
+ const chunk={cx,cz,blocks};const result=buildChunkGeometry(world,chunk,atlas);
+ for(const [key,material] of [['opaque',terrainMaterial],['water',waterMaterial]])if(result[key]){const mesh=new THREE.Mesh(result[key],material);mesh.position.set(cx*16,0,cz*16);mesh.castShadow=key==='opaque';mesh.receiveShadow=true;mesh.renderOrder=key==='water'?2:0;scene.add(mesh);chunk[key+'Mesh']=mesh;}
+ world.chunks.set(`${cx},${cz}`,chunk);
+}
+world.waterMaterial=waterMaterial;capture.setWorld(world);effects.setWorld(world);
+const reflection=new WaterReflection(scene,renderer);reflection.setWorld(world);reflection.setQuality(GRAPHICS_PRESETS.high);
+const mushrooms=new MushroomField(scene);mushrooms.setWorld(world);mushrooms.update(.1,camera.position);
+const fog=createPondMist(shared);scene.add(fog);const dummy=new THREE.Object3D();dummy.position.set(0,2.94,0);dummy.scale.set(6.2,.9,5.6);dummy.updateMatrix();fog.setMatrixAt(0,dummy.matrix);fog.count=1;fog.visible=true;fog.material.uniforms.mistSun.value.copy(shared.sunDirection.value);fog.material.uniforms.mistSunColor.value.copy(sun.color);
+const pipeline=new GraphicsPipeline(renderer,scene,camera);pipeline.applyProfile({...GRAPHICS_PRESETS.high,godRayStrength:0,bloomStrength:0});pipeline.resize(width,height,1);
+let clock=12,fogEnabled=true;
+function render(dt=0){clock+=dt;shared.time.value=clock;fog.material.uniforms.mistTime.value=clock;for(let t=0;t<dt;t+=.05)effects.update(Math.min(.05,dt-t),new THREE.Vector3(10,3,8),{dayAmount:1});fog.visible=fogEnabled;reflection.update(Math.max(.1,dt),camera);capture.update(camera);pipeline.render(1/60);document.getElementById('status').textContent=`${clock.toFixed(2)}s · ${effects.getStats().ripples} waves`;}
+document.getElementById('splash').onclick=()=>{effects.splash({x:0,z:0},2.92,4);render(.1);};
+document.getElementById('advance').onclick=()=>render(.25);
+document.getElementById('bank').onclick=()=>{camera.position.set(6,4.1,9);camera.lookAt(0,2.9,-1);render();};
+document.getElementById('overhead').onclick=()=>{camera.position.set(7,10,9);camera.lookAt(0,1.8,0);render();};
+document.getElementById('mushrooms').onclick=()=>{camera.position.set(7.8,3.65,3.7);camera.lookAt(6.7,3.17,1.7);render();};
+document.getElementById('mist').onclick=()=>{fogEnabled=!fogEnabled;render();};
+render();window.surfaceReview={scene,camera,renderer,shared,effects,capture,reflection,fog,mushrooms,world,render,
+  setFog(value){fogEnabled=value;},pixels(){const target=new THREE.WebGLRenderTarget(width,height);renderer.setRenderTarget(target);renderer.render(scene,camera);const data=new Uint8Array(width*height*4);renderer.readRenderTargetPixels(target,0,0,width,height,data);renderer.setRenderTarget(null);target.dispose();return data;}};
+</script></html>

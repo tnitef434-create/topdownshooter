@@ -25,5 +25,5 @@ document.getElementById('splash').onclick=()=>{
  for(let by=y+4;by>=y-8;by--){const surface=world.getFluidSurfaceY(x,by,z);if(surface!==null){e.waterEffects.splash({x,z},surface,3.5);break;}}
 };
 setInterval(()=>{const e=w().__worldloomEnvironment;if(!w().__worldloomPlayer||!e)return;
-status.textContent=`${e.waterView.submerged?'Underwater':'Air'} · ${e.waterView.depth.toFixed(1)} m depth · ${e.seaLife.getStats().pondFish} pond fish · ${e.waterEffects.getStats().ripples} ripples`;},500);
+status.textContent=`${e.waterView.submerged?'Underwater':'Air'} · ${e.waterView.depth.toFixed(1)} m depth · ${e.seaLife.getStats().pondFish} pond fish · ${e.waterEffects.getStats().ripples} ripples · fog ${e.scene.fog.near.toFixed(0)}–${e.scene.fog.far.toFixed(0)} m · terrain ${w().__worldloomWorld.getSafeTerrainDistance(w().__worldloomPlayer.position).toFixed(0)} m`;},500);
 </script></html>

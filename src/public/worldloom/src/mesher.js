@@ -334,6 +334,20 @@ class GeometryWriter {
   }
 
   addFace(x, y, z, face, uv, color, waterHeights = null, cornerLights = null, waterData = null) {
+    if(this.waterData && face.name==='top') {
+      // Half-metre vertices let impact waves change the actual surface shape.
+      const start=this.positions.length/3;
+      const blend=(v,s,t)=>v[0]*(1-s)*(1-t)+v[1]*s*(1-t)+v[2]*s*t+v[3]*(1-s)*t;
+      for(let j=0;j<=2;j++)for(let i=0;i<=2;i++){
+        const s=i/2,t=j/2,weights=waterHeights||[1,1,1,1];
+        this.positions.push(x+s,y+blend(weights,s,t),z+1-t);this.normals.push(0,1,0);
+        const light=cornerLights?blend(cornerLights,s,t):1;this.colors.push(color.r*light,color.g*light,color.b*light);
+        this.uvs.push(uv[0]+s*(uv[2]-uv[0]),uv[1]+t*(uv[3]-uv[1]));
+        for(let k=0;k<3;k++)this.waterData.push(blend((waterData||[[1,0,1],[1,0,1],[1,0,1],[1,0,1]]).map(v=>v[k]),s,t));
+      }
+      for(let j=0;j<2;j++)for(let i=0;i<2;i++){const a=start+j*3+i;this.indices.push(a,a+1,a+4,a,a+4,a+3);}
+      this.faces+=4;return;
+    }
     const offset = this.positions.length / 3;
     for (let cornerIndex = 0; cornerIndex < 4; cornerIndex++) {
       const corner = face.corners[cornerIndex];
@@ -468,7 +482,7 @@ export class ChunkGeometryJob {
     const worldZ = this.originZ + z;
     const skyline = this.skylineState.sample;
 
-    if (definition?.shape === 'prop' || definition?.renderMode === 'meadow-model') {
+    if (definition?.shape === 'prop' || ['meadow-model','mushroom-model'].includes(definition?.renderMode)) {
       // Rendered by a dedicated opaque Blender prop field, not atlas cutout quads.
       return;
     }

@@ -1887,6 +1887,7 @@ function animate(now) {
   // fully prepared world once when gameplay begins.
   if (state === 'loading') return;
   environment.waterReflection.update(dt,camera);
+  environment.waterCapture.update(camera);
   if (graphicsPipeline) graphicsPipeline.render(dt);
   else renderer.render(scene, camera);
 }

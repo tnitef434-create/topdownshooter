@@ -1,10 +1,12 @@
 import * as THREE from '../vendor/three.module.min.js';
 import { BLOCK } from './blocks.js';
 import { sampleWaterView } from './water-view.js';
+import { createWaterMotionUniforms, MAX_WATER_IMPULSES } from './water-motion.js';
 
 const MAX_RINGS=14, MAX_DROPS=160;
 export class WaterInteractionEffects {
-  constructor(scene) {
+  constructor(scene,shared={}) {
+    this.waveUniforms=createWaterMotionUniforms();Object.assign(shared,this.waveUniforms);this.waveCursor=0;
     this.world=null;this.rings=[];this.drops=[];this.previous=null;this.wet=false;this.cooldown=0;this.wakeTimer=0;this.entries=0;
     this.ringPool=Array.from({length:MAX_RINGS},()=>{
       const geometry=new THREE.RingGeometry(.72,1,64,2);
@@ -26,7 +28,7 @@ export class WaterInteractionEffects {
             #include <colorspace_fragment>
           }`});
       const mesh=new THREE.Mesh(geometry,material);mesh.rotation.x=-Math.PI/2;mesh.visible=false;mesh.renderOrder=4;
-      mesh.userData.skipAmbientOcclusion=true;mesh.raycast=()=>{};scene.add(mesh);return mesh;
+      mesh.userData.skipAmbientOcclusion=true;mesh.userData.skipWaterCapture=true;mesh.userData.skipWaterReflection=true;mesh.raycast=()=>{};scene.add(mesh);return mesh;
     });
     const geo=new THREE.BufferGeometry();
     geo.setAttribute('position',new THREE.Float32BufferAttribute(new Float32Array(MAX_DROPS*3),3));
@@ -48,16 +50,20 @@ export class WaterInteractionEffects {
         #include <colorspace_fragment>
         }`});
     this.mesh=new THREE.Points(geo,mat);this.mesh.visible=false;this.mesh.frustumCulled=false;this.mesh.renderOrder=5;
-    this.mesh.userData.skipAmbientOcclusion=true;scene.add(this.mesh);
+    this.mesh.userData.skipAmbientOcclusion=true;this.mesh.userData.skipWaterCapture=true;this.mesh.userData.skipWaterReflection=true;scene.add(this.mesh);
     const size=new THREE.Vector2();
     this.mesh.onBeforeRender=renderer=>{mat.uniforms.pixelHeight.value=renderer.getRenderTarget()?.height??renderer.getDrawingBufferSize(size).y;};
   }
   setWorld(world) {
     if(this.world===world)return;
     this.world=world;this.previous=null;this.wet=false;this.cooldown=0;this.wakeTimer=0;this.rings=[];this.drops=[];this.entries=0;
+    this.waveUniforms.waterRippleTime.value=0;this.waveUniforms.waterRipples.value.forEach(v=>v.set(0,0,0,0));this.waveCursor=0;
     this.ringPool.forEach(m=>m.visible=false);this.mesh.visible=false;this.mesh.geometry.setDrawRange(0,0);
   }
   ripple(x,z,surface,strength=1) {
+    const i=this.waveCursor++%MAX_WATER_IMPULSES;
+    this.waveUniforms.waterRipples.value[i].set(x,z,this.waveUniforms.waterRippleTime.value,strength);
+    this.waveUniforms.waterRippleLevels.value[i]=surface;
     const mesh=this.ringPool.find(m=>!this.rings.some(r=>r.mesh===m));if(!mesh)return;
     this.rings.push({mesh,x,z,surface,age:0,life:2.5,strength});
   }
@@ -77,6 +83,7 @@ export class WaterInteractionEffects {
     if(!this.world||!focus)return;
     if(context.active===false){this.previous=null;return;}
     dt=THREE.MathUtils.clamp(Number(dt)||0,0,.1);this.cooldown=Math.max(0,this.cooldown-dt);this.wakeTimer-=dt;
+    this.waveUniforms.waterRippleTime.value+=dt;
     const view=sampleWaterView(this.world,{x:focus.x,y:focus.y+.03,z:focus.z});
     const moved=this.previous?Math.hypot(focus.x-this.previous.x,focus.y-this.previous.y,focus.z-this.previous.z):0;
     // Loading/teleporting into a lake is not an impact. A real crossing uses the
@@ -95,7 +102,7 @@ export class WaterInteractionEffects {
       r.age+=dt;if(r.age>=r.life){r.mesh.visible=false;return false;}
       const radius=.18+r.age*(.70+.24*r.strength);
       r.mesh.position.set(r.x,r.surface+.068,r.z);r.mesh.scale.setScalar(radius);
-      r.mesh.material.uniforms.opacity.value=(1-r.age/r.life)**1.6*Math.min(1,r.age/.12)*.58*r.strength;
+      r.mesh.material.uniforms.opacity.value=(1-r.age/r.life)**2*Math.min(1,r.age/.12)*.22*r.strength;
       r.mesh.material.uniforms.light.value=light;r.mesh.visible=true;
       r.mesh.material.uniforms.band.value=Math.min(.08,.032/radius);
       const pos=r.mesh.geometry.attributes.position,wet=r.mesh.geometry.attributes.wet;

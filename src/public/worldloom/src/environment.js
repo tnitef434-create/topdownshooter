@@ -15,6 +15,8 @@ import { atmosphericFogRange } from './fog.js';
 import { enhanceWaterMaterial, WaterReflection } from './water-surface.js';
 import { sampleWaterView, underwaterOptics } from './water-view.js';
 import { WaterInteractionEffects } from './water-effects.js';
+import { WaterSceneCapture } from './water-capture.js';
+import { MushroomField } from './mushrooms.js';
 
 const LIGHT_BLOCKS = new Set([BLOCK.TORCH, BLOCK.LUMEN_CRYSTAL, BLOCK.KILN, BLOCK.FURNACE]);
 const FOLIAGE_BLOCKS = new Set([BLOCK.ASH_LEAVES, BLOCK.PINE_NEEDLES]);
@@ -1467,10 +1469,12 @@ export class Environment {
     this.hangingLeaves = new HangingLeavesField(scene, this.graphicsUniforms);
     this.redFlowers = new RedFlowerField(scene);
     this.meadowPlants = new MeadowPlantField(scene);
+    this.mushrooms = new MushroomField(scene);
     this.sandWind = new SandWindField(scene);
     this.seaLife = new SeaLifeField(scene);
     this.waterReflection = new WaterReflection(scene,renderer);
-    this.waterEffects = new WaterInteractionEffects(scene);
+    this.waterEffects = new WaterInteractionEffects(scene,this.graphicsUniforms);
+    this.waterCapture = new WaterSceneCapture(scene,renderer,this.graphicsUniforms);
     this.waterView = {submerged:false,depth:0};
     this.underwaterColor = new THREE.Color();
     this.waterLightFilter = new THREE.Color();
@@ -1504,10 +1508,12 @@ export class Environment {
     this.hangingLeaves.setWorld(this.weatherWorld);
     this.redFlowers.setWorld(this.weatherWorld);
     this.meadowPlants.setWorld(this.weatherWorld);
+    this.mushrooms.setWorld(this.weatherWorld);
     this.sandWind.setWorld(this.weatherWorld);
     this.seaLife.setWorld(this.weatherWorld);
     this.waterReflection.setWorld(this.weatherWorld);
     this.waterEffects.setWorld(this.weatherWorld);
+    this.waterCapture.setWorld(this.weatherWorld);
     this.summitCrosses.setWorld(this.weatherWorld);
     if (worldChanged) this._resetWeatherCycle(Boolean(this.weatherWorld));
   }
@@ -1616,6 +1622,7 @@ export class Environment {
     this.sandWind.setQuality(profile, settings.reducedMotion, this.weatherEnabled);
     this.seaLife.setQuality(profile, settings.reducedMotion);
     this.waterReflection.setQuality(profile);
+    this.waterCapture.setQuality(profile);
     this.summitCrosses.setQuality(profile);
     this.graphicsUniforms.windStrength.value = settings.reducedMotion ? 0.22 : 1;
 
@@ -2199,6 +2206,7 @@ export class Environment {
     this.hangingLeaves.update(dt, focus, context);
     this.redFlowers.update(dt, focus);
     this.meadowPlants.update(dt, focus);
+    this.mushrooms.update(dt, focus);
     this.sandWind.update(dt, focus, {...context, rainIntensity:this.rainIntensity, skyExposure:this.skyExposure, dayAmount:this.dayAmount});
     this.seaLife.update(dt, focus, context);
     this.waterEffects.update(dt,focus,{...context,dayAmount:this.dayAmount});
@@ -2209,6 +2217,7 @@ export class Environment {
     const submerged=this.waterView.submerged;
     for(const object of [this.atmosphere,this.sun,this.moon,this.stars,this.clouds]) object.visible=!submerged;
     if(submerged) {
+      if(this.pondEcology.mistMesh)this.pondEcology.mistMesh.visible=false;
       const optics=underwaterOptics(this.waterView.depth,this.dayAmount);
       this.underwaterColor.set(0x126574).multiplyScalar(optics.fogBrightness);
       this.scene.background=this.underwaterColor;

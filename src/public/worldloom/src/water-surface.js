@@ -1,4 +1,6 @@
 import * as THREE from '../vendor/three.module.min.js';
+import { WATER_MOTION_GLSL, createWaterMotionUniforms } from './water-motion.js';
+import { createWaterCaptureUniforms } from './water-capture.js';
 
 let waterNormals;
 function waterNormalTexture() {
@@ -36,36 +38,22 @@ export function waterOptics(depth, facing) {
   return { fresnel, transmission, opacity:1 - (1 - fresnel) * transmission };
 }
 
-const waveGLSL = /* glsl */`
-  vec3 waterWaves(vec2 p, float time) {
-    // World-space phases keep adjacent voxel chunks joined. xy are the slope,
-    // z the small vertical swell; short capillary waves only perturb shading.
-    vec2 a = normalize(vec2(1.,.37));
-    vec2 b = normalize(vec2(-.42,1.));
-    float p0 = dot(p,a)*.92 - time*1.05;
-    float p1 = dot(p,b)*1.43 + time*.79;
-    float p2 = dot(p,vec2(.82,.57))*5.1 - time*2.15 + sin(p1)*.6;
-    float p3 = dot(p,vec2(-.65,.76))*8.7 + time*2.8;
-    vec2 slope = a*cos(p0)*.042 + b*cos(p1)*.031;
-    slope += vec2(.82,.57)*cos(p2)*.070 + vec2(-.65,.76)*cos(p3)*.034;
-    return vec3(slope,sin(p0)*.036+sin(p1)*.021);
-  }
-`;
-
 export function enhanceWaterMaterial(material, shared) {
   if (!material || material.userData.worldloomEnhanced) return;
   material.userData.worldloomEnhanced = true;
+  shared = {...createWaterCaptureUniforms(),...createWaterMotionUniforms(),...shared};
   // Water has its own continuous surface: no block-atlas alpha, pixel normal
   // tiles or per-face terrain tint can leak into its optics.
   material.map = null; material.normalMap = null; material.vertexColors = false;
   material.color.set(0xffffff); material.opacity = 1; material.alphaTest = 0;
   material.roughness = .22; material.metalness = 0;
-  material.transparent = true; material.depthWrite = false; material.dithering = true;
+  material.transparent = true; material.depthWrite = false; material.dithering = true; material.forceSinglePass = true;
   const reflection = material.userData.waterReflection = {
     texture:{value:null}, matrix:{value:new THREE.Matrix4()}, valid:{value:0}, height:{value:0},
   };
   material.onBeforeCompile = shader => {
     Object.assign(shader.uniforms, {
+      ...Object.fromEntries(Object.entries(shared).filter(([key])=>key.startsWith('water'))),
       waterTime:shared.time, waterDay:shared.dayAmount, waterMotion:shared.windStrength,
       waterSun:shared.sunDirection, waterSunColor:shared.sunColor, waterSunVisibility:shared.sunVisibility,
       waterSky:shared.waterSky, waterHorizon:shared.waterHorizon,
@@ -77,13 +65,13 @@ export function enhanceWaterMaterial(material, shared) {
       attribute vec3 waterData;
       uniform float waterTime; uniform float waterMotion; uniform mat4 waterMirrorMatrix;
       varying vec3 vWaterPosition; varying vec3 vWaterData; varying float vWaterTop;
-      varying vec4 vWaterMirror;
-      ${waveGLSL}
+      varying vec4 vWaterMirror; varying float vWaterBaseY;
+      ${WATER_MOTION_GLSL}
     `).replace('#include <begin_vertex>',`#include <begin_vertex>
       vec3 baseWaterWorld = (modelMatrix * vec4(position,1.)).xyz;
-      vWaterData = waterData;
+      vWaterData = waterData;vWaterBaseY=baseWaterWorld.y;
       vWaterTop = step(.55,objectNormal.y);
-      transformed.y += waterWaves(baseWaterWorld.xz,waterTime).z * waterData.z * waterMotion;
+      transformed.y += waterWaves(baseWaterWorld.xz,waterTime,baseWaterWorld.y).z * waterData.z * waterMotion;
       vWaterPosition = (modelMatrix * vec4(transformed,1.)).xyz;
       vWaterMirror = waterMirrorMatrix * vec4(baseWaterWorld,1.);
     `);
@@ -93,9 +81,12 @@ export function enhanceWaterMaterial(material, shared) {
       uniform vec3 waterSky; uniform vec3 waterHorizon;
       uniform sampler2D waterReflection; uniform float waterMirrorValid; uniform float waterMirrorHeight;
       uniform sampler2D waterNormals;
+      uniform sampler2D waterSceneColor; uniform sampler2D waterSceneDepth; uniform float waterSceneValid;
+      uniform vec2 waterSceneSize; uniform mat4 waterProjectionInverse;
+      vec3 sceneViewPosition(vec2 uv){float d=texture2D(waterSceneDepth,uv).x;vec4 v=waterProjectionInverse*vec4(uv*2.-1.,d*2.-1.,1.);return v.xyz/v.w;}
       varying vec3 vWaterPosition; varying vec3 vWaterData; varying float vWaterTop;
-      varying vec4 vWaterMirror;
-      ${waveGLSL}
+      varying vec4 vWaterMirror; varying float vWaterBaseY;
+      ${WATER_MOTION_GLSL}
       float wh(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
       float wn(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(wh(i),wh(i+vec2(1,0)),f.x),mix(wh(i+vec2(0,1)),wh(i+1.),f.x),f.y);}
     `).replace('#include <color_fragment>',`#include <color_fragment>
@@ -106,7 +97,9 @@ export function enhanceWaterMaterial(material, shared) {
       vec2 n0=texture2D(waterNormals,waveUv*.064+waterTime*vec2(-.009,.005)).rg*2.-1.;
       vec2 n1=texture2D(waterNormals,mat2(.8,-.6,.6,.8)*waveUv*.103+waterTime*vec2(.006,.012)).rg*2.-1.;
       vec2 n2=texture2D(waterNormals,waveUv*.27+waterTime*vec2(-.017,-.008)).rg*2.-1.;
-      vec3 waterWave=vec3((n0+n1*.57+n2*.18)*.15,0.);
+      vec3 waterWave=waterWaves(waveUv,waterTime,vWaterBaseY);
+      waterWave.xy += (n0+n1*.57+n2*.18)*.10;
+      waterWave.xy *= mix(1.,max(.25,vWaterData.z),vWaterTop);
       vec3 waterWorldNormal = normalize(vec3(-waterWave.x * waterMotion,1.,-waterWave.y * waterMotion));
       vec3 waterViewNormal = normalize(mat3(viewMatrix) * waterWorldNormal);
       normal = normalize(mix(normal,gl_FrontFacing ? waterViewNormal : -waterViewNormal,vWaterTop));
@@ -124,7 +117,7 @@ export function enhanceWaterMaterial(material, shared) {
       mirrorUv += waterWave.xy * .017 / max(1.,length(cameraPosition-vWaterPosition)*.08);
       float mirrorEdge = smoothstep(0.,.04,mirrorUv.x) * smoothstep(0.,.04,mirrorUv.y)
         * smoothstep(0.,.04,1.-mirrorUv.x) * smoothstep(0.,.04,1.-mirrorUv.y);
-      float mirrorPlane = 1. - smoothstep(.10,.25,abs(vWaterPosition.y-waterMirrorHeight));
+      float mirrorPlane = 1. - smoothstep(.10,.25,abs(vWaterBaseY-waterMirrorHeight));
       if(waterMirrorValid > .5 && belowSurface < .5 && vWaterMirror.w > 0.) {
         reflectionColor = mix(reflectionColor,texture2D(waterReflection,clamp(mirrorUv,.001,.999)).rgb,mirrorEdge*mirrorPlane);
       }
@@ -134,17 +127,34 @@ export function enhanceWaterMaterial(material, shared) {
       glint *= waterSunVisibility * waterDay * (1.-belowSurface) * vWaterTop;
       vec3 scattered = outgoingLight * (1.-fresnel) * (1.-transmission);
       outgoingLight = (scattered + reflectionColor * fresnel + waterSunColor * glint * .32) / surfaceAlpha;
-      // Narrow, irregular wash at actual bank contact; no foam grid offshore.
+      // View-aligned refraction and actual seabed depth are shared by all chunks.
+      // Blend the transmitted scene here so overlapping transparent chunk bounds
+      // cannot turn one rectangular section into a solid cyan sheet.
+      if(waterSceneValid>.5 && vWaterTop>.5){
+        vec2 screenUv=gl_FragCoord.xy/waterSceneSize;
+        vec3 waterView=(viewMatrix*vec4(vWaterPosition,1.)).xyz;
+        vec3 bedView=sceneViewPosition(screenUv);
+        float waterPath=clamp(length(bedView)-length(waterView),0.,24.);
+        vec2 refractedUv=clamp(screenUv+waterWave.xy*min(.014,waterPath*.002)*waterMotion,.001,.999);
+        vec3 bentBed=sceneViewPosition(refractedUv);
+        if(-bentBed.z < -waterView.z+.04)refractedUv=screenUv;
+        vec3 background=texture2D(waterSceneColor,refractedUv).rgb;
+        vec3 absorption=exp(-vec3(.24,.075,.042)*waterPath);
+        vec3 waterTint=vec3(.012,.14,.17)*(.16+.84*waterDay);
+        vec3 transmitted=background*absorption+waterTint*(1.-absorption);
+        outgoingLight=mix(transmitted,reflectionColor,fresnel)+waterSunColor*glint*.24;
+        surfaceAlpha=1.;
+      }
       float wash = wn(vWaterPosition.xz*3.8+vec2(waterTime*.21,-waterTime*.16));
-      float foam = smoothstep(.18,.74,vWaterData.y) * smoothstep(.38,.72,wash)
+      float foam = smoothstep(.18,.74,vWaterData.y) * smoothstep(.48,.78,wash)
         * (.58+.42*sin(waterTime*.9+vWaterPosition.x*.5+vWaterPosition.z*.4)) * vWaterTop * (1.-belowSurface);
-      outgoingLight = mix(outgoingLight,waterSunColor*(.28+waterDay*.48),foam*.48);
-      diffuseColor.a = max(surfaceAlpha,foam*.62);
+      outgoingLight = mix(outgoingLight,waterSunColor*(.28+waterDay*.48),foam*.30);
+      diffuseColor.a = max(surfaceAlpha,foam*.42);
       #include <opaque_fragment>
     `);
     material.userData.worldloomShader = shader;
   };
-  material.customProgramCacheKey = () => 'worldloom-depth-fresnel-water-v1';
+  material.customProgramCacheKey = () => 'worldloom-refractive-wave-water-v2';
   material.needsUpdate = true;
 }
 
@@ -210,7 +220,7 @@ export class WaterReflection {
     mirror.projectionMatrixInverse.copy(mirror.projectionMatrix).invert();
     this.hidden.length=0;
     this.scene.traverse(object=>{
-      if(object.visible && (object===camera||object.material===this.material||object.renderOrder>=900)) {
+      if(object.visible && (object===camera||object.material===this.material||object.userData?.skipWaterReflection||object.renderOrder>=900)) {
         object.visible=false;this.hidden.push(object);
       }
     });

@@ -1,6 +1,7 @@
 import * as THREE from '../vendor/three.module.min.js';
 import { GLTFLoader } from '../vendor/GLTFLoader.js';
 import { mergeGeometries } from '../vendor/BufferGeometryUtils.js';
+import { createPondMist } from './pond-mist.js';
 
 const ASSET_URL = new URL('../assets/environment/pond-details.glb', import.meta.url).href;
 const DEFAULT_LOAD_TIMEOUT_MS = 8_000;
@@ -200,20 +201,17 @@ function disposeEcologyMeshes(meshes) {
   disposeMaterials(materials);
 }
 
-function createEcologyMeshes(gltf) {
+function createEcologyMeshes(gltf,shared) {
   if (!gltf?.scene) throw new Error('Pond detail glTF scene is missing');
   const geometries = [];
   const materials = [];
   try {
     const lilyRoot = gltf.scene.getObjectByName('Lily_Pad_Asset');
-    const mistRoot = gltf.scene.getObjectByName('Mist_Wisp_Asset');
     const lilyGeometry = bakeAssetGeometry(lilyRoot, gltf.scene, {
       preserveUv: true,
       useVertexColor: false,
     });
     geometries.push(lilyGeometry);
-    const mistGeometry = bakeAssetGeometry(mistRoot, gltf.scene);
-    geometries.push(mistGeometry);
     const lilyAtlas = findImportedAtlas(lilyRoot);
 
     const lilyMaterial = new THREE.MeshStandardMaterial({
@@ -228,25 +226,15 @@ function createEcologyMeshes(gltf) {
       side: THREE.DoubleSide,
     });
     materials.push(lilyMaterial);
-    const mistMaterial = new THREE.MeshBasicMaterial({
-      name: 'Blender pond mist material',
-      vertexColors: true,
-      transparent: true,
-      opacity: 0.12,
-      depthWrite: false,
-      depthTest: true,
-      side: THREE.DoubleSide,
-      fog: true,
-      toneMapped: true,
-    });
-    materials.push(mistMaterial);
+    const mistMesh=createPondMist(shared||{});
+    geometries.push(mistMesh.geometry);materials.push(mistMesh.material);
     const flyMesh = createFlyPoints();
     geometries.push(flyMesh.geometry);
     materials.push(flyMesh.material);
 
     return {
       padMesh: createInstancedMesh(lilyGeometry, lilyMaterial, MAX_PADS, 'Blender lily pads', 3),
-      mistMesh: createInstancedMesh(mistGeometry, mistMaterial, MAX_MIST, 'Blender pond mist', 4),
+      mistMesh,
       flyMesh,
     };
   } catch (error) {
@@ -351,7 +339,7 @@ export class PondEcologyField {
         }
         let meshes = null;
         try {
-          meshes = createEcologyMeshes(gltf);
+          meshes = createEcologyMeshes(gltf,this.graphicsUniforms);
         } catch (error) {
           disposeImportedScene(gltf.scene);
           failCosmetically(error);
@@ -460,7 +448,7 @@ export class PondEcologyField {
           x: pond.centerX,
           y: surface + 0.035,
           z: pond.centerZ,
-          scale: Math.min(pond.radiusX, pond.radiusZ) * 0.56,
+          scale: Math.min(pond.radiusX, pond.radiusZ) * 0.96,
           phase: pond.phase,
         });
       }
@@ -507,13 +495,16 @@ export class PondEcologyField {
     const mistVisibility = THREE.MathUtils.clamp((1 - rainIntensity * 1.8) * skyExposure, 0, 1);
     this.mistMesh.count = mistVisibility > 0.025 ? this.mistAnchors.length : 0;
     this.mistMesh.visible = this.mistMesh.count > 0;
-    this.mistMesh.material.opacity = (0.055 + (1 - dayAmount) * 0.075) * mistVisibility;
+    const mistUniforms=this.mistMesh.material.uniforms;
+    mistUniforms.mistTime.value=this._time*motion;mistUniforms.mistDensity.value=mistVisibility;
+    mistUniforms.mistDay.value=dayAmount;
+    if(this.graphicsUniforms?.sunDirection)mistUniforms.mistSun.value.copy(this.graphicsUniforms.sunDirection.value);
+    if(this.graphicsUniforms?.sunColor)mistUniforms.mistSunColor.value.copy(this.graphicsUniforms.sunColor.value);
     for (let index = 0; index < this.mistMesh.count; index++) {
       const anchor = this.mistAnchors[index];
-      const drift = this._time * 0.075 * motion + anchor.phase;
       this._dummy.position.set(anchor.x, anchor.y, anchor.z);
-      this._dummy.rotation.set(0, drift, 0);
-      this._dummy.scale.set(anchor.scale, anchor.scale * 0.42, anchor.scale);
+      this._dummy.rotation.set(0, 0, 0);
+      this._dummy.scale.set(anchor.scale, Math.min(1.05,Math.max(.6,anchor.scale*.16)), anchor.scale);
       this._dummy.updateMatrix();
       this.mistMesh.setMatrixAt(index, this._dummy.matrix);
     }

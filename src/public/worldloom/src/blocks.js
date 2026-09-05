@@ -469,6 +469,7 @@ export const BLOCKS = Object.freeze([
   }),
   defineBlock(BLOCK.GLOW_MUSHROOM, {
     name: 'Cave Button Mushroom',
+    renderMode: 'mushroom-model',
     description: 'A small, earthy mushroom that grows on naturally damp cave floors.',
     hardness: 0.05,
     color: 0x9a7654,
@@ -985,7 +986,9 @@ function paintAtlas(context) {
     rect(tile, '#b89062', 7, 13, 8, 5);
     rect(tile, '#775238', 17, 19, 10, 7);
     rect(tile, '#a77d52', 19, 17, 7, 5);
+    tile.globalCompositeOperation = 'source-atop';
     scatter(tile, random, ['#5c4232', '#d0aa78', '#6d4a35'], 11, 1, 2);
+    tile.globalCompositeOperation = 'source-over';
   });
 
   paintTile(context, TILE.BEDROCK, (tile, random) => {

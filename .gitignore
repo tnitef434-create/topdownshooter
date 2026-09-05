@@ -23,6 +23,11 @@ dist/worldloom/src/*
 !dist/worldloom/src/water-surface.js
 !dist/worldloom/src/water-view.js
 !dist/worldloom/src/water-effects.js
+!dist/worldloom/src/water-motion.js
+!dist/worldloom/src/water-capture.js
+!dist/worldloom/src/water-nature-data.js
+!dist/worldloom/src/pond-mist.js
+!dist/worldloom/src/mushrooms.js
 !dist/worldloom/src/ankle-dust-data.js
 !dist/worldloom/src/portal.js
 !dist/worldloom/src/forest-floor.js

@@ -12,6 +12,7 @@ try {
   const p=window.__worldloomPlayer;p.flying=true;p.pitch=-.42;p.yaw=0;p.setPosition(36,34,0);
  });
  await page.waitForFunction(()=>window.__worldloomEnvironment.waterReflection.renders>0,{timeout:45000});
+ await page.waitForFunction(()=>window.__worldloomEnvironment.scene.fog.far>30,{timeout:60000});
  const initial=await page.evaluate(()=>{
    const e=window.__worldloomEnvironment,w=window.__worldloomWorld;
    return {reflection:e.waterReflection.renders,valid:w.waterMaterial.userData.waterReflection.valid.value,waterChunks:[...w.chunks.values()].filter(c=>c.waterMesh?.visible).length,ao:window.__worldloomGraphics.aoEnabled};
@@ -35,6 +36,7 @@ try {
  const pond=await page.evaluate(()=>{const w=window.__worldloomWorld,p=w.getPondsNear(0,0,450)[0];if(!p)return null;const player=window.__worldloomPlayer;player.pitch=-.6;player.setPosition(p.centerX,p.waterY+2.3,p.centerZ+4);return p;});
  assert.ok(pond,'seed 41 contains a pond for integration coverage');
  await page.waitForFunction(()=>window.__worldloomSeaLife.getStats().pondFish>=3,{timeout:60000});
+ await page.waitForFunction(()=>window.__worldloomEnvironment.scene.fog.far>30,{timeout:60000});
  const pondLife=await page.evaluate(()=>window.__worldloomSeaLife.getStats());
  assert.equal(pondLife.plants,0);await page.screenshot({path:'../../outputs/worldloom-pond-fish.png'});
  assert.equal(errors.length,0,errors.join('\n'));
