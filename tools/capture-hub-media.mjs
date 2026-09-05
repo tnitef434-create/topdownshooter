@@ -1,10 +1,11 @@
-// Record first-person gameplay for Nite in an isolated browser profile.
+// Record native high-resolution gameplay for Unpaused in an isolated browser.
 // Recorded movement runs through the real player controller and collision.
 import puppeteer from 'puppeteer';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
-const out = fileURLToPath(new URL('../../hub-capture/', import.meta.url));
+const out = fileURLToPath(new URL('../../hub-capture-hq/', import.meta.url));
+const width = 1800, height = 2000, fps = 30, frameCount = fps * 6;
 await mkdir(out, { recursive: true });
 const browser = await puppeteer.launch({
   executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe',
@@ -12,10 +13,10 @@ const browser = await puppeteer.launch({
   args: ['--no-sandbox', '--enable-webgl', '--enable-unsafe-swiftshader', '--autoplay-policy=no-user-gesture-required'],
 });
 const page = await browser.newPage();
-await page.setViewport({ width: 900, height: 1000, deviceScaleFactor: 1 });
+await page.setViewport({ width, height, deviceScaleFactor: 1 });
 page.on('pageerror', e => console.error(e.message));
 await page.evaluateOnNewDocument(() => {
-  localStorage.setItem('worldloom.settings.v1', JSON.stringify({viewDistance:5,graphicsQuality:'high',weatherEffects:true,fov:74,reducedMotion:false}));
+  localStorage.setItem('worldloom.settings.v1', JSON.stringify({viewDistance:5,graphicsQuality:'high',renderScale:1,weatherEffects:true,fov:74,reducedMotion:false}));
   const raf = window.requestAnimationFrame.bind(window);
   window.requestAnimationFrame = (callback) => raf((now) => {
     if (window.manualCapture && callback.name === 'animate') window.captureAnimate = callback;
@@ -23,7 +24,7 @@ await page.evaluateOnNewDocument(() => {
   });
 });
 try {
-  await page.goto(new URL('worldloom/index.html',process.env.NITE_TEST_URL||'http://127.0.0.1:4186/').href);
+  await page.goto(new URL('worldloom/index.html',process.env.HUB_CAPTURE_URL||'http://127.0.0.1:4187/').href);
   await page.waitForFunction(() => document.querySelector('#loading-screen')?.classList.contains('hidden'), {timeout:120000});
   await page.evaluate(() => {document.querySelector('#seed-input').value='41';document.querySelector('input[value="builder"]').checked=true;document.querySelector('#new-world-button').click();});
   await page.waitForFunction(() => window.__worldloomPlayer && document.querySelector('#loading-screen').classList.contains('hidden') && !document.querySelector('#hud').classList.contains('hidden'), {timeout:180000});
@@ -35,9 +36,9 @@ try {
     held.setVisible=()=>show(true);
     const update=p.update.bind(p);
     p.update=(dt,input,settings)=>update(dt,window.gameplayCapture?{
-      consumeLook:()=>({x:window.captureFrame>24?-.22:0,y:0}),
+      consumeLook:()=>({x:window.captureFrame>30?-.176:0,y:0}),
       isDown:(...codes)=>{
-        if(window.captureFrame<20||window.captureFrame>=115)return false;
+        if(window.captureFrame<25||window.captureFrame>=144)return false;
         if(codes.includes('KeyW'))return true;
         return codes.includes('Space')&&p.grounded&&p._collidesAt(p.position.clone().addScaledVector(p._forward,.8));
       },
@@ -67,6 +68,10 @@ try {
     }
     return scenes;
   });
+  await page.evaluate(({width,height})=>{
+    const g=window.__worldloomGraphics;
+    g.renderer.setPixelRatio(1);g.renderer.setSize(width,height,false);g.resize(width,height,1);
+  },{width,height});
   await writeFile(`${out}/scenes.json`,JSON.stringify(scenes,null,2));
   for (const scene of scenes) {
     const only=process.argv.indexOf('--scene');
@@ -86,15 +91,16 @@ try {
     await page.evaluate(()=>{window.manualCapture=true;});
     await page.waitForFunction(()=>window.captureAnimate);
     await page.evaluate(()=>{window.gameplayCapture=true;window.captureFrame=0;});
-    for(let i=0;i<144;i++){
+    for(let i=0;i<frameCount;i++){
       const data=await page.evaluate(({s,i})=>{
         window.captureFrame=i;
-        window.captureTime+=1000/24;window.captureAnimate(window.captureTime);
+        window.captureTime+=1000/30;window.captureAnimate(window.captureTime);
         const g=window.__worldloomGraphics;g.renderer.getContext().finish();
-        return g.renderer.domElement.toDataURL('image/jpeg',.9).split(',')[1];
+        if(g.renderer.domElement.width!==1800||g.renderer.domElement.height!==2000)throw new Error('Capture must render at native 1800x2000');
+        return g.renderer.domElement.toDataURL('image/jpeg',.97).split(',')[1];
       },{s:scene,i});
       await writeFile(`${out}/${scene.name}/${String(i).padStart(4,'0')}.jpg`,Buffer.from(data,'base64'));
-      if(i%48===0)console.log(`${scene.name} ${i}/144`);
+      if(i%60===0)console.log(`${scene.name} ${i}/${frameCount} at ${width}x${height}`);
     }
     console.log('Gameplay end',await page.evaluate(()=>({position:window.__worldloomPlayer.position.toArray(),distance:window.__worldloomPlayer.distanceMoved,hand:window.__worldloomHeldItem.presentationVisible})));
     await page.evaluate(()=>{window.gameplayCapture=false;window.manualCapture=false;window.requestAnimationFrame(window.captureAnimate);});

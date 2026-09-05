@@ -11,6 +11,7 @@
     <title>Worldloom — Unpaused</title>
     <link rel="icon" href="favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="/worldloom-entry.css" />
   </head>
   <body>
     <a class="skip-link" href="#main-menu">Skip to game menu</a>
@@ -30,18 +31,15 @@
         <a id="unsupported-return" class="button button--primary" href="/">Return to all games</a>
       </section>
 
-      <section id="loading-screen" class="screen loading-screen" aria-live="polite">
-        <div class="loading-atmosphere" aria-hidden="true">
-          <span class="voxel voxel--one"></span>
-          <span class="voxel voxel--two"></span>
-          <span class="voxel voxel--three"></span>
-        </div>
-        <div class="loading-card">
-          <div class="brand brand--loading" aria-label="Worldloom">
-            <span class="brand__eyebrow">A world shaped by you</span>
-            <span class="brand__name">Worldloom</span>
-            <span class="brand__sigil" aria-hidden="true"></span>
-          </div>
+      <section id="loading-screen" class="screen loading-screen u-loading" aria-live="polite" aria-label="Loading Worldloom">
+        <div class="u-loading__content">
+          <svg class="u-loading__mark" viewBox="0 0 40 40" width="142" height="142" aria-hidden="true">
+            <path d="M9 8v15c0 6 4 9 9 9s9-3 9-9v-3" fill="none" stroke="#f4f6dc" stroke-opacity=".65" stroke-width="3.4"/>
+            <path class="u-loading__trail" d="M27 20v3c0 6-4 9-9 9s-9-3-9-9V8" pathLength="100" fill="none" stroke="#ff6339" stroke-width="3.4" stroke-dasharray="22 140"/>
+            <path class="u-loading__runner" d="m-4.5-6 9 6-9 6z" fill="#ff6339"/>
+            <path class="u-loading__rest" d="m24 5 9 6-9 6z" fill="#ff6339"/>
+          </svg>
+          <p class="u-loading__title">Worldloom</p>
           <div class="loading-track" role="progressbar" aria-label="Loading world" aria-valuemin="0" aria-valuemax="100" aria-valuenow="8">
             <span id="loading-bar"></span>
           </div>

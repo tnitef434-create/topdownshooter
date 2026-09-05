@@ -57,3 +57,12 @@ Build an original block-hewn survival-game UI heavily inspired by tactile voxel 
 Account verification: Resend sends a single-use, 30-minute email link. New accounts stay inactive until the inbox owner sets the final password. Existing credits and purchases remain intact. Verified accounts can generate one permanent, unique four-digit friend code (0000–9999) in the hub profile and copy it. No email addresses or friend-code generation controls appear inside TacticStrike. Resends are limited to one per minute and five per account per day. Canonical public domain: https://unpaused.online.
 
 September 5 account and shared worlds update: visible hub branding is the custom U mark alone; retain the name in document titles, accessibility labels and email sender details. Use the existing cream U/orange play mark, black #090909 account surfaces and deep orange #e95128 actions. Signed-in account dialog has accessible Account / Worlds / Invites tabs. World cards show name, journey, friend/owner, Play and owner-only Delete with an inline irreversible-delete confirmation. Account worlds are persistent, with ten owned worlds and one invited friend per world; shared worlds do not consume the guest’s ownership quota. Existing browser saves can be copied explicitly to the account. The email header uses the U image with alt text for clients that block images.
+
+
+## Worldloom entry and legibility — September 5, 2026
+
+Use the original U mark on a #090909 loading screen. Its orange triangle follows the U from the right down around the base and up the left, then retraces its path. Inline SVG and CSS motion start before the game module downloads; reduced motion shows the still brand mark. The hub paints the same screen on normal link activation and clears it on history restoration. Game loading keeps its real progress and completion signal. Visible branding uses the U, with Worldloom as the destination label.
+
+The hub gameplay is captured natively at 1800 × 2000, 30 fps; phones and Save-Data use 900 × 1000. Encode directly from frames, with a seamless three-scene loop, H.264 faststart, and no intermediate lossy pass. The separate main-menu panorama remains native 4K.
+
+Keep the grey beveled Worldloom menu, moss actions, and ochre new-world action. The invitation well uses explicit light text on charcoal. Labels are at least 12px, descriptions 13px, controls 14px, inputs 15px (16px on phones). Reduce heading shadows and letter compression. Use one menu scroll area rather than a nested clipped form; all actions remain reachable on narrow screens.

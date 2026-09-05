@@ -81,6 +81,7 @@ accounts.json.tmp
 worlds.json
 worlds.json.tmp
 !dist/account-client.js
+!dist/worldloom-entry.css
 !dist/worldloom/src/multiplayer.js
 !dist/worldloom/src/shared-world.js
 !dist/worldloom/vendor/

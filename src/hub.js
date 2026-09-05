@@ -1,8 +1,10 @@
 import { initHubMotion } from './hub-motion.js';
 import { initHubAccount } from './hub-account.js';
+import { initWorldloomEntry } from './hub-entry.js';
 
 initHubMotion();
 initHubAccount();
+initWorldloomEntry();
 
 const film = document.querySelector('#worldloom-film');
 let loaded = false;
@@ -13,7 +15,8 @@ function syncPlayback() {
   if (document.hidden) { film.pause(); return; }
   if (!loaded) {
     const source = film.querySelector('source');
-    source.src = source.dataset.src;
+    const small = window.innerWidth <= 700 || navigator.connection?.saveData;
+    source.src = small ? source.dataset.smallSrc : source.dataset.src;
     film.muted = true;
     film.load();
     loaded = true;

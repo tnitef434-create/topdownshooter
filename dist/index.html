@@ -15,7 +15,8 @@
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/hub/apple-touch-icon.png">
   <link rel="preload" as="image" href="/hub/worldloom-poster.jpg" fetchpriority="high">
-  <script type="module" crossorigin src="/assets/hub-C7Hdtp62.js"></script>
+  <link rel="stylesheet" href="/worldloom-entry.css">
+  <script type="module" crossorigin src="/assets/hub-BR21OC0x.js"></script>
   <link rel="modulepreload" crossorigin href="/assets/account-client-D3X58vZL.js">
   <link rel="stylesheet" crossorigin href="/assets/hub-BxoQfE8e.css">
 </head>
@@ -30,9 +31,9 @@
   <main class="games" aria-label="Choose your game">
     <a id="enter-worldloom" class="game game--worldloom" href="/worldloom/" aria-labelledby="worldloom-title worldloom-action">
       <div class="game-media" aria-hidden="true">
-        <img class="poster" src="/hub/worldloom-poster.jpg" alt="" fetchpriority="high" width="900" height="1000">
+        <img class="poster" src="/hub/worldloom-poster.jpg" alt="" fetchpriority="high" width="1800" height="2000">
         <video id="worldloom-film" class="film" autoplay muted loop playsinline preload="none" poster="/hub/worldloom-poster.jpg" tabindex="-1" disablepictureinpicture>
-          <source data-src="/hub/worldloom-loop.mp4" type="video/mp4">
+          <source data-src="/hub/worldloom-loop.mp4" data-small-src="/hub/worldloom-loop-mobile.mp4" type="video/mp4">
         </video>
       </div>
       <div class="game-copy">
@@ -53,6 +54,18 @@
       <span class="game-activity">Players online</span>
     </a>
   </main>
+  <section id="worldloom-transition" class="u-loading" role="status" aria-label="Opening Worldloom" hidden>
+    <div class="u-loading__content">
+      <svg class="u-loading__mark" viewBox="0 0 40 40" width="142" height="142" aria-hidden="true">
+            <path d="M9 8v15c0 6 4 9 9 9s9-3 9-9v-3" fill="none" stroke="#f4f6dc" stroke-opacity=".65" stroke-width="3.4"/>
+            <path class="u-loading__trail" d="M27 20v3c0 6-4 9-9 9s-9-3-9-9V8" pathLength="100" fill="none" stroke="#ff6339" stroke-width="3.4" stroke-dasharray="22 140"/>
+            <path class="u-loading__runner" d="m-4.5-6 9 6-9 6z" fill="#ff6339"/>
+            <path class="u-loading__rest" d="m24 5 9 6-9 6z" fill="#ff6339"/>
+          </svg>
+      <p class="u-loading__title">Worldloom</p>
+      <p class="u-loading__message">Opening your world.</p>
+    </div>
+  </section>
   <dialog id="hub-account" class="account-dialog" aria-labelledby="account-title" aria-describedby="account-intro">
     <button id="account-close" class="account-close" type="button" aria-label="Close account">×</button>
     <p class="account-brand"><img src="/hub/u-mark.svg" width="46" height="46" alt="Unpaused"></p>

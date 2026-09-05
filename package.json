@@ -17,6 +17,7 @@
     "test:bots:browser": "node tests/tacticstrike-bot-browser-smoke.mjs",
     "test:browser": "node tests/worldloom-browser-smoke.mjs",
     "test:hub": "node tests/unpaused-hub-browser.mjs",
+    "test:entry": "node tests/worldloom-entry-browser.mjs",
     "test:accounts:browser": "node tests/hub-account-browser.mjs",
     "test:multiplayer": "node --test --test-isolation=none tests/worldloom-multiplayer.test.mjs",
     "test:multiplayer:browser": "node tests/worldloom-multiplayer-browser.mjs"

@@ -1,17 +1,21 @@
+// Encode directly from native frames; no intermediate lossy video pass.
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, copyFileSync } from 'node:fs';
+import { mkdirSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-const source=fileURLToPath(new URL('../../hub-capture/',import.meta.url));
+const source=fileURLToPath(new URL('../../hub-capture-hq/',import.meta.url));
 const output=fileURLToPath(new URL('../src/public/hub/',import.meta.url));
 mkdirSync(output,{recursive:true});
 const ffmpeg=process.env.FFMPEG_PATH || 'C:/pinokio/bin/ffmpeg-env/Library/bin/ffmpeg.exe';
-function run(args){const result=spawnSync(ffmpeg,['-hide_banner','-loglevel','error','-y',...args],{stdio:'inherit',windowsHide:true});if(result.status!==0)throw new Error('Video encoding failed');}
-for(const scene of ['pond','coast','ridge'])run(['-framerate','24','-i',`${source}/${scene}/%04d.jpg`,'-vf','scale=768:854:flags=lanczos,setsar=1','-an','-c:v','libx264','-preset','slow','-crf','21','-pix_fmt','yuv420p',`${source}/${scene}.mp4`]);
-// Join three gameplay shots and crossfade back into the first shot. Trimming
-// the first 0.8s closes the loop at the same shot/time with no black frame.
-run(['-i',`${source}/pond.mp4`,'-i',`${source}/coast.mp4`,'-i',`${source}/ridge.mp4`,'-i',`${source}/pond.mp4`,
-  '-filter_complex','[0:v][1:v]xfade=transition=fade:duration=0.8:offset=5.2[a];[a][2:v]xfade=transition=fade:duration=0.8:offset=10.4[b];[b][3:v]xfade=transition=fade:duration=0.8:offset=15.6,trim=start=0.8:end=16.4,setpts=PTS-STARTPTS[v]',
-  '-map','[v]','-an','-r','24','-c:v','libx264','-preset','slow','-crf','23','-pix_fmt','yuv420p','-movflags','+faststart',`${output}/worldloom-loop.mp4`]);
-copyFileSync(`${source}/pond/0096.jpg`,`${output}/worldloom-poster.jpg`);
-run(['-i',`${source}/tacticstrike.jpg`,'-vf','crop=1120:1400:340:80,scale=900:1124:flags=lanczos','-q:v','3','-frames:v','1',`${output}/tacticstrike-poster.jpg`]);
-console.log('Encoded real game scenes in src/public/hub.');
+function run(args){const r=spawnSync(ffmpeg,['-hide_banner','-loglevel','error','-y',...args],{stdio:'inherit',windowsHide:true});if(r.status!==0)throw new Error('Video encoding failed');}
+const shots=['pond','coast','ridge','pond'];
+for(const rendition of [{name:'worldloom-loop.mp4',width:1800,height:2000,crf:'18',maxrate:'9M'},{name:'worldloom-loop-mobile.mp4',width:900,height:1000,crf:'21',maxrate:'3M'}]){
+  const inputs=shots.flatMap(scene=>['-framerate','30','-i',`${source}/${scene}/%04d.jpg`]);
+  const prep=shots.map((_,i)=>`[${i}:v]scale=${rendition.width}:${rendition.height}:flags=lanczos,setsar=1,format=yuv420p[v${i}];`).join('');
+  // The last crossfade meets the first shot at the same time/position on repeat.
+  const fade='[v0][v1]xfade=transition=fade:duration=0.8:offset=5.2[a];[a][v2]xfade=transition=fade:duration=0.8:offset=10.4[b];[b][v3]xfade=transition=fade:duration=0.8:offset=15.6,trim=start=0.8:end=16.4,setpts=PTS-STARTPTS[v]';
+  run([...inputs,'-filter_complex_threads','2','-filter_complex',prep+fade,'-map','[v]','-an','-r','30','-c:v','libx264','-threads','4','-preset','slow','-crf',rendition.crf,'-maxrate',rendition.maxrate,'-bufsize','18M','-pix_fmt','yuv420p','-movflags','+faststart',`${output}/${rendition.name}`]);
+  const bytes=statSync(`${output}/${rendition.name}`).size;
+  if(bytes>=25*1024*1024)throw new Error('Video exceeds the static hosting asset limit');
+  console.log(`${rendition.name}: ${rendition.width}x${rendition.height}, 30fps, ${(bytes/1024/1024).toFixed(2)} MiB`);
+}
+run(['-i',`${source}/pond/0096.jpg`,'-q:v','3','-frames:v','1',`${output}/worldloom-poster.jpg`]);
