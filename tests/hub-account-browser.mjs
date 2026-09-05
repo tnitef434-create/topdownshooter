@@ -1,5 +1,6 @@
 import puppeteer from 'puppeteer';
 import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
 import {randomUUID} from 'node:crypto';
 
 const base=process.env.HUB_TEST_URL||'http://127.0.0.1:4186/';
@@ -8,6 +9,8 @@ const browser=await puppeteer.launch({executablePath:'C:/Program Files/Google/Ch
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
 const email=`unpaused-${randomUUID()}@example.invalid`,password=`QA-${randomUUID()}`;
 const errors=[];
+const outbox=process.env.TEST_EMAIL_OUTBOX;
+if(!outbox)throw new Error('Set TEST_EMAIL_OUTBOX to the isolated backend test outbox.');
 try{
   const page=await browser.newPage();
   page.on('pageerror',e=>errors.push(e.message));
@@ -27,9 +30,7 @@ try{
   assert.ok(await page.$eval('#enter-worldloom',e=>Math.abs(e.getBoundingClientRect().width-innerWidth*.62)<1));
   assert.equal(await page.$eval('.game-media',e=>e.getBoundingClientRect().width),videoWidth,'video dimensions remain stable as the divider moves');
   await page.hover('#enter-tacticstrike');await wait(120);
-  const before=await page.$eval('#enter-worldloom',e=>e.getBoundingClientRect().width);
-  await page.hover('#enter-worldloom');
-  const after=await page.$eval('#enter-worldloom',e=>e.getBoundingClientRect().width);
+  const {before,after}=await page.$eval('#enter-worldloom',e=>{const before=e.getBoundingClientRect().width;e.dispatchEvent(new PointerEvent('pointerenter',{pointerType:'mouse'}));return {before,after:e.getBoundingClientRect().width};});
   assert.ok(Math.abs(after-before)<25,'retargeting must preserve continuity');
   await page.emulateMediaFeatures([{name:'prefers-reduced-motion',value:'reduce'}]);
   await page.mouse.move(-10,-10);await wait(1200);await page.hover('#enter-worldloom');await wait(90);
@@ -44,7 +45,26 @@ try{
   await page.waitForFunction(()=>document.querySelector('#account-message').textContent.includes('do not match'));
   await page.$eval('[name="confirm"]',(e,value)=>e.value=value,password);
   await page.click('.hub-account-form [type="submit"]');
+  await page.waitForFunction(()=>document.querySelector('#account-message').textContent.includes('Check your inbox'),{timeout:20000});
+  assert.equal(await page.evaluate(()=>localStorage.getItem('tacticstrike_account_session')),null,'registration must not create an active session');
+  const mail=(await readFile(outbox,'utf8')).trim().split('\n').map(line=>JSON.parse(line)).find(mail=>mail.to===email);
+  assert.ok(mail?.link);
+  const verification=new URL(mail.link);verification.host=new URL(base).host;
+  await page.goto(verification.href);
+  await page.waitForFunction(()=>document.querySelector('#account-title').textContent==='VERIFY YOUR EMAIL');
+  assert.equal(new URL(page.url()).hash,'','the verification token is removed from browser history');
+  await page.type('[name="password"]',password);await page.type('[name="confirm"]',password);
+  await page.click('.hub-account-form [type="submit"]');
   await page.waitForFunction(()=>!document.querySelector('#account-profile').hidden,{timeout:20000});
+  assert.equal(await page.$eval('#account-verification-status',e=>e.textContent),'Email verified');
+  await page.click('#account-generate-code');
+  await page.waitForFunction(()=>!document.querySelector('#account-friend-code').hidden);
+  const friendCode=await page.$eval('#account-friend-code',e=>e.textContent);
+  assert.match(friendCode,/^\d{4}$/);
+  assert.equal(await page.$eval('#account-generate-code',e=>e.hidden),true);
+  await page.screenshot({path:'../../outputs/unpaused-verified-friend-code.png'});
+  await page.setViewport({width:390,height:844});await page.screenshot({path:'../../outputs/unpaused-verified-friend-code-mobile.png'});
+  await page.setViewport({width:1440,height:900});
   assert.equal(await page.$eval('#account-email',e=>e.textContent),email);
   assert.equal(await page.$eval('[name="password"]',e=>e.value),'');
   await page.reload();await page.click('#open-account');
@@ -73,7 +93,7 @@ try{
   await page.$eval('[name="password"]',(e,v)=>e.value=v,password);
   await page.$eval('[name="confirm"]',(e,v)=>e.value=v,password);
   await page.click('.hub-account-form [type="submit"]');
-  await page.waitForFunction(()=>document.querySelector('#account-message').textContent.includes('already exists'));
+  await page.waitForFunction(()=>document.querySelector('#account-message').textContent.includes('Check your inbox'));
   await page.click('#account-close');
   await page.goto(new URL('/?account=login&return=credits',base).href);
   await page.type('[name="email"]',email);await page.type('[name="password"]',password);await page.click('.hub-account-form [type="submit"]');
@@ -90,5 +110,5 @@ try{
   await page.keyboard.press('Escape');assert.equal(await page.$eval('#hub-account',e=>e.open),false);
 
   assert.deepEqual(errors,[]);
-  console.log(JSON.stringify({passed:true,registration:true,passwordMismatch:true,wrongPassword:true,duplicateAccount:true,sessionRestore:true,crossTabLoginLogout:true,shooterEmailHidden:true,accountReturn:true,expiredSession:true,smoothHover:true,stableVideo:true,numberlessOnlineLabels:true}));
+  console.log(JSON.stringify({passed:true,registration:true,emailVerification:true,friendCode:true,passwordMismatch:true,wrongPassword:true,duplicateAccount:true,sessionRestore:true,crossTabLoginLogout:true,shooterEmailHidden:true,accountReturn:true,expiredSession:true,smoothHover:true,stableVideo:true,numberlessOnlineLabels:true}));
 }finally{await browser.close();}

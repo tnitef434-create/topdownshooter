@@ -2971,7 +2971,7 @@ function openCreditShopModal(source = 'menu') {
 }
 
 async function startCreditCheckout(packageId) {
-  if (!accountSession.user || !accountSession.token) {
+  if (!accountSession.user?.emailVerified || !accountSession.token) {
     openHubAccount();
     return;
   }
@@ -2993,6 +2993,7 @@ async function startCreditCheckout(packageId) {
     window.location.assign(result.checkoutUrl);
   } catch (error) {
     resetCreditCheckoutButtons();
+    if (error.code === 'EMAIL_VERIFICATION_REQUIRED') { openHubAccount(); return; }
     if (error.status === 401) {
       clearAccountSession();
       openHubAccount();
@@ -3491,9 +3492,9 @@ function updateAccountUI() {
   const status = document.getElementById('credit-shop-account-status');
   status?.classList.toggle('signed-in', Boolean(user));
   const label = status?.querySelector('span:last-child');
-  if (label) label.textContent = user ? 'UNPAUSED ACCOUNT CONNECTED' : accountAuthPending ? 'CONNECTING TO UNPAUSED…' : 'SIGN IN ON UNPAUSED';
+  if (label) label.textContent = user ? user.emailVerified ? 'UNPAUSED ACCOUNT CONNECTED' : 'VERIFY EMAIL ON UNPAUSED' : accountAuthPending ? 'CONNECTING TO UNPAUSED…' : 'SIGN IN ON UNPAUSED';
   document.querySelectorAll('#credit-shop-modal [data-buy-credit-pack]').forEach(button => {
-    if (button.firstChild) button.firstChild.textContent = user ? 'CONTINUE TO CHECKOUT ' : accountAuthPending ? 'CONNECTING TO UNPAUSED… ' : 'SIGN IN TO BUY ';
+    if (button.firstChild) button.firstChild.textContent = user ? user.emailVerified ? 'CONTINUE TO CHECKOUT ' : 'VERIFY EMAIL TO CONTINUE ' : accountAuthPending ? 'CONNECTING TO UNPAUSED… ' : 'SIGN IN TO BUY ';
   });
 }
 
@@ -3860,4 +3861,3 @@ window.addEventListener('opponent-chat-msg', (e) => {
   const { name, msg } = e.detail;
   appendChatMessage(name, msg, 'opponent');
 });
-

@@ -1,10 +1,11 @@
 import fs from 'fs';
 import path from 'path';
+import { randomInt } from 'node:crypto';
 import { neon } from '@neondatabase/serverless';
 
 function createEmptyLocalDatabase() {
   return {
-    version: 3,
+    version: 4,
     users: {},
     emailIndex: {},
     sessions: {},
@@ -27,6 +28,8 @@ function mapDatabaseUser(row) {
     },
     credits: Number(row.credits || 0),
     purchasedWeapons: Array.isArray(row.purchased_weapons) ? row.purchased_weapons : [],
+    emailVerifiedAt: row.email_verified_at ? new Date(row.email_verified_at).toISOString() : null,
+    friendCode: row.friend_code || null,
     createdAt: new Date(row.created_at).toISOString(),
     updatedAt: new Date(row.updated_at).toISOString()
   };
@@ -71,8 +74,8 @@ function mapPurchaseMessage(row) {
   };
 }
 
-export function createAccountStore({ databaseUrl = '', localFile }) {
-  const sql = databaseUrl ? neon(databaseUrl) : null;
+export function createAccountStore({ databaseUrl = '', localFile, sqlClient = null }) {
+  const sql = sqlClient || (databaseUrl ? neon(databaseUrl) : null);
   let localDatabase = createEmptyLocalDatabase();
   let ready = false;
   let initializationError = null;
@@ -135,6 +138,19 @@ export function createAccountStore({ databaseUrl = '', localFile }) {
           user_id UUID NOT NULL REFERENCES operative_accounts(id) ON DELETE CASCADE,
           expires_at TIMESTAMPTZ NOT NULL,
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `;
+      await sql`ALTER TABLE operative_accounts ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ`;
+      await sql`ALTER TABLE operative_accounts ADD COLUMN IF NOT EXISTS friend_code TEXT CHECK (friend_code ~ '^[0-9]{4}$')`;
+      await sql`CREATE UNIQUE INDEX IF NOT EXISTS operative_accounts_friend_code_idx ON operative_accounts(friend_code)`;
+      await sql`
+        CREATE TABLE IF NOT EXISTS operative_email_verifications (
+          user_id UUID PRIMARY KEY REFERENCES operative_accounts(id) ON DELETE CASCADE,
+          token_hash TEXT UNIQUE NOT NULL,
+          expires_at TIMESTAMPTZ NOT NULL,
+          sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          window_started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          send_count INTEGER NOT NULL DEFAULT 1
         )
       `;
       await sql`
@@ -283,6 +299,103 @@ export function createAccountStore({ databaseUrl = '', localFile }) {
     }
     localDatabase.sessions[tokenHash] = { userId, expiresAt };
     saveLocalDatabase();
+  }
+
+  // One outstanding link per account; the database enforces resend limits across instances.
+  async function reserveEmailVerification(userId, tokenHash, expiresAt, now = Date.now()) {
+    if (sql) {
+      const rows = await sql`
+        INSERT INTO operative_email_verifications (user_id, token_hash, expires_at, sent_at, window_started_at)
+        VALUES (${userId}, ${tokenHash}, ${new Date(expiresAt).toISOString()}, ${new Date(now).toISOString()}, ${new Date(now).toISOString()})
+        ON CONFLICT (user_id) DO UPDATE SET
+          token_hash = EXCLUDED.token_hash, expires_at = EXCLUDED.expires_at, sent_at = EXCLUDED.sent_at,
+          window_started_at = CASE WHEN operative_email_verifications.window_started_at <= EXCLUDED.sent_at - INTERVAL '24 hours' THEN EXCLUDED.sent_at ELSE operative_email_verifications.window_started_at END,
+          send_count = CASE WHEN operative_email_verifications.window_started_at <= EXCLUDED.sent_at - INTERVAL '24 hours' THEN 1 ELSE operative_email_verifications.send_count + 1 END
+        WHERE operative_email_verifications.sent_at <= EXCLUDED.sent_at - INTERVAL '60 seconds'
+          AND (operative_email_verifications.send_count < 5 OR operative_email_verifications.window_started_at <= EXCLUDED.sent_at - INTERVAL '24 hours')
+        RETURNING user_id
+      `;
+      return rows.length > 0;
+    }
+    localDatabase.emailVerifications ||= {};
+    const old = localDatabase.emailVerifications[userId];
+    const fresh = !old || old.windowStartedAt <= now - 86400000;
+    if (old && (old.sentAt > now - 60000 || (!fresh && old.sendCount >= 5))) return false;
+    localDatabase.emailVerifications[userId] = {tokenHash, expiresAt, sentAt:now, windowStartedAt:fresh?now:old.windowStartedAt, sendCount:fresh?1:old.sendCount+1};
+    saveLocalDatabase();
+    return true;
+  }
+
+  async function findEmailVerification(tokenHash) {
+    if (sql) {
+      const rows = await sql`SELECT user_id, expires_at FROM operative_email_verifications WHERE token_hash = ${tokenHash}`;
+      return rows[0] ? {userId:rows[0].user_id, expiresAt:new Date(rows[0].expires_at).getTime()} : null;
+    }
+    const entry = Object.entries(localDatabase.emailVerifications || {}).find(([,v])=>v.tokenHash === tokenHash);
+    return entry ? {userId:entry[0], expiresAt:entry[1].expiresAt} : null;
+  }
+
+  async function consumeEmailVerification(tokenHash, password, now = Date.now()) {
+    if (sql) {
+      const rows = await sql`
+        WITH consumed AS (
+          DELETE FROM operative_email_verifications WHERE token_hash = ${tokenHash} AND expires_at > ${new Date(now).toISOString()} RETURNING user_id
+        ), revoked AS (
+          DELETE FROM operative_sessions WHERE user_id IN (SELECT user_id FROM consumed)
+        )
+        UPDATE operative_accounts SET email_verified_at = COALESCE(email_verified_at, ${new Date(now).toISOString()}::timestamptz),
+          password_algorithm = ${password.algorithm}, password_salt = ${password.salt}, password_hash = ${password.hash}, updated_at = NOW()
+        WHERE id IN (SELECT user_id FROM consumed) RETURNING *
+      `;
+      return mapDatabaseUser(rows[0]);
+    }
+    const entry = Object.entries(localDatabase.emailVerifications || {}).find(([,v])=>v.tokenHash === tokenHash && v.expiresAt > now);
+    if (!entry) return null;
+    const user = localDatabase.users[entry[0]];
+    if (!user) return null;
+    delete localDatabase.emailVerifications[entry[0]];
+    for (const [key,session] of Object.entries(localDatabase.sessions)) if (session.userId === user.id) delete localDatabase.sessions[key];
+    user.emailVerifiedAt ||= new Date(now).toISOString();
+    user.password = password;
+    user.updatedAt = new Date(now).toISOString();
+    saveLocalDatabase();
+    return user;
+  }
+
+  async function generateFriendCode(userId) {
+    for (let attempt = 0; attempt < 32; attempt++) {
+      const user = await findUserById(userId);
+      if (!user?.emailVerifiedAt) throw Object.assign(new Error('Verify your email first.'), {code:'EMAIL_VERIFICATION_REQUIRED'});
+      if (user.friendCode) return user;
+      if (sql) {
+        try {
+          const rows = await sql`
+            WITH available AS (
+              SELECT lpad(n::text, 4, '0') AS code FROM generate_series(0,9999) AS n
+              WHERE NOT EXISTS (SELECT 1 FROM operative_accounts WHERE friend_code = lpad(n::text, 4, '0'))
+              ORDER BY random() LIMIT 1
+            )
+            UPDATE operative_accounts SET friend_code = available.code, updated_at = NOW() FROM available
+            WHERE id = ${userId} AND friend_code IS NULL AND email_verified_at IS NOT NULL RETURNING operative_accounts.*
+          `;
+          if (rows[0]) return mapDatabaseUser(rows[0]);
+          const current = await findUserById(userId);
+          if (current?.friendCode) return current;
+          break;
+        } catch (error) {
+          if (error?.code === '23505') continue; // Another account claimed this candidate; retry against the unique index.
+          throw error;
+        }
+      } else {
+        const used = new Set(Object.values(localDatabase.users).map(u=>u.friendCode).filter(Boolean));
+        const available = Array.from({length:10000},(_,n)=>String(n).padStart(4,'0')).filter(code=>!used.has(code));
+        if (!available.length) break;
+        // Recheck after the async read: concurrent requests for one account must be idempotent.
+        if (!user.friendCode) { user.friendCode=available[randomInt(available.length)]; saveLocalDatabase(); }
+        return user;
+      }
+    }
+    throw Object.assign(new Error('All four-digit friend codes are currently taken. Please try again later.'), {code:'FRIEND_CODES_UNAVAILABLE'});
   }
 
   async function findSession(tokenHash) {
@@ -613,6 +726,10 @@ export function createAccountStore({ databaseUrl = '', localFile }) {
     createSession,
     findSession,
     deleteSession,
+    reserveEmailVerification,
+    findEmailVerification,
+    consumeEmailVerification,
+    generateFriendCode,
     createPurchaseIntent,
     createPurchaseCase,
     listPurchaseCasesForUser,

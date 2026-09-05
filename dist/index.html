@@ -9,14 +9,15 @@
   <meta property="og:description" content="Wander a little. Or go all in. Play Worldloom and TacticStrike on Unpaused.">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="Unpaused">
-  <meta property="og:image" content="https://tacticstrike.nl/hub/unpaused-social.png">
+  <meta property="og:image" content="https://unpaused.online/hub/unpaused-social.png">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
   <title>Unpaused — Find your next game</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/hub/apple-touch-icon.png">
   <link rel="preload" as="image" href="/hub/worldloom-poster.jpg" fetchpriority="high">
-  <script type="module" crossorigin src="/assets/hub-aSKjHQ5j.js"></script>
+  <script type="module" crossorigin src="/assets/hub-C7w3ayfY.js"></script>
   <link rel="modulepreload" crossorigin href="/assets/account-session-D3X58vZL.js">
-  <link rel="stylesheet" crossorigin href="/assets/hub-eTyGtIyj.css">
+  <link rel="stylesheet" crossorigin href="/assets/hub-DzCiZTKQ.css">
 </head>
 <body>
   <header class="masthead">
@@ -68,6 +69,15 @@
     <button id="account-switch" class="account-text-button" type="button">New here? Create an account</button>
     <div id="account-profile" hidden>
       <p class="account-detail-label">EMAIL</p><p id="account-email" class="account-email"></p>
+      <p id="account-verification-status" class="account-verification-status"></p>
+      <button id="account-resend" class="account-primary" type="button" hidden>SEND VERIFICATION EMAIL</button>
+      <div id="account-friend" class="account-friend" hidden>
+        <p class="account-detail-label">YOUR FRIEND CODE</p>
+        <strong id="account-friend-code" class="friend-code" hidden></strong>
+        <button id="account-generate-code" class="account-primary" type="button">GENERATE MY CODE</button>
+        <button id="account-copy-code" class="account-text-button" type="button" hidden>Copy code</button>
+        <p class="account-hint">Four digits. Yours permanently. Generate once, share with friends.</p>
+      </div>
       <div class="account-balance"><span>TacticStrike credits</span><strong id="account-credits">0</strong></div>
       <a id="account-return" class="account-primary" href="/tacticstrike/?shop=credits">TACTICSTRIKE CREDIT SHOP</a>
       <button id="account-logout" class="account-text-button" type="button">Sign out</button>

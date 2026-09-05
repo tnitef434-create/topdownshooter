@@ -52,3 +52,6 @@ Build an original block-hewn survival-game UI heavily inspired by tactile voxel 
 - Avoid `backdrop-filter` on full-screen overlays and frequently repainted HUD elements.
 - Avoid large animated box shadows.
 - At ≤620px, panels fill most width, controls stay 44px tall, objective/time remain on one row when possible and stack only if necessary.
+
+
+Account verification: Resend sends a single-use, 30-minute email link. New accounts stay inactive until the inbox owner sets the final password. Existing credits and purchases remain intact. Verified accounts can generate one permanent, unique four-digit friend code (0000–9999) in the hub profile and copy it. No email addresses or friend-code generation controls appear inside TacticStrike. Resends are limited to one per minute and five per account per day. Canonical public domain: https://unpaused.online.

@@ -7,6 +7,7 @@ import fs from 'fs';
 import crypto from 'crypto';
 import { promisify } from 'util';
 import { createAccountStore } from './accountStore.js';
+import { createAccountMailer } from './accountEmail.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -35,6 +36,7 @@ const accountStore = createAccountStore({
   localFile: process.env.LOCAL_ACCOUNT_DATABASE_FILE || path.join(__dirname, 'accounts.json')
 });
 const requirePersistentAccountStore = process.env.RENDER === 'true' || process.env.NODE_ENV === 'production';
+const accountMailer = createAccountMailer();
 
 function constantTimeTextEqual(left, right) {
   const leftBuffer = Buffer.from(String(left));
@@ -131,6 +133,8 @@ function publicAccount(user) {
     id: user.id,
     email: user.email,
     displayName: user.displayName,
+    emailVerified: Boolean(user.emailVerifiedAt),
+    friendCode: user.friendCode || null,
     credits: user.credits || 0,
     provider: 'email',
     createdAt: user.createdAt
@@ -159,6 +163,21 @@ function ensureAccountStoreAvailable(res) {
 function requireAccountStore(req, res, next) {
   if (ensureAccountStoreAvailable(res)) next();
 }
+
+function requireVerifiedEmail(req, res, next) {
+  if (!req.account.emailVerifiedAt) return res.status(403).json({error:'EMAIL_VERIFICATION_REQUIRED',message:'Verify your email on Unpaused to continue.'});
+  next();
+}
+
+async function sendAccountVerification(user) {
+  if (user.emailVerifiedAt) return;
+  if (!accountMailer.configured) throw Object.assign(new Error('Email verification is being configured. Please try again soon.'),{code:'EMAIL_UNAVAILABLE'});
+  const token=crypto.randomBytes(32).toString('base64url');
+  if (!await accountStore.reserveEmailVerification(user.id, hashSessionToken(token), Date.now()+30*60*1000)) return;
+  await accountMailer.sendVerification(user.email,token);
+}
+
+const verificationMessage='Check your inbox for a verification link. If you already have an active account, sign in instead.';
 
 async function authenticateAccount(req, res, next) {
   try {
@@ -205,6 +224,8 @@ const authAttempts = new Map();
 function authRateLimit(req, res, next) {
   const key = req.ip || req.socket.remoteAddress || 'unknown';
   const now = Date.now();
+  for (const [address, attempt] of authAttempts) if (attempt.resetAt <= now) authAttempts.delete(address);
+  if (!authAttempts.has(key) && authAttempts.size >= 10000) return res.status(429).json({error:'TOO_MANY_ATTEMPTS',message:'Please try again shortly.'});
   const current = authAttempts.get(key);
   const record = !current || current.resetAt <= now ? { count: 0, resetAt: now + 15 * 60 * 1000 } : current;
   record.count += 1;
@@ -285,13 +306,15 @@ app.use((req, res, next) => {
   next();
 });
 app.use(express.json({ limit: '3mb' }));
+app.use('/api/auth', (req,res,next)=>{res.setHeader('Cache-Control','no-store');next();});
 
 app.get('/api/auth/status', (req, res) => {
   const persistent = accountStore.isPersistent;
   res.json({
     available: accountStore.isReady && (!requirePersistentAccountStore || persistent),
     persistent,
-    storage: persistent ? 'postgresql' : 'local-development'
+    storage: persistent ? 'postgresql' : 'local-development',
+    emailVerification:accountMailer.configured
   });
 });
 
@@ -308,9 +331,12 @@ app.post('/api/auth/register', requireAccountStore, authRateLimit, async (req, r
       res.status(400).json({ error: 'INVALID_PASSWORD', message: 'Passcode must be between 8 and 128 characters.' });
       return;
     }
-    if (await accountStore.findUserByEmail(email)) {
-      res.status(409).json({ error: 'EMAIL_IN_USE', message: 'An account already exists for this email.' });
-      return;
+    if (!accountMailer.configured) return res.status(503).json({error:'EMAIL_UNAVAILABLE',message:'Email verification is being configured. Please try again soon.'});
+    const existing = await accountStore.findUserByEmail(email);
+    if (existing) {
+      // Email ownership establishes the final password; a pending signup cannot squat another person's address.
+      if (!existing.emailVerifiedAt) await sendAccountVerification(existing);
+      return res.status(202).json({verificationRequired:true,message:verificationMessage});
     }
 
     const id = crypto.randomUUID();
@@ -326,14 +352,15 @@ app.post('/api/auth/register', requireAccountStore, authRateLimit, async (req, r
       createdAt: now,
       updatedAt: now
     });
-    const session = await createSession(id);
-    res.status(201).json({ ...session, user: publicAccount(user) });
+    await sendAccountVerification(user);
+    res.status(202).json({verificationRequired:true,message:verificationMessage});
   } catch (error) {
     if (error?.code === 'DUPLICATE_EMAIL') {
-      res.status(409).json({ error: 'EMAIL_IN_USE', message: 'An account already exists for this email.' });
+      res.status(202).json({verificationRequired:true,message:verificationMessage});
       return;
     }
-    console.error('Account registration failed:', error);
+    if (error?.code === 'EMAIL_UNAVAILABLE' || error?.code === 'EMAIL_DELIVERY_FAILED') return res.status(503).json({error:'EMAIL_UNAVAILABLE',message:'Verification email could not be sent. Please try again in a minute.'});
+    console.error('Account registration failed:', error.code || 'DATABASE_ERROR');
     res.status(500).json({ error: 'REGISTER_FAILED', message: 'Account creation is temporarily unavailable.' });
   }
 });
@@ -342,21 +369,55 @@ app.post('/api/auth/login', requireAccountStore, authRateLimit, async (req, res)
   try {
     const email = normalizeEmail(req.body?.email);
     const password = String(req.body?.password || '');
+    if (!isValidEmail(email)||password.length>128) return res.status(401).json({error:'INVALID_CREDENTIALS',message:'Incorrect email or password.'});
     const user = await accountStore.findUserByEmail(email);
     if (!user || !(await verifyPassword(password, user.password))) {
       res.status(401).json({ error: 'INVALID_CREDENTIALS', message: 'Incorrect email or passcode.' });
       return;
     }
+    if (!user.emailVerifiedAt) {
+      await sendAccountVerification(user);
+      return res.status(202).json({verificationRequired:true,message:'Check your inbox and verify your email before signing in. You can request another link after one minute.'});
+    }
     const session = await createSession(user.id);
     res.json({ ...session, user: publicAccount(user) });
   } catch (error) {
-    console.error('Account login failed:', error);
+    if (error?.code === 'EMAIL_UNAVAILABLE' || error?.code === 'EMAIL_DELIVERY_FAILED') return res.status(503).json({error:'EMAIL_UNAVAILABLE',message:'Verification email could not be sent. Please try again in a minute.'});
+    console.error('Account login failed:', error.code || 'DATABASE_ERROR');
     res.status(500).json({ error: 'LOGIN_FAILED', message: 'Sign-in is temporarily unavailable.' });
   }
 });
 
 app.get('/api/auth/me', authenticateAccount, (req, res) => {
   res.json({ user: publicAccount(req.account) });
+});
+
+app.post('/api/auth/verify-email', requireAccountStore, authRateLimit, async (req,res)=>{
+  try {
+    const token=String(req.body?.token||''), password=String(req.body?.password||'');
+    if (!/^[A-Za-z0-9_-]{43}$/.test(token)||password.length<8||password.length>128) return res.status(400).json({error:'INVALID_VERIFICATION',message:'This link is invalid or expired. Request a new link by signing in.'});
+    const hash=hashSessionToken(token);
+    const verification=await accountStore.findEmailVerification(hash);
+    const user=verification&&verification.expiresAt>Date.now()?await accountStore.findUserById(verification.userId):null;
+    if (!user) return res.status(400).json({error:'INVALID_VERIFICATION',message:'This link is invalid or expired. Request a new link by signing in.'});
+    const verified=await accountStore.consumeEmailVerification(hash,await createPasswordRecord(password));
+    if (!verified) return res.status(400).json({error:'INVALID_VERIFICATION',message:'This link has already been used or expired.'});
+    const session=await createSession(verified.id);
+    res.json({...session,user:publicAccount(verified)});
+  } catch(error) {
+    console.error('Email verification failed:',error.code||'DATABASE_ERROR');
+    res.status(503).json({error:'VERIFICATION_FAILED',message:'Verification is temporarily unavailable. Please try again.'});
+  }
+});
+
+app.post('/api/auth/resend-verification', authenticateAccount, authRateLimit, async(req,res)=>{
+  try {await sendAccountVerification(req.account);res.json({message:'Check your inbox. You can request another link after one minute.'});}
+  catch(error) {res.status(503).json({error:'EMAIL_UNAVAILABLE',message:'Verification email could not be sent. Please try again later.'});}
+});
+
+app.post('/api/auth/friend-code', authenticateAccount, requireVerifiedEmail, authRateLimit, async(req,res)=>{
+  try {res.json({user:publicAccount(await accountStore.generateFriendCode(req.account.id))});}
+  catch(error) {res.status(503).json({error:'FRIEND_CODES_UNAVAILABLE',message:'A friend code is not available right now. Please try again later.'});}
 });
 
 app.post('/api/auth/logout', authenticateAccount, async (req, res) => {
@@ -369,7 +430,7 @@ app.post('/api/auth/logout', authenticateAccount, async (req, res) => {
   }
 });
 
-app.post('/api/credits/checkout', authenticateAccount, async (req, res) => {
+app.post('/api/credits/checkout', authenticateAccount, requireVerifiedEmail, async (req, res) => {
   try {
     const packageId = String(req.body?.packageId || '');
     const creditPackage = CREDIT_PACKAGES[packageId];
