@@ -109,11 +109,11 @@ try{
   assert.equal(await reduced.$eval('.games',e=>getComputedStyle(e).transitionDuration),'0s');
   await reduced.setViewport({width:1200,height:630});
   await reduced.mouse.move(-10,-10);
-  await reduced.screenshot({path:'src/public/hub/unpaused-social.png',type:'png'});
+  await reduced.screenshot({path:'../../outputs/unpaused-hub-social-preview.png',type:'png'});
   const iconPage=await browser.newPage();
   await iconPage.setViewport({width:180,height:180,deviceScaleFactor:1});
   await iconPage.goto(new URL('favicon.svg',base).href);
-  await iconPage.screenshot({path:'src/public/hub/apple-touch-icon.png',type:'png'});
+  await iconPage.screenshot({path:'../../outputs/unpaused-icon-preview.png',type:'png'});
   await iconPage.close();
 
   const phoneMenu=await browser.newPage();await phoneMenu.setViewport({width:390,height:844});
