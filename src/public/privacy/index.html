@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#080b0d">
+  <meta name="description" content="How Unpaused uses account information, Google sign-in, saved worlds, browser storage, and purchase support information.">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <title>Privacy — Unpaused</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <style>
+    :root{color-scheme:dark;font-family:Arial,Helvetica,sans-serif;color:#e8e9e7;background:#080b0d;font-synthesis:none}
+    *{box-sizing:border-box}
+    body{margin:0;min-width:280px}
+    a{color:#ff916e;text-underline-offset:4px;text-decoration-thickness:1px}
+    a:hover{color:#ffc4ae}
+    a:focus-visible{outline:2px solid #ff6339;outline-offset:6px;border-radius:2px}
+    .skip{position:absolute;top:12px;left:24px;transform:translateY(-200%);padding:12px;background:#080b0d;z-index:2}
+    .skip:focus{transform:none}
+    header{max-width:1200px;margin:auto;padding:30px 40px;display:flex;justify-content:space-between;align-items:center;gap:24px}
+    .brand{display:inline-flex;align-items:center;gap:12px;color:#f4f6ed;text-decoration:none;font-weight:800;font-size:19px;letter-spacing:-.5px}
+    .brand img{display:block;width:36px;height:39px}
+    .back{font-size:12px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;text-decoration:none;color:#c7cbc9;white-space:nowrap}
+    main{max-width:1000px;padding:60px 40px 90px;margin:auto}
+    .eyebrow{color:#ff805d;font-size:12px;letter-spacing:2.1px;font-weight:700;margin:0 0 20px;text-transform:uppercase}
+    h1{font-size:clamp(44px,8vw,78px);font-weight:800;line-height:1;letter-spacing:-3px;margin:0 0 25px}
+    .intro{font-size:20px;line-height:1.6;max-width:670px;color:#c7ceca;margin:0}
+    .updated{font-size:12px;color:#8f9b94;margin:24px 0 0;letter-spacing:.3px}
+    .layout{display:grid;grid-template-columns:190px minmax(0,1fr);gap:56px;margin-top:58px;border-top:1px solid #ffffff1f;padding-top:38px}
+    nav{align-self:start;position:sticky;top:30px}
+    nav p{font-size:11px;text-transform:uppercase;letter-spacing:1.5px;color:#8f9b94;margin:0 0 17px}
+    nav ol{list-style:none;margin:0;padding:0;display:grid;gap:13px}
+    nav a{font-size:13px;color:#c7ceca;text-decoration:none}
+    article{min-width:0}
+    section{scroll-margin-top:28px;margin-bottom:38px}
+    h2{font-size:22px;color:#f4f6ed;letter-spacing:-.5px;line-height:1.25;margin:0 0 15px}
+    p,li{font-size:15px;line-height:1.8}
+    article p{margin:0 0 15px;color:#bdc5c0}
+    article ul{padding-left:19px;margin:0 0 18px;color:#bdc5c0}
+    article li{padding-left:3px;margin:9px 0}
+    strong{color:#e5eae5;font-weight:700}
+    .contact{padding:25px 28px;border-left:3px solid #ff6339;background:#111719}
+    .contact p:last-child{margin-bottom:0}
+    .contact a{overflow-wrap:anywhere}
+    footer{max-width:1200px;margin:auto;border-top:1px solid #ffffff14;padding:26px 40px 34px;display:flex;justify-content:space-between;gap:20px;color:#839088;font-size:12px}
+    footer a{color:#b8c1bb;text-decoration:none}
+    @media(max-width:700px){header{padding:23px 24px}.brand{font-size:17px}.back{font-size:10px;letter-spacing:.7px}main{padding:45px 24px 42px}h1{letter-spacing:-2px}.intro{font-size:18px}.layout{display:block;margin-top:38px;padding-top:26px}nav{position:static;border-bottom:1px solid #ffffff1f;padding-bottom:26px;margin-bottom:34px}nav ol{display:flex;flex-wrap:wrap;gap:13px 23px}section{margin-bottom:34px}.contact{padding:21px}footer{padding:24px;font-size:11px}}
+    @media print{:root{color:#111;background:white}header,nav,footer{display:none}main{padding:0;max-width:none}.layout{display:block;margin-top:25px;padding-top:20px}h1,h2,strong,article p,article ul,.intro,.updated{color:#111}.contact{background:none}a{color:#111}section{break-inside:avoid}}
+  </style>
+</head>
+<body>
+  <a class="skip" href="#privacy">Skip to privacy notice</a>
+  <header>
+    <a class="brand" href="/" aria-label="Unpaused home">
+      <img src="/hub/u-mark.svg" width="36" height="39" alt="Unpaused">
+    </a>
+    <a class="back" href="/">← Back to the games</a>
+  </header>
+  <main id="privacy">
+    <p class="eyebrow">Your information</p>
+    <h1>Privacy.</h1>
+    <p class="intro">This notice explains the information used to run Unpaused, including Worldloom, TacticStrike, and your shared account.</p>
+    <p class="updated">Last updated <time datetime="2026-09-06">6 September 2026</time></p>
+    <div class="layout">
+      <nav aria-label="Privacy notice contents">
+        <p>On this page</p>
+        <ol>
+          <li><a href="#accounts">Accounts &amp; sign-in</a></li>
+          <li><a href="#games">Games &amp; saved worlds</a></li>
+          <li><a href="#storage">Browser storage</a></li>
+          <li><a href="#purchases">Purchases &amp; support</a></li>
+          <li><a href="#providers">Service providers</a></li>
+          <li><a href="#choices">Your choices &amp; contact</a></li>
+        </ol>
+      </nav>
+      <article aria-label="Privacy notice">
+        <section id="accounts">
+          <h2>Accounts &amp; sign-in</h2>
+          <p>When you create an account, Unpaused stores your email address, account identifier, verification status, chosen username, account dates, and friend code if you generate one. Your account can also hold credit balances and unlocked items. This information connects your profile, purchases, and saved worlds.</p>
+          <p>For email sign-in, the account service stores a salted password hash. Verification and password-reset emails are used to confirm email ownership and restore access. The service stores hashed sign-in and email-link tokens, along with information used to limit repeated requests.</p>
+          <p><strong>If you choose Google sign-in,</strong> Google provides a signed identity token containing your Google account identifier, email address, verification information, and basic profile information. Unpaused checks the token and stores your stable Google identifier and verified email to create or connect your account. The current integration does not save your Google profile photo or use your Google display name as your game username. It does not request access to your Gmail messages, Drive files, or contacts.</p>
+        </section>
+        <section id="games">
+          <h2>Games &amp; saved worlds</h2>
+          <p>Account-based Worldloom saves include the world name and seed, ownership and invitations, terrain changes, game progress, inventory, player state, and save dates. These records let you return to a world and keep shared play in sync. Local worlds can also be saved in your browser or imported into your account.</p>
+          <p>During multiplayer, other participants receive your player name and the gameplay information needed to play together, such as position, actions, equipped items, and shared world changes. A Worldloom invitation identifies the world and its players. Your account email and Google identifier are not included in the public player profile.</p>
+          <p>TacticStrike also uses a browser device identifier to save and sync its player name, match statistics, ranking, credits, and unlocked items. Match messages you send are relayed to other participants. Connection details, room activity, and errors are processed to operate the games, diagnose problems, and limit abuse; this can include IP addresses and connection identifiers.</p>
+        </section>
+        <section id="storage">
+          <h2>Browser storage</h2>
+          <p>Unpaused uses browser storage to keep you signed in and remember your cached account profile, game settings, progress, local world saves, and recovery information. Account sessions persist across browser visits until you sign out or the session is revoked.</p>
+          <p>TacticStrike saves its device identifier in both local storage and a cookie. Clearing only one may leave the other copy available. Your browser’s site-data controls can remove these records; doing so can sign you out and erase local progress that has not been saved to your account. Google’s sign-in interface may use its own browser storage when you interact with it.</p>
+        </section>
+        <section id="purchases">
+          <h2>Purchases &amp; support</h2>
+          <p>Credit checkout opens Revolut, where payment information is handled. Unpaused records the selected credit package and checkout request. If you open a purchase-support case, it stores your order reference, messages, uploaded receipt images, credit decisions, and case history so the purchase can be checked and support can reply. Receipt images may contain personal or payment information you include; obscure unrelated details before uploading.</p>
+          <p>Purchase-support information is available to the account holder and the administrators handling the case.</p>
+        </section>
+        <section id="providers">
+          <h2>Service providers</h2>
+          <p>The following services process information as part of providing Unpaused:</p>
+          <ul>
+            <li><strong>Cloudflare</strong> hosts and delivers the website.</li>
+            <li><strong>Render</strong> runs the account and game servers, including multiplayer connections.</li>
+            <li><strong>Neon</strong> stores account records and account-based Worldloom saves in the database.</li>
+            <li><strong>Resend</strong> receives the recipient email address and email content to deliver account verification and password-reset messages.</li>
+            <li><strong>Google</strong> provides the optional Google sign-in interface and identity verification.</li>
+            <li><strong>Revolut</strong> provides credit payment checkout.</li>
+          </ul>
+          <p>Requests to these services can also include technical information such as IP address, browser details, request time, and service errors. Google and Revolut provide their own information about how they handle data when you use their interfaces.</p>
+        </section>
+        <section id="choices">
+          <h2>Your choices &amp; contact</h2>
+          <p>You can change your username in your account, reset your email password, and sign out. In the account’s world list, an owner can delete a saved Worldloom world. This removes the world from the active world database and ends access for its participants. Signing out, clearing browser data, or removing Google’s connection does not itself delete your Unpaused account or its saved worlds.</p>
+          <p>Account, game, and purchase records are stored so these features and support history remain available. The site does not currently provide a button to delete an entire account. For questions about information held about you, or to request access, correction, or deletion, use the contact below.</p>
+          <div class="contact">
+            <p><strong>Contact Unpaused</strong><br><a href="mailto:hot.tt.fyp@gmail.com">hot.tt.fyp@gmail.com</a></p>
+            <p>Include the email associated with your account and describe your request. Do not send your password, sign-in token, or an unused verification or reset link. We may need to confirm account ownership before acting on a request.</p>
+          </div>
+        </section>
+      </article>
+    </div>
+  </main>
+  <footer><span>Unpaused · Privacy</span><a href="/">Return to the games ↑</a></footer>
+</body>
+</html>

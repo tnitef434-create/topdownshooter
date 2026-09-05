@@ -66,6 +66,7 @@ export function mountAccountDialog() {
       </div>
       <button id="account-logout" class="account-text-button" type="button">Sign out</button>
     </div>
+    <a class="account-privacy" href="/privacy/" target="_blank" rel="noopener">Privacy</a>
     </div>
   </dialog>`;
   const dialog = template.content.firstElementChild;

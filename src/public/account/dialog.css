@@ -74,3 +74,5 @@
 .account-auth-divider{display:flex;align-items:center;gap:12px;color:#a6958a;font:12px Arial,sans-serif;margin:22px 0 -8px}
 .account-auth-divider::before,.account-auth-divider::after{content:"";height:1px;flex:1;background:#39231a}
 .account-dialog .hub-account-form input:focus-visible{outline-offset:-3px}
+.account-privacy{display:block;width:max-content;margin:24px auto 4px;padding:8px;color:#a6958a;font:12px Arial,sans-serif;text-underline-offset:4px}
+.account-privacy:hover{color:#ff9978}

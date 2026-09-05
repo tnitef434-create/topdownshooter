@@ -86,6 +86,8 @@ worlds.json.tmp
 !dist/loop-video.js
 !dist/account/
 !dist/account/**
+!dist/privacy/
+!dist/privacy/**
 !dist/worldloom-entry.css
 !dist/worldloom/src/multiplayer.js
 !dist/worldloom/src/account-menu.js
