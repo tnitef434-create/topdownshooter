@@ -14,6 +14,7 @@ import { installShooterAccountIdentity } from './shooterAccountIdentity.js';
 import { createShooterRoomRecovery, SHOOTER_SOCKET_OPTIONS } from './shooterRoomRecovery.js';
 import { createWorldStore } from './worldStore.js';
 import { installWorldServer } from './worldServer.js';
+import { creditCheckoutAvailability, requireCreditCheckoutAvailable } from './creditCheckout.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -332,6 +333,7 @@ app.get('/api/auth/status', (req, res) => {
     storage: persistent ? 'postgresql' : 'local-development',
     persistentSessions: true,
     accountUsernames: true,
+    creditCheckout: creditCheckoutAvailability(),
     googleClientId: googleAuth.clientId,
     revision: /^[a-f0-9]{40}$/i.test(process.env.RENDER_GIT_COMMIT || '') ? process.env.RENDER_GIT_COMMIT : null,
     emailVerification:accountMailer.configured
@@ -500,10 +502,15 @@ app.post('/api/auth/logout', authenticateAccount, async (req, res) => {
   }
 });
 
-app.post('/api/credits/checkout', authenticateAccount, requireVerifiedEmail, async (req, res) => {
+app.get('/api/credits/status', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json(creditCheckoutAvailability());
+});
+
+app.post('/api/credits/checkout', authenticateAccount, requireVerifiedEmail, requireCreditCheckoutAvailable, async (req, res) => {
   try {
     const packageId = String(req.body?.packageId || '');
-    const creditPackage = CREDIT_PACKAGES[packageId];
+    const creditPackage = Object.hasOwn(CREDIT_PACKAGES,packageId) ? CREDIT_PACKAGES[packageId] : null;
     if (!creditPackage) {
       res.status(400).json({ error: 'PACKAGE_UNAVAILABLE', message: 'That credit package is not available yet.' });
       return;

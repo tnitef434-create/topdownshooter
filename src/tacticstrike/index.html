@@ -684,21 +684,6 @@
       </div>
     </div>
 
-    <!-- News Screen Modal -->
-    <div id="news-modal" class="modal-overlay" style="z-index: 12000; background: rgba(0, 0, 0, 0.85); backdrop-filter: blur(8px);">
-      <div class="modal-card" style="max-width: 480px; border: 1px solid var(--neon-teal); box-shadow: 0 0 30px rgba(102, 252, 241, 0.15); padding: 35px 28px;">
-         <div style="font-family: var(--font-title); font-size: 10px; color: var(--neon-yellow); letter-spacing: 2px; font-weight: 700; margin-bottom: 6px;">TACTICSTRIKE INTELLIGENCE FEED</div>
-         <h2 style="font-family: var(--font-title); font-size: 26px; color: #fff; margin-bottom: 15px; letter-spacing: 1.5px; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 12px; font-weight: 900;">DAILY NEWS UPDATE</h2>
-         <div style="font-family: 'Inter', sans-serif; font-size: 13px; line-height: 1.6; color: #a2aab8; margin-bottom: 25px;">
-           <p style="margin-bottom: 14px;">⚡ <strong style="color: #fff;">BATTLEPASS UPDATE:</strong> Battlepasses will be added later today! Prepare for the long, hard grind to unlock exclusive titles, weapons, and seasonal rewards.</p>
-           <p style="margin-bottom: 14px;">🤝 <strong style="color: #66fcf1;">SPECIAL PARTNERSHIP:</strong> In collaboration with <strong style="color: #66fcf1; font-family: var(--font-title);">BANKZITTERSRATINGS</strong>! Expect custom ratings, rankings, and exclusive partnership integration coming very soon.</p>
-         </div>
-         <div class="modal-actions" style="margin-top: 15px;">
-           <button id="btn-close-news" class="btn primary btn-3d" style="width: 100%; font-size: 12px; padding: 12px;">AUTHORIZE & PROCEED</button>
-         </div>
-      </div>
-    </div>
-
     <!-- What's New Screen Modal -->
     <div id="whats-new-modal" class="modal-overlay" style="z-index: 12000; background: rgba(0, 0, 0, 0.85); backdrop-filter: blur(8px);">
       <div class="modal-card" style="max-width: 480px; border: 1px solid var(--neon-teal); box-shadow: 0 0 30px rgba(102, 252, 241, 0.15); padding: 35px 28px;">
@@ -734,15 +719,15 @@
 
         <div class="credit-shop-intro">
           <div>
-            <span class="section-kicker">SELECT CREDIT DROP</span>
-            <p>Secure checkout — a verified account is required.</p>
+            <span id="credit-checkout-heading" class="section-kicker">CREDIT PURCHASES PAUSED</span>
+            <p id="credit-checkout-status" role="status" aria-live="polite">Credit purchases are temporarily unavailable. Existing credits and purchase support are still available.</p>
           </div>
           <button id="credit-shop-account-status" class="credit-shop-account-status" type="button" data-open-account><img src="/hub/u-mark.svg" alt="Unpaused" width="22" height="22"><span class="account-status-dot"></span><span>SIGN IN</span></button>
         </div>
 
         <div class="credit-pack-grid">
           <article class="credit-pack credit-pack-featured">
-            <span class="credit-pack-status">AVAILABLE NOW</span>
+            <span class="credit-pack-status">PURCHASES PAUSED</span>
             <div class="credit-token-mark" aria-hidden="true"><img src="/tacticstrike-credit-stack.webp" alt=""><span>50</span></div>
             <h3>50 CREDITS</h3>
             <p class="credit-pack-subtitle">FIELD DROP</p>
@@ -752,12 +737,14 @@
               class="credit-buy-btn btn-3d"
               type="button"
               data-buy-credit-pack="50"
-              aria-label="Buy 50 TacticStrike credits for €0.99"
-            >CONTINUE TO CHECKOUT <span>↗</span></button>
+              aria-label="Purchases paused for 50 TacticStrike credits"
+              aria-describedby="credit-checkout-status"
+              disabled
+            >PURCHASES PAUSED</button>
           </article>
 
           <article class="credit-pack credit-pack-featured">
-            <span class="credit-pack-status">AVAILABLE NOW</span>
+            <span class="credit-pack-status">PURCHASES PAUSED</span>
             <div class="credit-token-mark" aria-hidden="true"><img src="/tacticstrike-credit-stack.webp" alt=""><span>500</span></div>
             <h3>500 CREDITS</h3>
             <p class="credit-pack-subtitle">STRIKE CACHE</p>
@@ -767,8 +754,10 @@
               class="credit-buy-btn btn-3d"
               type="button"
               data-buy-credit-pack="500"
-              aria-label="Buy 500 TacticStrike credits for €4.99"
-            >CONTINUE TO CHECKOUT <span>↗</span></button>
+              aria-label="Purchases paused for 500 TacticStrike credits"
+              aria-describedby="credit-checkout-status"
+              disabled
+            >PURCHASES PAUSED</button>
           </article>
 
           <article class="credit-pack credit-pack-locked" aria-disabled="true">
@@ -889,14 +878,14 @@
         <section class="shop-credit-banner" aria-label="Buy TacticStrike credits">
           <div class="shop-credit-art" aria-hidden="true"><img src="/tacticstrike-credit-stack.webp" alt=""><span class="shop-credit-scan"></span></div>
           <div class="shop-credit-banner-copy">
-            <span class="shop-credit-banner-kicker">FIELD DROP AVAILABLE</span>
+            <span id="shop-credit-availability" class="shop-credit-banner-kicker">CREDIT PURCHASES PAUSED</span>
             <h3>LOW ON CREDITS?</h3>
-            <p>Choose a 50-credit field drop or a 500-credit strike cache and get back to the armory.</p>
+            <p id="shop-credit-purchase-status" role="status" aria-live="polite">Credit purchases are temporarily unavailable. Existing credits and purchase support are still available.</p>
           </div>
           <div class="shop-credit-banner-actions">
             <button class="shop-credit-packs-btn" type="button" data-open-credit-shop>VIEW CREDIT PACKS</button>
-            <button class="shop-credit-direct-btn" type="button" data-buy-credit-pack="50">BUY 50 · €0.99 <span>↗</span></button>
-            <button class="shop-credit-direct-btn" type="button" data-buy-credit-pack="500">BUY 500 · €4.99 <span>↗</span></button>
+            <button class="shop-credit-direct-btn" type="button" data-buy-credit-pack="50" aria-label="Purchases paused for 50 TacticStrike credits" aria-describedby="shop-credit-purchase-status" disabled>PURCHASES PAUSED</button>
+            <button class="shop-credit-direct-btn" type="button" data-buy-credit-pack="500" aria-label="Purchases paused for 500 TacticStrike credits" aria-describedby="shop-credit-purchase-status" disabled>PURCHASES PAUSED</button>
           </div>
         </section>
 

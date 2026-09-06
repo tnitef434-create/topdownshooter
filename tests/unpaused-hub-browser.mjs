@@ -52,7 +52,7 @@ try{
   assert.equal(await page.$('#worldloom-frame'),null);
   assert.match(page.url(),/tacticstrike\//);
   await page.waitForFunction(()=>!document.querySelector('#startup-overlay'),{timeout:15000});
-  if (await page.$('#news-modal.active')) await page.click('#btn-close-news');
+  assert.equal(await page.$('#news-modal'),null,'the obsolete automatic news popup must stay removed');
   await page.waitForSelector('.hub-return',{visible:true,timeout:15000});
   await Promise.all([page.waitForNavigation({waitUntil:'domcontentloaded'}),page.click('.hub-return')]);
   await page.waitForSelector('#enter-worldloom');

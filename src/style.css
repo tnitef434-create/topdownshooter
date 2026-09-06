@@ -528,6 +528,12 @@ footer {
   font-size: 11px;
 }
 
+#credit-checkout-status {
+  max-width: 520px;
+  color: #c6c9cf;
+  line-height: 1.65;
+}
+
 .credit-shop-account-status {
   display: inline-flex;
   align-items: center;
@@ -721,6 +727,8 @@ footer {
   box-shadow: none;
   cursor: not-allowed;
 }
+
+.credit-buy-btn[data-buy-credit-pack]:disabled { color: #b9bdc5; }
 
 .credit-shop-footer {
   display: flex;
@@ -3741,6 +3749,16 @@ footer {
 .shop-exit-btn:hover {
   filter: brightness(1.1);
   transform: translateY(-1px);
+}
+
+.shop-credit-direct-btn:disabled {
+  cursor: not-allowed;
+  border-color: rgba(255, 255, 255, .12);
+  color: #b9bdc5;
+  background: #16191f;
+  box-shadow: none;
+  transform: none;
+  filter: none;
 }
 
 .item-shop-section-bar {

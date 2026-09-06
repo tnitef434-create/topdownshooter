@@ -2818,7 +2818,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
   initSettings();
   const accountRestore = initAccountAuth();
-  initNewsModal();
   initWhatsNewModal();
   initCreditShop();
   initPurchaseSupport();
@@ -2883,24 +2882,6 @@ function isWeaponUnlocked(weaponKey) {
   return rp >= req.rp;
 }
 
-function initNewsModal() {
-  const newsModal = document.getElementById('news-modal');
-  const closeNewsBtn = document.getElementById('btn-close-news');
-  
-  if (!newsModal || !closeNewsBtn) return;
-  
-  const hasSeenNews = sessionStorage.getItem('tacticstrike_news_seen');
-  if (!hasSeenNews) {
-    newsModal.classList.add('active');
-  }
-  
-  closeNewsBtn.addEventListener('click', () => {
-    newsModal.classList.remove('active');
-    sessionStorage.setItem('tacticstrike_news_seen', 'true');
-    playMenuClick();
-  });
-}
-
 function initWhatsNewModal() {
   const whatsNewModal = document.getElementById('whats-new-modal');
   const openWhatsNewBtn = document.getElementById('btn-open-whats-new');
@@ -2919,11 +2900,17 @@ function initWhatsNewModal() {
   });
 }
 
+const CREDIT_CHECKOUT_PAUSED_MESSAGE = 'Credit purchases are temporarily unavailable. Existing credits and purchase support are still available.';
+let creditCheckoutAvailable = false;
+let creditCheckoutStarting = false;
+let creditCheckoutForcedPause = false;
+let creditCheckoutStatusGeneration = 0;
+let creditCheckoutMessage = CREDIT_CHECKOUT_PAUSED_MESSAGE;
+
 function initCreditShop() {
   const creditShopModal = document.getElementById('credit-shop-modal');
   const openCreditShopBtn = document.getElementById('btn-open-credit-shop');
   const closeCreditShopBtn = document.getElementById('btn-close-credit-shop');
-  const buyCreditsButtons = document.querySelectorAll('#credit-shop-modal [data-buy-credit-pack]');
 
   if (!creditShopModal || !closeCreditShopBtn) return;
 
@@ -2937,7 +2924,7 @@ function initCreditShop() {
 
   document.addEventListener('click', (event) => {
     const checkoutTrigger = event.target.closest('[data-buy-credit-pack]');
-    if (!checkoutTrigger) return;
+    if (!checkoutTrigger || checkoutTrigger.disabled) return;
     event.preventDefault();
     startCreditCheckout(checkoutTrigger.dataset.buyCreditPack);
   });
@@ -2947,24 +2934,66 @@ function initCreditShop() {
     playCreditShopSound('close');
   });
 
-  buyCreditsButtons.forEach(button => button.addEventListener('click', () => playCreditShopSound('confirm')));
-
   window.addEventListener('pageshow', (event) => {
     if (event.persisted) resetCreditCheckoutButtons();
   });
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) resetCreditCheckoutButtons();
   });
+  renderCreditCheckoutState();
+}
+
+function renderCreditCheckoutState() {
+  const status = document.getElementById('credit-checkout-status');
+  const heading = document.getElementById('credit-checkout-heading');
+  if (status) status.textContent = creditCheckoutMessage;
+  if (heading) heading.textContent = creditCheckoutAvailable ? 'SELECT CREDIT DROP' : 'CREDIT PURCHASES PAUSED';
+  const shopStatus = document.getElementById('shop-credit-purchase-status');
+  const shopHeading = document.getElementById('shop-credit-availability');
+  if (shopStatus) shopStatus.textContent = creditCheckoutAvailable ? 'Choose a 50-credit field drop or a 500-credit strike cache and get back to the armory.' : creditCheckoutMessage;
+  if (shopHeading) shopHeading.textContent = creditCheckoutAvailable ? 'FIELD DROP AVAILABLE' : 'CREDIT PURCHASES PAUSED';
+  document.querySelectorAll('[data-buy-credit-pack]').forEach(button => {
+    button.disabled = !creditCheckoutAvailable || creditCheckoutStarting;
+    const availableLabel = button.classList.contains('shop-credit-direct-btn') ? `BUY ${button.dataset.buyCreditPack} · €${button.dataset.buyCreditPack === '50' ? '0.99' : '4.99'} ↗` : 'CONTINUE TO CHECKOUT ↗';
+    button.textContent = !creditCheckoutAvailable ? 'PURCHASES PAUSED' : creditCheckoutStarting ? 'OPENING SECURE CHECKOUT…' : availableLabel;
+    button.setAttribute('aria-label', creditCheckoutAvailable ? `Buy ${button.dataset.buyCreditPack} TacticStrike credits` : `Purchases paused for ${button.dataset.buyCreditPack} TacticStrike credits`);
+    const packStatus = button.closest('.credit-pack')?.querySelector('.credit-pack-status');
+    if (packStatus) packStatus.textContent = creditCheckoutAvailable ? 'AVAILABLE NOW' : 'PURCHASES PAUSED';
+  });
+}
+
+async function refreshCreditCheckoutStatus() {
+  const generation = ++creditCheckoutStatusGeneration;
+  // Availability is never restored from cached DOM or a previous visit.
+  // Only this fresh, successful status response can enable checkout.
+  creditCheckoutAvailable = false;
+  creditCheckoutMessage = CREDIT_CHECKOUT_PAUSED_MESSAGE;
+  renderCreditCheckoutState();
+  if (creditCheckoutForcedPause) return false;
+  try {
+    const status = await accountApi('/api/credits/status', { cache: 'no-store', signal: AbortSignal.timeout(10000) });
+    if (generation !== creditCheckoutStatusGeneration) return false;
+    creditCheckoutAvailable = !creditCheckoutForcedPause && status.available === true;
+    creditCheckoutMessage = creditCheckoutAvailable
+      ? 'Secure checkout — a verified account is required.'
+      : CREDIT_CHECKOUT_PAUSED_MESSAGE;
+  } catch {
+    if (generation !== creditCheckoutStatusGeneration) return false;
+    creditCheckoutAvailable = false;
+    creditCheckoutMessage = CREDIT_CHECKOUT_PAUSED_MESSAGE;
+  }
+  renderCreditCheckoutState();
+  return creditCheckoutAvailable;
 }
 
 function resetCreditCheckoutButtons() {
-  document.querySelectorAll('#credit-shop-modal [data-buy-credit-pack]').forEach(button => {
-    button.disabled = false;
-    if (button.dataset.checkoutLabel) {
-      button.innerHTML = button.dataset.checkoutLabel;
-      delete button.dataset.checkoutLabel;
-    }
-  });
+  ++creditCheckoutStatusGeneration;
+  creditCheckoutAvailable = false;
+  creditCheckoutMessage = CREDIT_CHECKOUT_PAUSED_MESSAGE;
+  renderCreditCheckoutState();
+  if (!document.hidden && document.querySelector('#credit-shop-modal.active, #shop-modal.active')) {
+    void refreshCreditCheckoutStatus();
+  }
 }
 window.resetCreditCheckoutButtons = resetCreditCheckoutButtons;
 
@@ -2978,32 +3007,42 @@ function openCreditShopModal(source = 'menu') {
   }
   creditShopModal.dataset.source = source;
   creditShopModal.classList.add('active');
+  // A rejected checkout stays paused for this visit. Reopening the shop is
+  // the explicit retry and checks the server again before enabling anything.
+  creditCheckoutForcedPause = false;
+  resetCreditCheckoutButtons();
   playCreditShopSound('open');
 }
 
 async function startCreditCheckout(packageId) {
-  if (!accountSession.user?.emailVerified || !accountSession.token) {
-    openHubAccount();
-    return;
-  }
-
-  const checkoutButton = document.querySelector(`[data-buy-credit-pack="${packageId}"]`);
-  if (checkoutButton) {
-    checkoutButton.dataset.checkoutLabel = checkoutButton.innerHTML;
-    checkoutButton.disabled = true;
-    checkoutButton.textContent = 'OPENING SECURE CHECKOUT…';
-  }
-
+  if (creditCheckoutStarting || !['50', '500'].includes(String(packageId))) return;
+  creditCheckoutStarting = true;
   try {
+    // Recheck before opening an account or creating a payment. This also
+    // blocks stale tabs if purchases were paused after the shop was opened.
+    if (!await refreshCreditCheckoutStatus()) {
+      showNotification(CREDIT_CHECKOUT_PAUSED_MESSAGE, 6000);
+      return;
+    }
+    if (!accountSession.user?.emailVerified || !accountSession.token) {
+      openHubAccount();
+      return;
+    }
     const result = await accountApi('/api/credits/checkout', {
       method: 'POST',
       body: JSON.stringify({ packageId })
     });
+    if (typeof result.checkoutUrl !== 'string' || !result.checkoutUrl) throw new Error('Checkout is unavailable. Please try again later.');
     playCreditShopSound('confirm');
-    resetCreditCheckoutButtons();
     window.location.assign(result.checkoutUrl);
   } catch (error) {
-    resetCreditCheckoutButtons();
+    if (error.code === 'CHECKOUT_PAUSED') {
+      creditCheckoutForcedPause = true;
+      creditCheckoutAvailable = false;
+      creditCheckoutMessage = CREDIT_CHECKOUT_PAUSED_MESSAGE;
+      showNotification(CREDIT_CHECKOUT_PAUSED_MESSAGE, 6000);
+      return;
+    }
     if (error.code === 'EMAIL_VERIFICATION_REQUIRED') { openHubAccount(); return; }
     if (error.status === 401) {
       clearAccountSession();
@@ -3012,6 +3051,9 @@ async function startCreditCheckout(packageId) {
     }
     showNotification(error.message, 6000);
     playErrorBeep();
+  } finally {
+    creditCheckoutStarting = false;
+    resetCreditCheckoutButtons();
   }
 }
 
@@ -3515,9 +3557,7 @@ function updateAccountUI() {
   status?.classList.toggle('signed-in', Boolean(user));
   const label = status?.querySelector('span:last-child');
   if (label) label.textContent = user ? user.emailVerified ? 'ACCOUNT CONNECTED' : 'VERIFY YOUR EMAIL' : accountAuthPending ? 'CONNECTING…' : 'SIGN IN';
-  document.querySelectorAll('#credit-shop-modal [data-buy-credit-pack]').forEach(button => {
-    if (button.firstChild) button.firstChild.textContent = user ? user.emailVerified ? 'CONTINUE TO CHECKOUT ' : 'VERIFY EMAIL TO CONTINUE ' : accountAuthPending ? 'CONNECTING… ' : 'SIGN IN TO BUY ';
-  });
+  renderCreditCheckoutState();
 }
 
 function clearAccountSession() {
@@ -3593,6 +3633,8 @@ function initItemShop() {
   openShopBtn.addEventListener('click', () => {
     renderShopItems();
     shopModal.classList.add('active');
+    creditCheckoutForcedPause = false;
+    resetCreditCheckoutButtons();
     playMenuClick();
   });
   
