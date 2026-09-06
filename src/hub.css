@@ -17,6 +17,7 @@ button,a{-webkit-tap-highlight-color:transparent}
 .game::after{content:"";position:absolute;inset:0;z-index:-2;pointer-events:none;background:#080c12;opacity:.1;transition:opacity .7s}
 .game-copy{width:min(88%,620px);text-align:center;transform:translateY(4vh);transition:transform .7s cubic-bezier(.22,.8,.24,1),opacity .5s}
 .game h2{margin:0;font-size:inherit;line-height:0}
+.game-description{max-width:35ch;margin:22px auto -16px;padding-inline:12px;font-size:15px;font-weight:700;line-height:1.5;text-wrap:balance;text-shadow:0 2px 8px #000,0 1px 3px #000}
 .game-logo{display:block;width:100%;height:auto;filter:drop-shadow(0 7px 0 #0007) drop-shadow(0 12px 24px #0007)}
 .game--worldloom .game-logo{transform:rotate(-3deg)}
 .game--tacticstrike .game-logo{width:92%;margin-inline:auto}
@@ -28,6 +29,28 @@ button,a{-webkit-tap-highlight-color:transparent}
 .game:active .enter{translate:0 4px;box-shadow:0 1px 0 #243018}
 .game--tacticstrike:active .enter{box-shadow:0 1px 0 #84301c}
 .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+.discover-games{max-width:1160px;margin:auto;padding:88px 40px 64px;color:#eee9e3;line-height:1.75}
+.discover-intro{max-width:720px;margin-bottom:52px}
+.discover-label{margin:0 0 16px;color:#ff8b64;font-size:12px;font-weight:800;letter-spacing:.1em}
+.discover-intro h1{margin:0 0 24px;font-size:clamp(32px,4.5vw,56px);font-weight:900;line-height:1.08;letter-spacing:-1.5px}
+.discover-intro>p:last-child{font-size:18px;color:#bdbab6}
+.discover-grid{display:grid;grid-template-columns:1fr 1fr;gap:64px}
+.discover-game h2{margin:0;font-size:30px;letter-spacing:-.7px}
+.discover-genre{margin:2px 0 20px;color:#ff8b64;font-weight:700;font-size:14px}
+.discover-game>p:not(.discover-genre),.discover-faq p{color:#bdbab6}
+.discover-game>a{display:inline-block;margin-top:10px;color:#fff;font-weight:700;text-underline-offset:5px}
+.discover-game>a span{display:inline-block;margin-left:8px}
+.discover-faq{max-width:800px;margin-top:72px}
+.discover-faq h2{font-size:26px;letter-spacing:-.5px}
+.discover-faq details{border-bottom:1px solid #ffffff24;padding:16px 0}
+.discover-faq summary{cursor:pointer;font-weight:700;list-style-position:outside;margin-left:18px;padding-left:6px}
+.discover-faq p{margin:14px 0 4px 24px}
+.discover-games a:hover,.hub-footer a:hover{color:#ff8b64}
+.discover-games a:focus-visible,.discover-games summary:focus-visible,.hub-footer a:focus-visible{outline:2px solid #ff8b64;outline-offset:6px}
+.hub-footer{display:flex;align-items:center;gap:30px;max-width:1160px;margin:auto;padding:24px 40px 40px;border-top:1px solid #ffffff1a}
+.footer-mark{display:inline-flex;flex:none}.hub-footer nav{display:flex;flex-wrap:wrap;gap:12px 26px}
+.hub-footer nav a{color:#bdbab6;font-size:14px;text-underline-offset:4px}
+@media(max-width:700px){.game-description{font-size:12px;margin:12px auto -10px}.discover-games{padding:52px 24px 40px}.discover-grid{grid-template-columns:1fr;gap:34px}.discover-intro{margin-bottom:36px}.discover-intro>p:last-child{font-size:16px}.discover-faq{margin-top:46px}.hub-footer{padding:24px;align-items:flex-start}}
 @media(hover:hover) and (pointer:fine) and (min-width:701px){
   .games:not(.motion-ready):has(.game--worldloom:hover){grid-template-columns:1.6fr 1fr}
   .games:not(.motion-ready):has(.game--tacticstrike:hover){grid-template-columns:1fr 1.6fr}

@@ -2971,6 +2971,11 @@ window.resetCreditCheckoutButtons = resetCreditCheckoutButtons;
 function openCreditShopModal(source = 'menu') {
   const creditShopModal = document.getElementById('credit-shop-modal');
   if (!creditShopModal) return;
+  const banner = creditShopModal.querySelector('img[data-src]');
+  if (banner) {
+    banner.src = banner.dataset.src;
+    delete banner.dataset.src;
+  }
   creditShopModal.dataset.source = source;
   creditShopModal.classList.add('active');
   playCreditShopSound('open');

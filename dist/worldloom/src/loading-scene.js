@@ -19,7 +19,13 @@ export class LoadingScene {
     this.birds.volume=this.level;
     this.sync();
   }
-  setActive(active) {this.active=Boolean(active);this.sync();}
+  setActive(active) {
+    this.active=Boolean(active);
+    // The forest belongs to world loading. Do not download its large fallback
+    // image while a visitor is only opening or browsing the main menu.
+    if(this.active&&!this.video.poster&&this.video.dataset.poster)this.video.poster=this.video.dataset.poster;
+    this.sync();
+  }
   async ready() {
     // Let the first video frame decode before chunk generation competes for CPU.
     // A slow/unsupported video falls back to its poster without blocking a world.

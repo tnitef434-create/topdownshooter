@@ -1,0 +1,6 @@
+# Public pages and the assets needed to render both games are crawlable.
+# Account and world query variants use their clean menu URL as canonical.
+User-agent: *
+Allow: /
+
+Sitemap: https://unpaused.online/sitemap.xml

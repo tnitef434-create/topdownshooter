@@ -5,16 +5,51 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta
       name="description"
-      content="Worldloom — an original voxel-fantasy world to gather, shape, and illuminate."
+      content="Play Worldloom free in your browser. Explore a voxel world, build and craft, discover caves, or invite a friend to a shared saved world on Unpaused."
     />
     <meta name="theme-color" content="#07130f" />
-    <title>Worldloom — Unpaused</title>
+    <title>Worldloom — Free Voxel Survival &amp; Building Game | Unpaused</title>
+    <meta name="robots" content="index, follow, max-image-preview:large" />
+    <link rel="canonical" href="https://unpaused.online/worldloom/" />
+    <meta property="og:title" content="Worldloom — Free Voxel Survival &amp; Building Game" />
+    <meta property="og:description" content="Explore, craft and build in a world of your own. Play solo or invite a friend to a shared saved world. Free in your browser on Unpaused." />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Unpaused" />
+    <meta property="og:url" content="https://unpaused.online/worldloom/" />
+    <meta property="og:locale" content="en_GB" />
+    <meta property="og:image" content="https://unpaused.online/hub/unpaused-social.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Unpaused U logo, home of Worldloom" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Worldloom — Free Voxel Survival &amp; Building Game" />
+    <meta name="twitter:description" content="Explore caves, gather resources and build your own world. Play Worldloom solo or with a friend, free in your browser." />
+    <meta name="twitter:image" content="https://unpaused.online/hub/unpaused-social.png" />
+    <meta name="twitter:image:alt" content="Unpaused U logo, home of Worldloom" />
+    <script type="application/ld+json">
+    {
+      "@context":"https://schema.org",
+      "@graph":[
+        {"@type":"WebPage","@id":"https://unpaused.online/worldloom/#webpage","url":"https://unpaused.online/worldloom/","name":"Play Worldloom","inLanguage":"en","isPartOf":{"@id":"https://unpaused.online/#website"},"mainEntity":{"@id":"https://unpaused.online/worldloom/#game"}},
+        {"@type":"VideoGame","@id":"https://unpaused.online/worldloom/#game","name":"Worldloom","url":"https://unpaused.online/worldloom/","description":"A free browser-based voxel survival and building game with crafting, caves, saved worlds and two-player shared worlds.","genre":["Sandbox","Survival","Adventure"],"gamePlatform":"Web browser","playMode":["https://schema.org/SinglePlayer","https://schema.org/MultiPlayer","https://schema.org/CoOp"],"numberOfPlayers":{"@type":"QuantitativeValue","minValue":1,"maxValue":2},"isAccessibleForFree":true,"inLanguage":"en","image":"https://unpaused.online/hub/worldloom-poster.jpg","publisher":{"@id":"https://unpaused.online/#organization"},"potentialAction":{"@type":"PlayAction","target":"https://unpaused.online/worldloom/"}}
+      ]
+    }
+    </script>
     <link rel="icon" href="favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="styles.css" />
     <link rel="stylesheet" href="/worldloom-entry.css" />
     <link rel="stylesheet" href="/account/dialog.css" />
   </head>
   <body>
+    <noscript>
+      <style>#game-shell,.skip-link{display:none!important}body{overflow:auto!important;background:#080b0d}.no-script-game{max-width:740px;margin:8vh auto;padding:32px;color:#f4f6ed;font:17px/1.7 Arial,Helvetica,sans-serif}.no-script-game h1{font-size:42px;line-height:1.1}.no-script-game a{color:#ff9978;text-underline-offset:4px}.no-script-game a:focus-visible{outline:2px solid #ff6339;outline-offset:5px}</style>
+      <main class="no-script-game">
+        <a href="/" aria-label="Unpaused home"><img src="/hub/u-mark.svg" alt="" width="40" height="43"></a>
+        <h1>Worldloom</h1>
+        <p>A free voxel survival and building game for your browser. Gather resources, craft tools, explore caves and build a world of your own. Choose survival or free building, play solo or invite one friend to a shared saved world.</p>
+        <p>Enable JavaScript and WebGL 2 to open the game menu and play. You can still read the <a href="/games/worldloom/">Worldloom game guide</a>, explore <a href="/games/tacticstrike/">TacticStrike</a> or return to <a href="/">all games</a>.</p>
+      </main>
+    </noscript>
     <a class="skip-link" href="#main-menu">Skip to game menu</a>
 
     <main id="game-shell">
@@ -34,7 +69,7 @@
 
       <section id="loading-screen" class="screen loading-screen u-loading" data-phase="menu" aria-live="polite" aria-label="Opening Worldloom menu">
         <div class="loading-forest" aria-hidden="true">
-          <video id="loading-film" muted loop playsinline preload="none" poster="assets/loading/forest-leaves-poster.jpg" data-src="assets/loading/forest-leaves-4k.mp4" data-small-src="assets/loading/forest-leaves-1080.mp4" tabindex="-1" disablepictureinpicture></video>
+          <video id="loading-film" muted loop playsinline preload="none" data-poster="assets/loading/forest-leaves-poster.webp" data-src="assets/loading/forest-leaves-4k.mp4" data-small-src="assets/loading/forest-leaves-1080.mp4" tabindex="-1" disablepictureinpicture></video>
         </div>
         <audio id="loading-birds" src="assets/audio/birds-near-trees.mp3" loop preload="none"></audio>
         <div class="u-loading__content">
@@ -54,8 +89,8 @@
 
       <section id="main-menu" class="screen menu-screen hidden" aria-labelledby="main-title">
         <div class="menu-scenery menu-scenery--film" aria-hidden="true">
-          <img src="assets/menu/worldloom-drone-poster.jpg" alt="" width="3840" height="2160" fetchpriority="high">
-          <video id="menu-film" autoplay muted loop playsinline preload="none" poster="assets/menu/worldloom-drone-poster.jpg" data-src="assets/menu/worldloom-drone-4k.mp4" data-small-src="assets/menu/worldloom-drone-1080.mp4" tabindex="-1" disablepictureinpicture></video>
+          <img src="assets/menu/worldloom-drone-poster.webp" srcset="assets/menu/worldloom-drone-poster-1280.webp 1280w, assets/menu/worldloom-drone-poster.webp 3840w" sizes="100vw" alt="" width="3840" height="2160" fetchpriority="high">
+          <video id="menu-film" autoplay muted loop playsinline preload="none" data-src="assets/menu/worldloom-drone-4k.mp4" data-small-src="assets/menu/worldloom-drone-1080.mp4" tabindex="-1" disablepictureinpicture></video>
         </div>
         <div class="menu-layout">
           <header class="brand brand--hero">

@@ -108,3 +108,12 @@ worlds.json.tmp
 !dist/worldloom/src/discovery-field.js
 !dist/worldloom/src/discovery-loot.js
 work/multiplayer-recovery-*/
+
+# Search discovery, lightweight game guides, and optimized menu images.
+!dist/robots.txt
+!dist/sitemap.xml
+!dist/_headers
+!dist/404.html
+!dist/games/
+!dist/games/**
+!dist/credit-shop-banner.webp

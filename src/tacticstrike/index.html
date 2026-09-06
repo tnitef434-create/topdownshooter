@@ -3,9 +3,36 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>TacticStrike — Unpaused</title>
+  <title>TacticStrike — Free Online Tactical Shooter | Unpaused</title>
   <base href="/">
-  <meta name="description" content="TacticStrike on Unpaused. Play tactical top-down battles online or practice against bots.">
+  <meta name="description" content="Play TacticStrike free in your browser. Join online top-down tactical battles, choose your loadout, or practice against bots. Play now on Unpaused.">
+  <meta name="robots" content="index, follow, max-image-preview:large">
+  <meta name="theme-color" content="#080b0d">
+  <link rel="canonical" href="https://unpaused.online/tacticstrike/">
+  <meta property="og:title" content="TacticStrike — Free Online Tactical Shooter">
+  <meta property="og:description" content="Online top-down battles, weapon loadouts and practice against bots. Play TacticStrike free in your browser on Unpaused.">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Unpaused">
+  <meta property="og:url" content="https://unpaused.online/tacticstrike/">
+  <meta property="og:locale" content="en_GB">
+  <meta property="og:image" content="https://unpaused.online/hub/unpaused-social.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Unpaused U logo, home of TacticStrike">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="TacticStrike — Free Online Tactical Shooter">
+  <meta name="twitter:description" content="Choose your loadout and join online tactical battles, or practice against bots. Free to play on Unpaused.">
+  <meta name="twitter:image" content="https://unpaused.online/hub/unpaused-social.png">
+  <meta name="twitter:image:alt" content="Unpaused U logo, home of TacticStrike">
+  <script type="application/ld+json">
+  {
+    "@context":"https://schema.org",
+    "@graph":[
+      {"@type":"WebPage","@id":"https://unpaused.online/tacticstrike/#webpage","url":"https://unpaused.online/tacticstrike/","name":"Play TacticStrike","inLanguage":"en","isPartOf":{"@id":"https://unpaused.online/#website"},"mainEntity":{"@id":"https://unpaused.online/tacticstrike/#game"}},
+      {"@type":"VideoGame","@id":"https://unpaused.online/tacticstrike/#game","name":"TacticStrike","url":"https://unpaused.online/tacticstrike/","description":"A free browser-based top-down tactical shooter with online battles, weapon loadouts and bot practice.","genre":["Action","Tactical shooter"],"gamePlatform":"Web browser","playMode":["https://schema.org/SinglePlayer","https://schema.org/MultiPlayer"],"isAccessibleForFree":true,"inLanguage":"en","image":"https://unpaused.online/hub/tacticstrike-poster.jpg","publisher":{"@id":"https://unpaused.online/#organization"},"potentialAction":{"@type":"PlayAction","target":"https://unpaused.online/tacticstrike/"}}
+    ]
+  }
+  </script>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><circle cx=%2250%22 cy=%2250%22 r=%2235%22 fill=%22none%22 stroke=%22%2366fcf1%22 stroke-width=%228%22/><circle cx=%2250%22 cy=%2250%22 r=%228%22 fill=%22%23ff3c3c%22/><path d=%22M 50 5 L 50 25 M 50 75 L 50 95 M 5 50 L 25 50 M 75 50 L 95 50%22 stroke=%22%2366fcf1%22 stroke-width=%228%22 stroke-linecap=%22round%22/></svg>">
   <!-- Google Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -18,6 +45,15 @@
   <!-- Socket.io client (loaded dynamically via bundler or server, or we can just import from socket.io-client) -->
 </head>
 <body class="is-starting">
+  <noscript>
+    <style>#startup-overlay,#app{display:none!important}body{overflow:auto!important;background:#080b0d}.no-script-game{max-width:740px;margin:8vh auto;padding:32px;color:#f4f6ed;font:17px/1.7 Arial,Helvetica,sans-serif}.no-script-game h1{font-size:42px;line-height:1.1}.no-script-game a{color:#ff9978;text-underline-offset:4px}.no-script-game a:focus-visible{outline:2px solid #ff6339;outline-offset:5px}</style>
+    <main class="no-script-game">
+      <a href="/" aria-label="Unpaused home"><img src="/hub/u-mark.svg" alt="" width="40" height="43"></a>
+      <h1>TacticStrike</h1>
+      <p>A free top-down tactical shooter for your browser. Choose a weapon loadout, join online battles or practice your movement and aim against bots.</p>
+      <p>Enable JavaScript to open the game menu and play. You can still read the <a href="/games/tacticstrike/">TacticStrike game guide</a>, explore <a href="/games/worldloom/">Worldloom</a> or return to <a href="/">all games</a>.</p>
+    </main>
+  </noscript>
 
   <div id="startup-overlay" class="startup-overlay u-loading" role="status" aria-live="polite" aria-label="Opening TacticStrike menu">
     <div class="u-loading__content">
@@ -687,7 +723,7 @@
     <div id="credit-shop-modal" class="modal-overlay credit-shop-overlay">
       <div class="modal-card credit-shop-card">
         <div class="credit-shop-hero">
-          <img src="/credit-shop-banner.png" alt="Tactical supply case filled with glowing gold credit tokens">
+          <img data-src="/credit-shop-banner.webp" alt="Tactical supply case filled with glowing gold credit tokens" decoding="async" width="1774" height="887">
           <div class="credit-shop-hero-shade"></div>
           <div class="credit-shop-hero-copy">
             <span class="credit-shop-eyebrow">TACTICSTRIKE ARMORY</span>
@@ -987,7 +1023,7 @@
 
   <!-- Ranked Match Transition Video Overlay -->
   <div id="ranked-video-overlay" style="position: fixed; inset: 0; z-index: 9999; background: #000; opacity: 0; pointer-events: none; transition: opacity 0.5s ease; display: none; align-items: center; justify-content: center;">
-    <video id="ranked-video" src="/fbee.mp4" style="width: 100%; height: 100%; object-fit: cover;" playsinline></video>
+    <video id="ranked-video" src="/fbee.mp4" style="width: 100%; height: 100%; object-fit: cover;" playsinline preload="none"></video>
   </div>
 
   <!-- Hacking/Defusal Minigame Overlay -->
