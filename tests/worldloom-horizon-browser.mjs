@@ -18,17 +18,23 @@ try{
     const w=window.__worldloomWorld,p=window.__worldloomPlayer,e=window.__worldloomEnvironment;
     return {stats:w.getStats(),safeDistance:w.getSafeTerrainDistance(p.position),cameraFar:p.camera.far,fogNear:e.scene.fog.near,clarity:e.fogClarity};
   });
-  assert.ok(initial.stats.distantTerrain.ready,'the distant landscape is complete before entry');
-  assert.ok(initial.safeDistance>initial.cameraFar&&initial.cameraFar>=704,'the camera stays inside the fully loaded horizon');
+  assert.equal(Object.hasOwn(initial.stats,'distantTerrain'),false,'no artificial horizon participates in loading');
+  assert.ok(initial.safeDistance>30&&initial.safeDistance<initial.cameraFar,'terrain coverage is actual voxel distance; the wide clip plane serves the sky');
   assert.equal(initial.stats.queued,0,'initial generation finishes behind the loading screen');
   await page.screenshot({path:'../../outputs/worldloom-spawn-horizon.png'});
   // Look across that same initial footprint from above the canopy.
   await page.evaluate(()=>{const p=window.__worldloomPlayer;p.flying=true;p.position.y+=25;p.velocity.set(0,0,0);p.pitch=-.12;p.yaw=.8;});
   await page.waitForFunction(()=>window.__worldloomEnvironment.fogClarity>.999,{timeout:60000});
-  const clear=await page.evaluate(()=>({near:window.__worldloomEnvironment.scene.fog.near,far:window.__worldloomPlayer.camera.far}));
-  assert.ok(clear.near>clear.far,'clear weather has no fog inside the rendered view');
+  const clear=await page.evaluate(()=>{
+    const world=window.__worldloomWorld,environment=window.__worldloomEnvironment,proxies=[];
+    environment.scene.traverse(object=>{if(object.userData?.distantTerrain||/distant terrain|distant moving water/i.test(object.name))proxies.push(object.name);});
+    return {near:environment.scene.fog.near,far:environment.scene.fog.far,safe:world.getSafeTerrainDistance(window.__worldloomPlayer.position),hasProxy:Object.hasOwn(world,'distantTerrain'),proxies};
+  });
+  assert.equal(clear.hasProxy,false);assert.deepEqual(clear.proxies,[]);
+  assert.ok(clear.near>=clear.far-16,'clear weather keeps haze near the edge of completed real terrain');
+  assert.ok(clear.far<=clear.safe+1.5,'streaming never grants fake terrain coverage');
   await page.screenshot({path:'../../outputs/worldloom-clear-horizon.png'});
   assert.deepEqual(errors,[]);
   await writeFile('../../outputs/Worldloom-horizon-check.json',JSON.stringify({passed:true,initial,clear},null,2));
-  console.log(JSON.stringify({passed:true,initialCameraFar:initial.cameraFar,safeDistance:initial.safeDistance,fogOutsideView:true}));
+  console.log(JSON.stringify({passed:true,initialCameraFar:initial.cameraFar,safeDistance:initial.safeDistance,noArtificialHorizon:true}));
 }finally{await browser.close();}

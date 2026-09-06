@@ -251,13 +251,24 @@
         <div class="inventory-window surface-panel">
           <header class="panel-header">
             <div>
-              <p class="panel-kicker">Craft · build · survive</p>
+              <p id="inventory-kicker" class="panel-kicker">Craft · build · survive</p>
               <h2 id="inventory-title">Your pack</h2>
             </div>
             <button id="inventory-close" class="icon-button" type="button" aria-label="Close inventory">×</button>
           </header>
 
           <div class="inventory-layout">
+            <section id="chest-section" class="chest-section" aria-labelledby="chest-title" hidden>
+              <div class="chest-heading">
+                <div class="section-heading">
+                  <h3 id="chest-title">Chest</h3>
+                  <span>Choose a stack to take it</span>
+                </div>
+                <button id="chest-take-all" class="craft-button" type="button" disabled>Take all</button>
+              </div>
+              <div id="chest-grid" class="chest-grid" aria-label="Chest contents"></div>
+              <p id="chest-status" class="chest-status" role="status" aria-live="polite">Opening chest…</p>
+            </section>
             <section class="inventory-section" aria-labelledby="pack-title">
               <div class="section-heading">
                 <h3 id="pack-title">Storage</h3>
@@ -326,7 +337,7 @@
                 <label class="setting-row" for="view-distance">
                   <span><strong>View distance</strong><small>Full detail nearby · lightweight terrain at long range</small></span>
                   <span class="range-control">
-                    <input id="view-distance" type="range" min="2" max="20" step="1" value="4" />
+                    <input id="view-distance" type="range" min="2" max="8" step="1" value="4" />
                     <output id="view-distance-value" for="view-distance">4 chunks</output>
                   </span>
                 </label>

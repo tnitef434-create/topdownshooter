@@ -25,7 +25,6 @@ import {
   detailedViewDistance,
   normalizeViewDistance,
 } from './streaming-config.js';
-import { DistantTerrainHorizon } from './distant-terrain.js';
 
 export {
   LEGACY_WORLD_GENERATOR_VERSION,
@@ -625,7 +624,6 @@ export class World {
       generatedTotal: 0,
       rebuiltTotal: 0,
     };
-    this.distantTerrain = new DistantTerrainHorizon(this.scene, this);
     this._refreshStats();
   }
 
@@ -1709,10 +1707,9 @@ export class World {
     const pz = Number(position?.z ?? position?.[2] ?? 0);
     const centerX = floorDiv(Number.isFinite(px) ? px : 0, CHUNK_SIZE);
     const centerZ = floorDiv(Number.isFinite(pz) ? pz : 0, CHUNK_SIZE);
-    // View distance is the visual horizon. Expensive interactive voxel chunks
-    // retain a separate bounded radius; a lightweight distant terrain proxy
-    // carries settings above that cap without generating far caves, fluids,
-    // foliage and collision meshes merely to fill a distant silhouette.
+    // Every visible landscape mesh belongs to a real voxel chunk. The two
+    // support rings prepare travel and neighboring faces without any proxy
+    // mountains or separate landscape-generation workload.
     const distance = normalizeViewDistance(renderDistance, this.renderDistance);
     const detailDistance = detailedViewDistance(distance);
     const streamDistance = detailedStreamDistance(distance);
@@ -1730,7 +1727,6 @@ export class World {
     this.renderDistance = distance;
     this.detailDistance = detailDistance;
     this.streamDistance = streamDistance;
-    this.distantTerrain?.request(px, pz, distance, detailDistance);
 
     const directionSector = this.streamDirection.strength > 0.04
       ? ((Math.round(Math.atan2(this.streamDirection.z, this.streamDirection.x) / (Math.PI / 4)) % 8) + 8) % 8
@@ -2829,13 +2825,8 @@ export class World {
   hasPendingStreamingWork() {
     return Boolean(
       this.generationQueue.length
-      || this.stats.dirty > 0
-      || this.distantTerrain?.pending,
+      || this.stats.dirty > 0,
     );
-  }
-
-  processDistantTerrain(maxRows = 2, maxMilliseconds = 2.4) {
-    return this.distantTerrain?.process(maxRows, maxMilliseconds) || 0;
   }
 
   _replaceMesh(chunk, property, geometry, material, name) {
@@ -3032,13 +3023,7 @@ export class World {
     const localX = localCoordinate(worldX, centerX);
     const localZ = localCoordinate(worldZ, centerZ);
     const nearestChunkEdge = Math.min(localX, CHUNK_SIZE - localX, localZ, CHUNK_SIZE - localZ);
-    const detailedSafe = Math.max(8, completeRadius * CHUNK_SIZE + nearestChunkEdge - 2);
-    const distantSafe = this.distantTerrain?.getSafeDistanceFor(
-      worldX,
-      worldZ,
-      detailedSafe,
-    ) || 0;
-    return Math.max(detailedSafe, distantSafe);
+    return Math.max(8, completeRadius * CHUNK_SIZE + nearestChunkEdge - 2);
   }
 
   _removeChunk(key, chunk, keepGeneratedData = true) {
@@ -3278,14 +3263,11 @@ export class World {
       detailDistance: this.detailDistance,
       streamDistance: this.streamDistance,
       streamRevision: this.streamRevision,
-      distantTerrain: this.distantTerrain?.getStats?.() || null,
     };
   }
 
   dispose() {
     this.forestFloorCollisionEnabled = false;
-    this.distantTerrain?.dispose?.();
-    this.distantTerrain = null;
     for (const [key, chunk] of [...this.chunks]) this._removeChunk(key, chunk, false);
     this.dormantChunks.clear();
     this.generationQueue.length = 0;

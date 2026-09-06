@@ -9,7 +9,7 @@ const camera=new THREE.PerspectiveCamera(42,1.5,.1,180);scene.add(new THREE.Hemi
 const sun=new THREE.DirectionalLight('#fff0c0',3.2);sun.castShadow=true;sun.shadow.mapSize.set(2048,2048);sun.shadow.camera.left=-22;sun.shadow.camera.right=22;sun.shadow.camera.top=22;sun.shadow.camera.bottom=-22;sun.shadow.bias=-.0002;sun.shadow.normalBias=.04;sun.shadow.radius=2;scene.add(sun,sun.target);
 const world=new World(64,scene,createTextureAtlas(),{generatorVersion:3,discoveryVersion:1});const field=new LandDiscoveryField(scene);field.setWorld(world);
 async function show(kind){
- const d=world.getLandDiscoveryForRegion(...(kind==='bell_shrine'?[-1,-1]:[1,-4]));
+ const d=world.getLandDiscoveryForRegion(...(kind==='bell_shrine'?[1,-2]:[-4,-4]));
  for(let z=-2;z<=2;z++)for(let x=-2;x<=2;x++)world.ensurePositionGenerated(d.x+x*16,d.z+z*16);
  let count=0;while(count++<1200){world.processQueue(5,50);world.rebuildDirty(8,50);if(!world.generationQueue.length&&[...world.chunks.values()].every(c=>!c.meshDirty))break;}
  field.timer=0;field.update(1,new THREE.Vector3(d.x,d.y,d.z),3);

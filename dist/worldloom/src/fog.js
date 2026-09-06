@@ -22,7 +22,8 @@ export function atmosphericFogRange(viewDistance = 4, context = {}) {
   const legacyNear = Math.max(12, distance * 10 - 8 - rain * 11);
   const legacyFar = distance * 16 + 34 - rain * Math.min(32, distance * 4);
 
-  // The distant mesh is completed before spawn and extends beyond this view.
+  // Clear-air atmosphere adds no haze itself. The separate streaming guard
+  // still fades only the boundary of completed, real voxel terrain.
   const clearNear = cameraFarForViewDistance(distance) + 8;
   const clearFar = clearNear + 24;
   const storm = Math.max(

@@ -68,6 +68,12 @@ export class UI {
       hud: $('hud'),
       inventory: $('inventory-panel'),
       inventoryGrid: $('inventory-grid'),
+      inventoryTitle: $('inventory-title'),
+      inventoryKicker: $('inventory-kicker'),
+      chest: $('chest-section'),
+      chestGrid: $('chest-grid'),
+      chestStatus: $('chest-status'),
+      chestTakeAll: $('chest-take-all'),
       craftList: $('craft-list'),
       recipeSearch: $('recipe-search'),
       settings: $('settings-panel'),
@@ -90,6 +96,8 @@ export class UI {
       continueButton: $('continue-button'),
     };
     this.inventory = null;
+    this.chest = null;
+    this.chestFocusIndex = null;
     this.recipeAvailability = null;
     this.inventorySelection = null;
     this.inventoryOpen = false;
@@ -102,6 +110,7 @@ export class UI {
     this.onSelectHotbar = null;
     this.onCraft = null;
     this.onInventoryClose = null;
+    this.onChestTake = null;
     this.onResume = null;
     this.onRespawn = null;
     this.onNewWorld = null;
@@ -138,6 +147,9 @@ export class UI {
       if (this.onInventoryClose) this.onInventoryClose();
       else this.setInventory(false);
     });
+    this.elements.chestTakeAll?.addEventListener('click', () => {
+      if (this.chest && !this.chest.busy && !this.chest.loading && !this.elements.chestTakeAll.disabled) this.onChestTake?.();
+    });
     $('settings-button')?.addEventListener('click', () => this.setSettings(true));
     $('pause-settings-button')?.addEventListener('click', () => this.setSettings(true));
     $('settings-close')?.addEventListener('click', () => this.setSettings(false));
@@ -170,7 +182,7 @@ export class UI {
       }
       if (event.key !== 'Tab') return;
       const focusable = [...openDialog.querySelectorAll('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [contenteditable="true"], [tabindex]:not([tabindex="-1"])')]
-        .filter((element) => !element.hidden && element.getClientRects().length);
+        .filter((element) => !element.hidden && !element.closest('[inert]') && element.getClientRects().length);
       if (!focusable.length) return;
       const first = focusable[0];
       const last = focusable.at(-1);
@@ -292,6 +304,7 @@ export class UI {
     this.settingsOpen = false;
     this.creditsOpen = false;
     this.inventorySelection = null;
+    this.setChest(null);
     this.elements.inventory?.classList.add('hidden');
     this.elements.settings?.classList.add('hidden');
     this.elements.credits?.classList.add('hidden');
@@ -305,12 +318,109 @@ export class UI {
     if (!open) {
       this._cancelInventoryPointer();
       this.inventorySelection = null;
+      this.setChest(null);
     }
     this.elements.inventory?.classList.toggle('hidden', !open);
     if (open) {
       this.renderInventory();
-      this.renderRecipes();
+      if (!this.chest) this.renderRecipes();
       document.getElementById('inventory-close')?.focus();
+    }
+  }
+
+  setChest(data) {
+    const wasChest = Boolean(this.chest);
+    const changedChest = this.chest?.key !== data?.key;
+    if (!data || changedChest) this.chestFocusIndex = null;
+    if (!data || changedChest || data.busy || data.loading) {
+      this._cancelInventoryPointer();
+      this.inventorySelection = null;
+    }
+    const stacks = Array.isArray(data?.remaining) ? data.remaining : [];
+    this.chest = data ? {
+      key: String(data.key || ''),
+      name: String(data.name || 'Discovered chest'),
+      remaining: stacks.map((slot) => ({ id: Math.floor(Number(slot?.id)), count: Math.floor(Number(slot?.count)) }))
+        .filter((slot) => slot.id > 0 && slot.count > 0).slice(0, 9),
+      busy: Boolean(data.busy),
+      loading: Boolean(data.loading),
+      message: String(data.message || ''),
+    } : null;
+    this.elements.inventory?.classList.toggle('has-chest', Boolean(this.chest));
+    if (this.elements.chest) this.elements.chest.hidden = !this.chest;
+    const craftSection = this.elements.inventory?.querySelector('.craft-section');
+    if (craftSection) craftSection.hidden = Boolean(this.chest);
+    if (this.elements.inventoryTitle) this.elements.inventoryTitle.textContent = this.chest?.name || 'Your pack';
+    if (this.elements.inventoryKicker) this.elements.inventoryKicker.textContent = this.chest ? 'Found in the wild' : 'Craft · build · survive';
+    if (this.elements.inventoryGrid) this.elements.inventoryGrid.inert = Boolean(this.chest?.busy || this.chest?.loading);
+    this.renderChest();
+    if (wasChest && !this.chest && this.inventoryOpen) this.renderRecipes();
+  }
+
+  renderChest() {
+    const { chestGrid: root, chestStatus: status, chestTakeAll: takeAll } = this.elements;
+    if (!this.chest || !root) return;
+    const locked = this.chest.busy || this.chest.loading;
+    const available = this.chest.remaining.some((slot) => !this.inventory?.canAdd || this.inventory.canAdd(slot.id, 1));
+    const empty = this.chest.remaining.length === 0;
+    const state = this.chest.loading ? 'loading' : this.chest.busy ? 'busy' : this.chest.message ? 'message' : empty ? 'empty' : !available ? 'full' : 'ready';
+    const message = this.chest.loading ? 'Opening chest…' : this.chest.busy ? 'Moving loot to your pack…' : this.chest.message || (empty ? 'This chest is empty.' : !available ? 'Your pack is full. Make room to take more loot.' : 'Take what you need. Anything left stays in this chest.');
+    if (status && status.textContent !== message) status.textContent = message;
+    if (status) status.dataset.state = state;
+    root.setAttribute('aria-busy', `${locked}`);
+    if (takeAll) takeAll.disabled = locked || empty || !available;
+    const focusedSlot = root.contains(document.activeElement) ? document.activeElement : null;
+    if (focusedSlot) this.chestFocusIndex = Number(focusedSlot.dataset.chestIndex);
+    // Keep the nine buttons alive across shared-world updates so repeated
+    // snapshots never restart focus, pointer hover, or the item artwork.
+    if (root.children.length !== 9) {
+      root.replaceChildren();
+      for (let index = 0; index < 9; index++) {
+        const slotButton = button('', 'inventory-slot chest-slot');
+        slotButton.dataset.chestIndex = `${index}`;
+        slotButton.addEventListener('click', () => {
+          const slot = this.chest?.remaining[index];
+          if (!slot || this.chest.busy || this.chest.loading || slotButton.disabled) return;
+          this.onChestTake?.(slot.id);
+        });
+        const showDetail = () => {
+          const slot = this.chest?.remaining[index];
+          if (!slot) return;
+          const item = getItem(slot.id);
+          if ($('inventory-detail-name')) $('inventory-detail-name').textContent = `${item.name} ×${slot.count}`;
+          if ($('inventory-detail-copy')) $('inventory-detail-copy').textContent = item.description || 'Take this stack into your pack.';
+        };
+        slotButton.addEventListener('pointerenter', showDetail);
+        slotButton.addEventListener('focus', showDetail);
+        root.append(slotButton);
+      }
+    }
+    [...root.children].forEach((slotButton, index) => {
+      const slot = this.chest.remaining[index];
+      const signature = slot ? `${slot.id}:${slot.count}` : '';
+      slotButton.disabled = locked || !slot || Boolean(this.inventory?.canAdd && !this.inventory.canAdd(slot.id, 1));
+      if (slotButton.dataset.contents === signature) return;
+      slotButton.dataset.contents = signature;
+      slotButton.replaceChildren();
+      if (slot) {
+        const item = getItem(slot.id);
+        slotButton.dataset.itemId = `${slot.id}`;
+        slotButton.append(itemIcon(item));
+        const count = document.createElement('span');
+        count.className = 'slot-count';
+        count.textContent = `${slot.count}`;
+        slotButton.append(count);
+        slotButton.setAttribute('aria-label', `Take ${item.name}, ${slot.count}`);
+        slotButton.title = `${item.name} ×${slot.count}`;
+      } else {
+        delete slotButton.dataset.itemId;
+        slotButton.setAttribute('aria-label', `Empty chest slot ${index + 1}`);
+        slotButton.removeAttribute('title');
+      }
+    });
+    if (!locked && (focusedSlot?.disabled || (Number.isInteger(this.chestFocusIndex) && document.activeElement === document.body))) {
+      const previousSlot = root.children[this.chestFocusIndex];
+      (previousSlot && !previousSlot.disabled ? previousSlot : root.querySelector('button:not(:disabled)') || $('inventory-close'))?.focus();
     }
   }
 
@@ -416,7 +526,7 @@ export class UI {
     this.renderHotbar();
     if (this.inventoryOpen) {
       this.renderInventory();
-      this.renderRecipes();
+      if (!this.chest) this.renderRecipes();
     }
   }
 
@@ -497,7 +607,7 @@ export class UI {
         element.append(tooltip);
       }
       element.addEventListener('click', () => {
-        if (performance.now() < this.suppressInventoryClickUntil) return;
+        if (this.chest?.busy || this.chest?.loading || performance.now() < this.suppressInventoryClickUntil) return;
         if (this.inventorySelection === null) {
           if (slot.id) this.inventorySelection = index;
         } else {
@@ -511,6 +621,7 @@ export class UI {
       element.addEventListener('pointerenter', () => this._showInventoryDetail(index));
       element.addEventListener('focus', () => this._showInventoryDetail(index));
       element.addEventListener('keydown', (event) => {
+        if (this.chest?.busy || this.chest?.loading) return;
         if (!slot.id || !['Delete', 'Backspace'].includes(event.key)) return;
         event.preventDefault();
         this.onInventoryDrop?.(index);
@@ -522,6 +633,7 @@ export class UI {
     });
     if (Number.isInteger(focusedIndex)) root.querySelector(`[data-index="${focusedIndex}"]`)?.focus();
     this._showInventoryDetail(this.inventorySelection ?? focusedIndex);
+    this.renderChest();
   }
 
   _showInventoryDetail(index) {
@@ -534,7 +646,7 @@ export class UI {
   }
 
   _beginInventoryPointer(event, index) {
-    if (event.button !== 0 || !this.inventory?.slots[index]?.id || this.inventoryPointer) return;
+    if (this.chest?.busy || this.chest?.loading || event.button !== 0 || !this.inventory?.slots[index]?.id || this.inventoryPointer) return;
     const originElement = event.currentTarget;
     this.inventoryPointer = {
       pointerId: event.pointerId,

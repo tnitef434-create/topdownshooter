@@ -4,7 +4,7 @@ import { accountPlayerName } from './accountUsername.js';
 import { isWorldMember, worldError } from './worldStore.js';
 import { validVector, validCell, cellKey, personalSave, unpackEdits, worldSave } from './src/public/worldloom/src/shared-world.js';
 import { WORLD_GENERATOR_VERSION, isSupportedWorldGeneratorVersion } from './src/public/worldloom/src/generator-version.js';
-import { createDiscoveryVerifier, applyDiscoveryLootClaim } from './worldDiscoveryLoot.js';
+import { createDiscoveryVerifier, inspectSavedDiscoveryLoot, applyDiscoveryLootClaim } from './worldDiscoveryLoot.js';
 import { isDiscoveryLootLedger } from './src/public/worldloom/src/discovery-loot.js';
 
 const uuid = value => typeof value==='string' && /^[0-9a-f-]{36}$/i.test(value);
@@ -140,6 +140,23 @@ export function installWorldServer({app,io,store,accounts,authenticate,verified,
         namespace.to(worldId).emit('drop-removed',{key:message.key,remaining:result.remaining,revision:w.revision});ack({ok:true,...result});
       }catch(e){ack(replyError(e));}
     });
+    const verifyLootSession=async()=>{
+      const session=await accounts.findSession(socket.data.sessionKey);
+      if(!isAccountSessionActive(session)||session.userId!==user.id)throw worldError('Sign in again to open this chest.',401);
+    };
+    socket.on('inspect-loot',async(message,ack)=>{
+      if(typeof ack!=='function')return;
+      try{
+        if(Date.now()-(socket.data.inspectLootAt||0)<100)throw worldError('Wait a moment before opening the chest again.',429);
+        socket.data.inspectLootAt=Date.now();
+        await verifyLootSession();
+        const w=await store.get(worldId);
+        if(!w||w.deleted||!isWorldMember(w,user.id))throw worldError('World unavailable.',404);
+        if(!room.discoveryVerifier)room.discoveryVerifier=createDiscoveryVerifier(w);
+        // Opening the lid is a read, never an inventory or world save.
+        ack({...inspectSavedDiscoveryLoot(w,user.id,socket.data.pose,message,room.discoveryVerifier),revision:w.revision});
+      }catch(e){ack(replyError(e));}
+    });
     socket.on('claim-loot',async(message,ack)=>{
       if(typeof ack!=='function')return;
       let ownsPending=false;
@@ -147,6 +164,7 @@ export function installWorldServer({app,io,store,accounts,authenticate,verified,
         if(socket.data.pending)throw worldError('Wait for the previous save.',429);
         if(Date.now()-(socket.data.lootAt||0)<200)throw worldError('Wait a moment before opening the chest again.',429);
         socket.data.lootAt=Date.now();socket.data.pending=true;ownsPending=true;
+        await verifyLootSession();
         const {world:w,result}=await store.mutate(worldId,user.id,w=>{
           if(w.deleted)throw worldError('World deleted.',404);
           if(!room.discoveryVerifier)room.discoveryVerifier=createDiscoveryVerifier(w);

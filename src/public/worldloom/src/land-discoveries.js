@@ -2,7 +2,7 @@ import { hash2D } from './noise.js';
 
 export const DISCOVERY_VERSION = 1;
 export const DISCOVERY_REGION_SIZE = 80;
-export const DISCOVERY_SPAWN_CHANCE = 0.25;
+export const DISCOVERY_SPAWN_CHANCE = 0.075;
 export const DISCOVERY_KINDS = Object.freeze(['bell_shrine', 'quarry_rig']);
 export const DISCOVERY_NAMES = Object.freeze({bell_shrine:'Wayfarer Bell Shrine',quarry_rig:'Abandoned Quarry Rig'});
 const SALT = 0x73ae129b;
@@ -12,7 +12,10 @@ export function discoveryPlacementForRegion(world, rx, rz) {
   if (world.discoveryVersion !== DISCOVERY_VERSION || !Number.isInteger(rx) || !Number.isInteger(rz)) return null;
   // The roll is independent of terrain. A region is eligible if one of its six
   // seed-selected sites passes the dry, supported and flat footprint checks.
-  if (discoverySpawnRoll(world.seed,rx,rz) >= DISCOVERY_SPAWN_CHANCE) return null;
+  // A saved chest ledger also anchors its old site. Reducing the generation
+  // rate must never erase an already opened chest or replace its remaining loot.
+  const savedChest=Object.hasOwn(world.discoveryLoot||{},`land1:${rx}:${rz}`);
+  if (!savedChest && discoverySpawnRoll(world.seed,rx,rz) >= DISCOVERY_SPAWN_CHANCE) return null;
   for(let attempt=0;attempt<6;attempt++) {
     const salt=world.seed^SALT^Math.imul(attempt+1,0x9e3779b9);
     const x=rx*DISCOVERY_REGION_SIZE+10+Math.floor(hash2D(rx,rz,salt^0x12ab)*60);

@@ -41,6 +41,7 @@ async function account(label){
 async function ready(page){await page.bringToFront();await page.waitForFunction(()=>window.__worldloomShared?.ready&&window.__worldloomPlayer&&document.querySelector('#loading-screen').classList.contains('hidden'),{timeout:180000});}
 async function poseAt(page,cell){
  await page.bringToFront();
+ if(await page.$eval('#pause-menu',e=>!e.classList.contains('hidden')))await page.click('#resume-button');
  await page.evaluate(cell=>{
   const w=window.__worldloomWorld,p=window.__worldloomPlayer;
   for(let dz=-1;dz<=1;dz++)for(let dx=-1;dx<=1;dx++)w.ensurePositionGenerated(cell.x+dx*16,cell.z+dz*16);
@@ -48,7 +49,14 @@ async function poseAt(page,cell){
   p._syncCamera(0,false,70,true);const s=window.__worldloomShared;
   s.socket.emit('pose',{position:p.position.toArray(),velocity:[0,0,0],yaw:p.yaw,pitch:p.pitch});
  },cell);
- await wait(180);
+ // Teleports used by this fixture can fall inside the server's pose throttle.
+ // Wait for the real server to see the position before exercising reach checks.
+ await page.waitForFunction(async()=>{
+  const s=window.__worldloomShared,p=window.__worldloomPlayer;
+  s.socket.emit('pose',{position:p.position.toArray(),velocity:[0,0,0],yaw:p.yaw,pitch:p.pitch});
+  const snapshot=await s.request('snapshot',{}),pose=snapshot.players.find(v=>v.id===s.you.id)?.pose;
+  return pose&&Math.hypot(...pose.position.map((v,i)=>v-p.position.toArray()[i]))<.3;
+ },{polling:150});
 }
 async function inventory(page){return page.evaluate(()=>window.__worldloomShared.getSnapshot().inventory);}
 const itemTotal=slots=>slots.reduce((sum,s)=>sum+s.count,0);
@@ -79,7 +87,7 @@ try{
  console.log('Loading owner world.');await a.bringToFront();await a.goto(base+`/worldloom/?world=${worldId}`);await ready(a);
  await a.evaluate(()=>{window.savedWorldIdentity=window.__worldloomWorld;window.savedPlayerIdentity=window.__worldloomPlayer;});
  log('Real received-invitation UI joined the shared world; both live clients finished loading.');
- const d=await a.evaluate(()=>window.__worldloomWorld.getLandDiscoveryForRegion(-1,-1));
+ const d=await a.evaluate(()=>window.__worldloomWorld.getLandDiscoveryForRegion(1,-2));
  await poseAt(a,d.chest);await poseAt(b,{...d.chest,x:d.chest.x+2});
  await a.bringToFront();await wait(1000);
  assert.equal(await b.evaluate(()=>document.hidden),true,'bringToFront actually hides the other browser tab');
@@ -110,17 +118,32 @@ try{
  await a.waitForFunction(c=>window.__worldloomWorld.getBlock(c.x+2,c.y,c.z)===8,{},cell);
  assert.equal(await a.evaluate(()=>window.savedWorldIdentity===window.__worldloomWorld),true);
  log('Terrain edits sync both ways; a genuinely frozen browser renderer resumes friend edits in the same world object.');
- // A real R interaction collects exactly once and updates the other player's receipt.
+ // Opening reveals contents without pickup. Both players see one shared chest.
  await poseAt(a,d.chest);await a.evaluate(()=>{const s=window.__worldloomShared,v=s.getSnapshot().inventory;v.slots=Array.from({length:36},()=>({id:0,count:0}));s.onInventory(v);});
  await a.evaluate(()=>window.__worldloomShared.flush(true));
  assert.equal(await a.evaluate(()=>window.__worldloomPlayer.raycast(4.25)?.block?.id),24,'R ray targets the actual chest');
- await a.keyboard.press('r');await a.waitForFunction(()=>document.querySelector('#toast-root')?.textContent?.includes('Copper')||document.querySelector('.toast')?.textContent?.includes('Copper'));
+ await a.keyboard.press('r');await a.waitForSelector('#chest-grid button:not([disabled])');
+ assert.equal(itemTotal((await inventory(a)).slots),0,'Opening must not transfer loot');
+ const initialLoot=await a.evaluate(key=>structuredClone(window.__worldloomWorld.discoveryLoot[key]),d.key);
+ const beforeFriend=await inventory(b);
+ await poseAt(b,d.chest);await b.keyboard.press('r');await b.waitForSelector('#chest-grid button:not([disabled])');
+ const firstId=initialLoot[0].id;
+ await a.bringToFront();await a.click(`#chest-grid [data-item-id="${firstId}"]`);
+ await a.waitForFunction(id=>window.__worldloomShared.getSnapshot().inventory.slots.some(s=>s.id===id&&s.count>0),{},firstId);
+ await b.waitForFunction(id=>!document.querySelector(`#chest-grid [data-item-id="${id}"]`),{},firstId);
+ const friendId=initialLoot[1].id;
+ await b.bringToFront();await b.click(`#chest-grid [data-item-id="${friendId}"]`);
+ await a.waitForFunction(id=>!document.querySelector(`#chest-grid [data-item-id="${id}"]`),{},friendId);
+ await a.bringToFront();await a.waitForSelector('#chest-take-all:not([disabled])');await a.click('#chest-take-all');
  await a.waitForFunction(key=>window.__worldloomWorld.discoveryLoot[key]?.length===0,{},d.key);
  await b.waitForFunction(key=>window.__worldloomWorld.discoveryLoot[key]?.length===0,{},d.key);
- const collected=await inventory(a);assert.ok(itemTotal(collected.slots)>5);await a.screenshot({path:resolve('../../outputs/worldloom-recovery-cache-loot.png')});
- await wait(250);await a.keyboard.press('r');await a.waitForFunction(()=>document.querySelector('.toast')?.textContent?.includes('empty'));
+ const collected=await inventory(a);assert.ok(itemTotal(collected.slots)>0);await a.screenshot({path:resolve('../../outputs/worldloom-recovery-cache-loot.png')});
+ assert.equal(itemTotal(collected.slots)+itemTotal((await inventory(b)).slots)-itemTotal(beforeFriend.slots),itemTotal(initialLoot),'Both players receive exactly the original loot, without duplicates');
+ await a.click('#inventory-close');await wait(250);await a.keyboard.press('r');await a.waitForFunction(()=>document.querySelector('#chest-status')?.textContent?.includes('empty'));
  assert.deepEqual(await inventory(a),collected);
- log('R opens the visible cache, transfers loot, informs the other client, and shows empty without duplicate inventory.');
+ await a.click('#inventory-close');await b.bringToFront();await b.click('#inventory-close');await a.bringToFront();
+ if(await a.$eval('#pause-menu',e=>!e.classList.contains('hidden')))await a.click('#resume-button');
+ log('R opens without pickup; item selection and Take all synchronize both open chest windows without duplication; empty contents persist on reopen.');
  // Preserve a transaction whose commit is queued exactly as the owner goes offline.
  await a.evaluate(c=>{
   window.__worldloomWorld.setBlock(c.x+3,c.y,c.z,4);window.__worldloomShared.flush(true).catch(()=>{});
@@ -137,13 +160,15 @@ try{
  log('Offline physics/daylight freeze; pending owner edits and continuing friend edits recover without scene recreation.');
  // Lose the claim ACK after the actual server transaction has persisted. The
  // normal socket request executes first; only its response is interrupted.
- const second=await a.evaluate(()=>window.__worldloomWorld.getLandDiscoveryForRegion(1,-1));await poseAt(a,second.chest);
+ const second=await a.evaluate(()=>window.__worldloomWorld.getLandDiscoveryForRegion(-4,-4));await poseAt(a,second.chest);
  const before=await inventory(a);
  await a.evaluate(()=>{const s=window.__worldloomShared,v=s.getSnapshot().inventory;v.slots=Array.from({length:36},()=>({id:3,count:99}));s.onInventory(v);});
  await a.evaluate(()=>window.__worldloomShared.flush(true));await a.keyboard.press('r');
- await a.waitForFunction(()=>document.querySelector('.toast')?.textContent?.includes('pack is full'));
+ await a.waitForFunction(()=>document.querySelector('#chest-status')?.textContent?.includes('pack is full'));
+ assert.equal(await a.$eval('#chest-take-all',e=>e.disabled),true);
  assert.equal(itemTotal((await inventory(a)).slots),36*99);
  assert.equal(Object.hasOwn((await serverSaved(worldId)).discoveryLoot,second.key),false,'a full pack leaves the entire cache available');
+ await a.click('#inventory-close');
  await a.evaluate(v=>window.__worldloomShared.onInventory(v),before);await a.evaluate(()=>window.__worldloomShared.flush(true));await wait(250);
  log('A real R interaction with a full inventory leaves every cache item available and displays the full-pack explanation.');
  await a.evaluate(cell=>{
@@ -167,7 +192,13 @@ try{
  assert.deepEqual((await serverSaved(worldId)).players[owner.user.id].inventory,recovered,'later heartbeat cannot erase the recovered transaction');
  log('Persisted cache claim with intentionally lost ACK resnapshots authoritative inventory; no duplication or lost loot after heartbeat.');
  await a.evaluate(()=>window.__worldloomShared.flush(true));await b.evaluate(()=>window.__worldloomShared.flush(true));
- await a.keyboard.press('Escape');await a.waitForSelector('#title-button',{visible:true});await a.click('#title-button');await a.waitForFunction(()=>!new URLSearchParams(location.search).has('world'));
+ await a.bringToFront();
+ // CDP's synthetic Escape does not perform Chrome's native pointer unlock.
+ // Exercise the real pointerlockchange pause path before using Save & leave.
+ await a.evaluate(()=>document.exitPointerLock());
+ await a.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+ if(await a.$eval('#pause-menu',e=>e.classList.contains('hidden')))await a.keyboard.press('Escape');
+ await a.waitForSelector('#title-button',{visible:true});await a.click('#title-button');await a.waitForFunction(()=>!new URLSearchParams(location.search).has('world'));
  await a.goto(base+`/worldloom/?world=${worldId}`);await ready(a);
  assert.deepEqual(await inventory(a),recovered);
  assert.deepEqual(await a.evaluate(key=>window.__worldloomWorld.discoveryLoot[key],second.key),[]);

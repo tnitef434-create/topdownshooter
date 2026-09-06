@@ -90,17 +90,14 @@ import {
 import {
   CHUNK_WORLD_SIZE,
   DETAIL_SUPPORT_CHUNKS,
-  DISTANT_HORIZON_BUFFER_CHUNKS,
   MAX_DETAIL_DISTANCE,
   MAX_VIEW_DISTANCE,
   MIN_VIEW_DISTANCE,
   cameraFarForViewDistance,
   detailedStreamDistance,
   detailedViewDistance,
-  distantHorizonRadius,
   normalizeViewDistance,
 } from '../src/public/worldloom/src/streaming-config.js';
-import { DistantTerrainHorizon } from '../src/public/worldloom/src/distant-terrain.js';
 
 function validSnapshot() {
   return {
@@ -121,21 +118,20 @@ function validSnapshot() {
   };
 }
 
-test('view-distance configuration keeps the visual horizon broad and voxel detail bounded', () => {
+test('view-distance configuration uses only real voxel distance and keeps the sky clip wide', () => {
   assert.equal(MIN_VIEW_DISTANCE, 2);
-  assert.equal(MAX_VIEW_DISTANCE, 20);
+  assert.equal(MAX_VIEW_DISTANCE, 8);
   assert.equal(MAX_DETAIL_DISTANCE, 8);
   assert.equal(DETAIL_SUPPORT_CHUNKS, 2);
-  assert.equal(DISTANT_HORIZON_BUFFER_CHUNKS, 3);
   assert.equal(CHUNK_WORLD_SIZE, 16);
 
   assert.equal(normalizeViewDistance(undefined), 4);
   assert.equal(normalizeViewDistance(Number.NaN, 6), 6);
   assert.equal(normalizeViewDistance(-100), MIN_VIEW_DISTANCE);
   assert.equal(normalizeViewDistance('19.6'), MAX_VIEW_DISTANCE);
-  assert.equal(normalizeViewDistance(10.49), 10);
-  assert.equal(normalizeViewDistance(10.5), 11);
-  assert.equal(normalizeViewDistance(9, 99), 9,
+  assert.equal(normalizeViewDistance(6.49), 6);
+  assert.equal(normalizeViewDistance(6.5), 7);
+  assert.equal(normalizeViewDistance(7, 99), 7,
     'a valid requested distance must not inherit a malformed fallback');
 
   assert.equal(detailedViewDistance(MIN_VIEW_DISTANCE), MIN_VIEW_DISTANCE);
@@ -144,15 +140,12 @@ test('view-distance configuration keeps the visual horizon broad and voxel detai
   assert.equal(detailedStreamDistance(MIN_VIEW_DISTANCE), MIN_VIEW_DISTANCE + DETAIL_SUPPORT_CHUNKS);
   assert.equal(detailedStreamDistance(MAX_VIEW_DISTANCE), MAX_DETAIL_DISTANCE + DETAIL_SUPPORT_CHUNKS);
 
-  const maximumHorizon = (MAX_VIEW_DISTANCE + DISTANT_HORIZON_BUFFER_CHUNKS) * CHUNK_WORLD_SIZE * 3;
-  assert.equal(distantHorizonRadius(MAX_VIEW_DISTANCE), maximumHorizon);
   assert.ok(cameraFarForViewDistance(MIN_VIEW_DISTANCE) >= 700,
-    'even low detail must load a broad clear-air surface horizon');
-  assert.equal(cameraFarForViewDistance(MAX_VIEW_DISTANCE), maximumHorizon - 64);
-  assert.ok(cameraFarForViewDistance(MAX_VIEW_DISTANCE) < distantHorizonRadius(MAX_VIEW_DISTANCE));
+    'sky and cloud geometry keep their clip range without generating proxy terrain');
+  assert.equal(cameraFarForViewDistance(MAX_VIEW_DISTANCE),704);
 });
 
-test('saved view distance clamps to 2–20 while graphics presets remain valid defaults', () => {
+test('saved proxy-era view distances clamp to 2–8 while graphics presets remain valid defaults', () => {
   const store = new SaveStore();
   const sanitize = (viewDistance) => store.sanitizeSettings({
     ...DEFAULT_SETTINGS,
@@ -1655,82 +1648,26 @@ test('streaming plan revision changes only when its chunk-space signature change
   world.dispose();
 });
 
-test('distant terrain builds deterministically, incrementally, and swaps atomically', () => {
-  const scene = new THREE.Scene();
-  const terrain = {
-    seaLevel: 32,
-    _columnInfo(x, z) {
-      const height = Math.round(31 + Math.sin(x / 41) * 6 + Math.cos(z / 53) * 4);
-      return {
-        height,
-        biome: x < -40 ? 'forest' : x > 80 ? 'desert' : 'plains',
-        moisture: 0.45 + Math.sin(z / 90) * 0.2,
-        forestWeight: x < 0 ? 0.7 : 0.1,
-        desertWeight: x > 50 ? 0.65 : 0.05,
-        surfaceSand: x > 90,
-        rockiness: Math.max(0, (height - 34) / 24),
-        pondWaterLevel: Math.abs(x) < 8 && Math.abs(z) < 8 ? 34 : null,
-      };
-    },
-  };
-  const hashGeometry = (horizon) => {
-    const hash = createHash('sha256');
-    for (const name of ['position', 'normal', 'color']) {
-      const array = horizon.mesh.geometry.getAttribute(name).array;
-      hash.update(Buffer.from(array.buffer, array.byteOffset, array.byteLength));
-    }
-    return hash.digest('hex');
-  };
-
-  const first = new DistantTerrainHorizon(scene, terrain);
-  assert.equal(first.request(0.5, 0.5, MAX_VIEW_DISTANCE, MAX_DETAIL_DISTANCE), false);
-  const originalPending = first.pendingWork;
-  first.process(1, Number.POSITIVE_INFINITY);
-  assert.ok(first.pendingWork < originalPending && first.pending,
-    'one row should advance without publishing the complete horizon');
-  while (first.pending) first.process(16, Number.POSITIVE_INFINITY);
-  assert.equal(first.ready, true);
-  assert.equal(first.mesh.castShadow, false);
-  assert.equal(first.mesh.receiveShadow, false);
-  assert.equal(first.mesh.userData.distantTerrain, true);
-  const firstStats = first.getStats();
-  assert.ok(first.mesh.geometry.getAttribute('position').array.filter((_,i)=>i%3===1).every(y=>y>15),'null pond levels must never flatten real terrain to sea level zero');
-  const water=first.group.children.find(m=>m.name==='Worldloom distant moving water');
-  assert.ok(water.geometry.getAttribute('position').count>0,'distant water has its own moving surface');
-  assert.ok(water.geometry.getAttribute('waterData').array.every(Number.isFinite));
-  assert.equal(firstStats.outerRadius, distantHorizonRadius(MAX_VIEW_DISTANCE));
-  assert.equal(firstStats.innerRadius, CHUNK_WORLD_SIZE * 3);
-  assert.ok(firstStats.vertices > 0 && firstStats.vertices <= 210_000);
-  assert.ok(firstStats.triangles > 0 && firstStats.triangles <= 70_000);
-  for (const name of ['position', 'normal', 'color']) {
-    const values = first.mesh.geometry.getAttribute(name).array;
-    assert.ok(values.every(Number.isFinite), `${name} contains a non-finite distant-terrain value`);
-  }
-  assert.equal(first.getSafeDistanceFor(0.5, 0.5, 8), 0,
-    'the visual horizon cannot bridge an unfinished detailed centre hole');
-  assert.ok(first.getSafeDistanceFor(0.5, 0.5, 80) >= 350,
-    'a complete detailed seam should unlock the twenty-chunk visual horizon');
-  const firstHash = hashGeometry(first);
-
-  const replay = new DistantTerrainHorizon(null, terrain);
-  replay.request(0.5, 0.5, MAX_VIEW_DISTANCE, MAX_DETAIL_DISTANCE);
-  replay.process(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY);
-  assert.equal(hashGeometry(replay), firstHash, 'the same world request must reproduce exact horizon buffers');
-  assert.equal(first.request(15.75, 8.25, MAX_VIEW_DISTANCE, MAX_DETAIL_DISTANCE), true,
-    'movement inside the snapped chunk must be a cache hit');
-
-  const oldMesh = first.mesh;
-  assert.equal(first.request(16.5, 8.25, MAX_VIEW_DISTANCE, MAX_DETAIL_DISTANCE), false);
-  assert.equal(first.mesh, oldMesh, 'a replacement build must retain the published horizon');
-  assert.equal(first.ready, false);
-  first.process(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY);
-  assert.notEqual(first.mesh, oldMesh, 'the replacement must publish atomically after completion');
-  assert.equal(first.ready, true);
-  assert.deepEqual(first.getStats().center, [16, 0]);
-
-  replay.dispose();
-  first.dispose();
-  assert.equal(scene.children.includes(first.group), false);
+test('streaming creates no proxy terrain and safe visibility uses real chunk coverage only', () => {
+  const scene=new THREE.Scene(),world=new World(64,scene,null);
+  assert.equal(Object.hasOwn(world,'distantTerrain'),false);
+  assert.equal(typeof world.processDistantTerrain,'undefined');
+  const position={x:.5,z:.5};
+  world.updateStreaming(position,20);
+  assert.equal(world.renderDistance,8,'old twenty-chunk settings cannot schedule extra landscape work');
+  assert.equal(world.streamDistance,10);
+  assert.equal(world.getSafeTerrainDistance(position),8,'unmeshed terrain grants no invented coverage');
+  const terrainBefore=world.terrainHeight(620,-411);
+  assert.ok(Number.isFinite(terrainBefore));
+  world.getRenderedRadius=()=>3;
+  assert.equal(world.getSafeTerrainDistance(position),46.5);
+  world.generationQueue=[];world.stats.dirty=0;
+  assert.equal(world.hasPendingStreamingWork(),false,'no hidden proxy job holds loading open');
+  const meshes=[];scene.traverse(object=>{if(object.isMesh)meshes.push(object);});
+  assert.equal(meshes.some(mesh=>mesh.userData.distantTerrain||/distant terrain|distant moving water/i.test(mesh.name)),false);
+  assert.equal(Object.hasOwn(world.getStats(),'distantTerrain'),false);
+  assert.equal(world.terrainHeight(620,-411),terrainBefore,'real generated terrain remains deterministic');
+  world.dispose();
 });
 
 test('mature overgrown trees use ivy bark textures without protruding lower-trunk leaf blocks', () => {
@@ -1776,7 +1713,7 @@ test('mature overgrown trees use ivy bark textures without protruding lower-trun
   world.dispose();
 });
 
-test('dry open daylight has no distance fog inside the fully loaded camera view', () => {
+test('dry daylight keeps the nearby world clear and fades at the completed voxel boundary', () => {
   const clear = atmosphericFogRange(4, {
     rainIntensity: 0,
     overcastAmount: 0,
@@ -1786,9 +1723,10 @@ test('dry open daylight has no distance fog inside the fully loaded camera view'
   });
   const cameraFar=cameraFarForViewDistance(4);
   assert.ok(clear.near>cameraFar);
-  const loaded=clampFogToMeshedTerrain({atmosphericNear:clear.near,atmosphericFar:clear.far,safeTerrainFar:distantHorizonRadius(4)-24,clarity:clear.clarity});
-  assert.ok(loaded.near>cameraFar,'the streaming guard must also leave the visible landscape fog-free');
-  assert.ok(loaded.far<distantHorizonRadius(4),'the final safety edge remains inside real rendered terrain');
+  const safeTerrainFar=detailedStreamDistance(4)*CHUNK_WORLD_SIZE-2;
+  const loaded=clampFogToMeshedTerrain({atmosphericNear:clear.near,atmosphericFar:clear.far,safeTerrainFar,clarity:clear.clarity});
+  assert.equal(loaded.far,safeTerrainFar,'only real mesh coverage can extend the visible landscape');
+  assert.ok(loaded.near>=safeTerrainFar-16,'clear weather limits the fade to the outermost real terrain');
 });
 
 test('storm, cave, night and underwater contexts preserve established fog density', () => {

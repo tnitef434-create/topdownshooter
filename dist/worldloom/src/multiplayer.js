@@ -54,8 +54,8 @@ class RemotePlayer {
 }
 
 export class SharedWorldClient {
-  constructor(worldId,{scene,atlas,onLoad,onResume,onStatus,onClosed,getSnapshot,onInventory,onDrop,onDropRemoved,onEcology,onAttack}) {
-    Object.assign(this,{worldId,scene,atlas,onLoad,onResume,onStatus,onClosed,getSnapshot,onInventory,onDrop,onDropRemoved,onEcology,onAttack});
+  constructor(worldId,{scene,atlas,onLoad,onResume,onStatus,onClosed,getSnapshot,onInventory,onDiscovery,onDrop,onDropRemoved,onEcology,onAttack}) {
+    Object.assign(this,{worldId,scene,atlas,onLoad,onResume,onStatus,onClosed,getSnapshot,onInventory,onDiscovery,onDrop,onDropRemoved,onEcology,onAttack});
     this.ready=false;this.applying=false;this.edits=[];this.dropAdds=[];this.remotes=new Map();this.events=[];this.you=null;this.busy=null;this.pending=null;this.stopped=false;this.revision=0;
     const {token}=readAccountSession();
     this.sessionChanged=()=>{if(readAccountSession().token!==token){this.dispose();this.onClosed('Your account changed. Sign in again to reopen this world.');}};
@@ -73,8 +73,9 @@ export class SharedWorldClient {
     this.socket.on('changes',change=>{if(!this.ready)this.events.push(change);else this.applyChanges(change);});
     this.socket.on('drop-removed',data=>{if(this.ready)this.onDropRemoved(data);});
     this.discoveryEvents=[];
+    this.discoveryRevisions=new Map();
     this.socket.on('discovery-looted',data=>{
-      if(this.ready&&this.world)this.world.discoveryLoot[data.key]=data.remaining;
+      if(this.ready&&this.world)this.applyDiscovery(data);
       else this.discoveryEvents.push(data);
     });
     this.socket.on('ecology',data=>{this.ecology=data;if(this.ready&&!this.isLeader)this.onEcology(data);});
@@ -157,7 +158,8 @@ export class SharedWorldClient {
       if(this.ecology)this.onEcology(this.ecology);
       for(const drop of Object.values(snapshot.drops||{}))this.onDrop(drop);
       for(const event of this.events)if(event.revision>snapshot.revision)this.applyChanges(event);
-      for(const event of this.discoveryEvents)if(event.revision>snapshot.revision&&this.world)this.world.discoveryLoot[event.key]=event.remaining;
+      this.discoveryRevisions=new Map(Object.keys(this.world?.discoveryLoot||{}).map(key=>[key,snapshot.revision]));
+      for(const event of this.discoveryEvents)if(event.revision>snapshot.revision&&this.world)this.applyDiscovery(event);
       this.discoveryEvents=[];
       this.events=[];this.authoritativeInventoryPending=false;this.ready=true;this.onStatus('');this.dirtyPersonal=true;clearTimeout(this.retryTimer);
     }catch(error){if(!this.stopped)this.freeze('Game paused · waiting for the connection to recover…');}
@@ -217,15 +219,36 @@ export class SharedWorldClient {
     catch(error){if(error.retryable){this.freeze('Syncing your inventory after the connection interruption…');this.retry();}else this.authoritativeInventoryPending=false;}
     finally{this.picking=false;}
   }
-  async claimLoot(cell){
+  applyDiscovery(data){
+    if(!data?.key||!Array.isArray(data.remaining)||!this.world)return;
+    const known=this.discoveryRevisions.get(data.key)??-1;
+    if(Number.isInteger(data.revision)&&data.revision<known)return;
+    if(Number.isInteger(data.revision))this.discoveryRevisions.set(data.key,data.revision);
+    this.world.discoveryLoot[data.key]=data.remaining;
+    this.onDiscovery?.(data);
+  }
+  async inspectLoot(cell){
+    if(!this.ready||this.picking)throw new Error('Wait for your world to finish syncing.');
+    this.picking=true;
+    try{
+      await this.flush(true);
+      const result=await this.request('inspect-loot',{x:cell.x,y:cell.y,z:cell.z});
+      if(!this.stopped)this.applyDiscovery(result);
+      return result;
+    }catch(error){
+      if(error.retryable){this.freeze('Reconnecting before opening the chest…');this.retry();}
+      throw error;
+    }finally{this.picking=false;}
+  }
+  async claimLoot(cell,itemId){
     if(!this.ready||this.picking)throw new Error('Wait for your world to finish syncing.');
     this.picking=true;
     try{
       await this.flush(true);
       this.authoritativeInventoryPending=true;
-      const result=await this.request('claim-loot',{x:cell.x,y:cell.y,z:cell.z});
-      if(result.ok)this.onInventory(result.inventory);
-      if(result.key&&this.world)this.world.discoveryLoot[result.key]=result.remaining;
+      const result=await this.request('claim-loot',{x:cell.x,y:cell.y,z:cell.z,...(itemId===undefined?{}:{itemId})});
+      if(result.ok&&!this.stopped)this.onInventory(result.inventory);
+      if(!this.stopped)this.applyDiscovery(result);
       this.authoritativeInventoryPending=false;
       return result;
     }catch(error){

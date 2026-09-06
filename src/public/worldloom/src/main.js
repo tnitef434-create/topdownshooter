@@ -11,7 +11,7 @@ import { InputController, PlayerController, fallDamageForImpact } from './player
 import { AudioSystem } from './audio.js';
 import { MenuMusic } from './menu-music.js';
 import { LoadingScene } from './loading-scene.js';
-import { claimDiscoveryLoot } from './discovery-loot.js';
+import { claimDiscoveryLoot, inspectDiscoveryLoot } from './discovery-loot.js';
 import { Environment, BlockEffects } from './environment.js';
 import { SaveStore, Inventory, DEFAULT_SETTINGS, GRAPHICS_PRESETS } from './save.js';
 import {
@@ -62,6 +62,7 @@ let playerAvatar = null;
 let sharedWorld = null;
 let leavingWorld = false;
 let collectingLoot = false;
+let activeChest = null;
 let receivingDrop = null;
 let latestMotion = {};
 let graphicsPipeline = null;
@@ -79,7 +80,6 @@ let suppressMining = 0;
 let saveTimer = 0;
 let streamingTimer = 0;
 let streamWorkPhase = 0;
-let stagingWorkPhase = 0;
 let streamingFogFar = null;
 let hudTimer = 0;
 let fps = 60;
@@ -152,6 +152,7 @@ function yieldLoadingWork() {
 }
 
 function setState(next) {
+  if (next !== 'inventory') activeChest = null;
   state = next;
   input.enabled = ['playing', 'paused', 'inventory'].includes(next);
   if (next !== 'playing') input.clear();
@@ -347,7 +348,7 @@ function bindInput() {
     } else if (code === 'KeyR' && state === 'playing') {
       const hit=player.raycast(4.25);
       if(hit?.block?.id===BLOCK.BED)trySleepAtBed(hit);
-      else if(hit?.block?.id===BLOCK.CHEST&&world.getLandDiscoveryChest?.(hit.block.x,hit.block.y,hit.block.z))collectDiscovery(hit.block);
+      else if(hit?.block?.id===BLOCK.CHEST&&world.getLandDiscoveryChest?.(hit.block.x,hit.block.y,hit.block.z))openDiscoveryChest(hit.block);
       else if([BLOCK.CAMP_BENCH,BLOCK.KILN,BLOCK.FURNACE,BLOCK.CHEST].includes(hit?.block?.id))openInventory(hit.block);
     } else if (code === 'F3') {
       event.preventDefault();
@@ -402,6 +403,7 @@ function bindUI() {
   ui.onInventoryDrop = (from) => dropInventoryStack(from);
   ui.onSelectHotbar = selectHotbar;
   ui.onCraft = craftRecipe;
+  ui.onChestTake = takeChestLoot;
   ui.onInventoryClose = () => {
     if (state === 'inventory') toggleInventory();
   };
@@ -593,27 +595,6 @@ async function startWorld({ seed, mode: selectedMode, saveData = null }) {
   }
   if (!world.isNeighborhoodRendered(player.position.x, player.position.z, preloadRenderedRadius)) {
     throw new Error('The starting horizon could not be prepared safely.');
-  }
-  const initialHorizonWork = world.distantTerrain?.pendingWork || 0;
-  let horizonSlice = 0;
-  let horizonProgressAt = performance.now();
-  let horizonProgressMarker = `${initialHorizonWork}`;
-  while (world.distantTerrain?.pending) {
-    world.processDistantTerrain(6, 7);
-    horizonSlice++;
-    const remaining = world.distantTerrain.pendingWork;
-    const marker = `${remaining}:${world.distantTerrain.getStats?.().publishedBuilds || 0}`;
-    if (marker !== horizonProgressMarker) {
-      horizonProgressMarker = marker;
-      horizonProgressAt = performance.now();
-    } else if (performance.now() - horizonProgressAt > 30_000) {
-      throw new Error('The distant starting horizon stopped making progress.');
-    }
-    const completed = initialHorizonWork > 0
-      ? 1 - remaining / initialHorizonWork
-      : 1;
-    ui.setLoading(0.94 + Math.min(1, completed) * 0.05, 'Finishing the far landscape…');
-    await yieldLoadingWork();
   }
   // Loading has just proven this complete radius. Open directly to that safe
   // boundary; only later background-grown rings use the gentle outward fade.
@@ -1058,11 +1039,13 @@ function loadDroppedItems(records) {
 
 function openInventory(station = null) {
   if (state !== 'playing') return;
+  activeChest = null;
+  ui.setChest(null);
   stationContext = station && Number.isInteger(station.id)
     ? { id: station.id, x: station.x, y: station.y, z: station.z }
     : null;
-  document.exitPointerLock?.();
   setState('inventory');
+  document.exitPointerLock?.();
   ui.setInventory(true);
   refreshInventoryUI();
   audio.ui('open');
@@ -1404,7 +1387,7 @@ function finishDeathRespawn() {
 function placeSelectedBlock() {
   if (!player || !world || state !== 'playing') return;
   const hit = player.raycast();
-  if(hit?.block?.id===BLOCK.CHEST&&world.getLandDiscoveryChest?.(hit.block.x,hit.block.y,hit.block.z)){collectDiscovery(hit.block);return;}
+  if(hit?.block?.id===BLOCK.CHEST&&world.getLandDiscoveryChest?.(hit.block.x,hit.block.y,hit.block.z)){openDiscoveryChest(hit.block);return;}
   const slot = inventory.selectedSlot();
   const item = getItem(slot.id);
   const selectedIndex = inventory.selected;
@@ -1460,18 +1443,54 @@ function placeSelectedBlock() {
   }
 }
 
-async function collectDiscovery(cell) {
-  if(collectingLoot||leavingWorld||(sharedWorld&&!sharedWorld.ready))return;
-  collectingLoot=true;input.clear();input.enabled=false;resetMining();
+async function openDiscoveryChest(cell) {
+  if(state!=='playing'||collectingLoot||leavingWorld||(sharedWorld&&(!sharedWorld.ready||sharedWorld.picking)))return;
+  const discovery=world.getLandDiscoveryChest(cell.x,cell.y,cell.z);
+  if(!discovery)return;
+  const chest={key:discovery.key,name:discovery.name,cell:{x:cell.x,y:cell.y,z:cell.z},remaining:[],busy:true,loading:true};
+  activeChest=chest;collectingLoot=true;stationContext=null;resetMining();
+  setState('inventory');document.exitPointerLock?.();
+  ui.setChest(chest);ui.setInventory(true);refreshInventoryUI();audio.ui('open');
   try{
-    const result=sharedWorld?await sharedWorld.claimLoot(cell):claimDiscoveryLoot(world,inventory,cell);
+    const result=sharedWorld?await sharedWorld.inspectLoot(cell):inspectDiscoveryLoot(world,inventory,cell);
+    if(activeChest!==chest)return;
+    if(!result.ok)throw new Error('This chest is no longer available.');
+    chest.remaining=sharedWorld?world.discoveryLoot[chest.key]||result.remaining:result.remaining;
+    chest.message='';
+  }catch(error){if(activeChest===chest)chest.message=error.message||'Could not open this chest. Close it and try again.';}
+  finally{
+    collectingLoot=false;
+    if(activeChest===chest){chest.busy=false;chest.loading=false;ui.setChest(chest);}
+  }
+}
+
+function refreshOpenChest() {
+  if(!activeChest||state!=='inventory')return;
+  if(Object.hasOwn(world.discoveryLoot,activeChest.key))activeChest.remaining=world.discoveryLoot[activeChest.key];
+  ui.setChest({...activeChest,busy:activeChest.busy||Boolean(sharedWorld&&!sharedWorld.ready)});
+}
+
+async function takeChestLoot(itemId) {
+  const chest=activeChest,currentWorld=world;
+  if(!chest||state!=='inventory'||collectingLoot||leavingWorld||(sharedWorld&&(!sharedWorld.ready||sharedWorld.picking)))return;
+  if(!world.getLandDiscoveryChest(chest.cell.x,chest.cell.y,chest.cell.z)
+    ||Math.hypot(player.position.x-chest.cell.x-.5,player.position.y-chest.cell.y-.5,player.position.z-chest.cell.z-.5)>5.25){
+    chest.remaining=[];chest.message='This chest is no longer within reach.';ui.setChest(chest);return;
+  }
+  collectingLoot=true;chest.busy=true;chest.message='';ui.setChest(chest);input.clear();resetMining();
+  try{
+    const result=sharedWorld?await sharedWorld.claimLoot(chest.cell,itemId):claimDiscoveryLoot(world,inventory,chest.cell,itemId);
+    if(world!==currentWorld)return;
     if(result.ok){
-      refreshInventoryUI();checkObjectives();audio.ui('open');
-      ui.toast(result.items.map(item=>`${item.count} ${getItem(item.id).name}`).join(' · '),'success',4200);
+      refreshInventoryUI();checkObjectives();audio.pickup();
       if(!sharedWorld)saveGame(false);
-    }else ui.toast(result.full?'Your pack is full · loot stays in the chest':result.empty?'This cache is empty':'This cache is unavailable',result.full?'error':'normal',2500);
-  }catch(error){ui.toast(error.message||'The cache could not be opened. Try again.','error',3000);}
-  finally{collectingLoot=false;input.enabled=['playing','paused','inventory'].includes(state);}
+    }
+    if(activeChest===chest){
+      chest.remaining=sharedWorld?world.discoveryLoot[chest.key]||result.remaining:result.remaining;
+      chest.message=result.full?'Your pack is full. The remaining loot stays here.':result.stale?'That stack was taken by your friend.':result.invalid?'This chest is unavailable.':'';
+    }
+  }catch(error){if(activeChest===chest)chest.message=error.message||'Loot could not be collected. Try again.';}
+  finally{collectingLoot=false;if(activeChest===chest){chest.busy=false;refreshOpenChest();}}
 }
 
 function placementProblem(blockId, x, y, z) {
@@ -1500,6 +1519,11 @@ function placementProblem(blockId, x, y, z) {
 function useSelectedItem() {
   if(sharedWorld&&(!sharedWorld.ready||sharedWorld.picking))return;
   if (!inventory || !player || state !== 'playing') return;
+  // World interaction takes priority even with an empty hand, food or a tool.
+  const hit=player.raycast(4.25);
+  if(hit?.block?.id===BLOCK.CHEST&&world.getLandDiscoveryChest?.(hit.block.x,hit.block.y,hit.block.z)){
+    openDiscoveryChest(hit.block);return;
+  }
   const slot = inventory.selectedSlot();
   if (!slot.id || slot.count <= 0) return;
   const item = getItem(slot.id);
@@ -1549,7 +1573,7 @@ function updateMining(dt, hit) {
   const { x, y, z, id } = hit.block;
   const cache=id===BLOCK.CHEST&&world.getLandDiscoveryChest?.(x,y,z);
   if(cache&&(!Object.hasOwn(world.discoveryLoot,cache.key)||world.discoveryLoot[cache.key].length)){
-    resetMining();if(unbreakableToastTimer<=0){unbreakableToastTimer=2.2;ui.toast('R to collect this cache first · loot stays safe until your pack has room','normal',2100);}return false;
+    resetMining();if(unbreakableToastTimer<=0){unbreakableToastTimer=2.2;ui.toast('R or right-click to open this chest · take its loot before breaking it','normal',2100);}return false;
   }
   if (!id || id === BLOCK.WATER || id === BLOCK.LAVA) {
     resetMining();
@@ -1728,32 +1752,22 @@ function scheduleWorldWork() {
         player.position.z,
         nextRenderedRadius + 1,
       );
-      if (stagingBoost) stagingWorkPhase = (stagingWorkPhase + 1) % 3;
-      if (stagingBoost && world.distantTerrain?.pending && stagingWorkPhase === 0) {
-        // Build the cheap visual horizon alongside the detailed near rings so
-        // a patient title-screen player does not wait for every cave chunk
-        // before the clear-air distance can open.
-        world.processDistantTerrain(1, sliceBudget);
-      } else if (stagingBoost && nextSupportReady) {
+      if (stagingBoost && nextSupportReady) {
         // Finish the newly supported ring first: this increases the safe fog
         // distance immediately instead of meshing far chunks out of order.
         world.rebuildDirty(1, sliceBudget);
       } else if (stagingBoost && world.generationQueue.length) {
         world.processQueue(1, sliceBudget);
       } else {
-        streamWorkPhase = (streamWorkPhase + 1) % 3;
+        streamWorkPhase = (streamWorkPhase + 1) % 2;
         if (streamWorkPhase === 0 && world.generationQueue.length) {
           world.processQueue(1, sliceBudget);
         } else if (streamWorkPhase === 1 && world.stats.dirty > 0) {
           world.rebuildDirty(1, sliceBudget);
-        } else if (streamWorkPhase === 2 && world.distantTerrain?.pending) {
-          world.processDistantTerrain(1, sliceBudget);
         } else if (world.generationQueue.length) {
           world.processQueue(1, sliceBudget);
         } else if (world.stats.dirty > 0) {
           world.rebuildDirty(1, sliceBudget);
-        } else if (world.distantTerrain?.pending) {
-          world.processDistantTerrain(1, sliceBudget);
         }
       }
       passes++;
@@ -1922,7 +1936,7 @@ function updateHUD() {
       target = `${block.name} · R sleep / bind respawn`;
     } else if ([BLOCK.CAMP_BENCH, BLOCK.KILN, BLOCK.FURNACE, BLOCK.CHEST].includes(hit.block.id)) {
       const discovery=world.getLandDiscoveryChest?.(hit.block.x,hit.block.y,hit.block.z);
-      target = discovery ? `${discovery.name} · R collect loot` : `${block.name} · R interact`;
+      target = discovery ? `${discovery.name} · R / RMB open chest` : `${block.name} · R interact`;
     } else if (block?.unbreakable) {
       target = `${block.name} · unbreakable foundation`;
     } else {
@@ -1934,7 +1948,7 @@ function updateHUD() {
     ? [
       `${fps.toFixed(0)} FPS · ${renderer.info.render.calls} draws · ${renderer.info.render.triangles.toLocaleString()} tris`,
       `XYZ ${player.position.x.toFixed(1)} / ${player.position.y.toFixed(1)} / ${player.position.z.toFixed(1)}`,
-      `Chunks ${stats.generated}/${stats.loaded} · queue ${stats.queued} · horizon ${stats.distantTerrain?.ready ? 'ready' : stats.distantTerrain?.pending ? 'building' : 'detail only'}`,
+      `Chunks ${stats.generated}/${stats.loaded} · queue ${stats.queued}`,
       `Seed ${world.seed} · ${world.biomeAt(player.position.x, player.position.z)} · ${creatures?.count || 0} meadow pigs`,
       `Day ${survival.dayNumber} · food ${(survival.nourishment * 100).toFixed(0)}% · wet ${(survival.wetness * 100).toFixed(0)}% · air ${(survival.oxygen * 100).toFixed(0)}%`,
     ].join('\n')
@@ -2037,7 +2051,6 @@ function animate(now) {
   // repeatedly drawing a half-built 441-chunk scene behind it; publish the
   // fully prepared world once when gameplay begins.
   if (state === 'loading') return;
-  world?.distantTerrain?.updateWaterCoverage();
   environment.waterReflection.update(dt,camera);
   environment.waterCapture.requiresDepth=Boolean(heldItem?.presentationVisible);
   environment.waterCapture.update(camera);
@@ -2096,11 +2109,13 @@ async function boot() {
           status.textContent=message;status.hidden=!message;
           if(message&&world){input.clear();attackGesture=false;resetMining();audio.setPaused(true);}
           if(!message){input.clear();audio.setPaused(!['playing','inventory'].includes(state));scheduleWorldWork();}
+          refreshOpenChest();
         },
         onClosed:message=>{status.hidden=false;status.textContent=message;pauseGame();},
         onLoad:async snapshot=>{await startWorld({seed:snapshot.save.seed,mode:snapshot.save.mode,saveData:snapshot.save});if(!world)throw new Error('The world could not start.');},
         onResume:resumeSharedWorld,
         onInventory:data=>{inventory.load(data);refreshInventoryUI();checkObjectives();},
+        onDiscovery:()=>refreshOpenChest(),
         onDrop:drop=>{
           if(droppedItems.some(item=>item.networkId===drop.key))return;
           receivingDrop=drop.key;

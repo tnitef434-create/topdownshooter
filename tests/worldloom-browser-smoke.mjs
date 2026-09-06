@@ -142,10 +142,10 @@ try {
   });
   assert(maximumViewSettings, 'The view-distance control is missing');
   assert.equal(maximumViewSettings.minimum, 2);
-  assert.equal(maximumViewSettings.maximum, 20, 'The settings UI does not expose the 20-chunk horizon');
-  assert.equal(maximumViewSettings.value, 20);
-  assert.equal(maximumViewSettings.output, '20 chunks');
-  assert.equal(maximumViewSettings.persisted, 20,
+  assert.equal(maximumViewSettings.maximum, 8, 'The settings UI must expose only the real voxel range');
+  assert.equal(maximumViewSettings.value, 8);
+  assert.equal(maximumViewSettings.output, '8 chunks');
+  assert.equal(maximumViewSettings.persisted, 8,
     'The maximum view-distance selection did not survive settings persistence');
   await frame.evaluate(() => document.querySelector('#settings-close')?.click());
   await frame.waitForFunction(() => document.querySelector('#settings-panel')?.classList.contains('hidden'));
@@ -670,83 +670,20 @@ try {
   assert(gameState.fogClarity > 0.8,
     `The open daylight spawn did not select the clear-air fog profile (${gameState.fogClarity})`);
 
-  // Leave the browser idle while the incremental horizon builder runs. The
-  // explicit readiness contract avoids a machine-speed timeout masquerading
-  // as a graphics regression and proves the published mesh is the requested
-  // maximum-distance revision rather than an intermediate terrain shell.
-  try {
-    await frame.waitForFunction(() => (
-      window.__worldloomWorld?.distantTerrain?.ready === true
-    ), { timeout: 45_000, polling: 'raf' });
-  } catch (error) {
-    const diagnostics = await frame.evaluate(() => ({
-      world: window.__worldloomWorld?.getStats?.(),
-      horizon: window.__worldloomWorld?.distantTerrain?.getStats?.(),
-      state: document.querySelector('#hud')?.classList.contains('hidden') ? 'hidden' : 'playing',
-      visibility: document.visibilityState,
-    }));
-    throw new Error(`Distant horizon did not become ready: ${JSON.stringify(diagnostics)}`, {
-      cause: error,
-    });
-  }
   const maxDistanceState = await frame.evaluate(() => {
-    const world = window.__worldloomWorld;
-    const player = window.__worldloomPlayer;
-    const graphics = window.__worldloomGraphics;
-    const stats = world?.getStats?.();
-    const horizon = world?.distantTerrain;
-    const mesh = horizon?.mesh;
-    const position = mesh?.geometry?.getAttribute?.('position');
-    const normal = mesh?.geometry?.getAttribute?.('normal');
-    const color = mesh?.geometry?.getAttribute?.('color');
-    const finiteAttribute = (attribute) => {
-      if (!attribute?.array?.length) return false;
-      for (const value of attribute.array) {
-        if (!Number.isFinite(value)) return false;
-      }
-      return true;
-    };
-    const safeTerrainFar = world && player
-      ? world.getSafeTerrainDistance(player.position)
-      : Number.NaN;
-    return {
-      stats,
-      cameraFar: graphics?.camera?.far ?? null,
-      fogFar: graphics?.scene?.fog?.far ?? null,
-      safeTerrainFar,
-      horizon: {
-        ready: horizon?.ready === true,
-        meshes: horizon?.group?.children?.filter?.((child) => child.isMesh)?.length ?? 0,
-        landMeshes: horizon?.group?.children?.filter?.((child) => child.isMesh && child.userData.distantTerrain)?.length ?? 0,
-        waterMeshes: horizon?.group?.children?.filter?.((child) => child.isMesh && child.name === 'Worldloom distant moving water')?.length ?? 0,
-        tagged: mesh?.userData?.distantTerrain === true,
-        vertices: position?.count || 0,
-        triangles: position?.count ? position.count / 3 : 0,
-        finiteGeometry: [position, normal, color].every(finiteAttribute),
-      },
-    };
+    const world=window.__worldloomWorld,player=window.__worldloomPlayer,graphics=window.__worldloomGraphics;
+    const proxies=[];graphics.scene.traverse(object=>{if(object.userData?.distantTerrain||/distant terrain|distant moving water/i.test(object.name))proxies.push(object.name);});
+    return {stats:world.getStats(),cameraFar:graphics.camera.far,fogFar:graphics.scene.fog.far,safeTerrainFar:world.getSafeTerrainDistance(player.position),hasProxy:Object.hasOwn(world,'distantTerrain'),proxies};
   });
-  assert.equal(maxDistanceState.stats?.visualDistance, 20);
-  assert.equal(maxDistanceState.stats?.detailDistance, 8);
-  assert.equal(maxDistanceState.stats?.streamDistance, 10);
-  assert(maxDistanceState.stats.loaded <= 441,
-    `maximum view distance loaded too many full voxel chunks: ${JSON.stringify(maxDistanceState.stats)}`);
-  assert.equal(maxDistanceState.horizon.ready, true);
-  assert.equal(maxDistanceState.horizon.meshes, 2, 'The distant horizon exceeded its separate land/water draw budget');
-  assert.equal(maxDistanceState.horizon.landMeshes, 1, 'The land horizon must remain one merged draw mesh');
-  assert.equal(maxDistanceState.horizon.waterMeshes, 1, 'The moving distant water mesh disappeared');
-  assert.equal(maxDistanceState.horizon.tagged, true, 'The published horizon mesh lost its runtime marker');
-  assert.equal(maxDistanceState.horizon.finiteGeometry, true, 'The distant horizon contains invalid geometry data');
-  assert(maxDistanceState.horizon.vertices > 0 && maxDistanceState.horizon.triangles > 0,
-    `The distant horizon published no visible triangles: ${JSON.stringify(maxDistanceState.horizon)}`);
-  assert(Number.isFinite(maxDistanceState.cameraFar) && maxDistanceState.cameraFar >= 400,
-    `The camera clips the 20-chunk horizon at ${maxDistanceState.cameraFar}m`);
-  // Clear-distance fog is deliberately outside the visible camera range.
-  assert(maxDistanceState.safeTerrainFar > maxDistanceState.cameraFar,
-    `The camera clips beyond completed terrain (${maxDistanceState.cameraFar} >= ${maxDistanceState.safeTerrainFar})`);
-  assert(Number.isFinite(maxDistanceState.safeTerrainFar));
-  assert(maxDistanceState.fogFar <= maxDistanceState.safeTerrainFar + 1.5,
-    `Fog exposed terrain beyond the live safe horizon (${maxDistanceState.fogFar} > ${maxDistanceState.safeTerrainFar})`);
+  assert.equal(maxDistanceState.stats.visualDistance,8);
+  assert.equal(maxDistanceState.stats.detailDistance,8);
+  assert.equal(maxDistanceState.stats.streamDistance,10);
+  assert.ok(maxDistanceState.stats.loaded<=441);
+  assert.equal(maxDistanceState.hasProxy,false);
+  assert.deepEqual(maxDistanceState.proxies,[],'no artificial terrain or water horizon remains');
+  assert.ok(maxDistanceState.cameraFar>=700,'sky and cloud clipping stays unchanged');
+  assert.ok(maxDistanceState.safeTerrainFar<=10*16+8,'visibility comes only from real voxel chunks');
+  assert.ok(maxDistanceState.fogFar<=maxDistanceState.safeTerrainFar+1.5);
 
   const restoredViewSettings = await frame.evaluate(async () => {
     const quality = document.querySelector('#graphics-quality');
