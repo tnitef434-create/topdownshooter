@@ -34,9 +34,13 @@ try {
   // Simulate a decoder that stops presenting frames while its clock advances.
   await page.evaluate(()=>{
     const v=document.querySelector('#worldloom-film');window.initialFilm=v.src;
+    // A slow connection may already be using the small source. Recovery must
+    // reload that playable source too; it need not switch to a different URL.
+    window.filmRecoveryLoads=0;const load=v.load.bind(v);
+    v.load=()=>{window.filmRecoveryLoads++;return load();};
     v.getVideoPlaybackQuality=()=>({totalVideoFrames:7,droppedVideoFrames:0});
   });
-  await page.waitForFunction(()=>document.querySelector('#worldloom-film').src!==window.initialFilm,{timeout:15000});
+  await page.waitForFunction(()=>window.filmRecoveryLoads>0,{timeout:15000});
   await page.evaluate(()=>{delete document.querySelector('#worldloom-film').getVideoPlaybackQuality;});
   await page.waitForFunction(()=>{const v=document.querySelector('#worldloom-film');return v.readyState>=3&&v.currentTime>.2&&!v.paused;});
   await page.setViewport({width:390,height:844,isMobile:true,hasTouch:true});

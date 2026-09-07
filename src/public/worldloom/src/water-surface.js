@@ -1,4 +1,5 @@
 import * as THREE from '../vendor/three.module.min.js';
+import { needsShadowMapInitialization } from './shadow-state.js';
 import { WATER_MOTION_GLSL, createWaterMotionUniforms } from './water-motion.js';
 import { createWaterCaptureUniforms } from './water-capture.js';
 
@@ -227,7 +228,7 @@ export class WaterReflection {
     const renderer=this.renderer,previousTarget=renderer.getRenderTarget(),xr=renderer.xr.enabled;
     const shadows=renderer.shadowMap.autoUpdate,toneMapping=renderer.toneMapping;
     try {
-      renderer.xr.enabled=false;renderer.shadowMap.autoUpdate=false;renderer.toneMapping=THREE.NoToneMapping;
+      renderer.xr.enabled=false;renderer.shadowMap.autoUpdate=needsShadowMapInitialization(this.scene,mirror);renderer.toneMapping=THREE.NoToneMapping;
       renderer.setRenderTarget(this.target);renderer.clear();renderer.render(this.scene,mirror);
       state.texture.value=this.target.texture;state.height.value=this.height;state.valid.value=1;this.renders++;
     } finally {

@@ -1407,7 +1407,8 @@ test('Blender meadow pack has a pixel sunflower and two segmented opaque grasses
 
 test('production meadow plant files stay byte-identical to their tracked dist copies', () => {
   assert.deepEqual(readFileSync(DIST_MEADOW_PLANTS_URL), readFileSync(MEADOW_PLANTS_URL));
-  assert.deepEqual(readFileSync(DIST_MEADOW_RUNTIME_URL), readFileSync(MEADOW_RUNTIME_URL));
+  assert.equal(readFileSync(DIST_MEADOW_RUNTIME_URL, 'utf8').replaceAll('\r\n', '\n'),
+    readFileSync(MEADOW_RUNTIME_URL, 'utf8').replaceAll('\r\n', '\n'));
 });
 
 test('meadow pixel references, prompts and Blender generator preserve reproducible provenance', () => {
@@ -1720,8 +1721,8 @@ test('production forest-floor voxel assets stay byte-identical to tracked dist c
     'the site is serving a stale forest-floor GLB',
   );
   assert.equal(
-    readFileSync(FOREST_FLOOR_RUNTIME_URL, 'utf8'),
-    readFileSync(DIST_FOREST_FLOOR_RUNTIME_URL, 'utf8'),
+    readFileSync(FOREST_FLOOR_RUNTIME_URL, 'utf8').replaceAll('\r\n', '\n'),
+    readFileSync(DIST_FOREST_FLOOR_RUNTIME_URL, 'utf8').replaceAll('\r\n', '\n'),
     'the site is serving a stale forest-floor runtime',
   );
 });

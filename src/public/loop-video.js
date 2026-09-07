@@ -4,7 +4,9 @@ export function createLoopVideo(video, { source, smallSource, active = () => tru
   let disposed=false, pending=null, current='', fallback=false, retryAt=0;
   let lastTime=-1, lastFrames=-1, lastProgress=performance.now(), failures=0;
   const shouldPlay=()=>!disposed&&!document.hidden&&active();
-  const url=()=>fallback||small()?smallSource:source;
+  const constrained=()=>navigator.connection?.saveData || /^(slow-2g|2g|3g)$/.test(navigator.connection?.effectiveType || '')
+    || (Number(navigator.connection?.downlink)>0 && navigator.connection.downlink<2.5);
+  const url=()=>(fallback||small()||constrained()||navigator.onLine===false)&&smallSource?smallSource:source;
   function pause(){video.pause();lastProgress=performance.now();}
   function sync(){
     if(!shouldPlay()){pause();return;}
@@ -23,13 +25,22 @@ export function createLoopVideo(video, { source, smallSource, active = () => tru
     }).finally(()=>{if(pending===attempt)pending=null;});
   }
   function recover(){
-    if(!shouldPlay()||navigator.onLine===false||performance.now()<retryAt)return;
+    if(!shouldPlay()||performance.now()<retryAt)return;
+    // A missing/partial offline movie must reveal the cached still image rather
+    // than leave a blank or frozen frame over the menu. Try the smaller cached
+    // loop once, then wait for the connection instead of retrying every second.
+    video.classList.remove('is-playing');
+    if(navigator.onLine===false){
+      if(!fallback&&smallSource&&current!==smallSource){fallback=true;current='';pending=null;retryAt=0;sync();}
+      else retryAt=Infinity;
+      return;
+    }
     fallback=Boolean(smallSource);failures++;
     retryAt=performance.now()+Math.min(10000,failures*750);
     video.pause();current='';pending=null;lastTime=-1;lastProgress=performance.now();
   }
   const playing=()=>{video.classList.add('is-playing');lastProgress=performance.now();};
-  const wake=()=>{retryAt=0;lastProgress=performance.now();sync();};
+  const wake=()=>{if(navigator.onLine!==false)retryAt=0;lastProgress=performance.now();sync();};
   const tick=()=>{
     if(!shouldPlay())return;
     const now=performance.now();

@@ -5,6 +5,8 @@ const summary = invite.querySelector('summary');
 const fields = document.querySelector('#world-invite-fields');
 const code = document.querySelector('#invite-code');
 const worldsButton = document.querySelector('#world-account-button');
+const localChoice = document.querySelector('#world-local-save-choice');
+const localSave = document.querySelector('#world-local-save');
 const home = document.createComment('Invite fields return here when the account closes.');
 fields.before(home);
 let accountPromise;
@@ -12,10 +14,18 @@ let opening = false;
 let opener;
 
 function updateHint() {
+  const signedIn = Boolean(readAccountSession().token);
+  if (navigator.onLine === false && localSave) localSave.checked = true;
+  if (localChoice) localChoice.hidden = !signedIn;
+  const local = !signedIn || Boolean(localSave?.checked);
   const hint = document.querySelector('#world-save-hint');
-  if (hint) hint.textContent = readAccountSession().token
-    ? 'Saved to your account · up to 10 worlds · 2 players'
-    : 'Guest world · saved on this browser. Sign in for account saves and invites.';
+  if (hint) hint.textContent = local
+    ? 'Local world · one save in this browser. Account worlds stay separate; invites are not sent.'
+    : 'Saved to your account · up to 10 worlds · 2 players · internet required';
+  const create = document.querySelector('#new-world-button');
+  if (create) create.textContent = local ? 'Weave a local world' : 'Weave a new world';
+  summary.setAttribute('aria-disabled', `${signedIn && Boolean(localSave?.checked)}`);
+  if (local) invite.removeAttribute('open');
 }
 
 async function account() {
@@ -87,7 +97,15 @@ async function openAccount(trigger, inviteDraft) {
 code.addEventListener('input', () => code.setCustomValidity(''));
 summary.addEventListener('click', event => {
   event.preventDefault();
+  if (readAccountSession().token && localSave?.checked) {
+    document.querySelector('#world-save-hint').textContent = 'Invites need an account world and an internet connection. Local worlds are solo.';
+    return;
+  }
   openAccount(summary, true);
 });
 worldsButton.addEventListener('click', () => openAccount(worldsButton, false));
 window.addEventListener('storage', updateHint);
+window.addEventListener('offline', updateHint);
+window.addEventListener('online', updateHint);
+localSave?.addEventListener('change', updateHint);
+updateHint();

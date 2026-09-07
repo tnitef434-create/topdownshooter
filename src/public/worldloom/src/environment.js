@@ -1640,10 +1640,13 @@ export class Environment {
       // Low quality disables the sun/point shadows below, but the compact
       // headlamp shadow must remain active to prevent light leaking through rock.
       this.renderer.shadowMap.enabled = true;
-      const shadowType = profile.softShadows && THREE.PCFSoftShadowMap != null
-        ? THREE.PCFSoftShadowMap
-        : THREE.PCFShadowMap;
-      if (shadowType != null) this.renderer.shadowMap.type = shadowType;
+      // r184 folds PCFSoftShadowMap into PCFShadowMap. Water captures render
+      // before the shadow update, so selecting the deprecated type lets them
+      // compile terrain with an unsupported shadow sampler. The later automatic
+      // fallback leaves that cached program behind and turns terrain sky blue.
+      // Choose the supported filter before any pass; shadow.radius below keeps
+      // the authored soft edge without changing filter type mid-frame.
+      this.renderer.shadowMap.type = THREE.PCFShadowMap;
     }
     this.sunLight.castShadow = Boolean(profile.shadows);
     this.sunLight.shadow.camera.left = -this.shadowExtent;

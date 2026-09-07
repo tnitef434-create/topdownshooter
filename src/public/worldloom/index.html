@@ -8,6 +8,7 @@
       content="Play Worldloom free in your browser. Explore a voxel world, build and craft, discover caves, or invite a friend to a shared saved world on Unpaused."
     />
     <meta name="theme-color" content="#07130f" />
+    <script src="/offline-client.js" defer></script>
     <title>Worldloom — Free Voxel Survival &amp; Building Game | Unpaused</title>
     <meta name="robots" content="index, follow, max-image-preview:large" />
     <link rel="canonical" href="https://unpaused.online/worldloom/" />
@@ -108,8 +109,8 @@
             </header>
             <div class="menu-actions">
               <button id="continue-button" class="button button--primary button--wide" type="button">
-                <span class="button__label">Continue</span>
-                <span class="button__hint">Last world</span>
+                <span class="button__label">Continue local world</span>
+                <span class="button__hint">Saved in this browser</span>
               </button>
 
               <div class="new-world-form">
@@ -151,6 +152,10 @@
                   </label>
                 </fieldset>
 
+                <label id="world-local-save-choice" class="world-local-save-choice" hidden>
+                  <input id="world-local-save" type="checkbox" aria-describedby="world-save-hint">
+                  <span>Save on this browser <small>Solo · can play offline once downloaded</small></span>
+                </label>
                 <button id="new-world-button" class="button button--accent button--wide" type="button">
                   Weave a new world
                 </button>
@@ -161,6 +166,7 @@
                   </div>
                 </details>
                 <p id="world-save-hint" class="world-save-hint"></p>
+                <p data-offline-status class="world-save-hint" role="status" hidden></p>
                 <button id="world-account-button" type="button" class="button button--quiet button--wide" aria-haspopup="dialog" aria-controls="hub-account">My worlds &amp; received invites</button>
               </div>
 

@@ -229,9 +229,9 @@ export class UI {
   setContinueAvailable(available) {
     if (this.elements.continueButton) {
       this.elements.continueButton.disabled = !available;
-      this.elements.continueButton.title = available ? 'Continue your last world' : 'No saved world yet';
+      this.elements.continueButton.title = available ? 'Continue the world saved in this browser' : 'No local world saved yet';
       const hint = this.elements.continueButton.querySelector('.button__hint');
-      if (hint) hint.textContent = available ? 'Last world →' : 'No saved world yet';
+      if (hint) hint.textContent = available ? 'Saved in this browser →' : 'No local world saved yet';
     }
   }
 

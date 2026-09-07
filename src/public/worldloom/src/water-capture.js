@@ -1,4 +1,5 @@
 import * as THREE from '../vendor/three.module.min.js';
+import { needsShadowMapInitialization } from './shadow-state.js';
 export function createWaterCaptureUniforms(){return {
   waterSceneColor:{value:null},waterSceneDepth:{value:null},waterSceneValid:{value:0},
   waterSceneSize:{value:new THREE.Vector2(1,1)},waterProjectionInverse:{value:new THREE.Matrix4()},
@@ -35,7 +36,8 @@ export class WaterSceneCapture {
     });
     const previous=renderer.getRenderTarget(),tone=renderer.toneMapping,shadow=renderer.shadowMap.autoUpdate,xr=renderer.xr.enabled;
     try{
-      renderer.xr.enabled=false;renderer.toneMapping=THREE.NoToneMapping;renderer.shadowMap.autoUpdate=false;
+      renderer.xr.enabled=false;renderer.toneMapping=THREE.NoToneMapping;
+      renderer.shadowMap.autoUpdate=needsShadowMapInitialization(this.scene,camera);
       renderer.setRenderTarget(this.target);renderer.clear();renderer.render(this.scene,camera);
       u.waterSceneColor.value=this.target.texture;u.waterSceneDepth.value=this.target.depthTexture;
       // Screen UV uses the final view size, not the lower-resolution capture.

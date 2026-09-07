@@ -72,6 +72,7 @@ let settings = saves.loadSettings();
 let flags = {};
 let objectiveIndex = 0;
 let worldCreatedAt = null;
+let worldName = 'My Worldloom';
 let spawnPoint = new THREE.Vector3();
 let miningTarget = '';
 let miningProgress = 0;
@@ -377,19 +378,25 @@ function bindInput() {
 function bindUI() {
   ui.onNewWorld = async (seedText, selectedMode) => {
     const seed=seedFromText(seedText||`${Date.now()}`), button=document.getElementById('new-world-button');
-    if(button.disabled)return;
+    if(button.disabled||state!=='menu'||transitioning)return;
+    const name=document.getElementById('world-name').value.trim()||'My Worldloom';
     const friendCode=document.getElementById('invite-code').value.trim();
-    if(!readAccountSession().token){
-      if(friendCode){ui.toast('Sign in through your account to invite a friend.','error',4000);return;}
-      return startWorld({seed,mode:selectedMode});
+    if(!readAccountSession().token||document.getElementById('world-local-save')?.checked){
+      prepareLocalWorld();
+      return startWorld({seed,mode:selectedMode,name});
     }
+    if(navigator.onLine===false){ui.toast('Account worlds need internet. Choose “Save on this browser” for a new solo world.','error',5500);return;}
     button.disabled=true;
-    try{const result=await createSavedWorld({name:document.getElementById('world-name').value.trim()||'My Worldloom',seed,mode:selectedMode,friendCode});location.assign(`/worldloom/?world=${result.world.id}`);}
-    catch(error){ui.toast(error.message,'error',5500);button.disabled=false;}
+    try{const result=await createSavedWorld({name,seed,mode:selectedMode,friendCode});location.assign(`/worldloom/?world=${result.world.id}`);}
+    catch(error){ui.toast(`${error.message} You can choose “Save on this browser” for a separate solo world.`,'error',6500);button.disabled=false;}
   };
   ui.onContinue = () => {
+    if(state!=='menu'||transitioning)return;
     const data = saves.load();
-    if (data) startWorld({ seed: data.seed, mode: data.mode || 'survival', saveData: data });
+    if (data) {
+      prepareLocalWorld();
+      startWorld({ seed: data.seed, mode: data.mode || 'survival', saveData: data });
+    }
   };
   ui.onResume = resumeGame;
   ui.onRespawn = finishDeathRespawn;
@@ -414,6 +421,21 @@ function bindUI() {
   };
   ui.applySettings(settings);
   ui.setContinueAvailable(saves.hasSave());
+}
+
+function prepareLocalWorld() {
+  // Only an explicit local-world action in the menu reaches this path.
+  // Never reuse a waiting cloud client or its URL for the browser save.
+  sharedWorld?.dispose();
+  sharedWorld = null;
+  window.__worldloomShared = null;
+  const status = document.getElementById('shared-world-status');
+  if (status) { status.textContent = ''; status.hidden = true; }
+  const url = new URL(location.href);
+  if (url.searchParams.has('world')) {
+    url.searchParams.delete('world');
+    history.replaceState(null, '', url);
+  }
 }
 
 function applySettings(next) {
@@ -442,7 +464,7 @@ function resize() {
   camera.updateProjectionMatrix();
 }
 
-async function startWorld({ seed, mode: selectedMode, saveData = null }) {
+async function startWorld({ seed, mode: selectedMode, saveData = null, name = 'My Worldloom' }) {
   if (transitioning) return;
   transitioning = true;
   try {
@@ -489,6 +511,7 @@ async function startWorld({ seed, mode: selectedMode, saveData = null }) {
   world.setForestFloorCollisionEnabled?.(environment.forestFloor?.ready === true);
   mode = selectedMode === 'builder' ? 'builder' : 'survival';
   worldCreatedAt = saveData?.createdAt || new Date().toISOString();
+  worldName = saveData?.name || name;
   flags = { ...(saveData?.flags || {}) };
   objectiveIndex = objectiveIndexFromSave(saveData);
   survival = new SurvivalSystem(saveData?.survival);
@@ -1104,7 +1127,7 @@ function saveSnapshot() {
     discoveryVersion: world.discoveryVersion,
     discoveryLoot: world.discoveryLoot,
     mode,
-    name: 'My Worldloom',
+    name: worldName,
     createdAt: worldCreatedAt,
     timeOfDay: environment.time,
     player: player.getState(),
@@ -2100,8 +2123,6 @@ async function boot() {
     postToPortal('ready', { version: 2 });
     requestAnimationFrame(animate);
     const worldId=new URLSearchParams(location.search).get('world');
-    const localHint=document.getElementById('world-save-hint');
-    localHint.textContent=readAccountSession().token?'Saved to your account · up to 10 worlds · 2 players':'Guest world · saved on this browser. Sign in for account saves and invites.';
     if(worldId){
       const status=document.getElementById('shared-world-status');
       sharedWorld=new SharedWorldClient(worldId,{scene,atlas,getSnapshot:saveSnapshot,

@@ -2045,6 +2045,10 @@ kbd { border: 1px solid #75684d; border-bottom: 2px solid #0d110b; border-radius
 .world-invite p { margin: 12px 0 16px; color: var(--ink-muted); font: 400 13px/1.65 var(--font-ui); }
 .world-save-hint { margin: 0; color: #c0bba3; font: 400 12px/1.6 var(--font-ui); }
 .world-save-hint:empty { display: none; }
+.world-local-save-choice { display: flex; align-items: center; gap: 12px; padding: 12px; border: 1px solid #625f49; background: #20261d; color: #e5dcc3; font: 700 13px/1.5 var(--voxel-font); cursor: pointer; }
+.world-local-save-choice input { flex: none; width: 20px; height: 20px; accent-color: #c4ad78; }
+.world-local-save-choice small { display: block; margin-top: 3px; color: #c0bba3; font: 400 12px/1.5 var(--font-ui); }
+.world-invite summary[aria-disabled="true"] { color: #aaa98e; cursor: default; }
 .menu-actions__secondary { gap: 10px; }
 .menu-actions__secondary .button { min-height: 44px; background: #303429; border-color: #5e6049; border-bottom-color: #11170e; color: #d7cfb9; }
 .control-hint { grid-column: 1; grid-row: 3; align-self: start; width: min(390px, 100%); margin: 32px 0 0; padding: 14px 0; border-top: 1px solid #d6c69055; color: #e4dcc4; font: 400 12px/2 var(--font-ui); text-align: left; text-shadow: 1px 1px #172315; }

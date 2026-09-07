@@ -735,6 +735,7 @@ try {
       reducedMotion: false,
     });
     const highShadowType = environment.renderer.shadowMap.type;
+    const highShadowRadius = environment.sunLight.shadow.radius;
     environment.applyGraphicsSettings({
       graphicsQuality: 'balanced',
       weatherEffects: true,
@@ -784,7 +785,7 @@ try {
       lowDeepDirect: directionalSkyAccess(false, 0),
       highShadowType,
       balancedShadowType,
-      pcfSoftShadowType: THREE.PCFSoftShadowMap,
+      highShadowRadius,
       pcfShadowType: THREE.PCFShadowMap,
       highGodRays,
       balancedGodRays,
@@ -807,8 +808,10 @@ try {
     'The production cave grade no longer follows the twenty-eight-block light range');
   assert.equal(caveLightingState.lowDeepDirect, 0,
     'Low graphics mode can leak unshadowed sunlight into a deep cave');
-  assert.equal(caveLightingState.highShadowType, caveLightingState.pcfSoftShadowType,
-    'High graphics mode did not enable soft PCF shadows');
+  assert.equal(caveLightingState.highShadowType, caveLightingState.pcfShadowType,
+    'High graphics mode selected an unsupported shadow sampler before the water prepass');
+  assert(caveLightingState.highShadowRadius > 1,
+    'High graphics mode lost its soft shadow radius');
   assert.equal(caveLightingState.balancedShadowType, caveLightingState.pcfShadowType,
     'Balanced graphics mode no longer uses its lower-cost shadow filter');
   assert.equal(caveLightingState.highGodRays.volumetricSun, true,

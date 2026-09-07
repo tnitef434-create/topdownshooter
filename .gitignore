@@ -26,6 +26,7 @@ dist/worldloom/src/*
 !dist/worldloom/src/water-effects.js
 !dist/worldloom/src/water-motion.js
 !dist/worldloom/src/water-capture.js
+!dist/worldloom/src/shadow-state.js
 !dist/worldloom/src/water-nature-data.js
 !dist/worldloom/src/pond-mist.js
 !dist/worldloom/src/mushrooms.js
@@ -117,3 +118,5 @@ work/multiplayer-recovery-*/
 !dist/games/
 !dist/games/**
 !dist/credit-shop-banner.webp
+!dist/offline-client.js
+!dist/offline-worker.js
