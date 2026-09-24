@@ -1,6 +1,6 @@
 // Paint the same U that the destination displays while its modules load.
 export function initGameEntry() {
-  const links = document.querySelectorAll('#enter-worldloom, #enter-tacticstrike');
+  const links = document.querySelectorAll('#enter-aurora, #enter-worldloom, #enter-tacticstrike');
   const overlay = document.querySelector('#worldloom-transition');
   if (!links.length || !overlay) return;
   let navigating = false;
@@ -12,7 +12,7 @@ export function initGameEntry() {
     event.preventDefault();
     if (navigating) return;
     navigating = true;
-    const game = link.id === 'enter-worldloom' ? 'Worldloom' : 'TacticStrike';
+    const game = link.id === 'enter-worldloom' ? 'Worldloom' : link.id === 'enter-aurora' ? 'Aurora' : 'TacticStrike';
     overlay.querySelector('.u-loading__title').textContent = game;
     overlay.querySelector('.u-loading__message').textContent = 'Opening the menu.';
     overlay.setAttribute('aria-label', `Opening ${game}`);
