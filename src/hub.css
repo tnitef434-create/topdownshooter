@@ -34,7 +34,7 @@ button,a{-webkit-tap-highlight-color:transparent}
 .discover-label{margin:0 0 16px;color:#ff8b64;font-size:12px;font-weight:800;letter-spacing:.1em}
 .discover-intro h1{margin:0 0 24px;font-size:clamp(32px,4.5vw,56px);font-weight:900;line-height:1.08;letter-spacing:-1.5px}
 .discover-intro>p:last-child{font-size:18px;color:#bdbab6}
-.discover-grid{display:grid;grid-template-columns:1fr 1fr;gap:64px}
+.discover-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:48px}
 .discover-game h2{margin:0;font-size:30px;letter-spacing:-.7px}
 .discover-genre{margin:2px 0 20px;color:#ff8b64;font-weight:700;font-size:14px}
 .discover-game>p:not(.discover-genre),.discover-faq p{color:#bdbab6}
@@ -83,6 +83,30 @@ button,a{-webkit-tap-highlight-color:transparent}
   .arrow svg{width:19px;height:19px}.poster,.film{object-position:center 52%}
 }
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important}.game:hover .poster,.game:hover .film{transform:scale(1.02)}}
+/* Aurora: full-width strip across the top, the two browser games share the row below */
+.games{grid-template-rows:44fr 56fr;min-height:760px}
+.game--aurora{grid-column:1/-1}
+.game--aurora .game-media{background:#0b0a1c}
+.game--aurora .poster{object-position:center 40%}
+.game--aurora::before{background:linear-gradient(180deg,#07061522 0%,#07061500 30%,#07061544 70%,#070615aa 100%)}
+.game--aurora .game-divider{top:auto;left:0;right:0;bottom:0;width:auto;height:2px}
+.game--aurora .game-copy{width:min(44vw,500px);transform:translateY(1vh)}
+.game--aurora .game-description{margin-top:16px}
+.game--aurora .enter{margin-top:30px;background:linear-gradient(90deg,#9ef5d6,#b9a4ff);color:#120d2e;box-shadow:0 5px 0 #3f3290,0 10px 30px #0006}
+.game--aurora:active .enter{box-shadow:0 1px 0 #3f3290}
+.game-platform{margin:12px 0 0;font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#d8d2ff;text-shadow:0 2px 6px #000}
+/* soft moving light over the poster so the northern lights feel alive */
+.aurora-sky{position:absolute;inset:0;mix-blend-mode:screen;pointer-events:none}
+.aurora-sky i{position:absolute;top:-10%;width:45%;height:90%;border-radius:50%;filter:blur(60px);opacity:.35;animation:auroraDrift 14s ease-in-out infinite alternate}
+.aurora-sky i:nth-child(1){left:5%;background:#3dffc0}
+.aurora-sky i:nth-child(2){left:38%;background:#8f6bff;animation-duration:18s;animation-delay:-6s}
+.aurora-sky i:nth-child(3){left:66%;background:#39e0ff;animation-duration:16s;animation-delay:-3s;opacity:.25}
+@keyframes auroraDrift{0%{transform:translate(-6%,0) scaleY(.9)}50%{transform:translate(8%,4%) scaleY(1.15)}100%{transform:translate(-2%,-3%) scaleY(1)}}
+@media(min-width:701px){.game--aurora .game-media{left:0;width:100%;transform:none}}
+@media(hover:hover) and (pointer:fine) and (min-width:701px){.game--aurora:hover .enter{background:linear-gradient(90deg,#c2ffe9,#d4c7ff)}}
+@media(max-height:680px) and (min-width:701px){.games{min-height:640px}.game--aurora .game-copy{width:min(34vw,380px)}.game--aurora .enter{margin-top:18px}}
+@media(max-width:700px){.games{grid-template-rows:1fr 1fr 1fr;min-height:980px}.game--aurora{grid-column:1}.game--aurora .game-copy{width:min(74%,330px);transform:none}.discover-grid{grid-template-columns:1fr}}
+@media(prefers-reduced-motion:reduce){.aurora-sky i{animation:none}}
 /* A small release note attached to the existing mark. */
 .hub-news-trigger { display:grid;place-items:center;border:0;padding:5px;margin:-5px;background:none;color:inherit;cursor:pointer;border-radius:6px;pointer-events:auto; }
 .hub-news-trigger:focus-visible { outline:2px solid #ff6339;outline-offset:5px; }
