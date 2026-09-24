@@ -1,8 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url><loc>https://unpaused.online/</loc></url>
+  <url><loc>https://unpaused.online/games/aurora/</loc></url>
   <url><loc>https://unpaused.online/games/worldloom/</loc></url>
   <url><loc>https://unpaused.online/games/tacticstrike/</loc></url>
+  <url><loc>https://unpaused.online/aurora/</loc></url>
   <url><loc>https://unpaused.online/worldloom/</loc></url>
   <url><loc>https://unpaused.online/tacticstrike/</loc></url>
   <url><loc>https://unpaused.online/privacy/</loc></url>
