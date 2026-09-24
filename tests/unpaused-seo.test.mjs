@@ -6,8 +6,10 @@ import { resolve } from 'node:path';
 const origin='https://unpaused.online';
 const pages=[
   ['/', 'src/index.html'],
+  ['/aurora/', 'src/public/aurora/index.html'],
   ['/worldloom/', 'src/public/worldloom/index.html'],
   ['/tacticstrike/', 'src/tacticstrike/index.html'],
+  ['/games/aurora/', 'src/public/games/aurora/index.html'],
   ['/games/worldloom/', 'src/public/games/worldloom/index.html'],
   ['/games/tacticstrike/', 'src/public/games/tacticstrike/index.html'],
   ['/privacy/', 'src/public/privacy/index.html'],
