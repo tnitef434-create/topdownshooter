@@ -4,6 +4,7 @@ __pycache__/
 # The site is deployed directly from dist. Keep most generated output ignored,
 # but surface Worldloom runtime additions that tracked dist modules import.
 dist/*
+!dist/aurora/
 !dist/worldloom/
 dist/worldloom/*
 !dist/worldloom/src/
