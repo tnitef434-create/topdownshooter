@@ -2,7 +2,9 @@ import {createHubFlick} from './hub-sound.js';
 
 export function initHubMotion() {
   const games = document.querySelector('.games');
-  const panels = [...games.querySelectorAll('.game')];
+  // Aurora spans the top row; only the two browser games share the sliding split below it
+  const panels = [...games.querySelectorAll('.game:not(.game--aurora)')];
+  const aurora = games.querySelector('.game--aurora');
   const wide = matchMedia('(min-width:701px)');
   const pointer = matchMedia('(hover:hover) and (pointer:fine)');
   const flick=createHubFlick();
@@ -35,6 +37,7 @@ export function initHubMotion() {
     if(event.pointerType==='mouse'&&pointer.matches){hovered=panel;select();}
   });
   games.addEventListener('pointerleave',()=>{hovered=null;select();});
+  if(aurora)aurora.addEventListener('pointerenter',()=>{hovered=null;select();});
   games.addEventListener('focusin',select);
   games.addEventListener('focusout',()=>queueMicrotask(select));
   wide.addEventListener('change',()=>{hovered=null;select();});
