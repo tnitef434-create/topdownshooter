@@ -69,7 +69,7 @@ export function initHubAccount({trigger=document.querySelector('#open-account'),
     dialog.querySelector('#account-email').textContent=session.user?.email||'';
     dialog.querySelector('#account-credits').textContent=String(session.user?.credits||0);
     dialog.querySelector('#account-return').href=returnTo||'/tacticstrike/?shop=credits';
-    dialog.querySelector('#account-return').textContent=returnTo?'CONTINUE TO TACTICSTRIKE':'TACTICSTRIKE CREDIT SHOP';
+    dialog.querySelector('#account-return').textContent=returnTo?'CONTINUE TO TACTICSTRIKE':'OPEN THE CREDIT SHOP';
     form.elements.email.closest('label').hidden=choosingPassword;form.elements.email.required=!choosingPassword;
     password.closest('label').hidden=requestingEmail;password.required=!requestingEmail;
     password.disabled=requestingEmail||pendingEmail||busy;
@@ -78,7 +78,18 @@ export function initHubAccount({trigger=document.querySelector('#open-account'),
     editEmail.hidden=!pendingEmail;editEmail.disabled=busy;
     googleOption.hidden=!googleIdentity||signedIn||!['login','register'].includes(mode);
     googleOption.inert=busy;
-    dialog.querySelector('#account-verification-status').textContent=verified?'Email verified':'Verify your email to activate this account.';
+    const status=dialog.querySelector('#account-verification-status');
+    status.textContent=verified?'Verified':'Not verified';status.classList.toggle('is-pending',!verified);
+    const name=session.user?.username;
+    dialog.querySelector('#player-name').textContent=name||'No username yet';
+    dialog.querySelector('#player-name').classList.toggle('is-empty',!name);
+    dialog.querySelector('#player-avatar').textContent=(name||session.user?.email||'?').slice(0,1).toUpperCase();
+    dialog.querySelector('#ts-operative').textContent=name||'Choose a username on the Profile tab';
+    // setup checklist: verify → username → friend code, in that order; hidden once everything is done
+    const steps={verify:verified,username:Boolean(name),friend:Boolean(session.user?.friendCode)};
+    const next=['verify','username','friend'].find(k=>!steps[k]);
+    const setup=dialog.querySelector('#account-setup');setup.hidden=!next;
+    setup.querySelectorAll('li').forEach(li=>{const k=li.dataset.step;li.classList.toggle('is-done',steps[k]);li.classList.toggle('is-next',k===next);li.querySelector('.step-action').hidden=k!==next;});
     resend.hidden=verified;resend.disabled=busy;
     dialog.querySelector('#account-return').hidden=!verified;
     dialog.querySelector('#account-friend').hidden=!verified;
@@ -202,7 +213,7 @@ export function initHubAccount({trigger=document.querySelector('#open-account'),
       try {storeAccountSession(result);} catch {throw new Error('Allow site storage in your browser to stay signed in.');}
       session={token:result.token,user:result.user};form.reset();
       if(mode==='verify'){const clean=new URL(location.href);clean.searchParams.delete('account');history.replaceState(null,'',clean);}
-      notify(mode==='verify'?'Email verified. Your account is ready. Generate your friend code below.':'You’re signed in.');mode='login';verificationToken=null;
+      notify(mode==='verify'?'Email verified. Next, choose your username.':'You’re signed in.');mode='login';verificationToken=null;
     } catch(error){notify(error.message);}
     finally{busy=false;render();if(session.user?.emailVerified)(!session.user.username?profileUsername:session.user.friendCode?dialog.querySelector('#account-return'):generate).focus();}
   });
@@ -213,7 +224,7 @@ export function initHubAccount({trigger=document.querySelector('#open-account'),
     try {
       const result=await accountRequest('/api/auth/username',{method:'POST',token,body:JSON.stringify({username:value})});
       if(session.token!==token)return;
-      session.user=result.user;storeAccountSession(session);notify('Username saved. Both games will use this name.');
+      session.user=result.user;storeAccountSession(session);notify(session.user.friendCode?'Username saved. Every Unpaused game will use this name.':'Username saved. Last step: get your friend code.');
     } catch(error){notify(error.message);}
     finally{busy=false;render();}
   });
@@ -229,6 +240,11 @@ export function initHubAccount({trigger=document.querySelector('#open-account'),
     try{const result=await accountRequest('/api/auth/friend-code',{method:'POST',token});if(session.token!==token)return;session.user=result.user;storeAccountSession(session);notify('Your permanent friend code is ready.');}
     catch(error){notify(error.message);}finally{busy=false;render();}
   });
+  dialog.querySelectorAll('#account-setup [data-goto]').forEach(button=>button.addEventListener('click',()=>{
+    worlds.showTab('profile');
+    const target=button.dataset.goto==='username'?profileUsername:generate;
+    target.scrollIntoView({block:'center',behavior:'smooth'});target.focus({preventScroll:true});
+  }));
   copy.addEventListener('click',async()=>{try{await navigator.clipboard.writeText(session.user.friendCode);notify('Friend code copied.');}catch{notify('Select your friend code to copy it.');}});
   resend.addEventListener('click',async()=>{
     if(busy)return;busy=true;render();

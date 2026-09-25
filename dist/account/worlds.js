@@ -3,27 +3,53 @@ import { accountRequest } from '../account-client.js';
 export function initAccountWorlds({dialog,getSession,notify}) {
   const section=dialog.querySelector('#account-worlds'), list=dialog.querySelector('#world-list'), invites=dialog.querySelector('#received-invites');
   let activeToken=null,loading=false,confirmDelete=null;
-  let tab=new URLSearchParams(location.search).get('account')||'profile';
-  let previousTab=null;
+  // Tabs follow the games: Profile, Worldloom (worlds + invites), TacticStrike, Aurora.
+  // Online features need a verified email; Aurora keeps its progress in this browser.
+  const TABS=['profile','worlds','tacticstrike','aurora'];
+  const alias={invites:'worlds',credits:'tacticstrike',shop:'tacticstrike'};
+  const initial=new URLSearchParams(location.search);
+  let tab=alias[initial.get('account')]||initial.get('account')||(initial.get('return')?'tacticstrike':'profile');
+  let previousTab=null,focusInvites=initial.get('account')==='invites';
+  const lockReason=name=>{
+    const user=getSession().user;
+    if(!user||name==='profile'||name==='aurora')return '';
+    if(!user.emailVerified)return name==='worlds'?'Verify your email to save Worldloom worlds to your account and receive invites.':'Verify your email to use credits and the TacticStrike shop.';
+    return '';
+  };
   function showTab(next){
-    tab=['profile','worlds','invites'].includes(next)?next:'profile';
-    const verified=getSession().user?.emailVerified;
-    const visibleTab=verified?tab:'profile';
+    if(next==='invites')focusInvites=true;
+    tab=TABS.includes(alias[next]||next)?(alias[next]||next):'profile';
+    const lock=lockReason(tab),visibleTab=lock?null:tab;
+    const lockEl=dialog.querySelector('#account-tab-lock');lockEl.hidden=!lock;lockEl.textContent=lock;
     dialog.querySelector('#account-details').hidden=visibleTab!=='profile';
-    section.hidden=!verified||visibleTab==='profile';
+    section.hidden=visibleTab!=='worlds';
     dialog.querySelector('#world-library').hidden=visibleTab!=='worlds';
-    dialog.querySelector('#invitation-panel').hidden=visibleTab!=='invites';
-    dialog.querySelectorAll('[data-account-tab]').forEach(button=>{button.setAttribute('aria-selected',String(button.dataset.accountTab===visibleTab));button.tabIndex=button.dataset.accountTab===visibleTab?0:-1;button.disabled=!verified&&button.dataset.accountTab!=='profile';});
-    if(previousTab!==null&&previousTab!==visibleTab&&!matchMedia('(prefers-reduced-motion: reduce)').matches){
-      const panel=dialog.querySelector(visibleTab==='profile'?'#account-details':visibleTab==='worlds'?'#world-library':'#invitation-panel');
+    dialog.querySelector('#tacticstrike-panel').hidden=visibleTab!=='tacticstrike';
+    dialog.querySelector('#aurora-panel').hidden=visibleTab!=='aurora';
+    if(visibleTab==='aurora')renderAurora();
+    dialog.querySelectorAll('[data-account-tab]').forEach(button=>{
+      const on=button.dataset.accountTab===tab;
+      button.setAttribute('aria-selected',String(on));button.tabIndex=on?0:-1;
+      button.classList.toggle('is-locked',Boolean(lockReason(button.dataset.accountTab)));button.disabled=false;
+    });
+    if(previousTab!==null&&previousTab!==tab&&!matchMedia('(prefers-reduced-motion: reduce)').matches){
+      const panel=lock?lockEl:dialog.querySelector({profile:'#account-details',worlds:'#world-library',tacticstrike:'#tacticstrike-panel',aurora:'#aurora-panel'}[tab]);
       panel.getAnimations().forEach(animation=>animation.cancel());
       panel.animate([{opacity:0,transform:'translateY(7px)'},{opacity:1,transform:'translateY(0)'}],{duration:230,easing:'cubic-bezier(.2,.7,.3,1)'});
     }
-    previousTab=visibleTab;
+    previousTab=tab;
+  }
+  function renderAurora(){
+    let p={};try{p=JSON.parse(localStorage.getItem('aurora-progress')||'{}')||{};}catch{}
+    const cleared=(p.best||[]).filter(x=>x!=null).length,gold=(p.medal||[]).filter(m=>m==='gold').length;
+    const relics=Object.values(p.relics||{}).reduce((n,a)=>n+(Array.isArray(a)?a.filter(Boolean).length:0),0);
+    dialog.querySelector('#aurora-cleared').textContent=String(cleared);
+    dialog.querySelector('#aurora-gold').textContent=String(gold);
+    dialog.querySelector('#aurora-relics').textContent=String(relics);
   }
   dialog.querySelectorAll('[data-account-tab]').forEach(button=>{
     button.addEventListener('click',()=>{showTab(button.dataset.accountTab);refresh(true);});
-    button.addEventListener('keydown',event=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;event.preventDefault();const tabs=[...dialog.querySelectorAll('[data-account-tab]:not(:disabled)')];const i=tabs.indexOf(button),target=event.key==='Home'?tabs[0]:event.key==='End'?tabs.at(-1):tabs[(i+(event.key==='ArrowRight'?1:-1)+tabs.length)%tabs.length];target.click();target.focus();});
+    button.addEventListener('keydown',event=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;event.preventDefault();const tabs=[...dialog.querySelectorAll('[data-account-tab]')];const i=tabs.indexOf(button),target=event.key==='Home'?tabs[0]:event.key==='End'?tabs.at(-1):tabs[(i+(event.key==='ArrowRight'?1:-1)+tabs.length)%tabs.length];target.click();target.focus();});
   });
   const text=(tag,value,className)=>{const el=document.createElement(tag);el.textContent=value;if(className)el.className=className;return el;};
   function localSave(){
@@ -62,9 +88,10 @@ export function initAccountWorlds({dialog,getSession,notify}) {
       dialog.querySelector('#invite-count').textContent=String(data.invites.length);
       dialog.querySelector('#invite-tab-count').textContent=data.invites.length?String(data.invites.length):'';
       list.replaceChildren(...data.worlds.map(w=>row(w)));
-      if(!data.worlds.length)list.append(text('p','Your next world starts here. Create one in Worldloom and it will appear in your account.','world-empty'));
+      if(!data.worlds.length)list.append(text('p','No worlds yet. Create one in Worldloom with “Save to my account” and it appears here, ready to continue on any device.','world-empty'));
       invites.replaceChildren(...data.invites.map(w=>row(w,true)));
-      if(!data.invites.length)invites.append(text('p','No invites yet. Share your four-digit friend code so a friend can invite you.','world-empty'));
+      dialog.querySelector('#invitation-panel').hidden=!data.invites.length;
+      if(focusInvites&&data.invites.length){focusInvites=false;dialog.querySelector('#invitation-panel').scrollIntoView({block:'nearest'});}
       dialog.querySelector('#import-local-world').hidden=!localSave()||owned>=10;
     }catch(e){notify(e.message);}finally{loading=false;list.removeAttribute('aria-busy');}
   }
@@ -77,5 +104,5 @@ export function initAccountWorlds({dialog,getSession,notify}) {
   });
   const timer=setInterval(()=>{if(dialog.open&&getSession().user?.emailVerified)refresh(true);},30_000);
   window.addEventListener('pagehide',()=>clearInterval(timer),{once:true});
-  return {refresh,showTab};
+  return {refresh,showTab,renderAurora};
 }
