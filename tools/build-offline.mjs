@@ -20,7 +20,7 @@ export async function buildOffline(outputDirectory) {
     const path = '/' + relative(root, file).replaceAll('\\', '/');
     if (/offline-worker\.js$|\.(?:map|md|txt|blend|py)$/.test(path)) continue;
     // Aurora's large bundle and relic icons are fetched when you first play it, not precached for everyone.
-    if (/\.(?:mp4|ogg)$/.test(path) || (path.endsWith('.mp3') && !path.startsWith('/worldloom/assets/')) || (path.startsWith('/aurora/') && path !== '/aurora/index.html')) {
+    if (/\.(?:mp4|ogg)$/.test(path) || (path.endsWith('.mp3') && !path.startsWith('/worldloom/assets/')) || (/^\/(?:aurora|hexgl|2048|hextris)\//.test(path) && !path.endsWith('/index.html'))) {
       media.push({ url: path, revision: hash(await readFile(file)) }); continue;
     }
     if (!/\.(?:html|js|css|svg|png|webp|jpe?g|glb|woff2?|mp3)$/.test(path)) continue;
