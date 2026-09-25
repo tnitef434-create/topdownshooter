@@ -77,3 +77,20 @@
 .u-loading[data-phase="world"] .u-loading__title { color:#f4f6dc;font-size:clamp(24px,3vw,38px);text-shadow:0 2px 16px #0009; }
 .u-loading[data-phase="world"] .loading-track { width:min(300px,65vw);background:#d9e6d52e;margin-top:22px; }
 .u-loading[data-phase="world"] #loading-text { color:#e1e9df;max-width:440px;text-shadow:0 1px 5px #000; }
+
+/* ---------- entering a game from the hub: blurred game art, calm glow, clean type ---------- */
+.u-loading:not([data-phase="world"]){background:radial-gradient(60% 50% at 50% 55%,color-mix(in srgb,var(--u-accent,#ff6339) 16%,transparent),transparent 70%),#08080a}
+.u-loading__bg{position:absolute;inset:-40px;background:var(--u-poster,none) center/cover no-repeat;filter:blur(28px) saturate(1.2) brightness(.45);transform:scale(1.08);opacity:0;animation:u-bg-in 1.2s ease forwards}
+.u-loading[data-phase="world"] .u-loading__bg{display:none}
+@keyframes u-bg-in{to{opacity:1;transform:scale(1)}}
+.u-loading:not([data-phase="world"]) .u-loading__content{position:relative;animation:u-content-in .6s cubic-bezier(.2,1.1,.3,1) both}
+@keyframes u-content-in{from{opacity:0;transform:translateY(14px) scale(.97)}to{opacity:1;transform:none}}
+.u-loading:not([data-phase="world"]) .u-loading__mark{width:96px;height:96px;margin-bottom:26px;filter:drop-shadow(0 0 24px color-mix(in srgb,var(--u-accent,#ff6339) 55%,transparent))}
+.u-loading:not([data-phase="world"]) .u-loading__title{font:800 clamp(22px,3.2vw,30px)/1.1 "Segoe UI",Inter,system-ui,-apple-system,Arial,sans-serif;letter-spacing:.32em;margin-right:-.32em;text-transform:uppercase;color:#fff}
+.u-loading:not([data-phase="world"]) .u-loading__message{margin-top:12px;min-height:0;font:500 14px/1.5 "Segoe UI",Inter,system-ui,Arial,sans-serif;color:#ffffffa0}
+.u-loading:not([data-phase="world"]) .u-loading__content::after{content:"";display:block;width:140px;height:3px;margin:24px auto 0;border-radius:3px;
+  background:linear-gradient(90deg,transparent,var(--u-accent,#ff6339),transparent) 0 0/50% 100% no-repeat,#ffffff14;animation:u-sweep 1.3s cubic-bezier(.5,0,.5,1) infinite}
+@keyframes u-sweep{from{background-position:-100% 0,0 0}to{background-position:200% 0,0 0}}
+.u-loading[data-game="aurora"]{--u-accent:#7fffd4;--u-poster:url(/hub/aurora-poster.jpg)}
+.u-loading[data-game="worldloom"]{--u-accent:#b6e06a;--u-poster:url(/hub/worldloom-poster.jpg)}
+.u-loading[data-game="tacticstrike"]{--u-accent:#ff6339;--u-poster:url(/hub/tacticstrike-poster.jpg)}
