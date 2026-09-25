@@ -121,3 +121,5 @@ work/multiplayer-recovery-*/
 !dist/credit-shop-banner.webp
 !dist/offline-client.js
 !dist/offline-worker.js
+!dist/trailer/
+!dist/trailer/**
