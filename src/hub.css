@@ -172,3 +172,4 @@ a.ag-item:focus-visible{box-shadow:inset 0 0 0 2px #ff6339}
 .ag-item img{flex:none;width:40px;height:40px;border-radius:10px;object-fit:cover;background:#1a1d26;box-shadow:0 0 0 1px color-mix(in srgb,var(--ag) 35%,transparent)}
 .all-games-sub{margin-top:12px;padding-top:12px;border-top:1px solid #ffffff14;color:#f4f6dc80}
 .all-games{max-height:calc(100svh - 90px);overflow:auto;pointer-events:auto}
+.discover-more{max-width:760px;margin:28px auto 0;padding:0 20px;color:#f4f6dcb3;font:500 15px/1.7 Arial,sans-serif;text-align:center}.discover-more a{color:#ff8b64;font-weight:700}
