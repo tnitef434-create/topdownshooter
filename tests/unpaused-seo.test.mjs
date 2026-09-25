@@ -12,6 +12,9 @@ const pages=[
   ['/games/aurora/', 'src/public/games/aurora/index.html'],
   ['/games/worldloom/', 'src/public/games/worldloom/index.html'],
   ['/games/tacticstrike/', 'src/public/games/tacticstrike/index.html'],
+  ['/hexgl/', 'src/public/hexgl/index.html'],
+  ['/2048/', 'src/public/2048/index.html'],
+  ['/hextris/', 'src/public/hextris/index.html'],
   ['/privacy/', 'src/public/privacy/index.html'],
 ];
 const unescape=s=>s.replaceAll('&amp;','&').replaceAll('&quot;','"').replaceAll('&#39;',"'");
