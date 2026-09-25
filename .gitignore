@@ -123,3 +123,7 @@ work/multiplayer-recovery-*/
 !dist/offline-worker.js
 !dist/trailer/
 !dist/trailer/**
+!dist/hexgl/
+!dist/2048/
+!dist/hextris/
+!dist/play-bar.js
