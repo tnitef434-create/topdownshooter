@@ -123,3 +123,42 @@
 @media(max-width:700px){.account-dialog{padding:26px 20px 18px;height:fit-content;max-height:calc(100svh - 24px)}.friend-code{font-size:44px}}
 @media(prefers-reduced-motion:reduce){.account-dialog[open]{animation:none}.account-primary,.account-close{transition:none}}
 .account-text-button,.account-auth-divider,.account-privacy{font-family:"Segoe UI",Inter,system-ui,Arial,sans-serif}
+
+/* ---------- signed-in layout: player card, setup checklist, one tab per game ---------- */
+.player-card{display:flex;align-items:center;gap:14px;margin-top:18px;padding:14px 16px;border-radius:16px;background:#ffffff08;box-shadow:inset 0 0 0 1px #ffffff10}
+.player-avatar{flex:none;display:grid;place-items:center;width:46px;height:46px;border-radius:14px;background:linear-gradient(135deg,#ff7446,#b8421a);color:#1a0903;font:800 20px "Segoe UI",Inter,system-ui,Arial,sans-serif}
+.player-meta{min-width:0;flex:1}
+.player-name{display:block;font-size:18px;font-weight:800;letter-spacing:-.2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.player-name.is-empty{color:#a8998f;font-weight:600;font-style:italic}
+.player-card .account-email{margin:2px 0 0;font-size:13px;color:#a8998f;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.player-card .account-verification-status{flex:none;margin:0;padding:4px 10px;border-radius:99px;font-size:11px;font-weight:800;letter-spacing:.4px;background:#7dffb01a;color:#8ff0b4;box-shadow:inset 0 0 0 1px #7dffb040}
+.player-card .account-verification-status.is-pending{background:#ffb14a1a;color:#ffc47a;box-shadow:inset 0 0 0 1px #ffb14a40}
+.setup-steps{list-style:none;margin:14px 0 0;padding:6px;border-radius:16px;background:linear-gradient(160deg,#ff63390f,#ffffff05);box-shadow:inset 0 0 0 1px #ff633926}
+.setup-steps li{display:flex;align-items:center;gap:12px;padding:10px 10px;border-radius:12px}
+.setup-steps li div{flex:1;min-width:0}.setup-steps b{display:block;font-size:14px}.setup-steps small{display:block;margin-top:2px;font-size:12px;color:#a8998f}
+.step-dot{flex:none;width:22px;height:22px;border-radius:50%;box-shadow:inset 0 0 0 2px #ffffff30;display:grid;place-items:center}
+.setup-steps li.is-done{opacity:.55}.setup-steps li.is-done .step-dot{background:#7dffb0;box-shadow:none}
+.setup-steps li.is-done .step-dot::after{content:"✓";font-size:13px;font-weight:900;color:#08140c}
+.setup-steps li.is-done b{text-decoration:line-through;text-decoration-color:#ffffff50}
+.setup-steps li.is-next{background:#ffffff08}.setup-steps li.is-next .step-dot{box-shadow:inset 0 0 0 2px #ff6339;animation:step-pulse 1.8s ease-in-out infinite}
+@keyframes step-pulse{50%{box-shadow:inset 0 0 0 2px #ff6339,0 0 0 5px #ff633926}}
+.step-action{flex:none;min-height:34px;padding:0 14px;border:0;border-radius:10px;background:linear-gradient(180deg,#ff7446,#e8501f);color:#1a0903;font:800 12px "Segoe UI",Inter,system-ui,Arial,sans-serif;cursor:pointer;transition:transform .15s}
+.step-action:hover{transform:translateY(-1px)}
+.account-tabs button{font-size:12.5px;padding:0 6px}
+.account-tabs button.is-locked:not([aria-selected="true"])::after{content:" 🔒";font-size:10px;opacity:.7}
+.account-tab-lock{margin:14px 0 0;padding:16px 18px;border-radius:14px;background:#ffb14a12;color:#ffd3a3;font-size:14px;line-height:1.5;box-shadow:inset 0 0 0 1px #ffb14a30}
+.game-panel{display:grid;gap:12px;margin-top:18px}
+.game-panel .account-balance{margin:0}
+.game-stat{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 18px;border-radius:14px;background:#ffffff08;box-shadow:inset 0 0 0 1px #ffffff10;font-size:14px;color:#c8b9af}
+.game-stat strong{color:#fff;font-size:16px;text-align:right;overflow-wrap:anywhere}
+.aurora-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.aurora-stats .game-stat{flex-direction:column;align-items:flex-start;gap:4px}
+.aurora-stats .game-stat strong{font-size:26px;background:linear-gradient(90deg,#9ef5d6,#b9a4ff);-webkit-background-clip:text;background-clip:text;color:transparent}
+#aurora-panel .account-primary{background:linear-gradient(180deg,#9ef5d6,#8f7bff);color:#120d2e;box-shadow:0 1px 0 #ffffff50 inset,0 8px 22px -8px #8f7bff,0 2px 0 #3f3290}
+.game-play-link{margin:0 auto}
+.invite-block{margin-bottom:10px;padding:2px 14px 12px;border-radius:16px;background:linear-gradient(160deg,#ff63391a,#ffffff05);box-shadow:inset 0 0 0 1px #ff633940}
+.account-username-form{border-bottom:0;padding-bottom:6px}
+@media(max-width:700px){.aurora-stats{grid-template-columns:1fr}.account-tabs button{font-size:11.5px}}
+.account-tabs button{white-space:nowrap;display:inline-flex;align-items:center;justify-content:center;gap:6px}
+.account-tabs span:not(:empty){margin:0;padding:1px 7px;font-size:10.5px;line-height:1.5;background:#ff6339;color:#1a0903}
+.account-tabs [aria-selected="true"] span:not(:empty){background:#1a0903;color:#ffb08f}
