@@ -14,6 +14,7 @@ export function initGameEntry() {
     navigating = true;
     const game = link.id === 'enter-worldloom' ? 'Worldloom' : link.id === 'enter-aurora' ? 'Aurora' : 'TacticStrike';
     overlay.querySelector('.u-loading__title').textContent = game;
+    overlay.dataset.game = game.toLowerCase();   // tints the loader and shows the game's art behind it
     overlay.querySelector('.u-loading__message').textContent = 'Opening the menu.';
     overlay.setAttribute('aria-label', `Opening ${game}`);
     overlay.hidden = false;
