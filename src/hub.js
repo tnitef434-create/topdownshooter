@@ -3,12 +3,14 @@ import { initHubAccount } from './hub-account.js';
 import { initGameEntry } from './hub-entry.js';
 import { createLoopVideo } from './public/loop-video.js';
 import { initHubNews } from './hub-news.js';
+import { initAllGames } from './hub-games.js';
 import { initHubTrailer } from './hub-trailer.js';
 
 initHubMotion();
 initHubAccount();
 initGameEntry();
 initHubNews();
+initAllGames();
 initHubTrailer();
 
 for (const film of document.querySelectorAll('#worldloom-film, #tacticstrike-film')) {
