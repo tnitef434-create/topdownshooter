@@ -50,7 +50,15 @@
       <button id="hub-news-trigger" class="hub-news-trigger" type="button" popovertarget="hub-news" aria-label="What's new at Unpaused" aria-expanded="false" aria-controls="hub-news">
       <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><path d="M5 5v15c0 6 4 9 9 9s9-3 9-9v-3"/><path d="m20 2 9 6-9 6z" fill="#ff6339" stroke="none"/></svg>
       </button>
+      <button id="all-games-trigger" class="all-games-trigger" type="button" popovertarget="all-games" aria-expanded="false" aria-controls="all-games">ALL GAMES<svg viewBox="0 0 12 12" aria-hidden="true"><path d="m3 4.5 3 3 3-3"/></svg></button>
     </div>
+    <nav id="all-games" class="all-games" popover="auto" aria-label="All games">
+      <p class="all-games-label">ALL GAMES <span>4</span></p>
+      <a class="ag-item" href="/aurora/" style="--ag:#6fffd2"><i aria-hidden="true">A</i><span><b>Aurora <em>New</em></b><small>3D space maze · only on Unpaused</small></span></a>
+      <a class="ag-item" href="/worldloom/" style="--ag:#9be07a"><i aria-hidden="true">W</i><span><b>Worldloom</b><small>Voxel survival &amp; building</small></span></a>
+      <a class="ag-item" href="/tacticstrike/" style="--ag:#ff8b64"><i aria-hidden="true">T</i><span><b>TacticStrike</b><small>Top-down tactical shooter</small></span></a>
+      <div class="ag-item is-soon" style="--ag:#e8c46a" aria-disabled="true"><i aria-hidden="true">F</i><span><b>Freeciv <em>Soon</em></b><small>Turn-based civilization strategy</small></span></div>
+    </nav>
     <aside id="hub-news" class="hub-news" popover="auto" aria-label="What's new">
       <p class="hub-news-label">WHAT’S NEW</p>
       <p>Aurora is here, only on Unpaused.</p>
