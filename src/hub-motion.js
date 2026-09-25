@@ -37,7 +37,7 @@ export function initHubMotion() {
     if(event.pointerType==='mouse'&&pointer.matches){hovered=panel;select();}
   });
   games.addEventListener('pointerleave',()=>{hovered=null;select();});
-  if(aurora)aurora.addEventListener('pointerenter',()=>{hovered=null;select();});
+  if(aurora)aurora.addEventListener('pointerenter',event=>{hovered=null;select();if(event.pointerType==='mouse'&&lastActive!==aurora){lastActive=aurora;flick(2);}});
   games.addEventListener('focusin',select);
   games.addEventListener('focusout',()=>queueMicrotask(select));
   wide.addEventListener('change',()=>{hovered=null;select();});
