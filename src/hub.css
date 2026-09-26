@@ -173,3 +173,28 @@ a.ag-item:focus-visible{box-shadow:inset 0 0 0 2px #ff6339}
 .all-games-sub{margin-top:12px;padding-top:12px;border-top:1px solid #ffffff14;color:#f4f6dc80}
 .all-games{max-height:calc(100svh - 90px);overflow:auto;pointer-events:auto}
 .discover-more{max-width:760px;margin:28px auto 0;padding:0 20px;color:#f4f6dcb3;font:500 15px/1.7 Arial,sans-serif;text-align:center}.discover-more a{color:#ff8b64;font-weight:700}
+/* Onyx banner: a permanent bar above the hub linking to /Onyx/. The hub below
+   shrinks by its height so the game tiles still fill exactly one screen. */
+:root{--onyx-bar:44px}
+.onyx-bar{position:sticky;top:0;z-index:30;display:flex;align-items:center;justify-content:center;gap:12px;height:var(--onyx-bar);padding:0 16px;background:#000;color:#fff;text-decoration:none;border-bottom:1px solid #ffffff1f;font:500 14px/1 Arial,Helvetica,sans-serif;letter-spacing:.1px;overflow:hidden;isolation:isolate}
+.onyx-bar::before{content:"";position:absolute;inset:0;z-index:-1;background:radial-gradient(420px 60px at 50% 0,#ffffff1a,transparent 70%);opacity:.7;transition:opacity .3s}
+.onyx-bar::after{content:"";position:absolute;top:0;bottom:0;left:-30%;width:30%;z-index:-1;background:linear-gradient(90deg,transparent,#ffffff14,transparent);animation:onyx-sheen 5s ease-in-out infinite}
+@keyframes onyx-sheen{0%,55%{transform:translateX(0)}100%{transform:translateX(460%)}}
+.onyx-bar__logo{width:22px;height:22px;flex:none;border-radius:6px;box-shadow:0 0 0 1px #ffffff40,0 2px 12px #ffffff26}
+.onyx-bar__tag{flex:none;padding:3px 7px;border:1px solid #ffffff55;border-radius:999px;font:900 10px/1 Arial,sans-serif;letter-spacing:1px;color:#fff}
+.onyx-bar__text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#b9b9b9}
+.onyx-bar__text b{color:#fff;font-weight:900;letter-spacing:.2px}
+.onyx-bar__short{display:none}
+.onyx-bar__cta{flex:none;display:inline-flex;align-items:center;gap:7px;height:28px;padding:0 12px;border-radius:7px;background:#fff;color:#000;font:900 12px/1 Arial,sans-serif;letter-spacing:.4px;text-transform:uppercase;transition:background .2s,transform .2s}
+.onyx-bar__cta svg{width:12px;height:12px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;transition:transform .2s}
+.onyx-bar:hover::before{opacity:1}
+.onyx-bar:hover .onyx-bar__cta{background:#e6e6e6}
+.onyx-bar:hover .onyx-bar__cta svg{transform:translateX(3px)}
+.onyx-bar:focus-visible{outline:2px solid #fff;outline-offset:-4px}
+.masthead{top:calc(30px + var(--onyx-bar))}
+body .account-trigger{top:calc(26px + var(--onyx-bar))}
+.games{height:calc(100svh - var(--onyx-bar))}
+@media(max-height:680px) and (min-width:701px){.masthead{top:calc(24px + var(--onyx-bar))}}
+@media(max-width:700px){:root{--onyx-bar:40px}.onyx-bar{gap:9px;font-size:13px}.onyx-bar__tag{display:none}.onyx-bar__long{display:none}.onyx-bar__short{display:inline}.masthead{top:calc(19px + var(--onyx-bar))}body .account-trigger{top:calc(16px + var(--onyx-bar))}}
+@media(max-width:420px){.onyx-bar__short{display:none}}
+@media(prefers-reduced-motion:reduce){.onyx-bar::after{animation:none;display:none}}

@@ -127,3 +127,8 @@ work/multiplayer-recovery-*/
 !dist/2048/
 !dist/hextris/
 !dist/play-bar.js
+
+# Onyx download page (unpaused.online/Onyx/) and its redirects.
+!dist/Onyx/
+!dist/Onyx/**
+!dist/_redirects
