@@ -198,3 +198,50 @@ body .account-trigger{top:calc(26px + var(--onyx-bar))}
 @media(max-width:700px){:root{--onyx-bar:40px}.onyx-bar{gap:9px;font-size:13px}.onyx-bar__tag{display:none}.onyx-bar__long{display:none}.onyx-bar__short{display:inline}.masthead{top:calc(19px + var(--onyx-bar))}body .account-trigger{top:calc(16px + var(--onyx-bar))}}
 @media(max-width:420px){.onyx-bar__short{display:none}}
 @media(prefers-reduced-motion:reduce){.onyx-bar::after{animation:none;display:none}}
+/* ---- Clarity pass: shared tokens, intro bar, focus states, readable sizes ---- */
+:root{
+  --c-bg:#080b0d;--c-surface:#0f1014;--c-text:#f4f6dc;--c-text-muted:#c9c6c1;--c-accent:#ff6339;--c-accent-text:#ff9b78;--c-focus:#ffd166;
+  --space-1:4px;--space-2:8px;--space-3:12px;--space-4:16px;--space-6:24px;--space-8:32px;
+  --fs-sm:14px;--fs-base:16px;--fs-lg:18px;
+  --hub-bar:64px;
+}
+body{background:var(--c-bg)}
+/* One visible keyboard focus style everywhere. */
+:where(a,button,summary,[tabindex]):focus-visible{outline:3px solid var(--c-focus);outline-offset:3px}
+.game:focus-visible{outline:4px solid var(--c-focus);outline-offset:-6px}
+.skip-link{position:absolute;left:var(--space-4);top:-100px;z-index:100;padding:var(--space-3) var(--space-4);border-radius:8px;background:var(--c-text);color:#111;font-weight:800;text-decoration:none}
+.skip-link:focus{top:var(--space-2)}
+/* Intro bar: says what Unpaused is on the first screen; brand/menu/account sit inside it. */
+.hub-bar{display:flex;align-items:center;justify-content:center;height:var(--hub-bar);padding:0 300px;background:var(--c-surface);border-bottom:1px solid #ffffff1a}
+.hub-intro{margin:0;color:var(--c-text-muted);font-size:var(--fs-base);line-height:1.35;text-align:center;text-wrap:balance}
+.hub-intro b{color:var(--c-text)}
+.masthead{top:calc(var(--onyx-bar) + (var(--hub-bar) - 30px) / 2)}
+body .account-trigger{top:calc(var(--onyx-bar) + (var(--hub-bar) - 42px) / 2)}
+.games{height:calc(100svh - var(--onyx-bar) - var(--hub-bar))}
+.brand{text-shadow:none}
+/* The Aurora tile is the recommended first game. */
+.start-here{display:inline-block;margin-right:var(--space-2);padding:3px 8px;border-radius:999px;background:var(--c-text);color:#120d2e;letter-spacing:.06em}
+.game-platform{font-size:12px;color:var(--c-text);text-shadow:0 1px 3px #000,0 2px 8px #000}
+.game-hint{margin-top:var(--space-4);letter-spacing:.08em}
+.game-description{font-size:var(--fs-base)}
+/* Readable secondary text (WCAG AA on dark backgrounds). */
+.ag-item small{color:#f4f6dcc7;font-size:13px}
+.all-games-sub{color:#f4f6dcb3}
+.discover-intro>p:last-child,.discover-game>p:not(.discover-genre),.discover-faq p{color:var(--c-text-muted)}
+.discover-label,.discover-genre,.all-games-label,.hub-news .hub-news-label{color:var(--c-accent-text)}
+.discover-more{color:var(--c-text-muted);font-size:var(--fs-base)}
+.discover-game>a,.discover-more a{text-decoration:underline;text-underline-offset:5px}
+.hub-footer nav a{color:var(--c-text-muted);font-size:15px;padding:var(--space-1) 0}
+.all-games-trigger,.account-trigger{min-height:36px}
+@media(max-height:680px) and (min-width:701px){:root{--hub-bar:56px}.masthead{top:calc(var(--onyx-bar) + (var(--hub-bar) - 30px) / 2)}}
+@media(max-width:1100px){.hub-bar{padding:0 250px}.hub-intro span{display:none}}
+@media(max-width:700px){
+  :root{--hub-bar:96px}
+  .hub-bar{align-items:flex-end;padding:0 var(--space-4) var(--space-3)}
+  .hub-intro{font-size:var(--fs-sm)}
+  .masthead{top:calc(var(--onyx-bar) + 14px)}
+  body .account-trigger{top:calc(var(--onyx-bar) + 10px)}
+  .game-description{font-size:var(--fs-sm)}
+  .game-hint{display:none}
+  .game-platform{letter-spacing:.06em}
+}
