@@ -1,6 +1,6 @@
 # Unpaused
 
-> Unpaused (https://unpaused.online) is a free browser game site. It is home to three original games, Aurora, Worldloom and TacticStrike, plus the open-source browser classics HexGL, 2048 and Hextris, credited to their creators. Games open from the home page and play in the browser without installing a game launcher.
+> Unpaused (https://unpaused.online) is a free browser game site that aims to be one of the best places to play free browser games: hand-picked, high-quality games, a clean design and a smooth system. It has 10 games: three originals, Aurora, Worldloom and TacticStrike, plus the open-source browser classics HexGL, 2048, Hextris, A Dark Room, Coastline Racer, Blockfall and Clumsy Bird, credited to their creators. Every game is free, with no ads and no account needed. Games open from the home page and play in the browser without installing a game launcher.
 
 Who it is for: players who want free games they can open straight in a desktop web browser, with keyboard and mouse (Aurora also has full controller support). Worldloom needs WebGL 2 and hardware acceleration.
 
@@ -21,6 +21,10 @@ Key facts:
 - [HexGL](https://unpaused.online/hexgl/): Futuristic 3D anti-gravity racing.
 - [2048](https://unpaused.online/2048/): The sliding number puzzle.
 - [Hextris](https://unpaused.online/hextris/): Rotate the hexagon to match falling colored blocks.
+- [A Dark Room](https://unpaused.online/adarkroom/): A minimalist text adventure by Doublespeak Games (MPL-2.0).
+- [Coastline Racer](https://unpaused.online/racer/): A retro pseudo-3D arcade racer by Jake Gordon (MIT).
+- [Blockfall](https://unpaused.online/blockfall/): A falling block puzzle, based on Jake Gordon's open-source JavaScript game (MIT).
+- [Clumsy Bird](https://unpaused.online/clumsy-bird/): A one-button flying arcade game by Ellison Leão (GPL-3.0).
 
 ## Other
 
