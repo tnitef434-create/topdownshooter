@@ -245,3 +245,10 @@ body .account-trigger{top:calc(var(--onyx-bar) + (var(--hub-bar) - 42px) / 2)}
   .game-hint{display:none}
   .game-platform{letter-spacing:.06em}
 }
+.game--aurora .game-platform{display:flex;flex-direction:column;align-items:center;gap:var(--space-2);margin-top:var(--space-3)}
+.start-here{margin:0}
+.game--aurora .game-copy{transform:translateY(-1vh)}
+.game--aurora .game-description{margin-top:10px}
+.game--aurora .enter{margin-top:22px}
+@media(max-width:700px){.game--aurora .game-copy{transform:none}}
+.start-here{text-shadow:none;box-shadow:0 2px 8px #0008}
