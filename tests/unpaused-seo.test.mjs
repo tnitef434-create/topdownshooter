@@ -15,6 +15,10 @@ const pages=[
   ['/hexgl/', 'src/public/hexgl/index.html'],
   ['/2048/', 'src/public/2048/index.html'],
   ['/hextris/', 'src/public/hextris/index.html'],
+  ['/adarkroom/', 'src/public/adarkroom/index.html'],
+  ['/racer/', 'src/public/racer/index.html'],
+  ['/blockfall/', 'src/public/blockfall/index.html'],
+  ['/clumsy-bird/', 'src/public/clumsy-bird/index.html'],
   ['/Onyx/', 'src/public/Onyx/index.html'],
   ['/privacy/', 'src/public/privacy/index.html'],
 ];
